@@ -1030,10 +1030,20 @@ class HourlyModel:
     def _model_fit_is_acceptable(self):
         cvrmse = self.baseline_metrics.cvrmse_adj
         pnrmse = self.baseline_metrics.pnrmse_adj
-        if (cvrmse is not None and cvrmse < self.settings.cvrmse_threshold) or (
-            pnrmse is not None and pnrmse < self.settings.pnrmse_threshold
-        ):
-            return True
+
+        # sufficient is (0 <= cvrmse <= threshold) or (0 <= pnrmse <= threshold)
+
+        if cvrmse is not None:
+            if (0 <= cvrmse) and (cvrmse <= self.settings.cvrmse_threshold):
+                return True
+            
+        if pnrmse is not None:
+            # less than 0 is not possible, but just in case
+            if (0 <= pnrmse) and (pnrmse <= self.settings.pnrmse_threshold):
+                return True
+
+        return False
+
 
     def to_dict(self) -> dict:
         """Returns a dictionary of model parameters.
