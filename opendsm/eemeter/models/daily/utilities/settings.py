@@ -381,6 +381,13 @@ class DailySettings(BaseSettings):
         description="Threshold for the CVRMSE to disqualify a model",
     )
 
+    pnrmse_threshold: float = CustomField(
+        default=1.6,
+        ge=0,
+        developer=True,
+        description="Threshold for the PNRMSE to disqualify a model",
+    )
+
 
     @pydantic.model_validator(mode="after")
     def _check_developer_mode(self):
