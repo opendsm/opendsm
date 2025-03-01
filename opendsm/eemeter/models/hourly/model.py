@@ -27,6 +27,8 @@ os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
+import re
+
 from pydantic import BaseModel, ConfigDict
 
 import numpy as np
@@ -230,7 +232,9 @@ class HourlyModel:
         df_meter = meter_data.df  # used to have a copy here
 
         # Prepare feature arrays/matrices
-        X_fit, X_predict, y_fit = self._prepare_features(df_meter)
+        X, y, fit_mask = self._prepare_features(df_meter)
+        X_fit = X[fit_mask, :]
+        y_fit = y[fit_mask]
 
         # fit the model
         self._model.fit(X_fit, y_fit)
@@ -242,7 +246,7 @@ class HourlyModel:
         )
 
         # get model prediction of baseline
-        df_meter = self._predict(meter_data, X=X_predict)
+        df_meter = self._predict(meter_data, X=X)
 
         # calculate baseline metrics on non-interpolated data
         cols = [col for col in df_meter.columns if col.startswith("interpolated_")]
@@ -262,7 +266,9 @@ class HourlyModel:
         df_meter = meter_data.df  # used to have a copy here
 
         # Prepare feature arrays/matrices
-        X_fit, X_predict, y_fit = self._prepare_features(df_meter)
+        X, y, fit_mask = self._prepare_features(df_meter)
+        X_fit = X[fit_mask, :]
+        y_fit = y[fit_mask]
 
         weights = 1
         rmse_annual_prior = np.inf
@@ -270,10 +276,10 @@ class HourlyModel:
         for i in range(self.settings.elasticnet.adaptive_weight_max_iter):
             self._model.fit(X_fit, y_fit, sample_weight=weights)
 
-            y_predict = self._model.predict(X_fit)
+            y_predict = self._model.predict(X)
 
             # calculate residuals and annual rmse
-            resid = y_fit - y_predict
+            resid = y - y_predict
 
             rmse_annual = np.sqrt(np.mean(resid ** 2))
 
@@ -309,7 +315,7 @@ class HourlyModel:
         )
 
         # get model prediction of baseline
-        df_meter = self._predict(meter_data, X=X_predict)
+        df_meter = self._predict(meter_data, X=X)
 
         # calculate baseline metrics on non-interpolated data
         cols = [col for col in df_meter.columns if col.startswith("interpolated_")]
@@ -399,7 +405,7 @@ class HourlyModel:
             columns.remove("datetime")  # index in output, not column
 
         if X is None:
-            _, X, _ = self._prepare_features(df_eval)
+            X, _, _ = self._prepare_features(df_eval)
 
         y_predict_scaled = self._model.predict(X)
         y_predict = self._y_scaler.inverse_transform(y_predict_scaled)
@@ -435,7 +441,6 @@ class HourlyModel:
         - A pandas DataFrame containing the initialized meter data
         """
         dst_indices = _get_dst_indices(meter_data)
-        initial_index = meter_data.index
         meter_data = self._add_categorical_features(meter_data)
         self._add_supplemental_features(meter_data)
 
@@ -443,9 +448,9 @@ class HourlyModel:
             self._ts_features, self._categorical_features
         )
 
-        meter_data = self._daily_sufficiency(meter_data)
+        meter_data = self._daily_fitting_sufficiency(meter_data)
         meter_data = self._normalize_features(meter_data)
-        meter_data = self._add_temperature_bin_masked_ts(meter_data)
+        meter_data = self._add_temperature_interactions(meter_data)
 
         # save actual df used for later inspection
         self._ts_feature_norm, _ = self._sort_features(self._ts_feature_norm)
@@ -456,32 +461,12 @@ class HourlyModel:
         self._processed_meter_data = self._processed_meter_data_full[selected_features]
 
         # get feature matrices
-        X_predict, _ = self._get_feature_matrices(meter_data, dst_indices)
+        X, y, fit_mask = self._get_feature_matrices(meter_data, dst_indices)
 
-        # Convert X to sparse matrices
-        X_predict = csr_matrix(X_predict.astype(float))
+        # Convert to sparse matrix
+        X = csr_matrix(X.astype(float))
 
-        if not self.is_fitted:
-            meter_data = meter_data.set_index(initial_index)
-            # remove insufficient days from fit data
-            meter_data = meter_data[meter_data["include_date"]]
-
-            # recalculate DST indices with removed days
-            dst_indices = _get_dst_indices(meter_data)
-
-            # index shouldn't matter since it's being aggregated on date col inside _get_feature_matrices,
-            # but just keeping the input consistent with initial call
-            meter_data = meter_data.reset_index()
-
-            X_fit, y_fit = self._get_feature_matrices(meter_data, dst_indices)
-
-            # Convert to sparse matrix
-            X_fit = csr_matrix(X_fit.astype(float))
-
-        else:
-            X_fit, y_fit = None, None
-
-        return X_fit, X_predict, y_fit
+        return X, y, fit_mask
 
     def _add_temperature_bins(self, df):
         # TODO: do we need to do something about empty bins in prediction? I think not but maybe
@@ -600,6 +585,9 @@ class HourlyModel:
                 settings.min_cluster_size,
                 settings._seed,
             )
+
+            # TODO: DELETE ME
+            # labels = np.arange(fit_df_grouped.shape[0])
 
             df_temporal_clusters = pd.DataFrame(
                 labels,
@@ -726,13 +714,10 @@ class HourlyModel:
 
         else:
             self._df_temporal_clusters = correct_missing_temporal_clusters(df)
-            n_clusters = len(
-                [
-                    c
-                    for c in self._categorical_features
-                    if c.startswith("temporal_cluster_")
-                ]
-            )
+            n_clusters = 0
+            for col in self._categorical_features:
+                if col.startswith("temporal_cluster") and "temp_bin" not in col:
+                    n_clusters += 1
 
         # join df_temporal_clusters to df
         df = pd.merge(
@@ -801,7 +786,7 @@ class HourlyModel:
         return features["ts"], features["cat"]
 
     # TODO rename to avoid confusion with data sufficiency
-    def _daily_sufficiency(self, df):
+    def _daily_fitting_sufficiency(self, df):
         # remove days with insufficient data
         min_hours = self.settings.min_daily_training_hours
 
@@ -848,8 +833,8 @@ class HourlyModel:
             )
 
         return df
-
-    def _add_temperature_bin_masked_ts(self, df):
+    
+    def _add_extreme_temperature_bins(self, df, bin_range):
         settings = self.settings.temperature_bin
 
         def get_k(int_col, a, b):
@@ -876,100 +861,118 @@ class HourlyModel:
 
             return k
 
-        # TODO: if this permanent then it should not create, erase, make anew
-        self._ts_feature_norm.remove("temperature_norm")
+        if self._T_edge_bin_coeffs is None:
+            self._T_edge_bin_coeffs = {}
 
-        # get all the temp_bin columns
-        # get list of columns beginning with "daily_temp_" and ending in a number
-        for interaction_col in ["temp_bin_", "temporal_cluster_"]:
-            cols = [
-                col
-                for col in df.columns
-                if col.startswith(interaction_col) and col[-1].isdigit()
-            ]
-            for col in cols:
-                # splits temperature_norm into unique columns if that temp_bin column is True
-                ts_col = f"{col}_ts"
-                df[ts_col] = df["temperature_norm"] * df[col]
+        cols = bin_range
+        # maybe add nonlinear terms to second and second to last columns?
+        # cols = [0, 1, last_temp_bin - 1, last_temp_bin]
+        # cols = list(set(cols))
+        # all columns?
+        # cols = range(cols[0], cols[1] + 1)
+
+        for n in cols:
+            base_col = f"temp_bin_{n}"
+            int_col = f"{base_col}_ts"
+            T_col = f"{base_col}_T"
+
+            # get k for exponential growth/decay
+            if not self.is_fitted:
+                # determine temperature conversion for bin
+                range_offset = settings.edge_bin_temperature_range_offset
+                T_range = [
+                    df[int_col].min() - range_offset,
+                    df[int_col].max() + range_offset,
+                ]
+                new_range = [-1, 1]
+
+                T_a = (new_range[1] - new_range[0]) / (T_range[1] - T_range[0])
+                T_b = new_range[1] - T_a * T_range[1]
+
+                # The best rate for exponential
+                if settings.edge_bin_rate == "heuristic":
+                    k = get_k(int_col, T_a, T_b)
+                else:
+                    k = settings.edge_bin_rate
+
+                # get A for exponential
+                A = 1 / (np.exp(1 / k * new_range[1]) - 1)
+
+                self._T_edge_bin_coeffs[n] = {
+                    "t_a": float(T_a),
+                    "t_b": float(T_b),
+                    "k": float(k),
+                    "a": float(A),
+                }
+
+            T_a = self._T_edge_bin_coeffs[n]["t_a"]
+            T_b = self._T_edge_bin_coeffs[n]["t_b"]
+            k = self._T_edge_bin_coeffs[n]["k"]
+            A = self._T_edge_bin_coeffs[n]["a"]
+
+            df[T_col] = np.where(
+                df[base_col].values, T_a * df[int_col].values + T_b, 0
+            )
+
+            for pos_neg in ["pos", "neg"]:
+                # if first or last column, add additional column
+                # testing exp, previously squaring worked well
+
+                s = 1
+                if "neg" in pos_neg:
+                    s = -1
+
+                # set rate exponential
+                ts_col = f"{base_col}_{pos_neg}_exp_ts"
+
+                df[ts_col] = np.where(
+                    df[base_col].values, A * np.exp(s / k * df[T_col].values) - A, 0
+                )
 
                 self._ts_feature_norm.append(ts_col)
 
-        # TODO: if this is permanent then it should be a function, not this mess
+        return df
+
+
+    def _add_temperature_interactions(self, df):
+        settings = self.settings.temperature_bin
+
+        # TODO: if this permanent then it should not create, erase, make anew
+        self._ts_feature_norm.remove("temperature_norm")
+
+        temp_bin_cols = [c for c in df.columns if re.match(r'^temp_bin_\d+$', c)]
+        cluster_cols = [c for c in df.columns if re.match(r'^temporal_cluster_\d+$', c)]
+
+        # add global temperature bins
+        for col in temp_bin_cols:
+            # splits temperature_norm into unique columns if that temp_bin column is True
+            ts_col = f"{col}_ts"
+            df[ts_col] = df["temperature_norm"] * df[col]
+
+            self._ts_feature_norm.append(ts_col)
+
+        # add temporal cluster interactions
+        # multiply each temp_bin by each temporal cluster
+        # get all columns that start with temp_bin_ and are a number
+
+        for temporal_cluster_col in cluster_cols:
+            for temp_bin_col in temp_bin_cols:
+                # add intercept term
+                interaction_col = f"{temporal_cluster_col}_{temp_bin_col}_interact"
+                df[interaction_col] = df[temp_bin_col] * df[temporal_cluster_col]
+
+                # add slope term
+                interaction_ts_col = f"{interaction_col}_ts"
+                df[interaction_ts_col] = 0.25*df["temperature_norm"] * df[interaction_col]
+
+                # add to feature lists
+                self._categorical_features.append(interaction_col)
+                self._ts_feature_norm.append(interaction_ts_col)
+
+        # add extreme temperature bins to global temperature bins
         if settings.include_edge_bins:
-            if self._T_edge_bin_coeffs is None:
-                self._T_edge_bin_coeffs = {}
-
-            cols = [
-                col
-                for col in df.columns
-                if col.startswith("temp_bin_") and col[-1].isdigit()
-            ]
-            cols = [0, int(cols[-1].replace("temp_bin_", ""))]
-            # maybe add nonlinear terms to second and second to last columns?
-            # cols = [0, 1, last_temp_bin - 1, last_temp_bin]
-            # cols = list(set(cols))
-            # all columns?
-            # cols = range(cols[0], cols[1] + 1)
-
-            for n in cols:
-                base_col = f"temp_bin_{n}"
-                int_col = f"{base_col}_ts"
-                T_col = f"{base_col}_T"
-
-                # get k for exponential growth/decay
-                if not self.is_fitted:
-                    # determine temperature conversion for bin
-                    range_offset = settings.edge_bin_temperature_range_offset
-                    T_range = [
-                        df[int_col].min() - range_offset,
-                        df[int_col].max() + range_offset,
-                    ]
-                    new_range = [-1, 1]
-
-                    T_a = (new_range[1] - new_range[0]) / (T_range[1] - T_range[0])
-                    T_b = new_range[1] - T_a * T_range[1]
-
-                    # The best rate for exponential
-                    if settings.edge_bin_rate == "heuristic":
-                        k = get_k(int_col, T_a, T_b)
-                    else:
-                        k = settings.edge_bin_rate
-
-                    # get A for exponential
-                    A = 1 / (np.exp(1 / k * new_range[1]) - 1)
-
-                    self._T_edge_bin_coeffs[n] = {
-                        "t_a": float(T_a),
-                        "t_b": float(T_b),
-                        "k": float(k),
-                        "a": float(A),
-                    }
-
-                T_a = self._T_edge_bin_coeffs[n]["t_a"]
-                T_b = self._T_edge_bin_coeffs[n]["t_b"]
-                k = self._T_edge_bin_coeffs[n]["k"]
-                A = self._T_edge_bin_coeffs[n]["a"]
-
-                df[T_col] = np.where(
-                    df[base_col].values, T_a * df[int_col].values + T_b, 0
-                )
-
-                for pos_neg in ["pos", "neg"]:
-                    # if first or last column, add additional column
-                    # testing exp, previously squaring worked well
-
-                    s = 1
-                    if "neg" in pos_neg:
-                        s = -1
-
-                    # set rate exponential
-                    ts_col = f"{base_col}_{pos_neg}_exp_ts"
-
-                    df[ts_col] = np.where(
-                        df[base_col].values, A * np.exp(s / k * df[T_col].values) - A, 0
-                    )
-
-                    self._ts_feature_norm.append(ts_col)
+            bin_range = [0, len(temp_bin_cols) - 1]
+            df = self._add_extreme_temperature_bins(df, bin_range)
 
         return df
 
@@ -995,7 +998,8 @@ class HourlyModel:
                     mean = (feature[hour + 1] + feature.pop(hour)) / 2
                     feature[hour] = mean
 
-        agg_x = df.groupby("date").agg(agg_dict).values.tolist()
+        df_grouped = df.groupby("date")
+        agg_x = df_grouped.agg(agg_dict).values.tolist()
         correct_dst(agg_x)
 
         # get the features and target for each day
@@ -1007,14 +1011,14 @@ class HourlyModel:
 
         # get the first categorical features for each day for each sample
         unique_dummies = (
-            df[self._categorical_features + ["date"]].groupby("date").first()
+            df[["date"] + self._categorical_features].groupby("date").first()
         )
 
         X = np.concatenate((ts_feature, unique_dummies), axis=1)
 
         if not self.is_fitted:
             agg_y = (
-                df.groupby("date")
+                df_grouped
                 .agg({"observed_norm": lambda x: list(x)})
                 .values.tolist()
             )
@@ -1022,10 +1026,12 @@ class HourlyModel:
             y = np.array(agg_y)
             y = y.reshape(y.shape[0], y.shape[1] * y.shape[2])
 
+            fit_mask = df_grouped["include_date"].first().values
         else:
             y = None
+            fit_mask = None
 
-        return X, y
+        return X, y, fit_mask
 
     def _model_fit_is_acceptable(self):
         cvrmse = self.baseline_metrics.cvrmse_adj
