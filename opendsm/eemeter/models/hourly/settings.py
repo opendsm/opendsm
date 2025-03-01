@@ -196,7 +196,7 @@ class TemporalClusteringSettings(BaseSettings):
 
     """lower bound for number of clusters"""
     n_cluster_lower: int = pydantic.Field(
-        default=2,
+        default=12,
         ge=2,
     )
 
