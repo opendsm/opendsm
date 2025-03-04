@@ -4,7 +4,7 @@ Changelog
 Development
 -----------
 
-* Placeholder
+* Squash numpy divide-by-zero warnings in caltrack hourly metrics.
 
 1.0.0
 -----
