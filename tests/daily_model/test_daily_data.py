@@ -729,6 +729,32 @@ def test_daily_reporting_data_with_missing_half_hourly_and_hourly_frequencies(
     )
 
 
+def test_daily_reporting_data_high_frequency_temperature_warning_gives_proper_results():
+
+    datetime_index = pd.date_range(
+        "2023-01-01", "2023-01-08", freq="h", tz="US/Eastern"
+    )
+    np.random.seed(TEMPERATURE_SEED)
+    # Create a 'temperature_mean' and meter_value columns with random data
+    temperature_mean = np.random.rand(len(datetime_index))
+
+    # Create the DataFrame
+    df = pd.DataFrame(data={"temperature": temperature_mean}, index=datetime_index)
+
+    # Nan all of 2023-01-01
+    df.loc["2023-01-01 06:00":"2023-01-01 18:00", "temperature"] = np.nan
+
+    cls = DailyReportingData(df, is_electricity_data=True)
+
+    assert len(cls.warnings) == 1
+    assert (
+        cls.warnings[0].qualified_name
+        == "eemeter.sufficiency_criteria.missing_high_frequency_temperature_data"
+    )
+    # Should return just the day that has too many nulls.
+    assert len(cls.warnings[0].data) == 1
+
+
 @pytest.mark.parametrize("get_datetime_index", [["D", True]], indirect=True)
 def test_daily_reporting_data_with_missing_daily_frequencies(get_datetime_index):
     datetime_index = get_datetime_index
