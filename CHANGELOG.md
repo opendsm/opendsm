@@ -4,7 +4,7 @@ Changelog
 Development
 -----------
 
-* Placeholder
+* Fix warning data on `high_frequency_temperature_data` warning.
 
 1.0.0
 -----
