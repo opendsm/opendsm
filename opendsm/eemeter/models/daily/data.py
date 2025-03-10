@@ -402,7 +402,7 @@ class _DailyData:
                             ),
                             data=[
                                 timestamp.isoformat()
-                                for timestamp in invalid_temperature_rows.index
+                                for timestamp in invalid_temperature_rows[invalid_temperature_rows].index
                             ],
                         )
                     )
