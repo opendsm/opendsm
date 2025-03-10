@@ -5,6 +5,7 @@ Development
 -----------
 
 * Fix warning data on `high_frequency_temperature_data` warning.
+* Squash numpy divide-by-zero warnings in caltrack hourly metrics.
 
 1.0.0
 -----
