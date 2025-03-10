@@ -1,0 +1,1630 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+        <link rel="prev" href="../">
+      
+      
+        <link rel="next" href="../hourly_model/">
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.0, mkdocs-material-9.5.29">
+    
+    
+      
+        <title>Daily / Billing Model - EEmeter</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.76a95c52.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../css/custom.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce((e,_)=>(e<<5)-e+_.charCodeAt(0),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="light-blue" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#model-overview" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="EEmeter" class="md-header__button md-logo" aria-label="EEmeter" data-md-component="logo">
+      
+  <img src="../../images/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2Z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            EEmeter
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Daily / Billing Model
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="light-blue" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12c0-2.42-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69Z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="light-blue" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69Z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var media,input,key,value,palette=__md_get("__palette");if(palette&&palette.color){"(prefers-color-scheme)"===palette.color.media&&(media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']"),palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent"));for([key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5Z"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5Z"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12Z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41Z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+    
+  
+  EEmeter
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+  Learn
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/eemeter/daily_model/" class="md-tabs__link">
+          
+  
+  Reference - Code API
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="EEmeter" class="md-nav__button md-logo" aria-label="EEmeter" data-md-component="logo">
+      
+  <img src="../../images/logo.png" alt="logo">
+
+    </a>
+    EEmeter
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    EEmeter
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  <span class="md-ellipsis">
+    Learn
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Learn
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    General Concepts
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2_2" id="__nav_2_2_label" tabindex="">
+            
+  
+  <span class="md-ellipsis">
+    EEmeter
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2_2">
+            <span class="md-nav__icon md-icon"></span>
+            EEmeter
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    Daily / Billing Model
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    Daily / Billing Model
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#model-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      Model Overview
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Model Overview">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-the-model-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      How the Model Works
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How the Model Works">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#model-shape-and-balance-points" class="md-nav__link">
+    <span class="md-ellipsis">
+      Model Shape and Balance Points
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#model-splits" class="md-nav__link">
+    <span class="md-ellipsis">
+      Model Splits
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-the-daily-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Using the Daily Model
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Using the Daily Model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#imports" class="md-nav__link">
+    <span class="md-ellipsis">
+      Imports
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#loading-example-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      Loading Example Data
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#loading-data-into-eemeter-data-objects" class="md-nav__link">
+    <span class="md-ellipsis">
+      Loading Data into EEmeter Data Objects
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#creating-the-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Creating the Model
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#predicting-with-the-model-and-calculating-savings" class="md-nav__link">
+    <span class="md-ellipsis">
+      Predicting with the Model and Calculating Savings
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#model-serialization" class="md-nav__link">
+    <span class="md-ellipsis">
+      Model Serialization
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#billing-data-model-differences" class="md-nav__link">
+    <span class="md-ellipsis">
+      Billing Data / Model Differences
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Billing Data / Model Differences">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#loading-example-data_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      Loading Example Data
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#loading-data-into-eemeter-data-objects_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      Loading Data into EEmeter Data Objects
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#creating-the-model-and-predicting" class="md-nav__link">
+    <span class="md-ellipsis">
+      Creating the Model and Predicting
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hourly_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hourly Model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference - Code API
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Reference - Code API
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    eemeter Modules
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            eemeter Modules
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/eemeter/daily_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Daily Model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/eemeter/billing_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Billing Model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/eemeter/daily_model_settings/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Daily Model Settings
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/eemeter/hourly_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hourly Model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/eemeter/utilities/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Utilities
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#model-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      Model Overview
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Model Overview">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-the-model-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      How the Model Works
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How the Model Works">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#model-shape-and-balance-points" class="md-nav__link">
+    <span class="md-ellipsis">
+      Model Shape and Balance Points
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#model-splits" class="md-nav__link">
+    <span class="md-ellipsis">
+      Model Splits
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-the-daily-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Using the Daily Model
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Using the Daily Model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#imports" class="md-nav__link">
+    <span class="md-ellipsis">
+      Imports
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#loading-example-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      Loading Example Data
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#loading-data-into-eemeter-data-objects" class="md-nav__link">
+    <span class="md-ellipsis">
+      Loading Data into EEmeter Data Objects
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#creating-the-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Creating the Model
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#predicting-with-the-model-and-calculating-savings" class="md-nav__link">
+    <span class="md-ellipsis">
+      Predicting with the Model and Calculating Savings
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#model-serialization" class="md-nav__link">
+    <span class="md-ellipsis">
+      Model Serialization
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#billing-data-model-differences" class="md-nav__link">
+    <span class="md-ellipsis">
+      Billing Data / Model Differences
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Billing Data / Model Differences">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#loading-example-data_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      Loading Example Data
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#loading-data-into-eemeter-data-objects_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      Loading Data into EEmeter Data Objects
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#creating-the-model-and-predicting" class="md-nav__link">
+    <span class="md-ellipsis">
+      Creating the Model and Predicting
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  <h1>Daily / Billing Model</h1>
+
+<h2 id="model-overview">Model Overview<a class="headerlink" href="#model-overview" title="Permanent link">&para;</a></h2>
+<p>The daily model is trained using daily energy usage intervals and also predicts energy usage in daily intervals. The billing model is identical to the daily model, but allows users to train using billing interval data instead, while handling the daily usage distribution under the hood.</p>
+<h3 id="how-the-model-works">How the Model Works<a class="headerlink" href="#how-the-model-works" title="Permanent link">&para;</a></h3>
+<h4 id="model-shape-and-balance-points">Model Shape and Balance Points<a class="headerlink" href="#model-shape-and-balance-points" title="Permanent link">&para;</a></h4>
+<p>The daily model, at its core, utilizes a piecewise linear regression model that predicts energy usage relative to temperature. The model determines temperature balance points at which energy usage starts changing relative to temperature.</p>
+<div style="text-align: center">
+    <img src="../../images/daily_model_balance_points.png" alt="Daily Model Balance Points">
+</div>
+
+<p>The key terms to understand here are:</p>
+<ul>
+<li><strong>Balance Points</strong>: Outdoor temperature thresholds beyond which heating and cooling effects are observed.</li>
+<li><strong>Heating and Cooling Coefficients</strong>: Rate of increase of energy use per change in temperature beyond the balance points.</li>
+<li><strong>Temperature Independent Load</strong>: The regression intercept (height of the flat line in the diagram).</li>
+</ul>
+<p>Based on the site behavior, there are four different model types that may be generated:
+- Heating and Cooling Loads
+- Heating Only Load
+- Cooling Only Load
+- Temperature Independent Load</p>
+<div style="text-align: center; margin-top: 30px">
+    <img src="../../images/heating_cooling_load.png" alt="Different Model Types">
+</div>
+
+<p>When the model is fit, each site will receive its own unique model fit and coefficients. The general model fitting process is as follows:</p>
+<ol>
+<li>Balance points are estimated with a global optimization algorithm.</li>
+<li>Sum of Squares Error (SSE) is minimized with Lasso regression inspired penalization.</li>
+<li>The best model type is determined (ex. cooling load only model)</li>
+<li>The model best fit is found using SSE.</li>
+</ol>
+<h4 id="model-splits">Model Splits<a class="headerlink" href="#model-splits" title="Permanent link">&para;</a></h4>
+<p>The process described above is effective but may have shortcomings in real life data if energy usage changes fundamentally during different time periods.</p>
+<p>For example, what if a site is more populated during a particular season (for example, a Summer House or Ski Lodge) or during weekdays (for example, offices and most homes). This may result in models that fail to accurately predict energy usage because they are trying to account for all time periods at once.</p>
+<div style="display: flex; justify-content: center; margin-top: 30px">
+    <img src="../../images/season_problems.png" alt="Seasonal Misalignment" style="max-width: 50%">
+    <img src="../../images/weekday_problems.png" alt="Weekday Misalignment" style="max-width: 50%">
+</div>
+
+<p>To combat this, the model will create "splits" that will store independent models for different seasons or weekday/weekend combinations, but only if necessary. </p>
+<p>The general process is as follows:</p>
+<ol>
+<li>Create models using all possible splits of season/weekday|weekend.</li>
+<li>Calculate modified BIC (Bayesian Information Criterion) for each preliminary combination.</li>
+<li>Select combination with the smallest BICmod.</li>
+<li>Best model type is inferred and best fit is found.</li>
+</ol>
+<p>This provides a standardized process for splitting the model to better predict energy usage by certain time periods (if the benefit outweighs the additional model complexity).</p>
+<div style="text-align: center; margin-top: 30px">
+    <img src="../../images/split_model_season.png" alt="Model split by season">
+</div>
+
+<h2 id="using-the-daily-model">Using the Daily Model<a class="headerlink" href="#using-the-daily-model" title="Permanent link">&para;</a></h2>
+<h3 id="imports">Imports<a class="headerlink" href="#imports" title="Permanent link">&para;</a></h3>
+<p>In this section, we'll walk through an example of creating a Daily Model and predicting usage with it.</p>
+<p>If you'd like to follow along, be sure to begin with the following imports. Numpy is used for one example of a disqualified meter, and matplotlib is used for plotting the data. Neither are required imports if you're not following along with the example precisely.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="kn">import</span><span class="w"> </span><span class="nn">eemeter</span>
+</code></pre></div>
+<h3 id="loading-example-data">Loading Example Data<a class="headerlink" href="#loading-example-data" title="Permanent link">&para;</a></h3>
+<p>With our imports set, we can begin by loading some example data. Here we use a built in utility function to load some prepared test data.</p>
+<p>This function returns two dataframes of daily electricity data, one for the baseline period and one for the reporting period.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">df_baseline</span><span class="p">,</span> <span class="n">df_reporting</span> <span class="o">=</span>  <span class="n">eemeter</span><span class="o">.</span><span class="n">load_test_data</span><span class="p">(</span><span class="s2">&quot;daily_treatment_data&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>If we inspect these dataframes, we will notice that there are 100 meters for you to experiment with, indexed by meter id and datetime.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nb">print</span><span class="p">(</span><span class="n">df_baseline</span><span class="p">)</span>
+</code></pre></div>
+<details class="returns">
+<summary>Returns</summary>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>id      datetime                    temperature observed
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>108618  2018-01-01 00:00:00-06:00   -2.384038   16635.193673
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>        2018-01-02 00:00:00-06:00   1.730000    15594.051162
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>        2018-01-03 00:00:00-06:00   13.087946   11928.025899
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>        2018-01-04 00:00:00-06:00   4.743269    14399.333812
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>        2018-01-05 00:00:00-06:00   4.130577    14315.101721
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>... ... ... ...
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>120841  2018-12-27 00:00:00-06:00   52.010625   1153.749811
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>        2018-12-28 00:00:00-06:00   35.270000   1704.076968
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>        2018-12-29 00:00:00-06:00   29.630000   2151.225729
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>        2018-12-30 00:00:00-06:00   34.250000   1331.123954
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>        2018-12-31 00:00:00-06:00   43.311250   1723.397349
+</code></pre></div>
+</details>
+<p>To simplify things, we will filter down to a single meter for the rest of the example. Let's filter down to id 108618.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">df_baseline_108618</span> <span class="o">=</span> <span class="n">df_baseline</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="mi">108618</span><span class="p">]</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">df_reporting_108618</span> <span class="o">=</span> <span class="n">df_reporting</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="mi">108618</span><span class="p">]</span>
+</code></pre></div>
+<p>If we inspect one of these dataframes, we will now notice that only a single meter is present with 365 days of data in each dataframe. </p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nb">print</span><span class="p">(</span><span class="n">df_baseline_108618</span><span class="p">)</span>
+</code></pre></div>
+<details class="returns">
+<summary>Returns</summary>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>datetime                    temperature observed
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>2018-01-01 00:00:00-06:00   -2.384038   16635.193673
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>2018-01-02 00:00:00-06:00   1.730000    15594.051162
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>2018-01-03 00:00:00-06:00   13.087946   11928.025899
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>2018-01-04 00:00:00-06:00   4.743269    14399.333812
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>2018-01-05 00:00:00-06:00   4.130577    14315.101721
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>... ... ...
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>2018-12-27 00:00:00-06:00   46.602066   4528.347029
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>2018-12-28 00:00:00-06:00   38.346724   5647.646228
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>2018-12-29 00:00:00-06:00   28.614456   5338.377496
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>2018-12-30 00:00:00-06:00   29.186923   6280.238343
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>2018-12-31 00:00:00-06:00   36.510441   4966.566443
+</code></pre></div>
+</details>
+<p>Also notice the general structure of these dataframes for a single meter. We have three columns:
+1. A timezone-aware datetime index.
+2. A temperature column (float) in Fahrenheit (be sure to convert any other units to Fahrenheit first).
+3. Observed meter usage (float). Our example is electricity data in kWh, but it could also be gas data.</p>
+<p>We can stop to plot this data to get a better understanding of the general behavior of this meter.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">ax</span> <span class="o">=</span> <span class="n">df_baseline_108618</span><span class="p">[</span><span class="s1">&#39;observed&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">label</span><span class="o">=</span><span class="s1">&#39;Observed Usage&#39;</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s1">&#39;blue&#39;</span><span class="p">)</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">df_baseline_108618</span><span class="p">[</span><span class="s1">&#39;temperature&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">ax</span><span class="o">=</span><span class="n">ax</span><span class="p">,</span> <span class="n">secondary_y</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s1">&#39;Temperature (F)&#39;</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s1">&#39;orange&#39;</span><span class="p">)</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;Observed Usage (kWh)&#39;</span><span class="p">)</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="n">ax</span><span class="o">.</span><span class="n">right_ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;Temperature (F)&#39;</span><span class="p">)</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="n">ax</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">loc</span><span class="o">=</span><span class="s1">&#39;upper left&#39;</span><span class="p">)</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="n">ax</span><span class="o">.</span><span class="n">right_ax</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">loc</span><span class="o">=</span><span class="s1">&#39;upper right&#39;</span><span class="p">)</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s1">&#39;Observed Usage and Temperature in the Baseline Period&#39;</span><span class="p">)</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</code></pre></div></p>
+<details class="returns">
+<summary>Returns</summary>
+<p><div style="text-align: center; margin-top: 30px">
+    <img src="../../images/baseline_data_daily.png" alt="Daily Baseline Data">
+</div></p>
+</details>
+<p>If we observe the data we can see a full year of data with observed usage peaking in the winter and lowering in the summer with warmer temperatures. It's clear that this site is located in a colder climate and uses more electricity in the winter.</p>
+<h3 id="loading-data-into-eemeter-data-objects">Loading Data into EEmeter Data Objects<a class="headerlink" href="#loading-data-into-eemeter-data-objects" title="Permanent link">&para;</a></h3>
+<p>With our sample data loaded into dataframes, we can create our Baseline and Reporting Data objects. Note that only the baseline period is needed to fit a model, but we will use our reporting period data to predict against.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">baseline_data</span> <span class="o">=</span> <span class="n">eemeter</span><span class="o">.</span><span class="n">eemeter</span><span class="o">.</span><span class="n">DailyBaselineData</span><span class="p">(</span><span class="n">df_baseline_108618</span><span class="p">,</span> <span class="n">is_electricity_data</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">reporting_data</span> <span class="o">=</span> <span class="n">eemeter</span><span class="o">.</span><span class="n">eemeter</span><span class="o">.</span><span class="n">DailyReportingData</span><span class="p">(</span><span class="n">df_reporting_108618</span><span class="p">,</span> <span class="n">is_electricity_data</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p>These classes are critical to ensure standardized data loaded into the model, and they also scan the data to check for data sufficiency and other criteria that might cause a model to be disqualified (unable to build a model of sufficient integrity).</p>
+<p>As a note, you can also instantiate these data classes with two separate meter usage and temperature Series objects, both indexed by timezone-aware datetime.</p>
+<details class="example">
+<summary>Example</summary>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">baseline_data</span> <span class="o">=</span> <span class="n">eemeter</span><span class="o">.</span><span class="n">eemeter</span><span class="o">.</span><span class="n">DailyBaselineData</span><span class="o">.</span><span class="n">from_series</span><span class="p">(</span><span class="n">df_baseline_108618</span><span class="p">[</span><span class="s1">&#39;observed&#39;</span><span class="p">],</span> <span class="n">df_baseline_108618</span><span class="p">[</span><span class="s1">&#39;temperature&#39;</span><span class="p">],</span> <span class="n">is_electricity_data</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+</details>
+<p>With data classes successfully instantiated, we can also check for any disqualifications or warnings before moving on to the model fitting step.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Disqualifications: </span><span class="si">{</span><span class="n">baseline_data</span><span class="o">.</span><span class="n">disqualification</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Warnings:          </span><span class="si">{</span><span class="n">baseline_data</span><span class="o">.</span><span class="n">warnings</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<details class="returns">
+<summary>Returns</summary>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>Disqualifications: []
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>Warnings:          [EEMeterWarning(qualified_name=eemeter.sufficiency_criteria.unable_to_confirm_daily_temperature_sufficiency), 
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>                    EEMeterWarning(qualified_name=eemeter.sufficiency_criteria.extreme_values_detected)]
+</code></pre></div>
+</details>
+<p>From this, we can see that no disqualifications are present but there are some warnings to be aware of as we proceed. Neither of these warnings will necessarily stop us from creating a model.</p>
+<p>Before we move on, also notice that you can access the underlying dataframe in each object like follows to see exactly what will be loaded into the model.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nb">print</span><span class="p">(</span><span class="n">baseline_data</span><span class="o">.</span><span class="n">df</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</code></pre></div>
+<details class="returns">
+<summary>Returns</summary>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>datetime                    season  weekday_weekend temperature observed
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>2018-01-01 00:00:00-06:00   winter  weekday         -2.384038   16635.193673
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>2018-01-02 00:00:00-06:00   winter  weekday         1.730000    15594.051162
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>2018-01-03 00:00:00-06:00   winter  weekday         13.087946   11928.025899
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>2018-01-04 00:00:00-06:00   winter  weekday         4.743269    14399.333812
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>2018-01-05 00:00:00-06:00   winter  weekday         4.130577    14315.101721
+</code></pre></div>
+</details>
+<h3 id="creating-the-model">Creating the Model<a class="headerlink" href="#creating-the-model" title="Permanent link">&para;</a></h3>
+<p>The daily model follows the general process of:
+1. Initialize
+2. Fit
+3. Predict</p>
+<p>We can do this easily as follows:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">daily_model</span> <span class="o">=</span> <span class="n">eemeter</span><span class="o">.</span><span class="n">eemeter</span><span class="o">.</span><span class="n">DailyModel</span><span class="p">()</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="n">daily_model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">baseline_data</span><span class="p">)</span>
+</code></pre></div>
+<p>Before we move to predicting against a dataframe, we can actually use the built in plot function (requiring matplotlib) to plot the performance of the model against the provided data.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">daily_model</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">baseline_data</span><span class="p">)</span>
+</code></pre></div>
+<details class="returns">
+<summary>Returns</summary>
+<p><div style="text-align: center; margin-top: 30px">
+    <img src="../../images/daily_baseline_vs_model.png" alt="Daily Baseline Observed vs. Model">
+</div></p>
+</details>
+<p>From this graph we can also observe model splits and model types as described in the <a href="#model-splits">Model Splits</a> section. We can observe the following models:</p>
+<ol>
+<li>Shoulder/Winter - Weekday</li>
+<li>Summer - Weekday</li>
+<li>Summer/Shoulder/Winter - Weekend</li>
+</ol>
+<p>This illustrates that Summer/Shoulder/Winter weekends were similar enough to be modeled together, but Summer weekdays and Shoulder/Winter weekdays were different enough to require separate models. All of this complexity is handled under the hood, and the model will utilize the correct model when predicting usage automatically.</p>
+<p>We can also use this function to plot the model prediction against the reporting period as follows:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">daily_model</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">reporting_data</span><span class="p">)</span>
+</code></pre></div>
+<details class="returns">
+<summary>Returns</summary>
+<p><div style="text-align: center; margin-top: 30px">
+    <img src="../../images/daily_reporting_vs_model.png" alt="Daily Reporting Observed vs. Model">
+</div></p>
+</details>
+<p>In this plot we can see that the site is using significantly less energy in colder temperatures compared to the model / baseline period. Perhaps this site installed an efficiency intervention that saves energy in colder temperatures?</p>
+<h3 id="predicting-with-the-model-and-calculating-savings">Predicting with the Model and Calculating Savings<a class="headerlink" href="#predicting-with-the-model-and-calculating-savings" title="Permanent link">&para;</a></h3>
+<p>With our fit model, we can now predict across a given reporting period as follows:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="n">df_results</span> <span class="o">=</span> <span class="n">daily_model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">reporting_data</span><span class="p">)</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="nb">print</span><span class="p">(</span><span class="n">df_results</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</code></pre></div>
+<details class="returns">
+<summary>Returns</summary>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>datetime                    season  day_of_week weekday_weekend temperature observed    predicted       predicted_unc   heating_load    cooling_load    model_split model_type                                          
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>2019-01-01 00:00:00-06:00   winter  2           weekday         -2.384038   9294.220619 15610.330791    1181.674285     14344.873494    0.0             wd-sh_wi    hdd_tidd_cdd_smooth
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>2019-01-02 00:00:00-06:00   winter  3           weekday         1.730000    8073.766329 14464.613486    1181.674285     13199.156189    0.0             wd-sh_wi    hdd_tidd_cdd_smooth
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>2019-01-03 00:00:00-06:00   winter  4           weekday         13.087946   5261.174665 11322.966704    1181.674285     10057.509407    0.0             wd-sh_wi    hdd_tidd_cdd_smooth
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>2019-01-04 00:00:00-06:00   winter  5           weekday         4.743269    6775.499525 13627.487003    1181.674285     12362.029706    0.0             wd-sh_wi    hdd_tidd_cdd_smooth
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>2019-01-05 00:00:00-06:00   winter  6           weekend         4.130577    6735.513000 11690.139993    1224.574703     11200.780385    0.0             we-su_sh_wi hdd_tidd_cdd_smooth
+</code></pre></div>
+</details>
+<p>We can also plot the observed usage vs. the predicted usage.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="n">ax</span> <span class="o">=</span> <span class="n">df_results</span><span class="p">[</span><span class="s1">&#39;observed&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">label</span><span class="o">=</span><span class="s1">&#39;Observed Usage&#39;</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s1">&#39;blue&#39;</span><span class="p">)</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="n">df_results</span><span class="p">[</span><span class="s1">&#39;predicted&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">ax</span><span class="o">=</span><span class="n">ax</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s1">&#39;Predicted Usage&#39;</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s1">&#39;orange&#39;</span><span class="p">)</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;Observed Usage (kWh)&#39;</span><span class="p">)</span>
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="n">ax</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">loc</span><span class="o">=</span><span class="s1">&#39;upper left&#39;</span><span class="p">)</span>
+<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s1">&#39;Observed Usage and Temperature in the Baseline Period&#39;</span><span class="p">)</span>
+<a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a><span class="n">plt</span><span class="o">.</span><span class="n">savefig</span><span class="p">(</span><span class="s1">&#39;predicted_vs_observed_daily.png&#39;</span><span class="p">)</span>
+<a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a><span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</code></pre></div>
+<details class="returns">
+<summary>Returns</summary>
+<p><div style="text-align: center; margin-top: 30px">
+    <img src="../../images/predicted_vs_observed_daily.png" alt="Daily Reporting Observed vs. Model">
+</div></p>
+</details>
+<p>From here, we can easily calculate savings by subtracting observed usage from predicted usage.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="n">df_results</span><span class="p">[</span><span class="s1">&#39;savings&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df_results</span><span class="p">[</span><span class="s1">&#39;predicted&#39;</span><span class="p">]</span> <span class="o">-</span> <span class="n">df_results</span><span class="p">[</span><span class="s1">&#39;observed&#39;</span><span class="p">]</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Predicted Usage (kWh):  </span><span class="si">{</span><span class="nb">round</span><span class="p">(</span><span class="n">df_results</span><span class="p">[</span><span class="s1">&#39;predicted&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">sum</span><span class="p">(),</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Observed Usage (kWh):   </span><span class="si">{</span><span class="nb">round</span><span class="p">(</span><span class="n">df_results</span><span class="p">[</span><span class="s1">&#39;observed&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">sum</span><span class="p">(),</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Savings (kWh):          </span><span class="si">{</span><span class="nb">round</span><span class="p">(</span><span class="n">df_results</span><span class="p">[</span><span class="s1">&#39;savings&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">sum</span><span class="p">(),</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<details class="returns">
+<summary>Returns</summary>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>Predicted Usage (kWh):  1297651.07
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>Observed Usage (kWh):   632077.62
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>Savings (kWh):          665573.45
+</code></pre></div>
+</details>
+<h3 id="model-serialization">Model Serialization<a class="headerlink" href="#model-serialization" title="Permanent link">&para;</a></h3>
+<p>After creating a model, we can also serialize it for storage and read it back in later.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="n">saved_model</span> <span class="o">=</span> <span class="n">daily_model</span><span class="o">.</span><span class="n">to_json</span><span class="p">()</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="nb">print</span><span class="p">(</span><span class="n">saved_model</span><span class="p">)</span>
+</code></pre></div>
+<details class="returns">
+<summary>Returns</summary>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="p">{</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="s2">&quot;submodels&quot;</span><span class="p">:</span> <span class="p">{</span>
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>    <span class="s2">&quot;wd-su&quot;</span><span class="p">:</span> <span class="p">{</span>
+<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a>    <span class="s2">&quot;coefficients&quot;</span><span class="p">:</span> <span class="p">{</span>
+<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a>        <span class="s2">&quot;model_type&quot;</span><span class="p">:</span> <span class="s2">&quot;tidd_cdd_smooth&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a>        <span class="s2">&quot;intercept&quot;</span><span class="p">:</span> <span class="mf">1036.62605016263</span><span class="p">,</span>
+<a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a>        <span class="s2">&quot;hdd_bp&quot;</span><span class="p">:</span> <span class="n">null</span><span class="p">,</span>
+<a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a>        <span class="s2">&quot;hdd_beta&quot;</span><span class="p">:</span> <span class="n">null</span><span class="p">,</span>
+<a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a>        <span class="s2">&quot;hdd_k&quot;</span><span class="p">:</span> <span class="n">null</span><span class="p">,</span>
+<a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a>        <span class="s2">&quot;cdd_bp&quot;</span><span class="p">:</span> <span class="mf">63.112946428571426</span><span class="p">,</span>
+<a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a>        <span class="s2">&quot;cdd_beta&quot;</span><span class="p">:</span> <span class="mf">55.8938901507189</span><span class="p">,</span>
+<a id="__codelineno-23-12" name="__codelineno-23-12" href="#__codelineno-23-12"></a>        <span class="s2">&quot;cdd_k&quot;</span><span class="p">:</span> <span class="mf">7.610345707770536</span>
+<a id="__codelineno-23-13" name="__codelineno-23-13" href="#__codelineno-23-13"></a>    <span class="p">},</span>
+<a id="__codelineno-23-14" name="__codelineno-23-14" href="#__codelineno-23-14"></a>    <span class="s2">&quot;temperature_constraints&quot;</span><span class="p">:</span> <span class="p">{</span>
+<a id="__codelineno-23-15" name="__codelineno-23-15" href="#__codelineno-23-15"></a>        <span class="s2">&quot;T_min&quot;</span><span class="p">:</span> <span class="mf">56.096346153846156</span><span class="p">,</span>
+<a id="__codelineno-23-16" name="__codelineno-23-16" href="#__codelineno-23-16"></a>        <span class="s2">&quot;T_max&quot;</span><span class="p">:</span> <span class="mf">85.60365384615385</span><span class="p">,</span>
+<a id="__codelineno-23-17" name="__codelineno-23-17" href="#__codelineno-23-17"></a>        <span class="s2">&quot;T_min_seg&quot;</span><span class="p">:</span> <span class="mf">63.112946428571426</span><span class="p">,</span>
+<a id="__codelineno-23-18" name="__codelineno-23-18" href="#__codelineno-23-18"></a>        <span class="s2">&quot;T_max_seg&quot;</span><span class="p">:</span> <span class="mf">81.97444606863725</span>
+<a id="__codelineno-23-19" name="__codelineno-23-19" href="#__codelineno-23-19"></a>    <span class="p">},</span>
+<a id="__codelineno-23-20" name="__codelineno-23-20" href="#__codelineno-23-20"></a>    <span class="s2">&quot;f_unc&quot;</span><span class="p">:</span> <span class="mf">287.2717928729389</span>
+<a id="__codelineno-23-21" name="__codelineno-23-21" href="#__codelineno-23-21"></a>    <span class="p">},</span>
+<a id="__codelineno-23-22" name="__codelineno-23-22" href="#__codelineno-23-22"></a>    <span class="s2">&quot;wd-sh_wi&quot;</span><span class="p">:</span> <span class="p">{</span>
+<a id="__codelineno-23-23" name="__codelineno-23-23" href="#__codelineno-23-23"></a>    <span class="s2">&quot;coefficients&quot;</span><span class="p">:</span> <span class="p">{</span>
+<a id="__codelineno-23-24" name="__codelineno-23-24" href="#__codelineno-23-24"></a>        <span class="s2">&quot;model_type&quot;</span><span class="p">:</span> <span class="s2">&quot;hdd_tidd_cdd_smooth&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-25" name="__codelineno-23-25" href="#__codelineno-23-25"></a>        <span class="s2">&quot;intercept&quot;</span><span class="p">:</span> <span class="mf">1265.4572967952768</span><span class="p">,</span>
+<a id="__codelineno-23-26" name="__codelineno-23-26" href="#__codelineno-23-26"></a>        <span class="s2">&quot;hdd_bp&quot;</span><span class="p">:</span> <span class="mf">48.66708982684446</span><span class="p">,</span>
+<a id="__codelineno-23-27" name="__codelineno-23-27" href="#__codelineno-23-27"></a>        <span class="s2">&quot;hdd_beta&quot;</span><span class="p">:</span> <span class="mf">280.56118289086174</span><span class="p">,</span>
+<a id="__codelineno-23-28" name="__codelineno-23-28" href="#__codelineno-23-28"></a>        <span class="s2">&quot;hdd_k&quot;</span><span class="p">:</span> <span class="mf">0.4861025625521579</span><span class="p">,</span>
+<a id="__codelineno-23-29" name="__codelineno-23-29" href="#__codelineno-23-29"></a>        <span class="s2">&quot;cdd_bp&quot;</span><span class="p">:</span> <span class="mf">74.4246153846154</span><span class="p">,</span>
+<a id="__codelineno-23-30" name="__codelineno-23-30" href="#__codelineno-23-30"></a>        <span class="s2">&quot;cdd_beta&quot;</span><span class="p">:</span> <span class="mf">76.12622638483967</span><span class="p">,</span>
+<a id="__codelineno-23-31" name="__codelineno-23-31" href="#__codelineno-23-31"></a>        <span class="s2">&quot;cdd_k&quot;</span><span class="p">:</span> <span class="mf">0.2941773382321021</span>
+<a id="__codelineno-23-32" name="__codelineno-23-32" href="#__codelineno-23-32"></a>    <span class="p">},</span>
+<a id="__codelineno-23-33" name="__codelineno-23-33" href="#__codelineno-23-33"></a>    <span class="s2">&quot;temperature_constraints&quot;</span><span class="p">:</span> <span class="p">{</span>
+<a id="__codelineno-23-34" name="__codelineno-23-34" href="#__codelineno-23-34"></a>        <span class="s2">&quot;T_min&quot;</span><span class="p">:</span> <span class="o">-</span><span class="mf">2.3840384615384616</span><span class="p">,</span>
+<a id="__codelineno-23-35" name="__codelineno-23-35" href="#__codelineno-23-35"></a>        <span class="s2">&quot;T_max&quot;</span><span class="p">:</span> <span class="mf">79.53846153846153</span><span class="p">,</span>
+<a id="__codelineno-23-36" name="__codelineno-23-36" href="#__codelineno-23-36"></a>        <span class="s2">&quot;T_min_seg&quot;</span><span class="p">:</span> <span class="mf">13.432307692307694</span><span class="p">,</span>
+<a id="__codelineno-23-37" name="__codelineno-23-37" href="#__codelineno-23-37"></a>        <span class="s2">&quot;T_max_seg&quot;</span><span class="p">:</span> <span class="mf">74.4246153846154</span>
+<a id="__codelineno-23-38" name="__codelineno-23-38" href="#__codelineno-23-38"></a>    <span class="p">},</span>
+<a id="__codelineno-23-39" name="__codelineno-23-39" href="#__codelineno-23-39"></a>    <span class="s2">&quot;f_unc&quot;</span><span class="p">:</span> <span class="mf">1181.6742853434923</span>
+<a id="__codelineno-23-40" name="__codelineno-23-40" href="#__codelineno-23-40"></a>    <span class="p">},</span>
+<a id="__codelineno-23-41" name="__codelineno-23-41" href="#__codelineno-23-41"></a>    <span class="s2">&quot;we-su_sh_wi&quot;</span><span class="p">:</span> <span class="p">{</span>
+<a id="__codelineno-23-42" name="__codelineno-23-42" href="#__codelineno-23-42"></a>    <span class="s2">&quot;coefficients&quot;</span><span class="p">:</span> <span class="p">{</span>
+<a id="__codelineno-23-43" name="__codelineno-23-43" href="#__codelineno-23-43"></a>        <span class="s2">&quot;model_type&quot;</span><span class="p">:</span> <span class="s2">&quot;hdd_tidd_cdd_smooth&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-44" name="__codelineno-23-44" href="#__codelineno-23-44"></a>        <span class="s2">&quot;intercept&quot;</span><span class="p">:</span> <span class="mf">489.35960795932726</span><span class="p">,</span>
+<a id="__codelineno-23-45" name="__codelineno-23-45" href="#__codelineno-23-45"></a>        <span class="s2">&quot;hdd_bp&quot;</span><span class="p">:</span> <span class="mf">51.43882581026119</span><span class="p">,</span>
+<a id="__codelineno-23-46" name="__codelineno-23-46" href="#__codelineno-23-46"></a>        <span class="s2">&quot;hdd_beta&quot;</span><span class="p">:</span> <span class="mf">236.45604355078808</span><span class="p">,</span>
+<a id="__codelineno-23-47" name="__codelineno-23-47" href="#__codelineno-23-47"></a>        <span class="s2">&quot;hdd_k&quot;</span><span class="p">:</span> <span class="mf">0.4856836346837153</span><span class="p">,</span>
+<a id="__codelineno-23-48" name="__codelineno-23-48" href="#__codelineno-23-48"></a>        <span class="s2">&quot;cdd_bp&quot;</span><span class="p">:</span> <span class="mf">74.55925252366727</span><span class="p">,</span>
+<a id="__codelineno-23-49" name="__codelineno-23-49" href="#__codelineno-23-49"></a>        <span class="s2">&quot;cdd_beta&quot;</span><span class="p">:</span> <span class="mf">66.31199103689823</span><span class="p">,</span>
+<a id="__codelineno-23-50" name="__codelineno-23-50" href="#__codelineno-23-50"></a>        <span class="s2">&quot;cdd_k&quot;</span><span class="p">:</span> <span class="mf">0.36878985440304235</span>
+<a id="__codelineno-23-51" name="__codelineno-23-51" href="#__codelineno-23-51"></a>    <span class="p">},</span>
+<a id="__codelineno-23-52" name="__codelineno-23-52" href="#__codelineno-23-52"></a>    <span class="s2">&quot;temperature_constraints&quot;</span><span class="p">:</span> <span class="p">{</span>
+<a id="__codelineno-23-53" name="__codelineno-23-53" href="#__codelineno-23-53"></a>        <span class="s2">&quot;T_min&quot;</span><span class="p">:</span> <span class="mf">6.881923076923076</span><span class="p">,</span>
+<a id="__codelineno-23-54" name="__codelineno-23-54" href="#__codelineno-23-54"></a>        <span class="s2">&quot;T_max&quot;</span><span class="p">:</span> <span class="mf">87.51442307692308</span><span class="p">,</span>
+<a id="__codelineno-23-55" name="__codelineno-23-55" href="#__codelineno-23-55"></a>        <span class="s2">&quot;T_min_seg&quot;</span><span class="p">:</span> <span class="mf">23.602702266483515</span><span class="p">,</span>
+<a id="__codelineno-23-56" name="__codelineno-23-56" href="#__codelineno-23-56"></a>        <span class="s2">&quot;T_max_seg&quot;</span><span class="p">:</span> <span class="mf">81.8328021978022</span>
+<a id="__codelineno-23-57" name="__codelineno-23-57" href="#__codelineno-23-57"></a>    <span class="p">},</span>
+<a id="__codelineno-23-58" name="__codelineno-23-58" href="#__codelineno-23-58"></a>    <span class="s2">&quot;f_unc&quot;</span><span class="p">:</span> <span class="mf">1224.5747026357867</span>
+<a id="__codelineno-23-59" name="__codelineno-23-59" href="#__codelineno-23-59"></a>    <span class="p">}</span>
+<a id="__codelineno-23-60" name="__codelineno-23-60" href="#__codelineno-23-60"></a><span class="p">},</span>
+<a id="__codelineno-23-61" name="__codelineno-23-61" href="#__codelineno-23-61"></a><span class="s2">&quot;info&quot;</span><span class="p">:</span> <span class="p">{</span>
+<a id="__codelineno-23-62" name="__codelineno-23-62" href="#__codelineno-23-62"></a>    <span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="p">{</span>
+<a id="__codelineno-23-63" name="__codelineno-23-63" href="#__codelineno-23-63"></a>    <span class="s2">&quot;wRMSE&quot;</span><span class="p">:</span> <span class="mf">580.7962073579329</span><span class="p">,</span>
+<a id="__codelineno-23-64" name="__codelineno-23-64" href="#__codelineno-23-64"></a>    <span class="s2">&quot;RMSE&quot;</span><span class="p">:</span> <span class="mf">580.7962073579328</span><span class="p">,</span>
+<a id="__codelineno-23-65" name="__codelineno-23-65" href="#__codelineno-23-65"></a>    <span class="s2">&quot;MAE&quot;</span><span class="p">:</span> <span class="mf">380.9965311661661</span><span class="p">,</span>
+<a id="__codelineno-23-66" name="__codelineno-23-66" href="#__codelineno-23-66"></a>    <span class="s2">&quot;CVRMSE&quot;</span><span class="p">:</span> <span class="mf">0.16332929359071596</span><span class="p">,</span>
+<a id="__codelineno-23-67" name="__codelineno-23-67" href="#__codelineno-23-67"></a>    <span class="s2">&quot;PNRMSE&quot;</span><span class="p">:</span> <span class="mf">0.06465498558194696</span>
+<a id="__codelineno-23-68" name="__codelineno-23-68" href="#__codelineno-23-68"></a>    <span class="p">},</span>
+<a id="__codelineno-23-69" name="__codelineno-23-69" href="#__codelineno-23-69"></a>    <span class="s2">&quot;baseline_timezone&quot;</span><span class="p">:</span> <span class="s2">&quot;America/Chicago&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-70" name="__codelineno-23-70" href="#__codelineno-23-70"></a>    <span class="s2">&quot;disqualification&quot;</span><span class="p">:</span> <span class="p">[],</span>
+<a id="__codelineno-23-71" name="__codelineno-23-71" href="#__codelineno-23-71"></a>    <span class="s2">&quot;warnings&quot;</span><span class="p">:</span> <span class="p">[</span>
+<a id="__codelineno-23-72" name="__codelineno-23-72" href="#__codelineno-23-72"></a>    <span class="p">{</span>
+<a id="__codelineno-23-73" name="__codelineno-23-73" href="#__codelineno-23-73"></a>        <span class="s2">&quot;qualified_name&quot;</span><span class="p">:</span> <span class="s2">&quot;eemeter.sufficiency_criteria.unable_to_confirm_daily_temperature_sufficiency&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-74" name="__codelineno-23-74" href="#__codelineno-23-74"></a>        <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="s2">&quot;Cannot confirm that pre-aggregated temperature data had sufficient hours kept&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-75" name="__codelineno-23-75" href="#__codelineno-23-75"></a>        <span class="s2">&quot;data&quot;</span><span class="p">:</span> <span class="p">{}</span>
+<a id="__codelineno-23-76" name="__codelineno-23-76" href="#__codelineno-23-76"></a>    <span class="p">},</span>
+<a id="__codelineno-23-77" name="__codelineno-23-77" href="#__codelineno-23-77"></a>    <span class="p">{</span>
+<a id="__codelineno-23-78" name="__codelineno-23-78" href="#__codelineno-23-78"></a>        <span class="s2">&quot;qualified_name&quot;</span><span class="p">:</span> <span class="s2">&quot;eemeter.sufficiency_criteria.extreme_values_detected&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-79" name="__codelineno-23-79" href="#__codelineno-23-79"></a>        <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="s2">&quot;Extreme values (greater than (median + (3 * IQR)), must be flagged for manual review.&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-80" name="__codelineno-23-80" href="#__codelineno-23-80"></a>        <span class="s2">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+<a id="__codelineno-23-81" name="__codelineno-23-81" href="#__codelineno-23-81"></a>        <span class="s2">&quot;n_extreme_values&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-23-82" name="__codelineno-23-82" href="#__codelineno-23-82"></a>        <span class="s2">&quot;median&quot;</span><span class="p">:</span> <span class="mf">2527.7263175451776</span><span class="p">,</span>
+<a id="__codelineno-23-83" name="__codelineno-23-83" href="#__codelineno-23-83"></a>        <span class="s2">&quot;upper_quantile&quot;</span><span class="p">:</span> <span class="mf">5347.202740928209</span><span class="p">,</span>
+<a id="__codelineno-23-84" name="__codelineno-23-84" href="#__codelineno-23-84"></a>        <span class="s2">&quot;lower_quantile&quot;</span><span class="p">:</span> <span class="mf">1247.7751658179252</span><span class="p">,</span>
+<a id="__codelineno-23-85" name="__codelineno-23-85" href="#__codelineno-23-85"></a>        <span class="s2">&quot;extreme_value_limit&quot;</span><span class="p">:</span> <span class="mf">14826.00904287603</span><span class="p">,</span>
+<a id="__codelineno-23-86" name="__codelineno-23-86" href="#__codelineno-23-86"></a>        <span class="s2">&quot;max_value&quot;</span><span class="p">:</span> <span class="mf">16635.193672683698</span>
+<a id="__codelineno-23-87" name="__codelineno-23-87" href="#__codelineno-23-87"></a>        <span class="p">}</span>
+<a id="__codelineno-23-88" name="__codelineno-23-88" href="#__codelineno-23-88"></a>    <span class="p">}</span>
+<a id="__codelineno-23-89" name="__codelineno-23-89" href="#__codelineno-23-89"></a>    <span class="p">]</span>
+<a id="__codelineno-23-90" name="__codelineno-23-90" href="#__codelineno-23-90"></a><span class="p">},</span>
+<a id="__codelineno-23-91" name="__codelineno-23-91" href="#__codelineno-23-91"></a><span class="s2">&quot;settings&quot;</span><span class="p">:</span> <span class="p">{</span>
+<a id="__codelineno-23-92" name="__codelineno-23-92" href="#__codelineno-23-92"></a>    <span class="s2">&quot;algorithm_choice&quot;</span><span class="p">:</span> <span class="s2">&quot;nlopt_sbplx&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-93" name="__codelineno-23-93" href="#__codelineno-23-93"></a>    <span class="s2">&quot;allow_separate_shoulder&quot;</span><span class="p">:</span> <span class="n">true</span><span class="p">,</span>
+<a id="__codelineno-23-94" name="__codelineno-23-94" href="#__codelineno-23-94"></a>    <span class="s2">&quot;allow_separate_summer&quot;</span><span class="p">:</span> <span class="n">true</span><span class="p">,</span>
+<a id="__codelineno-23-95" name="__codelineno-23-95" href="#__codelineno-23-95"></a>    <span class="s2">&quot;allow_separate_weekday_weekend&quot;</span><span class="p">:</span> <span class="n">true</span><span class="p">,</span>
+<a id="__codelineno-23-96" name="__codelineno-23-96" href="#__codelineno-23-96"></a>    <span class="s2">&quot;allow_separate_winter&quot;</span><span class="p">:</span> <span class="n">true</span><span class="p">,</span>
+<a id="__codelineno-23-97" name="__codelineno-23-97" href="#__codelineno-23-97"></a>    <span class="s2">&quot;alpha_final&quot;</span><span class="p">:</span> <span class="s2">&quot;adaptive&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-98" name="__codelineno-23-98" href="#__codelineno-23-98"></a>    <span class="s2">&quot;alpha_final_type&quot;</span><span class="p">:</span> <span class="s2">&quot;last&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-99" name="__codelineno-23-99" href="#__codelineno-23-99"></a>    <span class="s2">&quot;alpha_minimum&quot;</span><span class="p">:</span> <span class="o">-</span><span class="mf">100.0</span><span class="p">,</span>
+<a id="__codelineno-23-100" name="__codelineno-23-100" href="#__codelineno-23-100"></a>    <span class="s2">&quot;alpha_selection&quot;</span><span class="p">:</span> <span class="mf">2.0</span><span class="p">,</span>
+<a id="__codelineno-23-101" name="__codelineno-23-101" href="#__codelineno-23-101"></a>    <span class="s2">&quot;cvrmse_threshold&quot;</span><span class="p">:</span> <span class="mf">1.0</span><span class="p">,</span>
+<a id="__codelineno-23-102" name="__codelineno-23-102" href="#__codelineno-23-102"></a>    <span class="s2">&quot;developer_mode&quot;</span><span class="p">:</span> <span class="n">false</span><span class="p">,</span>
+<a id="__codelineno-23-103" name="__codelineno-23-103" href="#__codelineno-23-103"></a>    <span class="s2">&quot;final_bounds_scalar&quot;</span><span class="p">:</span> <span class="mf">1.0</span><span class="p">,</span>
+<a id="__codelineno-23-104" name="__codelineno-23-104" href="#__codelineno-23-104"></a>    <span class="s2">&quot;full_model&quot;</span><span class="p">:</span> <span class="s2">&quot;hdd_tidd_cdd&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-105" name="__codelineno-23-105" href="#__codelineno-23-105"></a>    <span class="s2">&quot;initial_guess_algorithm_choice&quot;</span><span class="p">:</span> <span class="s2">&quot;nlopt_direct&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-106" name="__codelineno-23-106" href="#__codelineno-23-106"></a>    <span class="s2">&quot;initial_smoothing_parameter&quot;</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">,</span>
+<a id="__codelineno-23-107" name="__codelineno-23-107" href="#__codelineno-23-107"></a>    <span class="s2">&quot;initial_step_percentage&quot;</span><span class="p">:</span> <span class="mf">0.1</span><span class="p">,</span>
+<a id="__codelineno-23-108" name="__codelineno-23-108" href="#__codelineno-23-108"></a>    <span class="s2">&quot;is_weekday&quot;</span><span class="p">:</span> <span class="p">{</span>
+<a id="__codelineno-23-109" name="__codelineno-23-109" href="#__codelineno-23-109"></a>    <span class="s2">&quot;1&quot;</span><span class="p">:</span> <span class="n">true</span><span class="p">,</span>
+<a id="__codelineno-23-110" name="__codelineno-23-110" href="#__codelineno-23-110"></a>    <span class="s2">&quot;2&quot;</span><span class="p">:</span> <span class="n">true</span><span class="p">,</span>
+<a id="__codelineno-23-111" name="__codelineno-23-111" href="#__codelineno-23-111"></a>    <span class="s2">&quot;3&quot;</span><span class="p">:</span> <span class="n">true</span><span class="p">,</span>
+<a id="__codelineno-23-112" name="__codelineno-23-112" href="#__codelineno-23-112"></a>    <span class="s2">&quot;4&quot;</span><span class="p">:</span> <span class="n">true</span><span class="p">,</span>
+<a id="__codelineno-23-113" name="__codelineno-23-113" href="#__codelineno-23-113"></a>    <span class="s2">&quot;5&quot;</span><span class="p">:</span> <span class="n">true</span><span class="p">,</span>
+<a id="__codelineno-23-114" name="__codelineno-23-114" href="#__codelineno-23-114"></a>    <span class="s2">&quot;6&quot;</span><span class="p">:</span> <span class="n">false</span><span class="p">,</span>
+<a id="__codelineno-23-115" name="__codelineno-23-115" href="#__codelineno-23-115"></a>    <span class="s2">&quot;7&quot;</span><span class="p">:</span> <span class="n">false</span>
+<a id="__codelineno-23-116" name="__codelineno-23-116" href="#__codelineno-23-116"></a>    <span class="p">},</span>
+<a id="__codelineno-23-117" name="__codelineno-23-117" href="#__codelineno-23-117"></a>    <span class="s2">&quot;maximum_slope_OoM_scaler&quot;</span><span class="p">:</span> <span class="mf">2.0</span><span class="p">,</span>
+<a id="__codelineno-23-118" name="__codelineno-23-118" href="#__codelineno-23-118"></a>    <span class="s2">&quot;reduce_splits_by_gaussian&quot;</span><span class="p">:</span> <span class="n">true</span><span class="p">,</span>
+<a id="__codelineno-23-119" name="__codelineno-23-119" href="#__codelineno-23-119"></a>    <span class="s2">&quot;reduce_splits_num_std&quot;</span><span class="p">:</span> <span class="p">[</span>
+<a id="__codelineno-23-120" name="__codelineno-23-120" href="#__codelineno-23-120"></a>    <span class="mf">1.4</span><span class="p">,</span>
+<a id="__codelineno-23-121" name="__codelineno-23-121" href="#__codelineno-23-121"></a>    <span class="mf">0.89</span>
+<a id="__codelineno-23-122" name="__codelineno-23-122" href="#__codelineno-23-122"></a>    <span class="p">],</span>
+<a id="__codelineno-23-123" name="__codelineno-23-123" href="#__codelineno-23-123"></a>    <span class="s2">&quot;regularization_alpha&quot;</span><span class="p">:</span> <span class="mf">0.001</span><span class="p">,</span>
+<a id="__codelineno-23-124" name="__codelineno-23-124" href="#__codelineno-23-124"></a>    <span class="s2">&quot;regularization_percent_lasso&quot;</span><span class="p">:</span> <span class="mf">1.0</span><span class="p">,</span>
+<a id="__codelineno-23-125" name="__codelineno-23-125" href="#__codelineno-23-125"></a>    <span class="s2">&quot;season&quot;</span><span class="p">:</span> <span class="p">{</span>
+<a id="__codelineno-23-126" name="__codelineno-23-126" href="#__codelineno-23-126"></a>    <span class="s2">&quot;1&quot;</span><span class="p">:</span> <span class="s2">&quot;winter&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-127" name="__codelineno-23-127" href="#__codelineno-23-127"></a>    <span class="s2">&quot;2&quot;</span><span class="p">:</span> <span class="s2">&quot;winter&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-128" name="__codelineno-23-128" href="#__codelineno-23-128"></a>    <span class="s2">&quot;3&quot;</span><span class="p">:</span> <span class="s2">&quot;shoulder&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-129" name="__codelineno-23-129" href="#__codelineno-23-129"></a>    <span class="s2">&quot;4&quot;</span><span class="p">:</span> <span class="s2">&quot;shoulder&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-130" name="__codelineno-23-130" href="#__codelineno-23-130"></a>    <span class="s2">&quot;5&quot;</span><span class="p">:</span> <span class="s2">&quot;shoulder&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-131" name="__codelineno-23-131" href="#__codelineno-23-131"></a>    <span class="s2">&quot;6&quot;</span><span class="p">:</span> <span class="s2">&quot;summer&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-132" name="__codelineno-23-132" href="#__codelineno-23-132"></a>    <span class="s2">&quot;7&quot;</span><span class="p">:</span> <span class="s2">&quot;summer&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-133" name="__codelineno-23-133" href="#__codelineno-23-133"></a>    <span class="s2">&quot;8&quot;</span><span class="p">:</span> <span class="s2">&quot;summer&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-134" name="__codelineno-23-134" href="#__codelineno-23-134"></a>    <span class="s2">&quot;9&quot;</span><span class="p">:</span> <span class="s2">&quot;summer&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-135" name="__codelineno-23-135" href="#__codelineno-23-135"></a>    <span class="s2">&quot;10&quot;</span><span class="p">:</span> <span class="s2">&quot;shoulder&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-136" name="__codelineno-23-136" href="#__codelineno-23-136"></a>    <span class="s2">&quot;11&quot;</span><span class="p">:</span> <span class="s2">&quot;winter&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-137" name="__codelineno-23-137" href="#__codelineno-23-137"></a>    <span class="s2">&quot;12&quot;</span><span class="p">:</span> <span class="s2">&quot;winter&quot;</span>
+<a id="__codelineno-23-138" name="__codelineno-23-138" href="#__codelineno-23-138"></a>    <span class="p">},</span>
+<a id="__codelineno-23-139" name="__codelineno-23-139" href="#__codelineno-23-139"></a>    <span class="s2">&quot;segment_minimum_count&quot;</span><span class="p">:</span> <span class="mi">6</span><span class="p">,</span>
+<a id="__codelineno-23-140" name="__codelineno-23-140" href="#__codelineno-23-140"></a>    <span class="s2">&quot;smoothed_model&quot;</span><span class="p">:</span> <span class="n">true</span><span class="p">,</span>
+<a id="__codelineno-23-141" name="__codelineno-23-141" href="#__codelineno-23-141"></a>    <span class="s2">&quot;split_selection_criteria&quot;</span><span class="p">:</span> <span class="s2">&quot;bic&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-142" name="__codelineno-23-142" href="#__codelineno-23-142"></a>    <span class="s2">&quot;split_selection_penalty_multiplier&quot;</span><span class="p">:</span> <span class="mf">0.24</span><span class="p">,</span>
+<a id="__codelineno-23-143" name="__codelineno-23-143" href="#__codelineno-23-143"></a>    <span class="s2">&quot;split_selection_penalty_power&quot;</span><span class="p">:</span> <span class="mf">2.061</span><span class="p">,</span>
+<a id="__codelineno-23-144" name="__codelineno-23-144" href="#__codelineno-23-144"></a>    <span class="s2">&quot;uncertainty_alpha&quot;</span><span class="p">:</span> <span class="mf">0.1</span>
+<a id="__codelineno-23-145" name="__codelineno-23-145" href="#__codelineno-23-145"></a><span class="p">}</span>
+<a id="__codelineno-23-146" name="__codelineno-23-146" href="#__codelineno-23-146"></a><span class="p">}</span>
+</code></pre></div>
+</details>
+<p>Afterwards, we can instantiate the model as follows:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="n">loaded_model</span> <span class="o">=</span> <span class="n">eemeter</span><span class="o">.</span><span class="n">eemeter</span><span class="o">.</span><span class="n">DailyModel</span><span class="o">.</span><span class="n">from_json</span><span class="p">(</span><span class="n">saved_model</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="billing-data-model-differences">Billing Data / Model Differences<a class="headerlink" href="#billing-data-model-differences" title="Permanent link">&para;</a></h2>
+<p>The Daily Model section generally applies to billing data as the same underlying model is used, but there are some key things to be aware of. It is strongly recommended to read the <a href="#using-the-daily-model">daily model</a> section before this section.</p>
+<h3 id="loading-example-data_1">Loading Example Data<a class="headerlink" href="#loading-example-data_1" title="Permanent link">&para;</a></h3>
+<p>Like the daily model, we will start by loading some specific billing data.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="n">df_baseline</span><span class="p">,</span> <span class="n">df_reporting</span> <span class="o">=</span> <span class="n">eemeter</span><span class="o">.</span><span class="n">load_test_data</span><span class="p">(</span><span class="s2">&quot;monthly_treatment_data&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>If we inspect these dataframes, we will notice that there are 100 meters for you to experiment with, indexed by meter id and datetime. Like before, we will filter to a single meter.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="n">df_baseline_108618</span> <span class="o">=</span> <span class="n">df_baseline</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="mi">108618</span><span class="p">]</span>
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="n">df_reporting_108618</span> <span class="o">=</span> <span class="n">df_reporting</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="mi">108618</span><span class="p">]</span>
+</code></pre></div>
+<p>If we inspect one of these dataframes, we will now notice that only a single meter is present with 365 days of data in each dataframe. </p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="nb">print</span><span class="p">(</span><span class="n">df_baseline_108618</span><span class="p">)</span>
+</code></pre></div>
+<details class="returns">
+<summary>Returns</summary>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>id      datetime                     temperature     observed                       
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a>108618  2018-01-01 00:00:00-06:00    -2.384038  257406.539278
+<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a>        2018-01-02 00:00:00-06:00     1.730000            NaN
+<a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a>        2018-01-03 00:00:00-06:00    13.087946            NaN
+<a id="__codelineno-28-5" name="__codelineno-28-5" href="#__codelineno-28-5"></a>        2018-01-04 00:00:00-06:00     4.743269            NaN
+<a id="__codelineno-28-6" name="__codelineno-28-6" href="#__codelineno-28-6"></a>        2018-01-05 00:00:00-06:00     4.130577            NaN
+<a id="__codelineno-28-7" name="__codelineno-28-7" href="#__codelineno-28-7"></a>...                                       ...            ...
+<a id="__codelineno-28-8" name="__codelineno-28-8" href="#__codelineno-28-8"></a>120841  2018-12-27 00:00:00-06:00    52.010625            NaN
+<a id="__codelineno-28-9" name="__codelineno-28-9" href="#__codelineno-28-9"></a>        2018-12-28 00:00:00-06:00    35.270000            NaN
+<a id="__codelineno-28-10" name="__codelineno-28-10" href="#__codelineno-28-10"></a>        2018-12-29 00:00:00-06:00    29.630000            NaN
+<a id="__codelineno-28-11" name="__codelineno-28-11" href="#__codelineno-28-11"></a>        2018-12-30 00:00:00-06:00    34.250000            NaN
+<a id="__codelineno-28-12" name="__codelineno-28-12" href="#__codelineno-28-12"></a>        2018-12-31 00:00:00-06:00    43.311250            NaN
+</code></pre></div>
+</details>
+<p>However, notice that we only have one observed value per month, even though we still have daily temperature data. The observed usage in a given month will be spread evenly across all days in the month when we instantiate the data classes.</p>
+<h3 id="loading-data-into-eemeter-data-objects_1">Loading Data into EEmeter Data Objects<a class="headerlink" href="#loading-data-into-eemeter-data-objects_1" title="Permanent link">&para;</a></h3>
+<p>Like the daily model, we will instantiate data objects, but this time we will use the Billing variant.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="n">billing_baseline_data</span> <span class="o">=</span> <span class="n">eemeter</span><span class="o">.</span><span class="n">eemeter</span><span class="o">.</span><span class="n">BillingBaselineData</span><span class="p">(</span><span class="n">df_baseline_108618</span><span class="p">,</span> <span class="n">is_electricity_data</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="n">billing_reporting_data</span> <span class="o">=</span> <span class="n">eemeter</span><span class="o">.</span><span class="n">eemeter</span><span class="o">.</span><span class="n">BillingReportingData</span><span class="p">(</span><span class="n">df_reporting_108618</span><span class="p">,</span> <span class="n">is_electricity_data</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p>Notice that the observed usage for each day is automatically spread evenly from the monthly usage provided.</p>
+<details class="returns">
+<summary>Returns</summary>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a>datetime                    season  weekday_weekend temperature observed
+<a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>2018-01-01 00:00:00-06:00   winter  weekday         -2.384038   8303.436751
+<a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a>2018-01-02 00:00:00-06:00   winter  weekday         1.730000    8303.436751
+<a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a>2018-01-03 00:00:00-06:00   winter  weekday         13.087946   8303.436751
+<a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a>2018-01-04 00:00:00-06:00   winter  weekday         4.743269    8303.436751
+<a id="__codelineno-30-6" name="__codelineno-30-6" href="#__codelineno-30-6"></a>2018-01-05 00:00:00-06:00   winter  weekday         4.130577    8303.436751
+<a id="__codelineno-30-7" name="__codelineno-30-7" href="#__codelineno-30-7"></a>... ... ... ... ...
+<a id="__codelineno-30-8" name="__codelineno-30-8" href="#__codelineno-30-8"></a>2018-12-27 00:00:00-06:00   winter  weekday         46.602066   5288.700172
+<a id="__codelineno-30-9" name="__codelineno-30-9" href="#__codelineno-30-9"></a>2018-12-28 00:00:00-06:00   winter  weekday         38.346724   5288.700172
+<a id="__codelineno-30-10" name="__codelineno-30-10" href="#__codelineno-30-10"></a>2018-12-29 00:00:00-06:00   winter  weekend         28.614456   5288.700172
+<a id="__codelineno-30-11" name="__codelineno-30-11" href="#__codelineno-30-11"></a>2018-12-30 00:00:00-06:00   winter  weekend         29.186923   5288.700172
+<a id="__codelineno-30-12" name="__codelineno-30-12" href="#__codelineno-30-12"></a>2018-12-31 00:00:00-06:00   winter  weekday         36.510441   5288.700172
+</code></pre></div>
+</details>
+<h3 id="creating-the-model-and-predicting">Creating the Model and Predicting<a class="headerlink" href="#creating-the-model-and-predicting" title="Permanent link">&para;</a></h3>
+<p>With the data classes instantiated, we can now fit and predict like normal.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="n">billing_model</span> <span class="o">=</span> <span class="n">eemeter</span><span class="o">.</span><span class="n">eemeter</span><span class="o">.</span><span class="n">BillingModel</span><span class="p">()</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">billing_baseline_data</span><span class="p">,</span> <span class="n">ignore_disqualification</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a><span class="nb">print</span><span class="p">(</span><span class="n">billing_model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">billing_reporting_data</span><span class="p">)</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</code></pre></div>
+<details class="returns">
+<summary>Returns</summary>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>datetime                    season  day_of_week weekday_weekend temperature observed    predicted   predicted_unc   heating_load    cooling_load    model_split model_type                      
+<a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>2019-01-01 00:00:00-06:00   winter  2           weekday         -2.384038   3655.09121  9733.728179 2316.237742     8530.919994     0.0             fw-su_sh_wi hdd_tidd_cdd
+<a id="__codelineno-32-3" name="__codelineno-32-3" href="#__codelineno-32-3"></a>2019-01-02 00:00:00-06:00   winter  3           weekday         1.730000    3655.09121  9235.507988 2316.237742     8032.699803     0.0             fw-su_sh_wi hdd_tidd_cdd
+<a id="__codelineno-32-4" name="__codelineno-32-4" href="#__codelineno-32-4"></a>2019-01-03 00:00:00-06:00   winter  4           weekday         13.087946   3655.09121  7860.032700 2316.237742     6657.224516     0.0             fw-su_sh_wi hdd_tidd_cdd
+<a id="__codelineno-32-5" name="__codelineno-32-5" href="#__codelineno-32-5"></a>2019-01-04 00:00:00-06:00   winter  5           weekday         4.743269    3655.09121  8870.593662 2316.237742     7667.785478     0.0             fw-su_sh_wi hdd_tidd_cdd
+<a id="__codelineno-32-6" name="__codelineno-32-6" href="#__codelineno-32-6"></a>2019-01-05 00:00:00-06:00   winter  6           weekend         4.130577    3655.09121  8944.792210 2316.237742     7741.984025     0.0             fw-su_sh_wi hdd_tidd_cdd
+</code></pre></div>
+</details>
+<p>Notice that the returned data is at the daily level, showing daily predictions and observed values. We can also aggregate this data up to a higher level as follows.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a><span class="nb">print</span><span class="p">(</span><span class="n">billing_model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">billing_reporting_data</span><span class="p">,</span> <span class="n">aggregation</span><span class="o">=</span><span class="s2">&quot;monthly&quot;</span><span class="p">))</span>
+</code></pre></div>
+<details class="returns">
+<summary>Returns</summary>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a>datetime                    season      temperature observed        predicted       predicted_unc   heating_load    cooling_load    model_split model_type                              
+<a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a>2019-01-01 00:00:00-06:00   winter      25.612211   113307.827517   196642.717137   12896.265955    159355.663417   0.000000        fw-su_sh_wi hdd_tidd_cdd
+<a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a>2019-02-01 00:00:00-06:00   winter      29.523429   81056.766022    164350.346292   12256.378085    130671.717126   0.000000        fw-su_sh_wi hdd_tidd_cdd
+<a id="__codelineno-34-4" name="__codelineno-34-4" href="#__codelineno-34-4"></a>2019-03-01 00:00:00-06:00   shoulder    36.122525   62783.320515    157185.144004   12896.265955    119898.090284   0.000000        fw-su_sh_wi hdd_tidd_cdd
+<a id="__codelineno-34-5" name="__codelineno-34-5" href="#__codelineno-34-5"></a>2019-04-01 00:00:00-05:00   shoulder    40.599556   53542.223426    135849.270725   12686.556598    99765.025189    0.000000        fw-su_sh_wi hdd_tidd_cdd
+<a id="__codelineno-34-6" name="__codelineno-34-6" href="#__codelineno-34-6"></a>2019-05-01 00:00:00-05:00   shoulder    64.969863   31089.429512    59427.613500    12896.265955    22047.507990    93.051790       fw-su_sh_wi hdd_tidd_cdd
+<a id="__codelineno-34-7" name="__codelineno-34-7" href="#__codelineno-34-7"></a>2019-06-01 00:00:00-05:00   summer      70.262968   29346.533659    43017.949048    12686.556598    6801.829282     131.874231      fw-su_sh_wi hdd_tidd_cdd
+<a id="__codelineno-34-8" name="__codelineno-34-8" href="#__codelineno-34-8"></a>2019-07-01 00:00:00-05:00   summer      75.915400   32743.001296    37549.881062    12896.265955    0.000000        262.827342      fw-su_sh_wi hdd_tidd_cdd
+<a id="__codelineno-34-9" name="__codelineno-34-9" href="#__codelineno-34-9"></a>2019-08-01 00:00:00-05:00   summer      75.706736   33660.542162    38028.046427    12896.265955    480.770213      260.222494      fw-su_sh_wi hdd_tidd_cdd
+<a id="__codelineno-34-10" name="__codelineno-34-10" href="#__codelineno-34-10"></a>2019-09-01 00:00:00-05:00   summer      68.480234   30381.828023    46721.644687    12686.556598    10530.068712    107.330440      fw-su_sh_wi hdd_tidd_cdd
+<a id="__codelineno-34-11" name="__codelineno-34-11" href="#__codelineno-34-11"></a>2019-10-01 00:00:00-05:00   shoulder    52.733661   34995.917728    97491.932913    12896.265955    60181.378730    23.500463       fw-su_sh_wi hdd_tidd_cdd
+<a id="__codelineno-34-12" name="__codelineno-34-12" href="#__codelineno-34-12"></a>2019-11-01 00:00:00-05:00   winter      35.239608   63200.887271    155322.359404   12686.556598    119238.113869   0.000000        fw-su_sh_wi hdd_tidd_cdd
+<a id="__codelineno-34-13" name="__codelineno-34-13" href="#__codelineno-34-13"></a>2019-12-01 00:00:00-06:00   winter      33.696016   65969.341170    166294.687445   12896.265955    129007.633726   0.000000        fw-su_sh_wi hdd_tidd_cdd
+</code></pre></div>
+</details>
+<p>With the monthly aggregation, the resulting dataframe is aggregated by month and 12 rows are returned.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.b8dbb3d2.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.fe8b6f2b.min.js"></script>
+      
+    
+  </body>
+</html>
