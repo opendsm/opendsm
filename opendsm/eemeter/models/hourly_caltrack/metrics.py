@@ -327,9 +327,6 @@ class ModelMetrics(object):
         self.observed_kurtosis = combined["observed"].kurtosis()
         self.predicted_kurtosis = combined["predicted"].kurtosis()
 
-        self.observed_cvstd = combined["observed"].std() / self.observed_mean
-        self.predicted_cvstd = combined["predicted"].std() / self.predicted_mean
-
         self.r_squared = _compute_r_squared(combined)
         self.r_squared_adj = _compute_r_squared_adj(
             self.r_squared, self.merged_length, self.num_parameters
@@ -340,8 +337,12 @@ class ModelMetrics(object):
             combined, self.merged_length, self.num_parameters
         )
 
-        self.cvrmse = _compute_cvrmse(self.rmse, self.observed_mean)
-        self.cvrmse_adj = _compute_cvrmse_adj(self.rmse_adj, self.observed_mean)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            self.observed_cvstd = combined["observed"].std() / self.observed_mean
+            self.predicted_cvstd = combined["predicted"].std() / self.predicted_mean
+
+            self.cvrmse = _compute_cvrmse(self.rmse, self.observed_mean)
+            self.cvrmse_adj = _compute_cvrmse_adj(self.rmse_adj, self.observed_mean)
 
         # Create a new DataFrame with all rows removed where observed is
         # zero, so we can calculate a version of MAPE with the zeros excluded.
