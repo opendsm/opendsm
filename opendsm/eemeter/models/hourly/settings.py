@@ -11,6 +11,7 @@ from typing import Optional, Literal, Union, TypeVar, Dict
 import pywt
 
 from opendsm.common.base_settings import BaseSettings
+from opendsm.common.clustering.settings import ClusteringSettings
 from opendsm.common.metrics import BaselineMetrics
 
 from opendsm.eemeter.common.warnings import EEMeterWarning
@@ -32,24 +33,6 @@ class BinningChoice(str, Enum):
     EQUAL_SAMPLE_COUNT = "equal_sample_count"
     EQUAL_BIN_WIDTH = "equal_bin_width"
     SET_BIN_WIDTH = "set_bin_width"
-
-
-class ClusterScoringMetric(str, Enum):
-    SILHOUETTE = "silhouette"
-    SILHOUETTE_MEDIAN = "silhouette_median"
-    VARIANCE_RATIO = "variance_ratio"
-    DAVIES_BOULDIN = "davies-bouldin"
-
-
-class DistanceMetric(str, Enum):
-    """
-    what distance method to use
-    """
-
-    EUCLIDEAN = "euclidean"
-    SEUCLIDEAN = "seuclidean"
-    MANHATTAN = "manhattan"
-    COSINE = "cosine"
 
 
 class DefaultTrainingFeatures(str, Enum):
@@ -158,83 +141,6 @@ class TemperatureBinSettings(BaseSettings):
                 raise ValueError(
                     "'edge_bin_days' must be None if 'include_edge_bins' is False."
                 )
-
-        return self
-
-
-class TemporalClusteringSettings(BaseSettings):
-    """wavelet decomposition level"""
-
-    wavelet_n_levels: int = pydantic.Field(
-        default=5,
-        ge=1,
-        # le=5,  #TODO investigate upper limit
-    )
-
-    """wavelet choice for wavelet decomposition"""
-    wavelet_name: str = pydantic.Field(
-        default="haar",  # maybe db3?
-    )
-
-    """signal extension mode for wavelet decomposition"""
-    wavelet_mode: str = pydantic.Field(
-        default="periodization",
-    )
-
-    """minimum variance ratio for PCA clustering"""
-    pca_min_variance_ratio_explained: float = pydantic.Field(
-        default=0.725,
-        ge=0.5,
-        le=1,
-    )
-
-    """number of times to recluster"""
-    recluster_count: int = pydantic.Field(
-        default=3,
-        ge=1,
-    )
-
-    """lower bound for number of clusters"""
-    n_cluster_lower: int = pydantic.Field(
-        default=12,
-        ge=2,
-    )
-
-    """upper bound for number of clusters"""
-    n_cluster_upper: int = pydantic.Field(
-        default=24,
-        ge=2,
-    )
-
-    """minimum cluster size"""
-    min_cluster_size: int = pydantic.Field(
-        default=1,
-        ge=1,
-    )
-
-    """scoring method for clustering"""
-    score_metric: ClusterScoringMetric = pydantic.Field(
-        default=ClusterScoringMetric.VARIANCE_RATIO,
-    )
-
-    """distance metric for clustering"""
-    distance_metric: DistanceMetric = pydantic.Field(
-        default=DistanceMetric.EUCLIDEAN,
-    )
-
-    @pydantic.model_validator(mode="after")
-    def _check_wavelet(self):
-        all_wavelets = pywt.wavelist(kind="discrete")
-        if self.wavelet_name not in all_wavelets:
-            raise ValueError(
-                f"'wavelet_name' must be a valid wavelet in PyWavelets: \n{all_wavelets}"
-            )
-
-        all_modes = pywt.Modes.modes
-        if self.wavelet_mode not in all_modes:
-            raise ValueError(
-                f"'wavelet_mode' must be a valid mode in PyWavelets: \n{all_modes}"
-            )
 
         return self
 
@@ -357,8 +263,8 @@ class BaseHourlySettings(BaseSettings):
     )
 
     """settings for temporal clustering"""
-    temporal_cluster: TemporalClusteringSettings = pydantic.Field(
-        default_factory=TemporalClusteringSettings,
+    temporal_cluster: ClusteringSettings = pydantic.Field(
+        default_factory=ClusteringSettings,
     )
 
     """supplemental time series column names"""

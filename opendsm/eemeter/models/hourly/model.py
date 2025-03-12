@@ -63,10 +63,7 @@ from opendsm.eemeter.common.exceptions import (
     DisqualifiedModelError,
 )
 from opendsm.eemeter.common.warnings import EEMeterWarning
-from opendsm.common.clustering import (
-    bisect_k_means as _bisect_k_means,
-    scoring as _scoring,
-)
+from opendsm.common.clustering.cluster import cluster_features
 from opendsm.common.adaptive_loss import adaptive_weights
 from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict
 from opendsm import __version__
@@ -571,23 +568,10 @@ class HourlyModel:
             )
 
             settings = self.settings.temporal_cluster
-            labels = _cluster_temporal_features(
+            labels = cluster_features(
                 fit_df_grouped.values,
-                settings.wavelet_n_levels,
-                settings.wavelet_name,
-                settings.wavelet_mode,
-                settings.pca_min_variance_ratio_explained,
-                settings.recluster_count,
-                settings.n_cluster_lower,
-                settings.n_cluster_upper,
-                settings.score_metric,
-                settings.distance_metric,
-                settings.min_cluster_size,
-                settings._seed,
+                settings.temporal_cluster
             )
-
-            # TODO: DELETE ME
-            # labels = np.arange(fit_df_grouped.shape[0])
 
             df_temporal_clusters = pd.DataFrame(
                 labels,
@@ -963,7 +947,8 @@ class HourlyModel:
 
                 # add slope term
                 interaction_ts_col = f"{interaction_col}_ts"
-                df[interaction_ts_col] = 0.25*df["temperature_norm"] * df[interaction_col]
+                # df[interaction_ts_col] = df["temperature_norm"] * df[interaction_col]
+                df[interaction_ts_col] = 0.5*df["temperature_norm"] * df[interaction_col]
 
                 # add to feature lists
                 self._categorical_features.append(interaction_col)
@@ -1214,159 +1199,6 @@ class HourlyModel:
             df_eval: The baseline or reporting data object to plot.
         """
         raise NotImplementedError
-
-
-class _LabelResult(BaseModel):
-    """
-    contains metrics about a cluster label returned from sklearn
-    """
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    labels: np.ndarray
-    score: float
-    score_unable_to_be_calculated: bool
-    n_clusters: int
-
-
-def _cluster_time_series(
-    data: np.ndarray,
-    recluster_count: int,
-    n_cluster_lower: int,
-    n_cluster_upper: int,
-    score_choice: str,
-    dist_metric: str,
-    min_cluster_size: int,
-    seed: int,
-):
-    """
-    clusters the temporal features of the dataframe
-    """
-    max_non_outlier_cluster_count = 200
-
-    results = []
-    for i in range(recluster_count):
-        algo = _bisect_k_means.BisectingKMeans(
-            n_clusters=n_cluster_upper,
-            init="k-means++",  # does not benefit from k-means++ like other k-means
-            n_init=5,  # default is 1
-            random_state=seed + i,  # can be set to None or seed_num
-            algorithm="elkan",  # ['lloyd', 'elkan']
-            bisecting_strategy="largest_cluster",  # ['biggest_inertia', 'largest_cluster']
-        )
-        algo.fit(data)
-        labels_dict = algo.labels_full
-
-        for n_cluster, labels in labels_dict.items():
-            score, score_unable_to_be_calculated = _scoring.score_clusters(
-                data,
-                labels,
-                n_cluster_lower,
-                score_choice,
-                dist_metric,
-                min_cluster_size,
-                max_non_outlier_cluster_count,
-            )
-
-            label_res = _LabelResult(
-                labels=labels,
-                score=score,
-                score_unable_to_be_calculated=score_unable_to_be_calculated,
-                n_clusters=n_cluster,
-            )
-            results.append(label_res)
-
-    # get the results index with the smallest score
-    HoF = None
-    for result in results:
-        if result.score_unable_to_be_calculated:
-            continue
-
-        if HoF is None or result.score < HoF.score:
-            HoF = result
-
-    return HoF.labels
-
-
-def _cluster_temporal_features(
-    data: np.ndarray,
-    wavelet_n_levels: int,
-    wavelet_name: str,
-    wavelet_mode: str,
-    min_var_ratio: float,
-    recluster_count: int,
-    n_cluster_lower: int,
-    n_cluster_upper: int,
-    score_choice: str,
-    dist_metric: str,
-    min_cluster_size: int,
-    seed: int,
-):
-    def _dwt_coeffs(data, wavelet="db1", wavelet_mode="periodization", n_levels=4):
-        all_features = []
-        # iterate through rows of numpy array
-        for row in range(len(data)):
-            decomp_coeffs = pywt.wavedec(
-                data[row], wavelet=wavelet, mode=wavelet_mode, level=n_levels
-            )
-            # remove last level
-            # if n_levels > 4:
-            # decomp_coeffs = decomp_coeffs[:-1]
-
-            decomp_coeffs = np.hstack(decomp_coeffs)
-
-            all_features.append(decomp_coeffs)
-
-        return np.vstack(all_features)
-
-    def _pca_coeffs(features, min_var_ratio=0.95):
-        # standardize the features
-        features = StandardScaler().fit_transform(features)
-
-        use_kernel_pca = False
-        if use_kernel_pca:
-            pca = KernelPCA(n_components=None, kernel="rbf")
-            pca_features = pca.fit_transform(features)
-
-            explained_variance_ratio = pca.eigenvalues_ / np.sum(pca.eigenvalues_)
-
-            # get the cumulative explained variance ratio
-            cumulative_explained_variance = np.cumsum(explained_variance_ratio)
-
-            # find number of components that explain pct% of the variance
-            n_components = np.argmax(cumulative_explained_variance > min_var_ratio)
-
-            # pca = PCA(n_components=n_components)
-            pca = KernelPCA(n_components=n_components, kernel="rbf")
-            pca_features = pca.fit_transform(features)
-
-        else:
-            pca = PCA(n_components=min_var_ratio)
-            pca_features = pca.fit_transform(features)
-
-        return pca_features
-
-    # calculate wavelet coefficients
-    with warnings.catch_warnings():
-        # TODO wavelet level 5 was chosen during hyperparam optimization, but
-        # worth investigating this further
-        warnings.filterwarnings("ignore", module="pywt._multilevel")
-        features = _dwt_coeffs(data, wavelet_name, wavelet_mode, wavelet_n_levels)
-    pca_features = _pca_coeffs(features, min_var_ratio)
-
-    # cluster the pca features
-    cluster_labels = _cluster_time_series(
-        pca_features,
-        recluster_count,
-        n_cluster_lower,
-        n_cluster_upper,
-        score_choice,
-        dist_metric,
-        min_cluster_size,
-        seed,
-    )
-
-    return cluster_labels
 
 
 def _fit_exp_growth_decay(x, y, k_only=True, is_x_sorted=False):
