@@ -212,7 +212,10 @@ def _interpolate_col(x, lags):
         nan_idx = x.index.get_indexer(nan_series_idx)
 
         # for each row, if the value is missing, calculate the mean of the lags and leads
-        x.loc[nan_series_idx] = np.nanmean(autocorr_helpers[nan_idx, :], axis=1)
+        # ignore FutureWarning from pandas for now
+        with warnings.catch_warnings():
+            warnings.simplefilter(action="ignore", category=FutureWarning)
+            x.loc[nan_series_idx] = np.nanmean(autocorr_helpers[nan_idx, :], axis=1)
 
         if x.isna().sum() == 0:
             break

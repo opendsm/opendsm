@@ -195,7 +195,7 @@ def _dbscan_clustering(
     algo = DBSCAN(
         eps=settings._algorithm.epsilon, 
         min_samples=settings._algorithm.min_samples, 
-        metric=settings._algorithm.distance_metric,
+        metric=settings._algorithm.distance_metric.value,
         algorithm=settings._algorithm.nearest_neighbors_algorithm,
         leaf_size=settings._algorithm.leaf_size,
         p=settings._algorithm.minkowski_p,
@@ -212,9 +212,13 @@ def _hdbscan_clustering(
     """
     clusters features using HDBSCAN algorithm
     """
+    min_samples = settings._algorithm.min_samples
+    if settings._algorithm.min_samples == 1:
+        min_samples = 2
+
     algo = HDBSCAN(
         min_samples=settings._algorithm.scoring_sample_count, 
-        min_cluster_size=settings._algorithm.min_samples,
+        min_cluster_size=min_samples,
         allow_single_cluster=settings._algorithm.allow_single_cluster,
         max_cluster_size=settings._algorithm.max_cluster_size,
         metric=settings._algorithm.distance_metric,
@@ -225,6 +229,19 @@ def _hdbscan_clustering(
         cluster_selection_method=settings._algorithm.cluster_selection_method,
     )
     labels = algo.fit_predict(data)
+
+    if settings._algorithm.min_samples == 1:
+        # get count of -1 labels
+        outlier_count = np.sum(labels == -1)
+
+        if outlier_count == 0:
+            return labels
+
+        # add to all labels to make room for outliers
+        labels[labels != -1] += outlier_count
+
+        # make labels with -1 defined as arange(max_label+1, n_samples)
+        labels[labels == -1] = np.arange(0, outlier_count)
 
     return labels
 
@@ -316,13 +333,12 @@ def _transform_data(
 
         return np.vstack(all_features)
 
-    def _pca_coeffs(features, min_var_ratio_explained=0.95, n_components=None):
+    def _pca_coeffs(features, method, min_var_ratio_explained=0.95, n_components=None):
         if min_var_ratio_explained is not None:
             n_components = min_var_ratio_explained
 
         # kernel pca is not fully developed
-        use_kernel_pca = False
-        if use_kernel_pca:
+        if method == "kernel_pca":
             pca = KernelPCA(n_components=None, kernel="rbf")
             pca_features = pca.fit_transform(features)
 
@@ -335,7 +351,7 @@ def _transform_data(
                 # find number of components that explain pct% of the variance
                 n_components = np.argmax(cumulative_explained_variance > n_components).astype(int)
 
-            if not isinstance(n_components, int):
+            if not isinstance(n_components, (int, np.integer)):
                 raise ValueError("n_components must be an integer for kernel PCA")
 
             # pca = PCA(n_components=n_components)
@@ -361,7 +377,8 @@ def _transform_data(
         )
 
     pca_features = _pca_coeffs(
-        features, 
+        features,
+        settings.pca_method,
         settings.pca_min_variance_ratio_explained,
         settings.pca_n_components,
     )

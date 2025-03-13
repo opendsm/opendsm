@@ -13,6 +13,11 @@ from opendsm.common.base_settings import BaseSettings
 
 
 
+class PCASelection(str, Enum):
+    PCA = "pca"
+    KERNEL_PCA = "kernel_pca"
+
+
 class WaveletTransformSettings(BaseSettings):
     """wavelet decomposition level"""
     wavelet_n_levels: int = pydantic.Field(
@@ -31,14 +36,19 @@ class WaveletTransformSettings(BaseSettings):
         default="periodization",
     )
 
+    """PCA method"""
+    pca_method: PCASelection = pydantic.Field(
+        default=PCASelection.PCA,
+    )
+
     """minimum variance ratio for PCA clustering"""
     pca_min_variance_ratio_explained: Optional[float] = pydantic.Field(
-        default=0.725,
+        default=None,
     )
 
     """number of components to keep for PCA clustering"""
     pca_n_components: Optional[Union[int, Literal["mle"]]] = pydantic.Field(
-        default=None,
+        default="mle",
     )
 
     """add mean to pca components"""
@@ -64,6 +74,11 @@ class WaveletTransformSettings(BaseSettings):
 
     @pydantic.model_validator(mode="after")
     def _check_pca_settings(self):
+        if self.pca_n_components is None and self.pca_min_variance_ratio_explained is None:
+            raise ValueError(
+                "Must specify either 'pca_min_variance_ratio_explained' or 'pca_n_components'"
+            )
+
         if self.pca_n_components is not None:
             if self.pca_min_variance_ratio_explained is not None:
                 raise ValueError(
@@ -75,6 +90,11 @@ class WaveletTransformSettings(BaseSettings):
                     raise ValueError(
                         "'pca_n_components' must be >= 1"
                     )
+
+            if (self.pca_n_components == "mle") and (self.pca_method == PCASelection.KERNEL_PCA):
+                raise ValueError(
+                    "Cannot use 'mle' with 'kernel_pca'"
+                )
 
         if self.pca_min_variance_ratio_explained is not None:
             if not 0.5 <= self.pca_min_variance_ratio_explained <= 1:
@@ -121,7 +141,7 @@ class ScoreSettings(BaseSettings):
 class ClusterRangeSettings(BaseSettings):
     """lower bound for number of clusters"""
     lower: int = pydantic.Field(
-        default=12,
+        default=2,
         ge=2,
     )
 
@@ -347,7 +367,7 @@ class SpectralSettings(BaseSettings):
 
     """gamma for RBF, polynomial, sigmoid, laplacian, and chi2 kernels"""
     gamma: float = pydantic.Field(
-        default=1.0,
+        default=2.0,
         ge=0, # could be wrong? maybe gt?
     )
 
