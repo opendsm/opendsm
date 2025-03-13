@@ -149,7 +149,7 @@ class ElasticNetSettings(BaseSettings):
     """ElasticNet alpha parameter"""
 
     alpha: float = pydantic.Field(
-        default=0.0425,
+        default=0.01, # TODO: Change this back to 0.0425
         ge=0,
     )
 
@@ -195,18 +195,18 @@ class ElasticNetSettings(BaseSettings):
 
     """Adaptive Daily Weights for ElasticNet"""
     adaptive_weights: bool = pydantic.Field(
-        default=False,
+        default=True,
     )
 
     """Number of iterations to iterate weights"""
     adaptive_weight_max_iter: Optional[int] = pydantic.Field(
-        default=None,   # Previously was using 100 as it exits early where appropriate
+        default=100,   # Previously was using 100 as it exits early where appropriate
         ge=1,
     )
 
     """Relative difference in weights to stop iteration"""
     adaptive_weight_tol: Optional[float] = pydantic.Field(
-        default=None,   # Previously was using 1e-4
+        default=1E-4,   # Previously was using 1e-4
         ge=0,
     )
 
