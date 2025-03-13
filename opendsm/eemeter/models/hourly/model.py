@@ -280,12 +280,14 @@ class HourlyModel:
 
             rmse_annual = np.sqrt(np.mean(resid ** 2))
 
-            rel_diff = (rmse_annual - rmse_annual_prior) / rmse_annual_prior
-            rmse_annual_prior = rmse_annual
+            if i > 0:
+                rel_diff = (rmse_annual - rmse_annual_prior) / rmse_annual_prior
 
-            # if rmse is not changing much, break
-            if rel_diff < self.settings.elasticnet.adaptive_weight_tol:
-                break
+                # if rmse is not changing much, break
+                if rel_diff < self.settings.elasticnet.adaptive_weight_tol:
+                    break
+
+            rmse_annual_prior = rmse_annual
 
             # for each day, calculate rmse to downweight outlier days
             rmse_daily = np.sqrt(np.mean(resid**2, axis=1))
@@ -567,10 +569,9 @@ class HourlyModel:
                 values="observed",
             )
 
-            settings = self.settings.temporal_cluster
             labels = cluster_features(
                 fit_df_grouped.values,
-                settings.temporal_cluster
+                self.settings.temporal_cluster
             )
 
             df_temporal_clusters = pd.DataFrame(
