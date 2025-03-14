@@ -200,7 +200,7 @@ class ElasticNetSettings(BaseSettings):
 
     """Number of iterations to iterate weights"""
     adaptive_weight_max_iter: Optional[int] = pydantic.Field(
-        default=100,   # Previously was using 100 as it exits early where appropriate
+        default=10,   # Previously was using 100 as it exits early where appropriate
         ge=1,
     )
 

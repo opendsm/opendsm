@@ -361,7 +361,7 @@ class SpectralSettings(BaseSettings):
 
     """number of nearest neighbors to use for nearest neighbors kernel"""
     nearest_neighbors: int = pydantic.Field(
-        default=10,
+        default=5,
         ge=1,
     )
 
@@ -372,7 +372,7 @@ class SpectralSettings(BaseSettings):
     )
 
     """stopping criterion for eigen decomposition"""
-    eigen_tol: Literal["auto"] = pydantic.Field(
+    eigen_tol: Union[float, Literal["auto"]] = pydantic.Field(
         default="auto",
     )
 
@@ -388,6 +388,16 @@ class SpectralSettings(BaseSettings):
     scoring: ScoreSettings = pydantic.Field(
         default_factory=ScoreSettings
     )
+
+    @pydantic.model_validator(mode="after")
+    def _check_eigen_tol(self):
+        if self.eigen_tol != "auto":
+            if self.eigen_tol < 0:
+                raise ValueError(
+                    "'eigen_tol' must be >= 0"
+                )
+
+        return self
 
 
 class ClusteringSettings(BaseSettings):

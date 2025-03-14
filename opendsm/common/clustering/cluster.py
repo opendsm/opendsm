@@ -261,19 +261,34 @@ def _spectral_clustering(
     min_cluster_size = settings._algorithm.scoring.min_cluster_size
     max_non_outlier_cluster_count = 200
 
+    # transform data as spectral clustering doesn't like negative values
+    # data = np.exp(-data / np.std(data))
+
+    X = data
     results = []
     for n_clusters in range(n_cluster_lower, n_cluster_upper + 1):
+        if n_clusters == n_cluster_lower:
+            affinity = settings._algorithm.affinity
+        else:
+            affinity = "precomputed"
+
         algo = SpectralClustering(
             n_clusters=n_clusters,
             eigen_solver=settings._algorithm.eigen_solver,
             n_components=settings._algorithm.n_components,
-            affinity=settings._algorithm.affinity,
+            affinity=affinity,
             n_neighbors=settings._algorithm.nearest_neighbors,
             gamma=settings._algorithm.gamma,
             eigen_tol=settings._algorithm.eigen_tol,
             assign_labels=settings._algorithm.assign_labels,
         )
-        labels = algo.fit_predict(data)
+
+        # hide UserWarning from sklearn
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning)
+            labels = algo.fit_predict(X)
+
+        X = algo.affinity_matrix_
 
         # Calculate a score for the clustering
         score, score_unable_to_be_calculated = _scoring.score_clusters(
