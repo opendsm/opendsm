@@ -273,10 +273,10 @@ class HourlyModel:
         for i in range(self.settings.elasticnet.adaptive_weight_max_iter):
             self._model.fit(X_fit, y_fit, sample_weight=weights)
 
-            y_predict = self._model.predict(X)
+            y_predict = self._model.predict(X_fit)
 
             # calculate residuals and annual rmse
-            resid = y - y_predict
+            resid = y_fit - y_predict
 
             rmse_annual = np.sqrt(np.mean(resid ** 2))
 
@@ -842,7 +842,12 @@ class HourlyModel:
                     pass
 
             k = np.abs(np.array(k))
-            k = np.mean(k[k < 5])
+            k_valid = k[k < 5]
+
+            if len(k_valid) > 0:
+                k = np.mean(k_valid)
+            else:
+                k = 1 # if no valid k, set to 1
 
             return k
 
@@ -856,6 +861,8 @@ class HourlyModel:
         # all columns?
         # cols = range(cols[0], cols[1] + 1)
 
+        # Add all columns using col_dict at end
+        col_dict = {}
         for n in cols:
             base_col = f"temp_bin_{n}"
             int_col = f"{base_col}_ts"
@@ -895,7 +902,7 @@ class HourlyModel:
             k = self._T_edge_bin_coeffs[n]["k"]
             A = self._T_edge_bin_coeffs[n]["a"]
 
-            df[T_col] = np.where(
+            col_dict[T_col] = np.where(
                 df[base_col].values, T_a * df[int_col].values + T_b, 0
             )
 
@@ -910,11 +917,14 @@ class HourlyModel:
                 # set rate exponential
                 ts_col = f"{base_col}_{pos_neg}_exp_ts"
 
-                df[ts_col] = np.where(
-                    df[base_col].values, A * np.exp(s / k * df[T_col].values) - A, 0
+                col_dict[ts_col] = np.where(
+                    df[base_col].values, A * np.exp(s / k * col_dict[T_col]) - A, 0
                 )
 
                 self._ts_feature_norm.append(ts_col)
+
+        # create new df with col_dict
+        df = pd.concat([df, pd.DataFrame(col_dict, index=df.index)], axis=1)
 
         return df
 
@@ -928,32 +938,36 @@ class HourlyModel:
         temp_bin_cols = [c for c in df.columns if re.match(r'^temp_bin_\d+$', c)]
         cluster_cols = [c for c in df.columns if re.match(r'^temporal_cluster_\d+$', c)]
 
+        col_dict = {}
+
         # add global temperature bins
         for col in temp_bin_cols:
             # splits temperature_norm into unique columns if that temp_bin column is True
             ts_col = f"{col}_ts"
-            df[ts_col] = df["temperature_norm"] * df[col]
+            col_dict[ts_col] = df["temperature_norm"] * df[col]
 
             self._ts_feature_norm.append(ts_col)
 
         # add temporal cluster interactions
         # multiply each temp_bin by each temporal cluster
         # get all columns that start with temp_bin_ and are a number
-
         for temporal_cluster_col in cluster_cols:
             for temp_bin_col in temp_bin_cols:
                 # add intercept term
                 interaction_col = f"{temporal_cluster_col}_{temp_bin_col}_interact"
-                df[interaction_col] = df[temp_bin_col] * df[temporal_cluster_col]
+                col_dict[interaction_col] = df[temp_bin_col] * df[temporal_cluster_col]
 
                 # add slope term
                 interaction_ts_col = f"{interaction_col}_ts"
                 # df[interaction_ts_col] = df["temperature_norm"] * df[interaction_col]
-                df[interaction_ts_col] = 0.5*df["temperature_norm"] * df[interaction_col]
+                col_dict[interaction_ts_col] = 0.5*df["temperature_norm"] * col_dict[interaction_col]
 
                 # add to feature lists
                 self._categorical_features.append(interaction_col)
                 self._ts_feature_norm.append(interaction_ts_col)
+
+        # concat df with col_dict
+        df = pd.concat([df, pd.DataFrame(col_dict, index=df.index)], axis=1)
 
         # add extreme temperature bins to global temperature bins
         if settings.include_edge_bins:
@@ -1235,7 +1249,8 @@ def _fit_exp_growth_decay(x, y, k_only=True, is_x_sorted=False):
     b = np.array([xy_diff, ys_diff])
 
     _, c = np.linalg.solve(A, b)
-    k = 1 / c
+    with np.errstate(divide='ignore'):
+        k = 1 / c # ignore divide by zero, it will be filtered later
 
     if k_only:
         a, b = None, None
