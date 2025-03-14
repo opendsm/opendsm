@@ -176,13 +176,16 @@ class DailyModel:
         self.disqualification = baseline_data.disqualification
         df = getattr(baseline_data, self._data_df_name)
         self._fit(df)
-        if self.error["CVRMSE"] > self.settings.cvrmse_threshold:
+        if not self._model_fit_is_acceptable():
             cvrmse_warning = EEMeterWarning(
-                qualified_name="eemeter.model_fit_metrics.cvrmse",
-                description=(
-                    f"Fit model has CVRMSE > {self.settings.cvrmse_threshold}"
-                ),
-                data={"CVRMSE": self.error["CVRMSE"]},
+                qualified_name="eemeter.model_fit_metrics",
+                description="Model disqualified due to poor fit.",
+                data={
+                    "cvrmse_threshold": self.settings.cvrmse_threshold,
+                    "cvrmse": self.error["CVRMSE"],
+                    "pnrmse_threshold": self.settings.pnrmse_threshold,
+                    "pnrmse": self.error["PNRMSE"],
+                },
             )
             cvrmse_warning.warn()
             self.disqualification.append(cvrmse_warning)
@@ -319,6 +322,23 @@ class DailyModel:
         df_eval = pd.concat([df_eval, dropped_rows])
 
         return df_eval.sort_index()
+
+    def _model_fit_is_acceptable(self):
+        cvrmse = self.error["CVRMSE"]
+        pnrmse = self.error["PNRMSE"]
+
+        # sufficient is (0 <= cvrmse <= threshold) or (0 <= pnrmse <= threshold)
+
+        if cvrmse is not None:
+            if (0 <= cvrmse) and (cvrmse <= self.settings.cvrmse_threshold):
+                return True
+            
+        if pnrmse is not None:
+            # less than 0 is not possible, but just in case
+            if (0 <= pnrmse) and (pnrmse <= self.settings.pnrmse_threshold):
+                return True
+
+        return False
 
     def to_dict(self) -> dict:
         """Returns a dictionary of model parameters.
