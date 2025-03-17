@@ -39,6 +39,10 @@ class DefaultTrainingFeatures(str, Enum):
     SOLAR = ["temperature", "ghi"]
     NONSOLAR = ["temperature"]
 
+class AggregationMethod(str, Enum):
+    MEAN = "mean"
+    MEDIAN = "median"
+
 
 class TemperatureBinSettings(BaseSettings):
     """how to bin temperature data"""
@@ -265,6 +269,17 @@ class BaseHourlySettings(BaseSettings):
     """settings for temporal clustering"""
     temporal_cluster: ClusteringSettings = pydantic.Field(
         default_factory=ClusteringSettings,
+    )
+
+    """temporal cluster aggregation method"""
+    temporal_cluster_aggregation: AggregationMethod = pydantic.Field(
+        default=AggregationMethod.MEDIAN,
+    )
+
+    """temporal cluster/temperature bin/temperature interaction scalar"""
+    interaction_scalar: float = pydantic.Field(
+        default=0.5,
+        gt=0,
     )
 
     """supplemental time series column names"""

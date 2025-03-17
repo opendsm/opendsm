@@ -64,16 +64,16 @@ def _bisecting_kmeans_clustering(
     clusters features using Bisecting K-Means algorithm
     """
     
-    recluster_count = settings._algorithm.recluster_count
-    n_cluster_lower = settings._algorithm.n_cluster.lower
-    n_cluster_upper = settings._algorithm.n_cluster.upper
-    n_init = settings._algorithm.internal_recluster_count
-    inner_algorithm = settings._algorithm.inner_algorithm
-    bisecting_strategy = settings._algorithm.bisecting_strategy
+    recluster_count = settings.bisecting_kmeans.recluster_count
+    n_cluster_lower = settings.bisecting_kmeans.n_cluster.lower
+    n_cluster_upper = settings.bisecting_kmeans.n_cluster.upper
+    n_init = settings.bisecting_kmeans.internal_recluster_count
+    inner_algorithm = settings.bisecting_kmeans.inner_algorithm
+    bisecting_strategy = settings.bisecting_kmeans.bisecting_strategy
 
-    score_choice = settings._algorithm.scoring.score_metric
-    dist_metric = settings._algorithm.scoring.distance_metric
-    min_cluster_size = settings._algorithm.scoring.min_cluster_size
+    score_choice = settings.bisecting_kmeans.scoring.score_metric
+    dist_metric = settings.bisecting_kmeans.scoring.distance_metric
+    min_cluster_size = settings.bisecting_kmeans.scoring.min_cluster_size
     max_non_outlier_cluster_count = 200
 
     seed = settings._seed
@@ -134,14 +134,14 @@ def _birch_clustering(
     Clusters features using Birch algorithm
     """
 
-    n_cluster_lower = settings._algorithm.n_cluster.lower
-    n_cluster_upper = settings._algorithm.n_cluster.upper
-    threshold = settings._algorithm.threshold
-    branching_factor = settings._algorithm.branching_factor
+    n_cluster_lower = settings.birch.n_cluster.lower
+    n_cluster_upper = settings.birch.n_cluster.upper
+    threshold = settings.birch.threshold
+    branching_factor = settings.birch.branching_factor
 
-    score_choice = settings._algorithm.scoring.score_metric
-    dist_metric = settings._algorithm.scoring.distance_metric
-    min_cluster_size = settings._algorithm.scoring.min_cluster_size
+    score_choice = settings.birch.scoring.score_metric
+    dist_metric = settings.birch.scoring.distance_metric
+    min_cluster_size = settings.birch.scoring.min_cluster_size
     max_non_outlier_cluster_count = 200
 
     results = []
@@ -193,12 +193,12 @@ def _dbscan_clustering(
     clusters features using DBSCAN algorithm
     """
     algo = DBSCAN(
-        eps=settings._algorithm.epsilon, 
-        min_samples=settings._algorithm.min_samples, 
-        metric=settings._algorithm.distance_metric.value,
-        algorithm=settings._algorithm.nearest_neighbors_algorithm,
-        leaf_size=settings._algorithm.leaf_size,
-        p=settings._algorithm.minkowski_p,
+        eps=settings.dbscan.epsilon, 
+        min_samples=settings.dbscan.min_samples, 
+        metric=settings.dbscan.distance_metric.value,
+        algorithm=settings.dbscan.nearest_neighbors_algorithm,
+        leaf_size=settings.dbscan.leaf_size,
+        p=settings.dbscan.minkowski_p,
     )
     labels = algo.fit_predict(data)
 
@@ -212,25 +212,25 @@ def _hdbscan_clustering(
     """
     clusters features using HDBSCAN algorithm
     """
-    min_samples = settings._algorithm.min_samples
-    if settings._algorithm.min_samples == 1:
+    min_samples = settings.hdbscan.min_samples
+    if settings.hdbscan.min_samples == 1:
         min_samples = 2
 
     algo = HDBSCAN(
-        min_samples=settings._algorithm.scoring_sample_count, 
+        min_samples=settings.hdbscan.scoring_sample_count, 
         min_cluster_size=min_samples,
-        allow_single_cluster=settings._algorithm.allow_single_cluster,
-        max_cluster_size=settings._algorithm.max_cluster_size,
-        metric=settings._algorithm.distance_metric,
-        cluster_selection_epsilon=settings._algorithm.cluster_selection_epsilon,
-        alpha=settings._algorithm.robust_single_linkage_scaling,
-        algorithm=settings._algorithm.nearest_neighbors_algorithm,
-        leaf_size=settings._algorithm.leaf_size,
-        cluster_selection_method=settings._algorithm.cluster_selection_method,
+        allow_single_cluster=settings.hdbscan.allow_single_cluster,
+        max_cluster_size=settings.hdbscan.max_cluster_size,
+        metric=settings.hdbscan.distance_metric,
+        cluster_selection_epsilon=settings.hdbscan.cluster_selection_epsilon,
+        alpha=settings.hdbscan.robust_single_linkage_scaling,
+        algorithm=settings.hdbscan.nearest_neighbors_algorithm,
+        leaf_size=settings.hdbscan.leaf_size,
+        cluster_selection_method=settings.hdbscan.cluster_selection_method,
     )
     labels = algo.fit_predict(data)
 
-    if settings._algorithm.min_samples == 1:
+    if settings.hdbscan.min_samples == 1:
         # get count of -1 labels
         outlier_count = np.sum(labels == -1)
 
@@ -253,12 +253,12 @@ def _spectral_clustering(
     """
     clusters features using Spectral Clustering algorithm
     """
-    n_cluster_lower = settings._algorithm.n_cluster.lower
-    n_cluster_upper = settings._algorithm.n_cluster.upper
+    n_cluster_lower = settings.spectral.n_cluster.lower
+    n_cluster_upper = settings.spectral.n_cluster.upper
     
-    score_choice = settings._algorithm.scoring.score_metric
-    dist_metric = settings._algorithm.scoring.distance_metric
-    min_cluster_size = settings._algorithm.scoring.min_cluster_size
+    score_choice = settings.spectral.scoring.score_metric
+    dist_metric = settings.spectral.scoring.distance_metric
+    min_cluster_size = settings.spectral.scoring.min_cluster_size
     max_non_outlier_cluster_count = 200
 
     # transform data as spectral clustering doesn't like negative values
@@ -268,19 +268,19 @@ def _spectral_clustering(
     results = []
     for n_clusters in range(n_cluster_lower, n_cluster_upper + 1):
         if n_clusters == n_cluster_lower:
-            affinity = settings._algorithm.affinity
+            affinity = settings.spectral.affinity
         else:
             affinity = "precomputed"
 
         algo = SpectralClustering(
             n_clusters=n_clusters,
-            eigen_solver=settings._algorithm.eigen_solver,
-            n_components=settings._algorithm.n_components,
+            eigen_solver=settings.spectral.eigen_solver,
+            n_components=settings.spectral.n_components,
             affinity=affinity,
-            n_neighbors=settings._algorithm.nearest_neighbors,
-            gamma=settings._algorithm.gamma,
-            eigen_tol=settings._algorithm.eigen_tol,
-            assign_labels=settings._algorithm.assign_labels,
+            n_neighbors=settings.spectral.nearest_neighbors,
+            gamma=settings.spectral.gamma,
+            eigen_tol=settings.spectral.eigen_tol,
+            assign_labels=settings.spectral.assign_labels,
         )
 
         # hide UserWarning from sklearn
@@ -415,8 +415,9 @@ def cluster_features(
 ):
     
     # bypass clustering if cluster count is >= data
-    if settings.clustering_algorithm not in ["dbscan", "hdbscan"]:
-        if settings._algorithm.n_cluster.lower >= len(data):
+    if settings.algorithm_selection not in ["dbscan", "hdbscan"]:
+        algo = getattr(settings, f"{settings.algorithm_selection.value}")
+        if algo.n_cluster.lower >= len(data):
             return np.arange(len(data))
 
     # standardize the data
@@ -428,18 +429,18 @@ def cluster_features(
         data = _transform_data(data, settings)
 
     # cluster the pca features
-    if settings.clustering_algorithm == "bisecting_kmeans":
+    if settings.algorithm_selection == "bisecting_kmeans":
         cluster_fcn = _bisecting_kmeans_clustering
-    elif settings.clustering_algorithm == "birch":
+    elif settings.algorithm_selection == "birch":
         cluster_fcn = _birch_clustering
-    elif settings.clustering_algorithm == "dbscan":
+    elif settings.algorithm_selection == "dbscan":
         cluster_fcn = _dbscan_clustering
-    elif settings.clustering_algorithm == "hdbscan":
+    elif settings.algorithm_selection == "hdbscan":
         cluster_fcn = _hdbscan_clustering
-    elif settings.clustering_algorithm == "spectral":
+    elif settings.algorithm_selection == "spectral":
         cluster_fcn = _spectral_clustering
     else:
-        raise ValueError(f"Unknown clustering algorithm: {settings.clustering_algorithm}")
+        raise ValueError(f"Unknown clustering algorithm: {settings.algorithm_selection}")
     
     cluster_labels = cluster_fcn(data, settings)
 

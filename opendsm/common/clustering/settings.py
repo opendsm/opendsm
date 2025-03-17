@@ -400,6 +400,14 @@ class SpectralSettings(BaseSettings):
         return self
 
 
+class ClusterAlgorithms(str, Enum):
+    BISECTING_KMEANS = "bisecting_kmeans"
+    BIRCH = "birch"
+    DBSCAN = "dbscan"
+    HDBSCAN = "hdbscan"
+    SPECTRAL = "spectral"
+
+
 class ClusteringSettings(BaseSettings):
     """standardize data boolean"""
     standardize: bool = pydantic.Field(
@@ -412,13 +420,33 @@ class ClusteringSettings(BaseSettings):
     )
 
     """clustering choice"""
-    clustering_algorithm: str = pydantic.Field(
-        default="spectral",
+    algorithm_selection: ClusterAlgorithms = pydantic.Field(
+        default=ClusterAlgorithms.SPECTRAL,
     )
-    
-    ## dict of options for selected clusteringalgorithm
-    clustering_algorithm_settings: Optional[dict] = pydantic.Field(
-        default=None,
+
+    """BisectingKMeans settings"""
+    bisecting_kmeans: BisectingKMeansSettings = pydantic.Field(
+        default_factory=BisectingKMeansSettings,
+    )
+
+    """Birch settings"""
+    birch: BirchSettings = pydantic.Field(
+        default_factory=BirchSettings,
+    )
+
+    """DBSCAN settings"""
+    dbscan: DBSCANSettings = pydantic.Field(
+        default_factory=DBSCANSettings,
+    )
+
+    """HDBSCAN settings"""
+    hdbscan: HDBSCANSettings = pydantic.Field(
+        default_factory=HDBSCANSettings,
+    )
+
+    """Spectral settings"""
+    spectral: SpectralSettings = pydantic.Field(
+        default_factory=SpectralSettings,
     )
 
     """seed for random state assignment"""
@@ -435,28 +463,6 @@ class ClusteringSettings(BaseSettings):
             self._seed = self.seed
 
         self._seed = self._seed
-
-        return self
-    
-    @pydantic.model_validator(mode="after")
-    def _assign_algorithm(self):
-        algo_dict = {
-            "bisecting_kmeans": BisectingKMeansSettings,
-            "birch": BirchSettings,
-            "dbscan": DBSCANSettings,
-            "hdbscan": HDBSCANSettings,
-            "spectral": SpectralSettings,
-        }
-
-        if self.clustering_algorithm not in algo_dict:
-            raise ValueError(
-                f"'name' must be one of the following: \n{list(algo_dict.keys())}"
-            )
-
-        if self.clustering_algorithm_settings is None:
-            self._algorithm = algo_dict[self.clustering_algorithm]()
-        else:
-            self._algorithm = algo_dict[self.clustering_algorithm](**self.clustering_algorithm_settings)
 
         return self
 

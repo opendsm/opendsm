@@ -46,7 +46,7 @@ from scipy.sparse import csr_matrix
 
 from scipy.spatial.distance import cdist
 
-from sklearn.linear_model import ElasticNet
+from sklearn.linear_model import ElasticNet, LinearRegression
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.decomposition import PCA, KernelPCA
 
@@ -127,16 +127,21 @@ class HourlyModel:
 
         self._T_edge_bin_coeffs = None
 
-        self._model = ElasticNet(
-            alpha=self.settings.elasticnet.alpha,
-            l1_ratio=self.settings.elasticnet.l1_ratio,
-            fit_intercept=self.settings.elasticnet.fit_intercept,
-            precompute=self.settings.elasticnet.precompute,
-            max_iter=self.settings.elasticnet.max_iter,
-            tol=self.settings.elasticnet.tol,
-            selection=self.settings.elasticnet.selection,
-            random_state=self.settings.elasticnet._seed,
-        )
+        if self.settings.elasticnet.alpha <= 1E-6:
+            self._model = LinearRegression(
+                fit_intercept=self.settings.elasticnet.fit_intercept
+            )
+        else:
+            self._model = ElasticNet(
+                alpha=self.settings.elasticnet.alpha,
+                l1_ratio=self.settings.elasticnet.l1_ratio,
+                fit_intercept=self.settings.elasticnet.fit_intercept,
+                precompute=self.settings.elasticnet.precompute,
+                max_iter=self.settings.elasticnet.max_iter,
+                tol=self.settings.elasticnet.tol,
+                selection=self.settings.elasticnet.selection,
+                random_state=self.settings.elasticnet._seed,
+            )
 
         self._T_bin_edges = None
         self._T_edge_bin_rate = None
@@ -559,7 +564,7 @@ class HourlyModel:
         def set_initial_temporal_clusters(df):
             fit_df_grouped = (
                 df.groupby(self._temporal_cluster_cols + ["hour_of_day"])["observed"]
-                .mean()
+                .agg(self.settings.temporal_cluster_aggregation)
                 .reset_index()
             )
             # pivot table to get 2D array of observed values
@@ -610,7 +615,7 @@ class HourlyModel:
                         df_missing.groupby(
                             self._temporal_cluster_cols + ["hour_of_day"]
                         )["observed"]
-                        .mean()
+                        .agg(self.settings.temporal_cluster_aggregation)
                         .reset_index()
                     )
                     df_missing_grouped = df_missing_grouped.pivot_table(
@@ -951,6 +956,7 @@ class HourlyModel:
         # add temporal cluster interactions
         # multiply each temp_bin by each temporal cluster
         # get all columns that start with temp_bin_ and are a number
+        s = self.settings.interaction_scalar
         for temporal_cluster_col in cluster_cols:
             for temp_bin_col in temp_bin_cols:
                 # add intercept term
@@ -960,7 +966,7 @@ class HourlyModel:
                 # add slope term
                 interaction_ts_col = f"{interaction_col}_ts"
                 # df[interaction_ts_col] = df["temperature_norm"] * df[interaction_col]
-                col_dict[interaction_ts_col] = 0.5*df["temperature_norm"] * col_dict[interaction_col]
+                col_dict[interaction_ts_col] = s*df["temperature_norm"] * col_dict[interaction_col]
 
                 # add to feature lists
                 self._categorical_features.append(interaction_col)
