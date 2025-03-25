@@ -153,13 +153,13 @@ class ElasticNetSettings(BaseSettings):
     """ElasticNet alpha parameter"""
 
     alpha: float = pydantic.Field(
-        default=0.01, # TODO: Change this back to 0.0425
+        default=0.074164,
         ge=0,
     )
 
     """ElasticNet l1_ratio parameter"""
     l1_ratio: float = pydantic.Field(
-        default=0.5,
+        default=0.175534,
         ge=0,
         le=1,
     )
@@ -278,7 +278,7 @@ class BaseHourlySettings(BaseSettings):
 
     """temporal cluster/temperature bin/temperature interaction scalar"""
     interaction_scalar: float = pydantic.Field(
-        default=0.5,
+        default=0.562026,
         gt=0,
     )
 

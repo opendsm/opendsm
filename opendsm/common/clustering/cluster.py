@@ -29,6 +29,9 @@ from pydantic import BaseModel, ConfigDict
 
 import pywt
 
+from scipy.signal import find_peaks
+
+
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.decomposition import PCA, KernelPCA
 from sklearn.cluster import DBSCAN, HDBSCAN, Birch, SpectralClustering
@@ -323,7 +326,7 @@ def _spectral_clustering(
 
 
 def _transform_data(
-    data: pd.DataFrame,
+    data: np.ndarray,
     settings: _settings.ClusteringSettings
 ):
     """
@@ -354,6 +357,10 @@ def _transform_data(
 
         # kernel pca is not fully developed
         if method == "kernel_pca":
+            if n_components ==  "mle":
+                pca = PCA(n_components=n_components)
+                pca_features = pca.fit_transform(features)
+
             pca = KernelPCA(n_components=None, kernel="rbf")
             pca_features = pca.fit_transform(features)
 
@@ -408,11 +415,78 @@ def _transform_data(
     return pca_features
 
 
-
-def cluster_features(
-    data: np.ndarray,
+def cluster_reorder(
+    data: pd.DataFrame, 
+    cluster_labels: np.ndarray,
     settings: _settings.ClusteringSettings,
 ):
+    sort_method = settings.cluster_sort_options.method
+    agg_type = settings.cluster_sort_options.aggregation
+    reverse = settings.cluster_sort_options.reverse
+
+    # assign labels to data
+    df = data
+    df["label"] = cluster_labels
+    
+    # group by cluster and aggregate
+    df_cluster = df.groupby('label').agg(agg_type)
+    n_clusters = len(df_cluster)
+
+    if sort_method == "size":
+        # sort clusters by count
+        cluster_size = df['label'].value_counts()
+        cluster_size = cluster_size.sort_values()
+
+        features = cluster_size
+
+    elif sort_method == "peak":
+        # subtract each cluster's median from the cluster's median
+        df_cluster_norm = df_cluster.sub(df_cluster.agg(agg_type, axis=1), axis=0)
+        cluster_max = df_cluster_norm.abs().max().max()
+        df_cluster_norm = df_cluster_norm/cluster_max
+
+        # find peaks and valleys
+        peak = {}
+        valley = {}
+        for i in range(n_clusters):
+            cluster_median = df_cluster.iloc[i]
+            df_cluster_norm = cluster_median - cluster_median.median()
+            peak[i] = find_peaks(df_cluster_norm.values, height=0.75, width=1)[0]
+            valley[i] = find_peaks(-df_cluster_norm.values, height=0.75, width=1)[0]
+
+            if len(peak[i]) == 0:
+                peak[i] = None
+            else:
+                peak[i] = peak[i][0]
+
+            if len(valley[i]) == 0:
+                valley[i] = None
+            else:
+                valley[i] = valley[i][0]
+        
+        # create df with peak and valley
+        features = pd.DataFrame({'peak': peak, 'valley': valley})
+
+        # sort features by valley and then peak smallest to largest with nans at the start for peak column
+        features = features.sort_values(by='valley')
+        features = features.sort_values(by='peak', na_position='first')
+
+    # create dictionary to remap cluster numbers to features order
+    if not reverse:
+        cluster_map = {features.index[i]: i for i in range(n_clusters)}
+    else:
+        cluster_map = {features.index[i]: i for i in range(n_clusters)[::-1]}
+
+    return cluster_map
+
+
+
+def cluster_features(
+    data: pd.DataFrame,
+    settings: _settings.ClusteringSettings,
+):
+    # convert data to numpy array
+    data = data.to_numpy()
     
     # bypass clustering if cluster count is >= data
     if settings.algorithm_selection not in ["dbscan", "hdbscan"]:
@@ -443,5 +517,8 @@ def cluster_features(
         raise ValueError(f"Unknown clustering algorithm: {settings.algorithm_selection}")
     
     cluster_labels = cluster_fcn(data, settings)
+
+    if settings.sort_clusters:
+        cluster_labels = cluster_reorder(data, cluster_labels, settings)
 
     return cluster_labels
