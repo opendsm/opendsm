@@ -48,9 +48,6 @@ from scipy.spatial.distance import cdist
 
 from sklearn.linear_model import ElasticNet, LinearRegression
 from sklearn.preprocessing import StandardScaler, RobustScaler
-from sklearn.decomposition import PCA, KernelPCA
-
-import pywt
 
 from timeit import default_timer as timer
 
@@ -575,7 +572,7 @@ class HourlyModel:
             )
 
             labels = cluster_features(
-                fit_df_grouped.values,
+                fit_df_grouped,
                 self.settings.temporal_cluster
             )
 

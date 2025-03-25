@@ -367,7 +367,7 @@ class SpectralSettings(BaseSettings):
 
     """gamma for RBF, polynomial, sigmoid, laplacian, and chi2 kernels"""
     gamma: float = pydantic.Field(
-        default=2.0,
+        default=0.813713,
         ge=0, # could be wrong? maybe gt?
     )
 
@@ -398,6 +398,34 @@ class SpectralSettings(BaseSettings):
                 )
 
         return self
+
+
+class SortMethod(str, Enum):
+    SIZE = "size"
+    PEAK = "peak"
+    # VARIANCE = "variance"
+
+
+class AggregateMethod(str, Enum):
+    MEAN = "mean"
+    MEDIAN = "median"
+
+
+class ClusterSortSettings(BaseSettings):
+    """sort method"""
+    method: SortMethod = pydantic.Field(
+        default=SortMethod.PEAK,
+    )
+
+    """aggregate method"""
+    aggregation: AggregateMethod = pydantic.Field(
+        default=AggregateMethod.MEAN
+    )
+
+    """sort order"""
+    reverse: bool = pydantic.Field(
+        default=False,
+    )
 
 
 class ClusterAlgorithms(str, Enum):
@@ -447,6 +475,16 @@ class ClusteringSettings(BaseSettings):
     """Spectral settings"""
     spectral: SpectralSettings = pydantic.Field(
         default_factory=SpectralSettings,
+    )
+
+    """sort clusters boolean"""
+    sort_clusters: bool = pydantic.Field(
+        default=False,
+    )
+
+    """sort clusters """
+    cluster_sort_options: ClusterSortSettings = pydantic.Field(
+        default_factory=ClusterSortSettings,
     )
 
     """seed for random state assignment"""
