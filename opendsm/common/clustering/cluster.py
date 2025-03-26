@@ -338,12 +338,14 @@ def _transform_data(
         all_features = []
         # iterate through rows of numpy array
         for row in range(len(data)):
+            # get max level of decomposition
+            dwt_max_level = pywt.dwt_max_level(data[row].shape[0], wavelet)
+            if n_levels > dwt_max_level:
+                n_levels = dwt_max_level
+            
             decomp_coeffs = pywt.wavedec(
                 data[row], wavelet=wavelet, mode=wavelet_mode, level=n_levels
             )
-            # remove last level
-            # if n_levels > 4:
-            # decomp_coeffs = decomp_coeffs[:-1]
 
             decomp_coeffs = np.hstack(decomp_coeffs)
 
@@ -388,9 +390,6 @@ def _transform_data(
 
     # calculate wavelet coefficients
     with warnings.catch_warnings():
-        # TODO wavelet level 5 was chosen during hyperparam optimization, but
-        # worth investigating this further
-        warnings.filterwarnings("ignore", module="pywt._multilevel")
         features = _dwt_coeffs(
             data, 
             settings.wavelet_name, 
@@ -425,7 +424,7 @@ def cluster_reorder(
     reverse = settings.cluster_sort_options.reverse
 
     # assign labels to data
-    df = data
+    df = data.copy()
     df["label"] = cluster_labels
     
     # group by cluster and aggregate
@@ -440,19 +439,28 @@ def cluster_reorder(
         features = cluster_size
 
     elif sort_method == "peak":
+        # TODO: This is a work in progress
+
         # subtract each cluster's median from the cluster's median
         df_cluster_norm = df_cluster.sub(df_cluster.agg(agg_type, axis=1), axis=0)
         cluster_max = df_cluster_norm.abs().max().max()
         df_cluster_norm = df_cluster_norm/cluster_max
 
+        # define threshold for peak and valley
+        threshold = np.quantile(abs(df_cluster.values), 0.75)
+
         # find peaks and valleys
         peak = {}
         valley = {}
+        norm = {}
         for i in range(n_clusters):
-            cluster_median = df_cluster.iloc[i]
-            df_cluster_norm = cluster_median - cluster_median.median()
-            peak[i] = find_peaks(df_cluster_norm.values, height=0.75, width=1)[0]
-            valley[i] = find_peaks(-df_cluster_norm.values, height=0.75, width=1)[0]
+            cluster_normal = df_cluster.iloc[i]
+            norm[i] = cluster_normal.agg(agg_type)
+            df_cluster_norm = cluster_normal - norm[i]
+            thresh = threshold - norm[i]
+
+            peak[i] = find_peaks(df_cluster_norm.values, height=thresh, width=1)[0]
+            valley[i] = find_peaks(-df_cluster_norm.values, height=thresh, width=1)[0]
 
             if len(peak[i]) == 0:
                 peak[i] = None
@@ -465,11 +473,9 @@ def cluster_reorder(
                 valley[i] = valley[i][0]
         
         # create df with peak and valley
-        features = pd.DataFrame({'peak': peak, 'valley': valley})
+        features = pd.DataFrame({'peak': peak, 'valley': valley, "norm": norm})
 
-        # sort features by valley and then peak smallest to largest with nans at the start for peak column
-        features = features.sort_values(by='valley')
-        features = features.sort_values(by='peak', na_position='first')
+        features = features.sort_values(by=["peak", "valley", "norm"], na_position='first')
 
     # create dictionary to remap cluster numbers to features order
     if not reverse:
@@ -482,11 +488,11 @@ def cluster_reorder(
 
 
 def cluster_features(
-    data: pd.DataFrame,
+    df: pd.DataFrame,
     settings: _settings.ClusteringSettings,
 ):
     # convert data to numpy array
-    data = data.to_numpy()
+    data = df.to_numpy()
     
     # bypass clustering if cluster count is >= data
     if settings.algorithm_selection not in ["dbscan", "hdbscan"]:
@@ -519,6 +525,9 @@ def cluster_features(
     cluster_labels = cluster_fcn(data, settings)
 
     if settings.sort_clusters:
-        cluster_labels = cluster_reorder(data, cluster_labels, settings)
+        cluster_remap_dict = cluster_reorder(df, cluster_labels, settings)
+
+        # remap cluster labels using cluster_remap_dict
+        cluster_labels = np.vectorize(cluster_remap_dict.get)(cluster_labels)
 
     return cluster_labels
