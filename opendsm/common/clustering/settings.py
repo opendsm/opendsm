@@ -33,7 +33,7 @@ class WaveletTransformSettings(BaseSettings):
 
     """signal extension mode for wavelet decomposition"""
     wavelet_mode: str = pydantic.Field(
-        default="periodization",
+        default="smooth",
     )
 
     """PCA method"""
