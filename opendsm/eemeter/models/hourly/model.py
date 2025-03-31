@@ -46,7 +46,7 @@ from scipy.sparse import csr_matrix
 
 from scipy.spatial.distance import cdist
 
-from sklearn.linear_model import ElasticNet, LinearRegression
+from sklearn.linear_model import ElasticNet, LinearRegression, Ridge, Lasso
 from sklearn.preprocessing import StandardScaler, RobustScaler
 
 from timeit import default_timer as timer
@@ -74,6 +74,10 @@ class HourlyModel:
         settings (dict): A dictionary of settings.
         baseline_metrics (dict): A dictionary of metrics based on input baseline data and model fit.
     """
+    
+    # thresholds for switching model types
+    _alpha_model_threshold = 1E-3
+    _l1_ratio_model_threshold = 1E-3
 
     # set priority columns for sorting
     # this is critical for ensuring predict column order matches fit column order
@@ -124,9 +128,25 @@ class HourlyModel:
 
         self._T_edge_bin_coeffs = None
 
-        if self.settings.elasticnet.alpha <= 1E-6:
+        if self.settings.elasticnet.alpha <= self._alpha_model_threshold:
             self._model = LinearRegression(
                 fit_intercept=self.settings.elasticnet.fit_intercept
+            )
+        elif self.settings.elasticnet.l1_ratio <= self._l1_ratio_model_threshold:
+            self._model = Ridge(
+                alpha=self.settings.elasticnet.alpha,
+                fit_intercept=self.settings.elasticnet.fit_intercept,
+                max_iter=self.settings.elasticnet.max_iter,
+                tol=self.settings.elasticnet.tol,
+                random_state=self.settings.elasticnet._seed,
+            )
+        elif self.settings.elasticnet.l1_ratio >= (1 - self._l1_ratio_model_threshold):
+            self._model = Lasso(
+                alpha=self.settings.elasticnet.alpha,
+                fit_intercept=self.settings.elasticnet.fit_intercept,
+                max_iter=self.settings.elasticnet.max_iter,
+                tol=self.settings.elasticnet.tol,
+                random_state=self.settings.elasticnet._seed,
             )
         else:
             self._model = ElasticNet(
@@ -850,6 +870,11 @@ class HourlyModel:
                 k = np.mean(k_valid)
             else:
                 k = 1 # if no valid k, set to 1
+
+            # if k is too small, set to minimum
+            k_min = 1/np.log(1E6)
+            if k < k_min:
+                k = k_min
 
             return k
 

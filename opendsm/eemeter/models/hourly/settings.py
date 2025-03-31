@@ -59,30 +59,30 @@ class TemperatureBinSettings(BaseSettings):
 
     """temperature bin width in fahrenheit"""
     bin_width: Optional[float] = pydantic.Field(
-        default=12,
+        default=41,
         ge=1,
     )
 
     """use edge bins bool"""
     include_edge_bins: bool = pydantic.Field(
-        default=True,
+        default=False, 
     )
 
     """rate for edge temperature bins"""
     edge_bin_rate: Optional[Union[float, Literal["heuristic"]]] = pydantic.Field(
-        default="heuristic",
+        default=None, # prior "heuristic"
     )
 
     """percent of total data in edge bins"""
     edge_bin_percent: Optional[float] = pydantic.Field(
-        default=0.0425,
-        ge=0,
+        default=None, # prior 0.045
+        gt=0,
         le=0.45,
     )
 
     """offset normalized temperature range for edge bins (keeps exp from blowing up)"""
     edge_bin_temperature_range_offset: Optional[float] = pydantic.Field(
-        default=1.0,
+        default=None, # prior 1.0
         ge=0,
     )
 
@@ -153,13 +153,13 @@ class ElasticNetSettings(BaseSettings):
     """ElasticNet alpha parameter"""
 
     alpha: float = pydantic.Field(
-        default=0.074164,
+        default=0.059259,
         ge=0,
     )
 
     """ElasticNet l1_ratio parameter"""
     l1_ratio: float = pydantic.Field(
-        default=0.175534,
+        default=0.05,
         ge=0,
         le=1,
     )
@@ -176,7 +176,7 @@ class ElasticNetSettings(BaseSettings):
 
     """ElasticNet max_iter parameter"""
     max_iter: int = pydantic.Field(
-        default=1000,
+        default=3000,
         ge=1,
         le=2**32 - 1,
     )
@@ -204,7 +204,7 @@ class ElasticNetSettings(BaseSettings):
 
     """Number of iterations to iterate weights"""
     adaptive_weight_max_iter: Optional[int] = pydantic.Field(
-        default=10,   # Previously was using 100 as it exits early where appropriate
+        default=25,   # Previously was using 100 as it exits early where appropriate
         ge=1,
     )
 

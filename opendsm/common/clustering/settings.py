@@ -21,7 +21,7 @@ class PCASelection(str, Enum):
 class WaveletTransformSettings(BaseSettings):
     """wavelet decomposition level"""
     wavelet_n_levels: int = pydantic.Field(
-        default=5,
+        default=4,
         ge=1,
         # le=5,  #TODO investigate upper limit
     )
@@ -367,7 +367,7 @@ class SpectralSettings(BaseSettings):
 
     """gamma for RBF, polynomial, sigmoid, laplacian, and chi2 kernels"""
     gamma: float = pydantic.Field(
-        default=0.813713,
+        default=2.0,
         ge=0, # could be wrong? maybe gt?
     )
 
