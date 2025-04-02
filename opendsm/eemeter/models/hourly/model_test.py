@@ -23,6 +23,8 @@ from __future__ import annotations
 import os
 import warnings
 
+from copy import deepcopy
+
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -46,8 +48,10 @@ from scipy.sparse import csr_matrix
 
 from scipy.spatial.distance import cdist
 
-from sklearn.linear_model import ElasticNet, LinearRegression, Ridge, Lasso
+from sklearn.multioutput import MultiOutputRegressor
+from sklearn.linear_model import SGDRegressor, RANSACRegressor, HuberRegressor
 from sklearn.kernel_ridge import KernelRidge
+
 from sklearn.preprocessing import StandardScaler, RobustScaler
 
 from timeit import default_timer as timer
@@ -62,12 +66,115 @@ from opendsm.eemeter.common.exceptions import (
 )
 from opendsm.eemeter.common.warnings import EEMeterWarning
 from opendsm.common.clustering.cluster import cluster_features
-from opendsm.common.adaptive_loss import adaptive_weights
 from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict
 from opendsm import __version__
 
 
-class HourlyModel:
+
+class MultiTargetRegressionWrapper:  
+    def __init__(self, model, **kwargs):
+        # Initialize the base ARDRegression with its parameters
+        self._base_regressor = model(**kwargs)
+        
+        # Wrap it in MultiOutputRegressor for multi-target support
+        self._multi_output = MultiOutputRegressor(self._base_regressor, n_jobs=None)
+        
+        # Initialize attributes
+        self.is_fit = False
+    
+    def fit(self, X, y, sample_weight=None):
+        """
+        Fit the model with X, y data.
+        
+        Parameters:
+        -----------
+        X : array-like of shape (n_samples, n_features)
+            The training input samples.
+        y : array-like of shape (n_samples,) or (n_samples, n_targets)
+            The target values.
+        sample_weight : array-like of shape (n_samples,), default=None
+            Sample weights.
+            
+        Returns:
+        --------
+        self : returns an instance of self.
+        """
+        # Fit the model
+        if sample_weight is not None:
+            self._multi_output.fit(X, y, sample_weight=sample_weight)
+        else:
+            self._multi_output.fit(X, y)
+
+        self.is_fit = True
+
+        return self
+    
+    def predict(self, X):
+        """
+        Predict using the model.
+        
+        Parameters:
+        -----------
+        X : array-like of shape (n_samples, n_features)
+            The input samples.
+            
+        Returns:
+        --------
+        y : array of shape (n_samples,) or (n_samples, n_targets)
+            The predicted values.
+        """
+        if not self.is_fit:
+            raise RuntimeError("Model must be fit before predictions can be made.")
+
+        return self._multi_output.predict(X)
+    
+    def _create_estimators_(self, n):
+        if hasattr(self._multi_output, "estimators_"):
+            return
+        
+        # Create estimators for each target
+        self._multi_output.estimators_ = [deepcopy(self._base_regressor) for _ in range(n)]
+    
+    @property
+    def coef_(self):
+        """Get model coefficients."""
+        if not self.is_fit:
+            raise RuntimeError("Model must be fit before coefficients can be accessed.")
+        
+        coef = np.vstack([est.coef_ for est in self._multi_output.estimators_])
+        
+        return coef
+        
+    @coef_.setter
+    def coef_(self, val):
+        """Set model coefficients"""
+        n_estimators = len(val)
+        self._create_estimators_(n_estimators)
+
+        for i, est in enumerate(self._multi_output.estimators_):
+            est.coef_ = val[i]
+
+    @property
+    def intercept_(self):
+        """Get model intercepts."""
+        if not self.is_fit:
+            raise RuntimeError("Model must be fit before intercepts can be accessed.")
+        
+        intercept = np.array([est.intercept_ for est in self._multi_output.estimators_])
+
+        return intercept
+        
+    @intercept_.setter
+    def intercept_(self, val):
+        """Set model intercepts"""
+        n_estimators = len(val)
+        self._create_estimators_(n_estimators)
+        
+        for i, est in enumerate(self._multi_output.estimators_):
+            est.intercept_ = val[i]
+
+
+class TestHourlyModel:
     """
     A class to fit a model to the input meter data.
 
@@ -154,44 +261,42 @@ class HourlyModel:
             self._y_scaler = RobustScaler(unit_variance=True)
 
         # set base model
-        if self.settings.base_model == _settings.BaseModel.ELASTICNET:
-            if self.settings.elasticnet.alpha <= self._alpha_model_threshold:
-                self._model = LinearRegression(
-                    fit_intercept=self.settings.elasticnet.fit_intercept
-                )
-            elif self.settings.elasticnet.l1_ratio <= self._l1_ratio_model_threshold:
-                self._model = Ridge(
-                    alpha=self.settings.elasticnet.alpha,
-                    fit_intercept=self.settings.elasticnet.fit_intercept,
-                    max_iter=self.settings.elasticnet.max_iter,
-                    tol=self.settings.elasticnet.tol,
-                    random_state=self.settings.elasticnet._seed,
-                )
-            elif self.settings.elasticnet.l1_ratio >= (1 - self._l1_ratio_model_threshold):
-                self._model = Lasso(
-                    alpha=self.settings.elasticnet.alpha,
-                    fit_intercept=self.settings.elasticnet.fit_intercept,
-                    max_iter=self.settings.elasticnet.max_iter,
-                    tol=self.settings.elasticnet.tol,
-                    random_state=self.settings.elasticnet._seed,
-                )
-            else:
-                self._model = ElasticNet(
-                    alpha=self.settings.elasticnet.alpha,
-                    l1_ratio=self.settings.elasticnet.l1_ratio,
-                    fit_intercept=self.settings.elasticnet.fit_intercept,
-                    precompute=self.settings.elasticnet.precompute,
-                    max_iter=self.settings.elasticnet.max_iter,
-                    tol=self.settings.elasticnet.tol,
-                    selection=self.settings.elasticnet.selection,
-                    random_state=self.settings.elasticnet._seed,
-                )
-        elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
-            self._model = KernelRidge(
-                alpha=self.settings.kernel_ridge.alpha,
-                kernel=self.settings.kernel_ridge.kernel,
-                gamma=self.settings.kernel_ridge.gamma,
-            )
+        # self._model = MultiTargetRegressionWrapper(
+        #     SGDRegressor,
+        #     loss="huber",
+        #     penalty="l2",
+        #     alpha=self.settings.elasticnet.alpha,
+        #     l1_ratio=self.settings.elasticnet.l1_ratio,
+        #     fit_intercept=self.settings.elasticnet.fit_intercept,
+        #     epsilon=2.5,
+        #     shuffle=True,
+        #     # learning_rate="optimal",
+        #     max_iter=self.settings.elasticnet.max_iter,
+        #     tol=self.settings.elasticnet.tol,
+        #     random_state=self.settings.elasticnet._seed,
+        #     verbose=0,
+        # )
+
+        # self._model = MultiTargetRegressionWrapper(
+        #     HuberRegressor,
+        #     alpha=self.settings.elasticnet.alpha,
+        #     epsilon=1.35,
+        #     fit_intercept=self.settings.elasticnet.fit_intercept,
+        #     max_iter=self.settings.elasticnet.max_iter,
+        #     tol=self.settings.elasticnet.tol,
+        # )
+
+        self._model = KernelRidge(
+            kernel="rbf",
+            alpha=self.settings.elasticnet.alpha,
+            gamma=1/500
+        )
+
+        # self._model = RANSACRegressor(
+        #     base_estimator,
+        #     min_samples=0.9,
+        #     max_trials=100,
+        # )
 
 
     def fit(
@@ -238,10 +343,7 @@ class HourlyModel:
             model_mismatch_warning.warn()
             self.warnings.append(model_mismatch_warning)
 
-        if self.settings.adaptive_weighted_days.enabled:
-            self._adaptive_fit(baseline_data)
-        else:
-            self._fit(baseline_data)
+        self._fit(baseline_data)
 
         if not self._model_fit_is_acceptable():
             model_fit_warning = EEMeterWarning(
@@ -273,89 +375,13 @@ class HourlyModel:
         self._model.fit(X_fit, y_fit)
         self.is_fitted = True
 
+        # FIXME
         # get number of model parameters
-        if self.settings.base_model == _settings.BaseModel.ELASTICNET:
-            num_parameters = np.count_nonzero(self._model.coef_) + np.count_nonzero(
-                self._model.intercept_
-            )
-        elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
-            num_parameters = np.count_nonzero(self._model.dual_coef_)
+        # num_parameters = np.count_nonzero(self._model.coef_) + np.count_nonzero(
+        #     self._model.intercept_
+        # )
 
-        # get model prediction of baseline
-        df_meter = self._predict(meter_data, X=X)
-
-        # calculate baseline metrics on non-interpolated data
-        cols = [col for col in df_meter.columns if col.startswith("interpolated_")]
-        interpolated = df_meter[cols].any(axis=1)
-
-        self.baseline_metrics = BaselineMetrics(
-            df=df_meter.loc[~interpolated], num_model_params=num_parameters
-        )
-        self.baseline_timezone = meter_data.tz
-
-        return self
-
-    def _adaptive_fit(self, meter_data):
-        adaptive_settings = self.settings.adaptive_weighted_days
-
-        # Initialize dataframe
-        self.is_fitted = False
-
-        df_meter = meter_data.df  # used to have a copy here
-
-        # Prepare feature arrays/matrices
-        X, y, fit_mask = self._prepare_features(df_meter)
-        X_fit = X[fit_mask, :]
-        y_fit = y[fit_mask]
-
-        weights = 1
-        rmse_annual_prior = np.inf
-        # fit the model
-        for i in range(adaptive_settings.max_iter):
-            self._model.fit(X_fit, y_fit, sample_weight=weights)
-
-            y_predict = self._model.predict(X_fit)
-
-            # calculate residuals and annual rmse
-            resid = y_fit - y_predict
-
-            rmse_annual = np.sqrt(np.mean(resid ** 2))
-
-            if i > 0:
-                rel_diff = (rmse_annual - rmse_annual_prior) / rmse_annual_prior
-
-                # if rmse is not changing much, break
-                if rel_diff < adaptive_settings.tol:
-                    break
-
-            rmse_annual_prior = rmse_annual
-
-            # for each day, calculate rmse to downweight outlier days
-            rmse_daily = np.sqrt(np.mean(resid**2, axis=1))
-
-            weights_prior = copy(weights)
-
-            weights, _, alpha = adaptive_weights(
-                rmse_daily, 
-                alpha="adaptive", 
-                sigma=2.698, 
-                quantile=0.25, 
-                min_weight=0.0
-            )
-            weights *= weights_prior
-
-            if alpha == 2:
-                break
-
-        self.is_fitted = True
-
-        # get number of model parameters
-        if self.settings.base_model == _settings.BaseModel.ELASTICNET:
-            num_parameters = np.count_nonzero(self._model.coef_) + np.count_nonzero(
-                self._model.intercept_
-            )
-        elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
-            num_parameters = np.count_nonzero(self._model.dual_coef_)
+        num_parameters = np.count_nonzero(self._model.dual_coef_)
 
         # get model prediction of baseline
         df_meter = self._predict(meter_data, X=X)
@@ -507,7 +533,7 @@ class HourlyModel:
         X, y, fit_mask = self._get_feature_matrices(meter_data, dst_indices)
 
         # Convert to sparse matrix
-        X = csr_matrix(X.astype(float))
+        # X = csr_matrix(X.astype(float))
 
         return X, y, fit_mask
 

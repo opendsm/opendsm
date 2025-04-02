@@ -25,8 +25,8 @@ class SelectionChoice(str, Enum):
 
 
 class ScalingChoice(str, Enum):
-    ROBUSTSCALER = "robustscaler"
-    STANDARDSCALER = "standardscaler"
+    ROBUST_SCALER = "robustscaler"
+    STANDARD_SCALER = "standardscaler"
 
 
 class BinningChoice(str, Enum):
@@ -39,9 +39,15 @@ class DefaultTrainingFeatures(str, Enum):
     SOLAR = ["temperature", "ghi"]
     NONSOLAR = ["temperature"]
 
+
 class AggregationMethod(str, Enum):
     MEAN = "mean"
     MEDIAN = "median"
+
+
+class BaseModel(str, Enum):
+    ELASTICNET = "elasticnet"
+    KERNEL_RIDGE = "kernel_ridge"
 
 
 class TemperatureBinSettings(BaseSettings):
@@ -197,40 +203,61 @@ class ElasticNetSettings(BaseSettings):
         default=SelectionChoice.CYCLIC,
     )
 
+
+class KernelRidgeSettings(BaseSettings):
+    """Kernel Ridge alpha parameter"""
+    alpha: float = pydantic.Field(
+        default=0.0425,
+        ge=0,
+    )
+
+    """Kernel Ridge kernel parameter"""
+    kernel: str = pydantic.Field(
+        default="rbf",
+    )
+
+    """Kernel Ridge gamma parameter"""
+    gamma: Optional[float] = pydantic.Field(
+        default=None,
+        gt=0,
+    )
+
+
+class AdaptiveDaysSettings(BaseSettings):
     """Adaptive Daily Weights for ElasticNet"""
-    adaptive_weights: bool = pydantic.Field(
+    enabled: bool = pydantic.Field(
         default=True,
     )
 
     """Number of iterations to iterate weights"""
-    adaptive_weight_max_iter: Optional[int] = pydantic.Field(
+    max_iter: Optional[int] = pydantic.Field(
         default=25,   # Previously was using 100 as it exits early where appropriate
         ge=1,
     )
 
     """Relative difference in weights to stop iteration"""
-    adaptive_weight_tol: Optional[float] = pydantic.Field(
+    tol: Optional[float] = pydantic.Field(
         default=1E-4,   # Previously was using 1e-4
         ge=0,
     )
 
     @pydantic.model_validator(mode="after")
     def _check_adaptive_weights(self):
-        if self.adaptive_weights:
-            if self.adaptive_weight_max_iter is None:
+        if self.enabled:
+            if self.max_iter is None:
                 raise ValueError(
                     "'adaptive_weight_iter' must be specified if 'adaptive_weights' is True."
                 )
-            if self.adaptive_weight_tol is None:
+            if self.tol is None:
                 raise ValueError(
                     "'adaptive_weight_tol' must be specified if 'adaptive_weights' is True."
                 )
         else:
-            if self.adaptive_weight_max_iter is not None:
+            if self.max_iter is not None:
                 raise ValueError(
                     "'adaptive_weight_iter' must be None if 'adaptive_weights' is False."
                 )
-            if self.adaptive_weight_tol is not None:
+            if self.tol is not None:
                 raise ValueError(
                     "'adaptive_weight_tol' must be None if 'adaptive_weights' is False."
                 )
@@ -292,14 +319,29 @@ class BaseHourlySettings(BaseSettings):
         default=None,
     )
 
+    """base model type"""
+    base_model: BaseModel = pydantic.Field(
+        default=BaseModel.ELASTICNET,
+    )
+
     """ElasticNet settings"""
     elasticnet: ElasticNetSettings = pydantic.Field(
         default_factory=ElasticNetSettings,
     )
 
+    """Kernel Ridge settings"""
+    kernel_ridge: KernelRidgeSettings = pydantic.Field(
+        default_factory=KernelRidgeSettings,
+    )
+
+    """adaptive days settings"""
+    adaptive_weighted_days: AdaptiveDaysSettings = pydantic.Field(
+        default_factory=AdaptiveDaysSettings,
+    )
+
     """Feature scaling method"""
     scaling_method: ScalingChoice = pydantic.Field(
-        default=ScalingChoice.STANDARDSCALER,
+        default=ScalingChoice.STANDARD_SCALER,
     )
 
     """seed for any random state assignment (ElasticNet, Clustering)"""
