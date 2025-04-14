@@ -349,24 +349,27 @@ class HourlyModel:
 
         self.is_fitted = True
 
+        # get model prediction of baseline
+        df_meter = self._predict(meter_data, X=X)      
+
+        # calculate baseline metrics on non-interpolated data
+        cols = [col for col in df_meter.columns if col.startswith("interpolated_")]
+        interpolated = df_meter[cols].any(axis=1)
+
+        df_baseline = df_meter.loc[~interpolated]
+
         # get number of model parameters
         if self.settings.base_model == _settings.BaseModel.ELASTICNET:
             num_parameters = np.count_nonzero(self._model.coef_) + np.count_nonzero(
                 self._model.intercept_
             )
         elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
-            num_parameters = np.count_nonzero(self._model.dual_coef_)
-
-        # get model prediction of baseline
-        df_meter = self._predict(meter_data, X=X)
-
-        # calculate baseline metrics on non-interpolated data
-        cols = [col for col in df_meter.columns if col.startswith("interpolated_")]
-        interpolated = df_meter[cols].any(axis=1)
+            num_parameters = len(df_baseline) - KRR_DoF_estimate(self._model)
 
         self.baseline_metrics = BaselineMetrics(
-            df=df_meter.loc[~interpolated], num_model_params=num_parameters
+            df=df_baseline, num_model_params=num_parameters
         )
+
         self.baseline_timezone = meter_data.tz
 
         return self
@@ -1084,8 +1087,10 @@ class HourlyModel:
         return X, y, fit_mask
 
     def _model_fit_is_acceptable(self):
-        cvrmse = self.baseline_metrics.cvrmse_adj
-        pnrmse = self.baseline_metrics.pnrmse_adj
+        cvrmse = self.baseline_metrics.cvrmse
+        pnrmse = self.baseline_metrics.pnrmse
+        # cvrmse = self.baseline_metrics.cvrmse_adj
+        # pnrmse = self.baseline_metrics.pnrmse_adj
 
         # sufficient is (0 <= cvrmse <= threshold) or (0 <= pnrmse <= threshold)
 
@@ -1318,6 +1323,44 @@ def _fit_exp_growth_decay(x, y, k_only=True, is_x_sorted=False):
         a, b = np.linalg.solve(A, b)
 
     return a, b, k
+
+
+def KRR_DoF_estimate(model):
+    """
+    Estimate the effective degrees of freedom for a kernel ridge regression model.
+    
+    Parameters:
+    -----------
+    model : KernelRidge
+        The fitted kernel ridge regression model
+    X : array of shape (n_samples, n_features)
+        The input data used to fit the model
+        
+    Returns:
+    --------
+    df : float
+        The estimated degrees of freedom
+    """
+    X = model.X_fit_
+    
+    n_samples = X.shape[0]
+    I = np.eye(n_samples) # identity matrix
+
+    alpha = model.alpha
+    
+    # Compute the kernel matrix
+    K = model._get_kernel(X)
+
+    # Calculate the hat matrix: K(K + nαI)^(-1)
+    # hat_matrix = np.dot(K, np.linalg.inv(K + n_samples * alpha * I))
+
+    # Calculate the hat matrix: K(K + αI)^(-1)
+    hat_matrix = np.dot(K, np.linalg.inv(K + alpha * I))
+    
+    # Degrees of freedom is the trace of the hat matrix
+    df = np.trace(hat_matrix)
+    
+    return int(df)
 
 
 def _get_dst_indices(df):

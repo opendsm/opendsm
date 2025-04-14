@@ -13,11 +13,6 @@ from opendsm.common.base_settings import BaseSettings
 
 
 
-class PCASelection(str, Enum):
-    PCA = "pca"
-    KERNEL_PCA = "kernel_pca"
-
-
 class WaveletTransformSettings(BaseSettings):
     """wavelet decomposition level"""
     wavelet_n_levels: int = pydantic.Field(
@@ -34,11 +29,6 @@ class WaveletTransformSettings(BaseSettings):
     """signal extension mode for wavelet decomposition"""
     wavelet_mode: str = pydantic.Field(
         default="smooth",
-    )
-
-    """PCA method"""
-    pca_method: PCASelection = pydantic.Field(
-        default=PCASelection.PCA,
     )
 
     """minimum variance ratio for PCA clustering"""
@@ -90,11 +80,6 @@ class WaveletTransformSettings(BaseSettings):
                     raise ValueError(
                         "'pca_n_components' must be >= 1"
                     )
-
-            if (self.pca_n_components == "mle") and (self.pca_method == PCASelection.KERNEL_PCA):
-                raise ValueError(
-                    "Cannot use 'mle' with 'kernel_pca'"
-                )
 
         if self.pca_min_variance_ratio_explained is not None:
             if not 0.5 <= self.pca_min_variance_ratio_explained <= 1:

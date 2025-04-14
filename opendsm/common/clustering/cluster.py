@@ -353,38 +353,12 @@ def _transform_data(
 
         return np.vstack(all_features)
 
-    def _pca_coeffs(features, method, min_var_ratio_explained=0.95, n_components=None):
+    def _pca_coeffs(features, min_var_ratio_explained=0.95, n_components=None):
         if min_var_ratio_explained is not None:
             n_components = min_var_ratio_explained
 
-        # kernel pca is not fully developed
-        if method == "kernel_pca":
-            if n_components ==  "mle":
-                pca = PCA(n_components=n_components)
-                pca_features = pca.fit_transform(features)
-
-            pca = KernelPCA(n_components=None, kernel="rbf")
-            pca_features = pca.fit_transform(features)
-
-            if min_var_ratio_explained is not None:
-                explained_variance_ratio = pca.eigenvalues_ / np.sum(pca.eigenvalues_)
-
-                # get the cumulative explained variance ratio
-                cumulative_explained_variance = np.cumsum(explained_variance_ratio)
-
-                # find number of components that explain pct% of the variance
-                n_components = np.argmax(cumulative_explained_variance > n_components).astype(int)
-
-            if not isinstance(n_components, (int, np.integer)):
-                raise ValueError("n_components must be an integer for kernel PCA")
-
-            # pca = PCA(n_components=n_components)
-            pca = KernelPCA(n_components=n_components, kernel="rbf")
-            pca_features = pca.fit_transform(features)
-
-        else:
-            pca = PCA(n_components=n_components)
-            pca_features = pca.fit_transform(features)
+        pca = PCA(n_components=n_components)
+        pca_features = pca.fit_transform(features)
 
         return pca_features
 
@@ -399,7 +373,6 @@ def _transform_data(
 
     pca_features = _pca_coeffs(
         features,
-        settings.pca_method,
         settings.pca_min_variance_ratio_explained,
         settings.pca_n_components,
     )

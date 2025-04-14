@@ -25,6 +25,38 @@ from opendsm.common.utils import LN_MAX_POS_SYSTEM_VALUE, LN_MIN_POS_SYSTEM_VALU
 
 
 @numba.jit(nopython=True, error_model="numpy", cache=True)
+def get_HDP_CDP(
+    hdd_bp,
+    cdd_bp,
+    T=np.array([]),
+    period=np.array([]),
+):
+    # if no period give, assume period matches T
+    if period.size == 0:
+        # period = np.repeat(np.arange(365), 24,)
+        period = np.arange(len(T))
+
+    # create HDP and CDP
+    # get unique values in period
+    period_unique, period_start, period_len = np.unique(period, return_index=True, return_counts=True)
+    HDP = np.zeros_like(period_unique, dtype=float)
+    CDP = np.zeros_like(period_unique, dtype=float)
+    for i, (i_start, len_) in enumerate(zip(period_start, period_len)):
+        i_end = i_start + len_
+        for j in range(i_start, i_end):
+            # HDP[i] += np.max([0.0, hdd_bp - T[j]])
+        
+            # Note HDP is modified for usage in this function
+            HDP[i] += np.min([0.0, T[j] - hdd_bp])
+            CDP[i] += np.max([0.0, T[j] - cdd_bp])
+        
+        HDP[i] = HDP[i]/len_
+        CDP[i] = CDP[i]/len_
+
+    return HDP, CDP
+
+
+@numba.jit(nopython=True, error_model="numpy", cache=True)
 def full_model(
     hdd_bp,
     hdd_beta,
@@ -35,6 +67,7 @@ def full_model(
     intercept,
     T_fit_bnds=np.array([]),
     T=np.array([]),
+    period=np.array([]),
 ):
     """
     This function predicts the total energy consumption based on the given parameters.
@@ -49,9 +82,10 @@ def full_model(
     intercept (float): The intercept value for the model.
     T_fit_bnds (numpy array): The temperature bounds for the model fitting. Default is an empty numpy array.
     T (numpy array): The temperature values. Default is an empty numpy array.
+    period (numpy array): The period values to create HDP and CDP. Default is an empty numpy array.
 
     Returns:
-    numpy array: The total energy consumption for each temperature value in T.
+    numpy array: The total energy consumption for each degree day value in period.
     """
 
     # if all variables are zero, return tidd model
@@ -65,40 +99,47 @@ def full_model(
         hdd_beta, cdd_beta = cdd_beta, hdd_beta
         hdd_k, cdd_k = cdd_k, hdd_k
 
-    E_tot = np.empty_like(T)
-    for n, Ti in enumerate(T):
-        if (Ti < hdd_bp) or (
-            (hdd_bp == cdd_bp) and (cdd_bp >= T_max)
-        ):  # Temperature is within the heating model
-            T_bp = hdd_bp
+    HDP, CDP = get_HDP_CDP(hdd_bp, cdd_bp, T, period)
+
+    # initialize E_tot as intercept
+    period_unique = np.unique(period)
+    E_tot = np.ones_like(period_unique)*intercept
+    for EDP in [HDP, CDP]:
+        # assign beta/k and correct sign
+        if EDP is HDP:
+            # skip HDP if heating region doesn't exist
+            if (hdd_bp == cdd_bp) and (hdd_bp <= T_min):
+                continue
+
             beta = -hdd_beta
             k = hdd_k
+        
+        if EDP is CDP:
+            # skip CDP if cooling region doesn't exist
+            if (hdd_bp == cdd_bp) and (cdd_bp >= T_max):
+                continue
 
-        elif (Ti > cdd_bp) or (
-            (hdd_bp == cdd_bp) and (hdd_bp <= T_min)
-        ):  # Temperature is within the cooling model
-            T_bp = cdd_bp
             beta = cdd_beta
             k = -cdd_k
 
-        else:  # Temperature independent
-            beta = 0.0
+        # skip if beta is zero
+        if beta == 0:
+            continue
 
-        # Evaluate
-        if beta == 0:  # tidd
-            E_tot[n] = intercept
+        for n, EDPi in enumerate(EDP):
+            if EDPi == 0:
+                continue
 
-        elif k == 0:  # c_hdd
-            E_tot[n] = beta * (Ti - T_bp) + intercept
+            # Evaluate
+            E_tot[n] += beta * EDPi
 
-        else:  # smoothed c_hdd
-            c_hdd = beta * (Ti - T_bp) + intercept
-
-            exp_interior = 1 / k * (Ti - T_bp)
-            exp_interior = np.clip(
-                exp_interior, LN_MIN_POS_SYSTEM_VALUE, LN_MAX_POS_SYSTEM_VALUE
-            )
-            E_tot[n] = abs(beta * k) * (np.exp(exp_interior) - 1) + c_hdd
+            if k != 0:  # smoothed c_hdd
+                exp_interior = np.clip(
+                    1 / k * EDPi, 
+                    LN_MIN_POS_SYSTEM_VALUE, 
+                    LN_MAX_POS_SYSTEM_VALUE
+                )
+                E_tot[n] += abs(beta * k) * (np.exp(exp_interior) - 1)
 
     return E_tot
 
@@ -215,6 +256,7 @@ def full_model_weight(
     cdd_k,
     intercept,
     T,
+    period,
     residual,
     sigma=3.0,
     quantile=0.25,
@@ -253,29 +295,32 @@ def full_model_weight(
     elif (cdd_bp >= T[-1]) or (hdd_bp <= T[0]):  # hdd or cdd only
         resid_all = [residual]
 
-    elif hdd_beta == 0:
-        idx_cdd_bp = np.argmin(np.abs(T - cdd_bp))
-
-        resid_all = [residual[:idx_cdd_bp], residual[idx_cdd_bp:]]
-
-    elif cdd_beta == 0:
-        idx_hdd_bp = np.argmin(np.abs(T - hdd_bp))
-
-        resid_all = [residual[:idx_hdd_bp], residual[idx_hdd_bp:]]
-
     else:
-        idx_hdd_bp = np.argmin(np.abs(T - hdd_bp))
-        idx_cdd_bp = np.argmin(np.abs(T - cdd_bp))
+        HDP, CDP = get_HDP_CDP(hdd_bp, cdd_bp, T, period)
 
-        if hdd_bp == cdd_bp:
-            resid_all = [residual[:idx_hdd_bp], residual[idx_cdd_bp:]]
+        if hdd_beta == 0:
+            idx_cdd_bp = np.argmin(np.abs(T - cdd_bp))
+
+            resid_all = [residual[:idx_cdd_bp], residual[idx_cdd_bp:]]
+
+        elif cdd_beta == 0:
+            idx_hdd_bp = np.argmin(np.abs(T - hdd_bp))
+
+            resid_all = [residual[:idx_hdd_bp], residual[idx_hdd_bp:]]
 
         else:
-            resid_all = [
-                residual[:idx_hdd_bp],
-                residual[idx_hdd_bp:idx_cdd_bp],
-                residual[idx_cdd_bp:],
-            ]
+            idx_hdd_bp = np.argmin(np.abs(T - hdd_bp))
+            idx_cdd_bp = np.argmin(np.abs(T - cdd_bp))
+
+            if hdd_bp == cdd_bp:
+                resid_all = [residual[:idx_hdd_bp], residual[idx_cdd_bp:]]
+
+            else:
+                resid_all = [
+                    residual[:idx_hdd_bp],
+                    residual[idx_hdd_bp:idx_cdd_bp],
+                    residual[idx_cdd_bp:],
+                ]
 
     weight = []
     C = []
