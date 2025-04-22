@@ -49,7 +49,7 @@ from scipy.sparse import csr_matrix
 from scipy.spatial.distance import cdist
 
 from sklearn.multioutput import MultiOutputRegressor
-from sklearn.linear_model import SGDRegressor, RANSACRegressor, HuberRegressor
+from sklearn.linear_model import SGDRegressor, RANSACRegressor, HuberRegressor, LassoLarsIC, LassoLars
 from sklearn.kernel_ridge import KernelRidge
 
 from sklearn.preprocessing import StandardScaler, RobustScaler
@@ -58,6 +58,7 @@ from timeit import default_timer as timer
 
 import json
 
+from opendsm.eemeter.models.hourly import HourlyModel
 from opendsm.eemeter.models.hourly import settings as _settings
 from opendsm.eemeter.models.hourly import HourlyBaselineData, HourlyReportingData
 from opendsm.eemeter.common.exceptions import (
@@ -260,37 +261,53 @@ class TestHourlyModel:
             self._feature_scaler = RobustScaler(unit_variance=True)
             self._y_scaler = RobustScaler(unit_variance=True)
 
+        self._initial_model = HourlyModel()
+
         # set base model
-        # self._model = MultiTargetRegressionWrapper(
-        #     SGDRegressor,
-        #     loss="huber",
-        #     penalty="l2",
-        #     alpha=self.settings.elasticnet.alpha,
-        #     l1_ratio=self.settings.elasticnet.l1_ratio,
-        #     fit_intercept=self.settings.elasticnet.fit_intercept,
-        #     epsilon=2.5,
-        #     shuffle=True,
-        #     # learning_rate="optimal",
-        #     max_iter=self.settings.elasticnet.max_iter,
-        #     tol=self.settings.elasticnet.tol,
-        #     random_state=self.settings.elasticnet._seed,
-        #     verbose=0,
-        # )
-
-        # self._model = MultiTargetRegressionWrapper(
-        #     HuberRegressor,
-        #     alpha=self.settings.elasticnet.alpha,
-        #     epsilon=1.35,
-        #     fit_intercept=self.settings.elasticnet.fit_intercept,
-        #     max_iter=self.settings.elasticnet.max_iter,
-        #     tol=self.settings.elasticnet.tol,
-        # )
-
-        self._model = KernelRidge(
-            kernel="rbf",
-            alpha=self.settings.elasticnet.alpha,
-            gamma=1/500
+        settings = self.settings.sgd_regressor
+        self._model = MultiTargetRegressionWrapper(
+            SGDRegressor,
+            loss=settings.loss,
+            penalty=settings._penalty,
+            alpha=settings.alpha,
+            l1_ratio=settings.l1_ratio,
+            epsilon=settings.epsilon,
+            fit_intercept=settings.fit_intercept,
+            max_iter=settings.max_iter,
+            tol=settings.tol,
+            learning_rate=settings.learning_rate,
+            eta0=settings.eta0,
+            power_t=settings.power_t,
+            shuffle=settings.shuffle,
+            early_stopping=settings.early_stopping,
+            validation_fraction=settings.validation_fraction,
+            n_iter_no_change=settings.n_iter_no_change,
+            warm_start=settings.warm_start,
+            random_state=settings._seed,
+            verbose=0,
         )
+
+        # self._model = MultiTargetRegressionWrapper(
+        #     LassoLarsIC,
+        #     criterion=self.settings.lasso_lars_ic.criterion,
+        #     noise_variance=self.settings.lasso_lars_ic.noise_variance,
+        #     fit_intercept=self.settings.lasso_lars_ic.fit_intercept,
+        #     positive=self.settings.lasso_lars_ic.positive,
+        #     eps=self.settings.lasso_lars_ic.eps,
+        #     copy_X=self.settings.lasso_lars_ic.copy_x,
+        #     max_iter=self.settings.lasso_lars_ic.max_iter,
+        # )
+
+        # self._model = MultiTargetRegressionWrapper(
+        #     LassoLars,
+        #     alpha=self.settings.elasticnet.alpha,
+        #     fit_intercept=self.settings.elasticnet.fit_intercept,
+        #     precompute=self.settings.elasticnet.precompute,
+        #     max_iter=self.settings.elasticnet.max_iter,
+        #     eps=1E-6,
+        #     jitter=0.01,
+        #     random_state=self.settings.elasticnet._seed,
+        # )
 
         # self._model = RANSACRegressor(
         #     base_estimator,
@@ -360,6 +377,26 @@ class TestHourlyModel:
             self.disqualification.append(model_fit_warning)
         return self
 
+    def _initial_fit_variance(self, meter_data):
+        self._initial_model.fit(meter_data)
+        df = self._initial_model.predict(meter_data)
+
+        # get variance using df observed and predicted
+        resid = df["observed"] - df["predicted"]
+
+        # drop nan values
+        resid = resid[~np.isnan(resid)]
+
+        # rescale to model scale
+        resid = self._y_scaler.transform(resid.values.reshape(-1, 1))
+
+        # get variance of residuals
+        var = np.var(resid)
+
+        return var
+
+
+
     def _fit(self, meter_data):
         # Initialize dataframe
         self.is_fitted = False
@@ -372,16 +409,23 @@ class TestHourlyModel:
         y_fit = y[fit_mask]
 
         # fit the model
+        # var = self._initial_fit_variance(meter_data)
+        # self._model._multi_output.estimator.noise_variance = var
+
         self._model.fit(X_fit, y_fit)
         self.is_fitted = True
 
         # FIXME
         # get number of model parameters
-        # num_parameters = np.count_nonzero(self._model.coef_) + np.count_nonzero(
-        #     self._model.intercept_
-        # )
+        
 
-        num_parameters = np.count_nonzero(self._model.dual_coef_)
+        num_parameters = 0
+        for est in self._model._multi_output.estimators_:
+            # num_parameters += np.count_nonzero(est.coef_)
+            num_parameters += np.count_nonzero(est.coef_) + np.count_nonzero(
+            est.intercept_
+        )
+        # num_parameters = np.count_nonzero(self._model.coef_)
 
         # get model prediction of baseline
         df_meter = self._predict(meter_data, X=X)

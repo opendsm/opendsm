@@ -47,12 +47,13 @@ class AggregationMethod(str, Enum):
 
 class BaseModel(str, Enum):
     ELASTICNET = "elasticnet"
+    SGDREGRESSOR = "sgdregressor"
     KERNEL_RIDGE = "kernel_ridge"
+    LASSO_LARS = "lasso_lars"
 
 
 class TemperatureBinSettings(BaseSettings):
     """how to bin temperature data"""
-
     method: BinningChoice = pydantic.Field(
         default=BinningChoice.SET_BIN_WIDTH,
     )
@@ -65,30 +66,30 @@ class TemperatureBinSettings(BaseSettings):
 
     """temperature bin width in fahrenheit"""
     bin_width: Optional[float] = pydantic.Field(
-        default=41,
+        default=25,
         ge=1,
     )
 
     """use edge bins bool"""
     include_edge_bins: bool = pydantic.Field(
-        default=False, 
+        default=True, 
     )
 
     """rate for edge temperature bins"""
     edge_bin_rate: Optional[Union[float, Literal["heuristic"]]] = pydantic.Field(
-        default=None, # prior "heuristic"
+        default="heuristic", # prior "heuristic"
     )
 
     """percent of total data in edge bins"""
     edge_bin_percent: Optional[float] = pydantic.Field(
-        default=None, # prior 0.045
+        default=0.087329, # prior 0.045
         gt=0,
         le=0.45,
     )
 
     """offset normalized temperature range for edge bins (keeps exp from blowing up)"""
     edge_bin_temperature_range_offset: Optional[float] = pydantic.Field(
-        default=None, # prior 1.0
+        default=1.0, # prior 1.0
         ge=0,
     )
 
@@ -159,13 +160,13 @@ class ElasticNetSettings(BaseSettings):
     """ElasticNet alpha parameter"""
 
     alpha: float = pydantic.Field(
-        default=0.059259,
+        default=0.009613,
         ge=0,
     )
 
     """ElasticNet l1_ratio parameter"""
     l1_ratio: float = pydantic.Field(
-        default=0.05,
+        default=1.0,
         ge=0,
         le=1,
     )
@@ -194,7 +195,7 @@ class ElasticNetSettings(BaseSettings):
 
     """ElasticNet tol parameter"""
     tol: float = pydantic.Field(
-        default=1e-4,
+        default=1e-3,
         gt=0,
     )
 
@@ -202,6 +203,131 @@ class ElasticNetSettings(BaseSettings):
     selection: SelectionChoice = pydantic.Field(
         default=SelectionChoice.CYCLIC,
     )
+
+
+class LossChoice(str, Enum):
+    SQUARED_ERROR = "squared_error"
+    HUBER = "huber"
+    EPSILON_INSENSITIVE = "epsilon_insensitive"
+    SQUARED_EPSILON_INSENSITIVE = "squared_epsilon_insensitive"
+
+
+class LearningRateChoice(str, Enum):
+    CONSTANT = "constant"
+    OPTIMAL = "optimal"
+    INVSCALING = "invscaling"
+    ADAPTIVE = "adaptive"
+
+
+class SGDSettings(BaseSettings):
+    loss: LossChoice = pydantic.Field(
+        default=LossChoice.HUBER,
+    )
+
+    alpha: float = pydantic.Field(
+        default=0.009613,
+        ge=0,
+    )
+
+    l1_ratio: float = pydantic.Field(
+        default=1.0,
+        ge=0,
+        le=1,
+    )
+
+    epsilon: float = pydantic.Field(
+        default=3.0,
+        gt=0,
+    )
+
+    adaptive_epsilon_sigma_threshold: float = pydantic.Field(
+        default=3.0,
+        gt=0,
+    )
+
+    adaptive_epsilon_iter: int = pydantic.Field(
+        default=5,
+        ge=1,
+        le=2**32 - 1,
+    )
+
+    adaptive_epsilon_tolerance: float = pydantic.Field(
+        default=0.05,
+        gt=0,
+    )
+
+    fit_intercept: bool = pydantic.Field(
+        default=True,
+    )
+
+    max_iter: int = pydantic.Field(
+        default=3000,
+        ge=1,
+        le=2**32 - 1,
+    )
+
+    tol: float = pydantic.Field(
+        default=1e-3,
+        gt=0,
+    )
+
+    learning_rate: LearningRateChoice = pydantic.Field(
+        default=LearningRateChoice.OPTIMAL,
+    )
+
+    eta0: float = pydantic.Field(
+        default=0.01,
+        gt=0,
+    )
+
+    power_t: float = pydantic.Field(
+        default=0.5,
+    )
+    
+    shuffle: bool = pydantic.Field(
+        default=True,
+    )
+
+    early_stopping: bool = pydantic.Field(
+        default=False,
+    )
+
+    validation_fraction: float = pydantic.Field(
+        default=0.1,
+        gt=0,
+        le=1,
+    )
+
+    n_iter_no_change: int = pydantic.Field(
+        default=10,
+        gt=0,
+        le=2**32 - 1,
+    )
+
+    warm_start: bool = pydantic.Field(
+        default=True,
+    )
+
+    
+    @pydantic.model_validator(mode="after")
+    def _set_penalty(self):
+        if self.alpha == 0:
+            self._penalty = None
+        elif self.l1_ratio == 0:
+            self._penalty = "l2"
+        elif self.l1_ratio == 1:
+            self._penalty = "l1"
+        else:
+            self._penalty = "elasticnet"
+
+        return self
+
+    @pydantic.model_validator(mode="after")
+    def _check_n_iter_no_change(self):
+        if self.n_iter_no_change > self.max_iter:
+            raise ValueError("'n_iter_no_change' must be less than 'max_iter'.")
+
+        return self
 
 
 class KernelRidgeSettings(BaseSettings):
@@ -221,6 +347,61 @@ class KernelRidgeSettings(BaseSettings):
         default=None,
         gt=0,
     )
+
+
+class Criterion(str, Enum):
+    AIC = "aic"
+    BIC = "bic"
+
+
+class LassoLarsICSettings(BaseSettings):
+    """criterion"""
+    criterion: Criterion = pydantic.Field(
+        default=Criterion.AIC,
+    )
+
+    """noise variance"""
+    noise_variance: Optional[float] = pydantic.Field(
+        default=None,
+        gt=0,
+    )
+
+    """fit_intercept"""
+    fit_intercept: bool = pydantic.Field(
+        default=True,
+    )
+
+    """Force positive coefficients"""
+    positive: bool = pydantic.Field(
+        default=False,
+    )
+
+
+    """epsilon-precision regularization for Cholesky diagonal factors"""
+    eps: float = pydantic.Field(
+        default=1E-6, #np.finfo(float).eps,
+        gt=0,
+    )
+
+    """copy X to prevent overwriting"""
+    copy_x: bool = pydantic.Field(
+        default=True,
+    )
+
+    """maximum number of iterations"""
+    max_iter: int = pydantic.Field(
+        default=1000,
+        ge=1,
+    )
+
+    @pydantic.model_validator(mode="after")
+    def _check_positive(self):
+        if self.positive:
+            if self.fit_intercept:
+                raise ValueError(
+                    "'fit_intercept' must be False if 'positive' is True."
+                )
+        return self
 
 
 class AdaptiveDaysSettings(BaseSettings):
@@ -246,20 +427,20 @@ class AdaptiveDaysSettings(BaseSettings):
         if self.enabled:
             if self.max_iter is None:
                 raise ValueError(
-                    "'adaptive_weight_iter' must be specified if 'adaptive_weights' is True."
+                    "'max_iter' must be specified if 'adaptive_weights' is True."
                 )
             if self.tol is None:
                 raise ValueError(
-                    "'adaptive_weight_tol' must be specified if 'adaptive_weights' is True."
+                    "'tol' must be specified if 'adaptive_weights' is True."
                 )
         else:
             if self.max_iter is not None:
                 raise ValueError(
-                    "'adaptive_weight_iter' must be None if 'adaptive_weights' is False."
+                    "'max_iter' must be None if 'adaptive_weights' is False."
                 )
             if self.tol is not None:
                 raise ValueError(
-                    "'adaptive_weight_tol' must be None if 'adaptive_weights' is False."
+                    "'tol' must be None if 'adaptive_weights' is False."
                 )
 
         return self
@@ -305,7 +486,7 @@ class BaseHourlySettings(BaseSettings):
 
     """temporal cluster/temperature bin/temperature interaction scalar"""
     interaction_scalar: float = pydantic.Field(
-        default=0.562026,
+        default=0.109947,
         gt=0,
     )
 
@@ -325,13 +506,23 @@ class BaseHourlySettings(BaseSettings):
     )
 
     """ElasticNet settings"""
-    elasticnet: ElasticNetSettings = pydantic.Field(
+    elasticnet: Optional[ElasticNetSettings] = pydantic.Field(
         default_factory=ElasticNetSettings,
     )
 
+    """SGDRegressor settings"""
+    sgd_regressor: Optional[SGDSettings] = pydantic.Field(
+        default_factory=SGDSettings,
+    )
+
     """Kernel Ridge settings"""
-    kernel_ridge: KernelRidgeSettings = pydantic.Field(
+    kernel_ridge: Optional[KernelRidgeSettings] = pydantic.Field(
         default_factory=KernelRidgeSettings,
+    )
+
+    """LassoLarsIC settings"""
+    lasso_lars: Optional[LassoLarsICSettings] = pydantic.Field(
+        default_factory=LassoLarsICSettings,
     )
 
     """adaptive days settings"""
@@ -359,6 +550,39 @@ class BaseHourlySettings(BaseSettings):
 
         self.elasticnet._seed = self._seed
         self.temporal_cluster._seed = self._seed
+        self.sgd_regressor._seed = self._seed
+
+        return self
+
+    @pydantic.model_validator(mode="after")
+    def _check_adaptive_sgdregressor(self):
+        if (self.base_model == BaseModel.SGDREGRESSOR) and self.adaptive_weighted_days.enabled:
+            raise ValueError("'adaptive_weighted_days' must be False if 'base_model' is 'sgdregressor'.")
+
+        return self
+
+    @pydantic.model_validator(mode="after")
+    def _remove_unselected_model_settings(self):
+        self.model_config["frozen"] = False
+        
+        if self.base_model == BaseModel.ELASTICNET:
+            self.sgd_regressor = None
+            self.kernel_ridge = None
+            self.lasso_lars = None
+        elif self.base_model == BaseModel.SGDREGRESSOR:
+            self.elasticnet = None
+            self.kernel_ridge = None
+            self.lasso_lars = None
+        elif self.base_model == BaseModel.KERNEL_RIDGE:
+            self.elasticnet = None
+            self.sgd_regressor = None
+            self.lasso_lars = None
+        elif self.base_model == BaseModel.LASSO_LARS:
+            self.elasticnet = None
+            self.sgd_regressor = None
+            self.kernel_ridge = None
+
+        self.model_config["frozen"] = True
 
         return self
 

@@ -18,17 +18,31 @@ class PCASelection(str, Enum):
     KERNEL_PCA = "kernel_pca"
 
 
+class WaveletSelection(str, Enum):
+    BIOR1_1 = "bior1.1"
+    COIF6 = "coif6"
+    COIF17 = "coif17"    # Best error/speed mix
+    DB1 = "db1"          # Best error metrics
+    DB16 = "db16"
+    DB26 = "db26"
+    DB29 = "db29"
+    HAAR = "haar"
+    RBIO1_1 = "rbio1.1"
+    SYM11 = "sym11"
+    
+
+
 class WaveletTransformSettings(BaseSettings):
     """wavelet decomposition level"""
     wavelet_n_levels: int = pydantic.Field(
-        default=4,
+        default=5,
         ge=1,
         # le=5,  #TODO investigate upper limit
     )
 
     """wavelet choice for wavelet decomposition"""
-    wavelet_name: str = pydantic.Field(
-        default="haar",  # maybe db3?
+    wavelet_name: WaveletSelection = pydantic.Field(
+        default=WaveletSelection.DB1,
     )
 
     """signal extension mode for wavelet decomposition"""
@@ -367,7 +381,7 @@ class SpectralSettings(BaseSettings):
 
     """gamma for RBF, polynomial, sigmoid, laplacian, and chi2 kernels"""
     gamma: float = pydantic.Field(
-        default=2.0,
+        default=2.906796,
         ge=0, # could be wrong? maybe gt?
     )
 
@@ -508,6 +522,26 @@ class ClusteringSettings(BaseSettings):
     def _add_standardize_to_transform(self):
         if self.transform_settings is not None:
             self.transform_settings._standardize = self.standardize
+
+        return self
+
+    @pydantic.model_validator(mode="after")
+    def _remove_unselected_algorithms(self):
+        self.model_config["frozen"] = False
+
+        algo_dict = {
+            ClusterAlgorithms.BISECTING_KMEANS: self.bisecting_kmeans,
+            ClusterAlgorithms.BIRCH: self.birch,
+            ClusterAlgorithms.DBSCAN: self.dbscan,
+            ClusterAlgorithms.HDBSCAN: self.hdbscan,
+            ClusterAlgorithms.SPECTRAL: self.spectral,
+        }
+
+        for k in algo_dict.keys():
+            if k != self.algorithm_selection:
+                setattr(self, k, None)
+
+        self.model_config["frozen"] = True
 
         return self
 

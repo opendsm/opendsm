@@ -46,7 +46,8 @@ from scipy.sparse import csr_matrix
 
 from scipy.spatial.distance import cdist
 
-from sklearn.linear_model import ElasticNet, LinearRegression, Ridge, Lasso
+from sklearn.multioutput import MultiOutputRegressor
+from sklearn.linear_model import ElasticNet, LinearRegression, Ridge, Lasso, SGDRegressor, LassoLarsIC, LassoLars
 from sklearn.kernel_ridge import KernelRidge
 from sklearn.preprocessing import StandardScaler, RobustScaler
 
@@ -67,6 +68,110 @@ from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict
 from opendsm import __version__
 
 
+
+class MultiTargetRegressionWrapper:  
+    def __init__(self, model, **kwargs):
+        # Initialize the base ARDRegression with its parameters
+        self._base_regressor = model(**kwargs)
+        
+        # Wrap it in MultiOutputRegressor for multi-target support
+        self._multi_output = MultiOutputRegressor(self._base_regressor, n_jobs=None)
+        
+        # Initialize attributes
+        self.is_fit = False
+    
+    def fit(self, X, y, sample_weight=None):
+        """
+        Fit the model with X, y data.
+        
+        Parameters:
+        -----------
+        X : array-like of shape (n_samples, n_features)
+            The training input samples.
+        y : array-like of shape (n_samples,) or (n_samples, n_targets)
+            The target values.
+        sample_weight : array-like of shape (n_samples,), default=None
+            Sample weights.
+            
+        Returns:
+        --------
+        self : returns an instance of self.
+        """
+        # Fit the model
+        if sample_weight is not None:
+            self._multi_output.fit(X, y, sample_weight=sample_weight)
+        else:
+            self._multi_output.fit(X, y)
+
+        self.is_fit = True
+
+        return self
+    
+    def predict(self, X):
+        """
+        Predict using the model.
+        
+        Parameters:
+        -----------
+        X : array-like of shape (n_samples, n_features)
+            The input samples.
+            
+        Returns:
+        --------
+        y : array of shape (n_samples,) or (n_samples, n_targets)
+            The predicted values.
+        """
+        if not self.is_fit:
+            raise RuntimeError("Model must be fit before predictions can be made.")
+
+        return self._multi_output.predict(X)
+    
+    def _create_estimators_(self, n):
+        if hasattr(self._multi_output, "estimators_"):
+            return
+        
+        # Create estimators for each target
+        self._multi_output.estimators_ = [copy(self._base_regressor) for _ in range(n)]
+    
+    @property
+    def coef_(self):
+        """Get model coefficients."""
+        if not self.is_fit:
+            raise RuntimeError("Model must be fit before coefficients can be accessed.")
+        
+        coef = np.vstack([est.coef_ for est in self._multi_output.estimators_])
+        
+        return coef
+        
+    @coef_.setter
+    def coef_(self, val):
+        """Set model coefficients"""
+        n_estimators = len(val)
+        self._create_estimators_(n_estimators)
+
+        for i, est in enumerate(self._multi_output.estimators_):
+            est.coef_ = val[i]
+
+    @property
+    def intercept_(self):
+        """Get model intercepts."""
+        if not self.is_fit:
+            raise RuntimeError("Model must be fit before intercepts can be accessed.")
+        
+        intercept = np.array([est.intercept_ for est in self._multi_output.estimators_])
+
+        return intercept
+        
+    @intercept_.setter
+    def intercept_(self, val):
+        """Set model intercepts"""
+        n_estimators = len(val)
+        self._create_estimators_(n_estimators)
+        
+        for i, est in enumerate(self._multi_output.estimators_):
+            est.intercept_ = val[i]
+
+
 class HourlyModel:
     """
     A class to fit a model to the input meter data.
@@ -77,7 +182,7 @@ class HourlyModel:
     """
     
     # thresholds for switching model types
-    _alpha_model_threshold = 1E-3
+    _alpha_model_threshold = 1E-5
     _l1_ratio_model_threshold = 1E-3
 
     # set priority columns for sorting
@@ -155,42 +260,62 @@ class HourlyModel:
 
         # set base model
         if self.settings.base_model == _settings.BaseModel.ELASTICNET:
-            if self.settings.elasticnet.alpha <= self._alpha_model_threshold:
+            settings = self.settings.elasticnet
+            if settings.alpha <= self._alpha_model_threshold:
                 self._model = LinearRegression(
-                    fit_intercept=self.settings.elasticnet.fit_intercept
-                )
-            elif self.settings.elasticnet.l1_ratio <= self._l1_ratio_model_threshold:
-                self._model = Ridge(
-                    alpha=self.settings.elasticnet.alpha,
-                    fit_intercept=self.settings.elasticnet.fit_intercept,
-                    max_iter=self.settings.elasticnet.max_iter,
-                    tol=self.settings.elasticnet.tol,
-                    random_state=self.settings.elasticnet._seed,
-                )
-            elif self.settings.elasticnet.l1_ratio >= (1 - self._l1_ratio_model_threshold):
-                self._model = Lasso(
-                    alpha=self.settings.elasticnet.alpha,
-                    fit_intercept=self.settings.elasticnet.fit_intercept,
-                    max_iter=self.settings.elasticnet.max_iter,
-                    tol=self.settings.elasticnet.tol,
-                    random_state=self.settings.elasticnet._seed,
+                    fit_intercept=settings.fit_intercept
                 )
             else:
-                self._model = ElasticNet(
-                    alpha=self.settings.elasticnet.alpha,
-                    l1_ratio=self.settings.elasticnet.l1_ratio,
-                    fit_intercept=self.settings.elasticnet.fit_intercept,
-                    precompute=self.settings.elasticnet.precompute,
-                    max_iter=self.settings.elasticnet.max_iter,
-                    tol=self.settings.elasticnet.tol,
-                    selection=self.settings.elasticnet.selection,
-                    random_state=self.settings.elasticnet._seed,
+                if settings.l1_ratio <= self._l1_ratio_model_threshold:
+                    model = Ridge
+                elif settings.l1_ratio >= (1 - self._l1_ratio_model_threshold):
+                    model = Lasso
+                else:
+                    model = ElasticNet
+
+                self._model = model(
+                    alpha=settings.alpha,
+                    fit_intercept=settings.fit_intercept,
+                    precompute=settings.precompute,
+                    max_iter=settings.max_iter,
+                    tol=settings.tol,
+                    selection=settings.selection,
+                    random_state=settings._seed,
                 )
+
+                if model == ElasticNet:
+                    self._model.l1_ratio = settings.l1_ratio
+
+        elif self.settings.base_model == _settings.BaseModel.SGDREGRESSOR:
+            settings = self.settings.sgd_regressor
+            self._model = MultiTargetRegressionWrapper(
+                SGDRegressor,
+                loss=settings.loss,
+                penalty=settings._penalty,
+                alpha=settings.alpha,
+                l1_ratio=settings.l1_ratio,
+                epsilon=settings.epsilon,
+                fit_intercept=settings.fit_intercept,
+                max_iter=settings.max_iter,
+                tol=settings.tol,
+                learning_rate=settings.learning_rate,
+                eta0=settings.eta0,
+                power_t=settings.power_t,
+                shuffle=settings.shuffle,
+                early_stopping=settings.early_stopping,
+                validation_fraction=settings.validation_fraction,
+                n_iter_no_change=settings.n_iter_no_change,
+                warm_start=settings.warm_start,
+                random_state=settings._seed,
+                verbose=0,
+            )
+                
         elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
+            settings = self.settings.kernel_ridge
             self._model = KernelRidge(
-                alpha=self.settings.kernel_ridge.alpha,
-                kernel=self.settings.kernel_ridge.kernel,
-                gamma=self.settings.kernel_ridge.gamma,
+                alpha=settings.alpha,
+                kernel=settings.kernel,
+                gamma=settings.gamma,
             )
 
 
@@ -240,6 +365,8 @@ class HourlyModel:
 
         if self.settings.adaptive_weighted_days.enabled:
             self._adaptive_fit(baseline_data)
+        if self.settings.base_model == _settings.BaseModel.SGDREGRESSOR:
+            self._SGD_update_fit(baseline_data)
         else:
             self._fit(baseline_data)
 
@@ -259,9 +386,9 @@ class HourlyModel:
         return self
 
     def _fit(self, meter_data):
-        # Initialize dataframe
         self.is_fitted = False
 
+        # Initialize dataframe
         df_meter = meter_data.df  # used to have a copy here
 
         # Prepare feature arrays/matrices
@@ -278,8 +405,15 @@ class HourlyModel:
             num_parameters = np.count_nonzero(self._model.coef_) + np.count_nonzero(
                 self._model.intercept_
             )
+        elif self.settings.base_model == _settings.BaseModel.SGDREGRESSOR:
+            num_parameters = 0
+            for est in self._model._multi_output.estimators_:
+                num_parameters += np.count_nonzero(est.coef_) + np.count_nonzero(
+                est.intercept_
+            )
         elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
             num_parameters = np.count_nonzero(self._model.dual_coef_)
+        
 
         # get model prediction of baseline
         df_meter = self._predict(meter_data, X=X)
@@ -295,12 +429,79 @@ class HourlyModel:
 
         return self
 
+    def _SGD_update_fit(self, meter_data):
+        settings = self.settings.sgd_regressor
+
+        self.is_fitted = False
+
+        # Initialize dataframe
+        df_meter = meter_data.df  # used to have a copy here
+
+        # Prepare feature arrays/matrices
+        X, y, fit_mask = self._prepare_features(df_meter)
+        X_fit = X[fit_mask, :]
+        y_fit = y[fit_mask]
+
+        epsilon_prior = settings.epsilon
+        for i in range(settings.adaptive_epsilon_iter):
+            # update epsilon
+            if i > 0:
+                # FUTURE IDEA: update epsilon for each estimator
+                self._model._base_regressor.epsilon = epsilon_prior
+
+            self._model.fit(X_fit, y_fit)
+            y_predict = self._model.predict(X_fit)
+
+            # calculate residuals and annual rmse
+            resid = np.abs(y_fit - y_predict)
+
+            # determine outlier threshold from residuals
+            Q1 = np.percentile(resid, 25)
+            Q3 = np.percentile(resid, 75)
+            IQR = Q3 - Q1
+            q13_scalar = 0.7413 * settings.adaptive_epsilon_sigma_threshold - 0.5
+            epsilon = Q3 + q13_scalar * IQR
+
+            if i > 0:
+                rel_diff = (epsilon - epsilon_prior) / epsilon_prior
+
+                # if not changing much, break
+                if np.abs(rel_diff) < settings.adaptive_epsilon_tolerance:
+                    break
+
+            epsilon_prior = epsilon
+
+        self.is_fitted = True
+
+        # get number of model parameters
+        num_parameters = 0
+        for est in self._model._multi_output.estimators_:
+            num_parameters += np.count_nonzero(est.coef_) + np.count_nonzero(
+            est.intercept_
+        )
+        
+        # get model prediction of baseline
+        df_meter = self._predict(meter_data, X=X)
+
+        # calculate baseline metrics on non-interpolated data
+        cols = [col for col in df_meter.columns if col.startswith("interpolated_")]
+        interpolated = df_meter[cols].any(axis=1)
+
+        self.baseline_metrics = BaselineMetrics(
+            df=df_meter.loc[~interpolated], num_model_params=num_parameters
+        )
+        self.baseline_timezone = meter_data.tz
+
+
     def _adaptive_fit(self, meter_data):
         adaptive_settings = self.settings.adaptive_weighted_days
 
-        # Initialize dataframe
         self.is_fitted = False
 
+        # Set warm_start to True
+        self._model.warm_start = True
+
+        # Initialize dataframe
         df_meter = meter_data.df  # used to have a copy here
 
         # Prepare feature arrays/matrices
