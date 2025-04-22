@@ -365,7 +365,8 @@ class HourlyModel:
 
         if self.settings.adaptive_weighted_days.enabled:
             self._adaptive_fit(baseline_data)
-        if self.settings.base_model == _settings.BaseModel.SGDREGRESSOR:
+        if ((self.settings.base_model == _settings.BaseModel.SGDREGRESSOR) and 
+            self.settings.sgd_regressor.adaptive_epsilon_enabled):
             self._SGD_update_fit(baseline_data)
         else:
             self._fit(baseline_data)

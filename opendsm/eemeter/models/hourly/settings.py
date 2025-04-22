@@ -240,6 +240,10 @@ class SGDSettings(BaseSettings):
         gt=0,
     )
 
+    adaptive_epsilon_enabled: bool = pydantic.Field(
+        default=True,
+    )
+
     adaptive_epsilon_sigma_threshold: float = pydantic.Field(
         default=3.0,
         gt=0,
