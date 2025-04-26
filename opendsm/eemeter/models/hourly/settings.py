@@ -204,6 +204,11 @@ class ElasticNetSettings(BaseSettings):
         default=SelectionChoice.CYCLIC,
     )
 
+    """ElasticNet warm_start parameter"""
+    warm_start: bool = pydantic.Field(
+        default=False,
+    )
+
 
 class LossChoice(str, Enum):
     SQUARED_ERROR = "squared_error"
@@ -225,7 +230,7 @@ class SGDSettings(BaseSettings):
     )
 
     alpha: float = pydantic.Field(
-        default=0.009613,
+        default=0.0175,
         ge=0,
     )
 
@@ -236,7 +241,7 @@ class SGDSettings(BaseSettings):
     )
 
     epsilon: float = pydantic.Field(
-        default=3.0,
+        default=5.0,
         gt=0,
     )
 
@@ -245,12 +250,12 @@ class SGDSettings(BaseSettings):
     )
 
     adaptive_epsilon_sigma_threshold: float = pydantic.Field(
-        default=3.0,
+        default=8.9,
         gt=0,
     )
 
     adaptive_epsilon_iter: int = pydantic.Field(
-        default=5,
+        default=10,
         ge=1,
         le=2**32 - 1,
     )
@@ -271,12 +276,12 @@ class SGDSettings(BaseSettings):
     )
 
     tol: float = pydantic.Field(
-        default=1e-3,
+        default=1e-4,
         gt=0,
     )
 
     learning_rate: LearningRateChoice = pydantic.Field(
-        default=LearningRateChoice.OPTIMAL,
+        default=LearningRateChoice.CONSTANT,
     )
 
     eta0: float = pydantic.Field(
@@ -574,7 +579,6 @@ class BaseHourlySettings(BaseSettings):
             self.kernel_ridge = None
             self.lasso_lars = None
         elif self.base_model == BaseModel.SGDREGRESSOR:
-            self.elasticnet = None
             self.kernel_ridge = None
             self.lasso_lars = None
         elif self.base_model == BaseModel.KERNEL_RIDGE:

@@ -35,7 +35,7 @@ class WaveletSelection(str, Enum):
 class WaveletTransformSettings(BaseSettings):
     """wavelet decomposition level"""
     wavelet_n_levels: int = pydantic.Field(
-        default=5,
+        default=4,
         ge=1,
         # le=5,  #TODO investigate upper limit
     )
@@ -467,27 +467,27 @@ class ClusteringSettings(BaseSettings):
     )
 
     """BisectingKMeans settings"""
-    bisecting_kmeans: BisectingKMeansSettings = pydantic.Field(
+    bisecting_kmeans: Optional[BisectingKMeansSettings] = pydantic.Field(
         default_factory=BisectingKMeansSettings,
     )
 
     """Birch settings"""
-    birch: BirchSettings = pydantic.Field(
+    birch: Optional[BirchSettings] = pydantic.Field(
         default_factory=BirchSettings,
     )
 
     """DBSCAN settings"""
-    dbscan: DBSCANSettings = pydantic.Field(
+    dbscan: Optional[DBSCANSettings] = pydantic.Field(
         default_factory=DBSCANSettings,
     )
 
     """HDBSCAN settings"""
-    hdbscan: HDBSCANSettings = pydantic.Field(
+    hdbscan: Optional[HDBSCANSettings] = pydantic.Field(
         default_factory=HDBSCANSettings,
     )
 
     """Spectral settings"""
-    spectral: SpectralSettings = pydantic.Field(
+    spectral: Optional[SpectralSettings] = pydantic.Field(
         default_factory=SpectralSettings,
     )
 

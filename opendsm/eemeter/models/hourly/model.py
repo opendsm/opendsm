@@ -69,18 +69,15 @@ from opendsm import __version__
 
 
 
-class MultiTargetRegressionWrapper:  
-    def __init__(self, model, **kwargs):
-        # Initialize the base ARDRegression with its parameters
-        self._base_regressor = model(**kwargs)
-        
-        # Wrap it in MultiOutputRegressor for multi-target support
-        self._multi_output = MultiOutputRegressor(self._base_regressor, n_jobs=None)
-        
-        # Initialize attributes
-        self.is_fit = False
+class SGDMultiTargetRegressor:  
+    def __init__(self, **kwargs):
+        n = 24 # 24 models for each hour of the day
+        self.regressors_ = [SGDRegressor(**kwargs) for _ in range(n)]
+
+        # previously was using sklearn.multioutput.MultiOutputRegressor
+        # but epsilon was not being set correctly
     
-    def fit(self, X, y, sample_weight=None):
+    def fit(self, X, y, coef_init=None, intercept_init=None, sample_weight=None):
         """
         Fit the model with X, y data.
         
@@ -97,15 +94,49 @@ class MultiTargetRegressionWrapper:
         --------
         self : returns an instance of self.
         """
-        # Fit the model
-        if sample_weight is not None:
-            self._multi_output.fit(X, y, sample_weight=sample_weight)
-        else:
-            self._multi_output.fit(X, y)
+        # # check that X is contiguous
+        # if not np.iscontiguousarray(X):
+        #     X = np.ascontiguousarray(X)
+        
+        for n in range(24):
+            regressor = self.regressors_[n]
 
-        self.is_fit = True
+            y_i = y[:,n]
+            if not y_i.flags["C_CONTIGUOUS"]:
+                y_i = np.ascontiguousarray(y_i)
+
+            coef_init_i = None
+            if coef_init is not None:
+                coef_init_i = coef_init[n]               
+            
+            intercept_init_i = None
+            if intercept_init is not None:
+                intercept_init_i = intercept_init[n]
+
+            # Fit the model
+            regressor.fit(
+                X, 
+                y_i, 
+                coef_init=coef_init_i, 
+                intercept_init=intercept_init_i, 
+                sample_weight=sample_weight
+            )
 
         return self
+
+    @property
+    def is_fit(self):
+        """Check if the model is fitted."""
+        is_fit = True
+        for regressor in self.regressors_:
+            if not hasattr(regressor, "coef_"):
+                is_fit = False
+                break
+            if not hasattr(regressor, "intercept_"):
+                is_fit = False
+                break
+
+        return is_fit
     
     def predict(self, X):
         """
@@ -124,52 +155,72 @@ class MultiTargetRegressionWrapper:
         if not self.is_fit:
             raise RuntimeError("Model must be fit before predictions can be made.")
 
-        return self._multi_output.predict(X)
-    
-    def _create_estimators_(self, n):
-        if hasattr(self._multi_output, "estimators_"):
-            return
-        
-        # Create estimators for each target
-        self._multi_output.estimators_ = [copy(self._base_regressor) for _ in range(n)]
+        y = np.empty((X.shape[0], 24))
+        for n in range(24):
+            y[:,n] = self.regressors_[n].predict(X)
+
+        return y
     
     @property
     def coef_(self):
         """Get model coefficients."""
-        if not self.is_fit:
-            raise RuntimeError("Model must be fit before coefficients can be accessed.")
+        if not all([hasattr(est, "coef_") for est in self.regressors_]):
+            raise RuntimeError("Model coefficients must be set before accessed.")
         
-        coef = np.vstack([est.coef_ for est in self._multi_output.estimators_])
+        coef = np.vstack([est.coef_ for est in self.regressors_])
+        coef = np.ascontiguousarray(coef)
         
         return coef
         
     @coef_.setter
     def coef_(self, val):
         """Set model coefficients"""
-        n_estimators = len(val)
-        self._create_estimators_(n_estimators)
-
-        for i, est in enumerate(self._multi_output.estimators_):
+        for i, est in enumerate(self.regressors_):
             est.coef_ = val[i]
 
     @property
     def intercept_(self):
         """Get model intercepts."""
-        if not self.is_fit:
-            raise RuntimeError("Model must be fit before intercepts can be accessed.")
+        if not all([hasattr(est, "intercept_") for est in self.regressors_]):
+            raise RuntimeError("Model intercepts must be set before accessed.")
         
-        intercept = np.array([est.intercept_ for est in self._multi_output.estimators_])
+        intercept = np.array([est.intercept_ for est in self.regressors_])
 
         return intercept
         
     @intercept_.setter
     def intercept_(self, val):
         """Set model intercepts"""
-        n_estimators = len(val)
-        self._create_estimators_(n_estimators)
+        for i, est in enumerate(self.regressors_):
+            if not isinstance(val[i], np.ndarray) or val[i].ndim != 1:
+                est.intercept_ = np.array([val[i]])
+            else:
+                est.intercept_ = val[i]
+
+    @property
+    def epsilon(self):       
+        """Get model epsilon."""
+        epsilon = np.array([est.epsilon for est in self.regressors_])
+
+        return epsilon
+
+    @epsilon.setter
+    def epsilon(self, val):
+        """Set model epsilon"""
+        for i, est in enumerate(self.regressors_):
+            est.epsilon = val[i]
+
+    @property
+    def num_parameters(self):
+        """Get number of model parameters."""
+        if not self.is_fit:
+            raise RuntimeError("Model must be fit before number of parameters can be accessed.")
         
-        for i, est in enumerate(self._multi_output.estimators_):
-            est.intercept_ = val[i]
+        num_parameters = 0
+        for est in self.regressors_:
+            num_parameters += np.count_nonzero(est.coef_) + np.count_nonzero(est.intercept_)
+        
+        return int(num_parameters)
 
 
 class HourlyModel:
@@ -225,7 +276,8 @@ class HourlyModel:
             self.settings = settings
 
         # Initialize model
-        self._model_selection()
+        self._set_scalers()
+        self._set_model()
 
         self._T_bin_edges = None
         self._T_edge_bin_coeffs = None
@@ -248,8 +300,8 @@ class HourlyModel:
         self.error = dict()
         self.version = __version__
 
-
-    def _model_selection(self):
+    
+    def _set_scalers(self):
         # set scalers
         if self.settings.scaling_method == _settings.ScalingChoice.STANDARD_SCALER:
             self._feature_scaler = StandardScaler()
@@ -258,6 +310,8 @@ class HourlyModel:
             self._feature_scaler = RobustScaler(unit_variance=True)
             self._y_scaler = RobustScaler(unit_variance=True)
 
+
+    def _set_model(self):
         # set base model
         if self.settings.base_model == _settings.BaseModel.ELASTICNET:
             settings = self.settings.elasticnet
@@ -280,6 +334,7 @@ class HourlyModel:
                     max_iter=settings.max_iter,
                     tol=settings.tol,
                     selection=settings.selection,
+                    warm_start=settings.warm_start,
                     random_state=settings._seed,
                 )
 
@@ -288,8 +343,7 @@ class HourlyModel:
 
         elif self.settings.base_model == _settings.BaseModel.SGDREGRESSOR:
             settings = self.settings.sgd_regressor
-            self._model = MultiTargetRegressionWrapper(
-                SGDRegressor,
+            self._model = SGDMultiTargetRegressor(
                 loss=settings.loss,
                 penalty=settings._penalty,
                 alpha=settings.alpha,
@@ -365,7 +419,7 @@ class HourlyModel:
 
         if self.settings.adaptive_weighted_days.enabled:
             self._adaptive_fit(baseline_data)
-        if ((self.settings.base_model == _settings.BaseModel.SGDREGRESSOR) and 
+        elif ((self.settings.base_model == _settings.BaseModel.SGDREGRESSOR) and 
             self.settings.sgd_regressor.adaptive_epsilon_enabled):
             self._SGD_update_fit(baseline_data)
         else:
@@ -407,15 +461,10 @@ class HourlyModel:
                 self._model.intercept_
             )
         elif self.settings.base_model == _settings.BaseModel.SGDREGRESSOR:
-            num_parameters = 0
-            for est in self._model._multi_output.estimators_:
-                num_parameters += np.count_nonzero(est.coef_) + np.count_nonzero(
-                est.intercept_
-            )
+            num_parameters = self._model.num_parameters
         elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
             num_parameters = np.count_nonzero(self._model.dual_coef_)
         
-
         # get model prediction of baseline
         df_meter = self._predict(meter_data, X=X)
 
@@ -443,28 +492,68 @@ class HourlyModel:
         X_fit = X[fit_mask, :]
         y_fit = y[fit_mask]
 
-        epsilon_prior = settings.epsilon
+        epsilon = np.empty(24)
         for i in range(settings.adaptive_epsilon_iter):
-            # update epsilon
+            if i == 0:
+                # initialize elastic net model
+                enet_settings = self.settings.model_dump()
+                enet_settings["base_model"] = _settings.BaseModel.ELASTICNET
+                enet_model = HourlyModel(settings=enet_settings)
+
+                # initialize SGD elastic net model
+                # SGD_enet_settings = self.settings.model_dump()
+                # SGD_enet_settings["sgd_regressor"]["loss"] = "squared_error"
+                # SGD_enet_model = HourlyModel(settings=SGD_enet_settings)
+
+                # fit elastic net model
+                enet_model._model.fit(X_fit, y_fit)
+                y_predict = enet_model._model.predict(X_fit)
+        
+                # fit SGD elastic net model    
+                # SGD_enet_model._model.fit(
+                #     X_fit, 
+                #     y_fit, 
+                #     coef_init=enet_model._model.coef_,
+                #     intercept_init=enet_model._model.intercept_,
+                # )
+                # y_predict = SGD_enet_model._model.predict(X_fit)
+            
+            else:
+                # update epsilon
+                self._model.epsilon = epsilon_prior
+                
+                self._model.fit(
+                    X_fit, 
+                    y_fit,
+                    coef_init=coef_init,
+                    intercept_init=intercept_init,
+                )
+                y_predict = self._model.predict(X_fit)
+
+            eps_algo = "mad"
+            for n in range(24):
+                resid = y_fit[:,n] - y_predict[:,n]
+                
+                if eps_algo == "stdev":
+                    epsilon[n] = settings.adaptive_epsilon_sigma_threshold * np.std(resid)
+
+                elif eps_algo == "iqr":
+                    resid = np.abs(resid)
+
+                    Q1 = np.percentile(resid, 25)
+                    Q3 = np.percentile(resid, 75)
+                    IQR = Q3 - Q1
+                    q13_scalar = 0.7413 * settings.adaptive_epsilon_sigma_threshold - 0.5
+
+                    epsilon[n] = Q3 + q13_scalar * IQR
+                elif eps_algo == "mad":
+                    resid_median = np.median(resid)
+                    MAD = np.median(np.abs(resid - resid_median))
+
+                    epsilon[n] = settings.adaptive_epsilon_sigma_threshold * 1.4826 * MAD
+
             if i > 0:
-                # FUTURE IDEA: update epsilon for each estimator
-                self._model._base_regressor.epsilon = epsilon_prior
-
-            self._model.fit(X_fit, y_fit)
-            y_predict = self._model.predict(X_fit)
-
-            # calculate residuals and annual rmse
-            resid = np.abs(y_fit - y_predict)
-
-            # determine outlier threshold from residuals
-            Q1 = np.percentile(resid, 25)
-            Q3 = np.percentile(resid, 75)
-            IQR = Q3 - Q1
-            q13_scalar = 0.7413 * settings.adaptive_epsilon_sigma_threshold - 0.5
-            epsilon = Q3 + q13_scalar * IQR
-
-            if i > 0:
-                rel_diff = (epsilon - epsilon_prior) / epsilon_prior
+                rel_diff = np.mean(np.abs((epsilon - epsilon_prior)) / epsilon_prior)
 
                 # if not changing much, break
                 if np.abs(rel_diff) < settings.adaptive_epsilon_tolerance:
@@ -472,14 +561,21 @@ class HourlyModel:
 
             epsilon_prior = epsilon
 
+            if i == 0:
+                # coef_init = SGD_enet_model._model.coef_
+                # intercept_init = SGD_enet_model._model.intercept_
+
+                coef_init = enet_model._model.coef_
+                intercept_init = enet_model._model.intercept_
+
+            else:
+                coef_init = self._model.coef_
+                intercept_init = self._model.intercept_
+
         self.is_fitted = True
 
         # get number of model parameters
-        num_parameters = 0
-        for est in self._model._multi_output.estimators_:
-            num_parameters += np.count_nonzero(est.coef_) + np.count_nonzero(
-            est.intercept_
-        )
+        num_parameters = self._model.num_parameters
         
         # get model prediction of baseline
         df_meter = self._predict(meter_data, X=X)
