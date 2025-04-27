@@ -205,9 +205,8 @@ def rolling_IQR_outlier(x, y, sigma_threshold=3, quantile=0.25, window=0.05, ste
     return outlier_threshold
 
 
-# TODO: uncertain if these C functions should use np.min, np.mean, or np.max
 @numba.jit(nopython=True, error_model="numpy", cache=True)
-def get_C(resid, mu, sigma, quantile=0.25):
+def get_C(resid, mu, sigma, quantile=0.25, algo="iqr_legacy"):
     """
     This function calculates the maximum absolute value of the Interquartile Range (IQR) of the residuals
     from a given mean (mu) and standard deviation (sigma). If the maximum absolute value is zero,
@@ -222,14 +221,36 @@ def get_C(resid, mu, sigma, quantile=0.25):
     Returns:
     float: The maximum absolute value of the IQR of the residuals, or the order of magnitude of the maximum value of the IQR.
     """
+    # remove non-finite values
+    resid = resid[np.isfinite(resid)]
 
-    q13 = IQR_outlier(
-        resid - mu, weights=None, sigma_threshold=sigma, quantile=quantile
-    )
-    C = np.max(np.abs(q13))
+    if algo == "iqr_legacy":
+        # TODO: uncertain if these C functions should use np.min, np.mean, or np.max
+        # suspect we can switch to IQR below, but need to test
+        bounds = IQR_outlier(
+            resid - mu, weights=None, sigma_threshold=sigma, quantile=quantile
+        )
+        C = np.max(np.abs(bounds))
+
+    elif algo == "iqr":
+        resid = np.abs(resid)
+
+        bounds = IQR_outlier(
+            resid - mu, weights=None, sigma_threshold=sigma, quantile=quantile
+        )
+        C = np.max(np.abs(bounds))
+
+    elif algo == "mad":
+        resid_median = np.median(resid)
+        MAD = np.median(np.abs(resid - resid_median))
+
+        C = sigma * 1.4826 * MAD
+
+    elif algo == "stdev":
+        C = sigma * np.std(resid)
 
     if C == 0:
-        C = OoM_numba(np.array([np.max(q13)]), method="floor")[0]
+        C = OoM_numba(np.array([C]), method="floor")[0]
 
     return C
 
@@ -526,7 +547,13 @@ def adaptive_loss_fcn(x, mu=0, c=1, alpha="adaptive", replace_nonfinite=True):
 
 # Assumes that x has not been standardized
 def adaptive_weights(
-    x, alpha="adaptive", sigma=3, quantile=0.25, min_weight=0.00, replace_nonfinite=True
+    x, 
+    alpha="adaptive", 
+    sigma=3, 
+    quantile=0.25, 
+    min_weight=0.00, 
+    C_algo="iqr_legacy", 
+    replace_nonfinite=True
 ):
     """
     This function calculates the adaptive weights for a given data set.
@@ -546,10 +573,11 @@ def adaptive_weights(
     x_no_outlier, _ = remove_outliers(x, sigma_threshold=sigma, quantile=0.25)
 
     # TODO: Should x be abs or not?
+    # likely should be abs
     # mu = np.median(np.abs(x_no_outlier))
     mu = np.median(x_no_outlier)
 
-    C = get_C(x, mu, sigma, quantile)
+    C = get_C(x, mu, sigma, quantile, C_algo)
     x = (x - mu) / C
 
     if alpha == "adaptive":

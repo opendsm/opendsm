@@ -47,7 +47,7 @@ from scipy.sparse import csr_matrix
 from scipy.spatial.distance import cdist
 
 from sklearn.multioutput import MultiOutputRegressor
-from sklearn.linear_model import ElasticNet, LinearRegression, Ridge, Lasso, SGDRegressor, LassoLarsIC, LassoLars
+from sklearn.linear_model import ElasticNet, LinearRegression, Ridge, Lasso, SGDRegressor
 from sklearn.kernel_ridge import KernelRidge
 from sklearn.preprocessing import StandardScaler, RobustScaler
 
@@ -69,15 +69,18 @@ from opendsm import __version__
 
 
 
-class SGDMultiTargetRegressor:  
-    def __init__(self, **kwargs):
-        n = 24 # 24 models for each hour of the day
-        self.regressors_ = [SGDRegressor(**kwargs) for _ in range(n)]
+class AdaptiveElasticNetRegressor(MultiOutputRegressor):  
+    def __init__(self, base_model, settings):
+        self.settings = settings
 
-        # previously was using sklearn.multioutput.MultiOutputRegressor
-        # but epsilon was not being set correctly
+        self.base_model = base_model
+        self.base_model.warm_start = True
+
+        n = 24 # 24 models for each hour of the day
+        self._regressors = [copy(self.base_model) for _ in range(n)]
+
     
-    def fit(self, X, y, coef_init=None, intercept_init=None, sample_weight=None):
+    def fit(self, X, y, sample_weight=None):
         """
         Fit the model with X, y data.
         
@@ -94,33 +97,91 @@ class SGDMultiTargetRegressor:
         --------
         self : returns an instance of self.
         """
+        settings = self.settings.adaptive_weights
+        window_size = self.settings.adaptive_weights.window_size - 1
+        tol = self.settings.adaptive_weights.tol
+
+        # fit the base model as an initial guess
+        self.base_model.fit(X, y, sample_weight=sample_weight)
+        y_fit = self.base_model.predict(X)
+
         # # check that X is contiguous
         # if not np.iscontiguousarray(X):
         #     X = np.ascontiguousarray(X)
-        
-        for n in range(24):
-            regressor = self.regressors_[n]
 
-            y_i = y[:,n]
-            if not y_i.flags["C_CONTIGUOUS"]:
-                y_i = np.ascontiguousarray(y_i)
+        if sample_weight is None:
+            weights = np.ones((X.shape[0], len(self._regressors)))
+        else:
+            weights = sample_weight
 
-            coef_init_i = None
-            if coef_init is not None:
-                coef_init_i = coef_init[n]               
+        num_hours = len(self._regressors)
+        hour_fit = [False for _ in range(num_hours)]
+        alpha_prior = [2.0 for _ in range(num_hours)]
+        for i in range(settings.max_iter):
+            for hour in range(num_hours):
+                if all(hour_fit):
+                    break
+                # elif hour_fit[hour]:
+                #     continue
+
+                # Update weights
+                # Calculate weights using window of hours
+                window_idx = np.arange(hour - window_size, hour + window_size + 1)
+
+                # if idx_i < 0, roll to the end or if idx_i >= num_hours, roll to the beginning 
+                for idx_i in range(len(window_idx)):
+                    if window_idx[idx_i] < 0:
+                        window_idx[idx_i] = num_hours + window_idx[idx_i]
+
+                    if window_idx[idx_i] >= num_hours:
+                        window_idx[idx_i] = window_idx[idx_i] - num_hours
+
+                # unique values in idx only
+                window_idx = list(set(window_idx))
+
+                # calculate residuals for window
+                resid = y[:,window_idx] - y_fit[:,window_idx]
+  
+                # calculate weights
+                weights_update, _, alpha = adaptive_weights(
+                    resid.flatten(), 
+                    alpha="adaptive", 
+                    sigma=settings.sigma, 
+                    quantile=0.25, 
+                    min_weight=0.0,
+                    C_algo=settings.c_algo,
+                )
+
+                # break criteria
+                if (alpha == 2) or (np.abs(alpha - alpha_prior[hour]) <= tol):
+                    hour_fit[hour] = True
+                    continue
+
+                # update weights and alpha_prior
+                alpha_prior[hour] = alpha
+                weights[:, hour] *= weights_update
+
+                # fit
+                self._regressors[hour].fit(
+                    X, 
+                    y[:, hour], 
+                    sample_weight=weights[:, hour]
+                )
+                y_fit[:, hour] = self._regressors[hour].predict(X)
+
+        # save info to class
+        self.adaptive_iterations = i
+        self.alpha = alpha_prior
+        self.weights = weights
+
+        # update the base model coefs and intercepts with the fitted regressors
+        for hour in range(num_hours):
+            # if coef doesn't exist, it's because alpha was 2
+            if not hasattr(self._regressors[hour], "coef_"):
+                continue
             
-            intercept_init_i = None
-            if intercept_init is not None:
-                intercept_init_i = intercept_init[n]
-
-            # Fit the model
-            regressor.fit(
-                X, 
-                y_i, 
-                coef_init=coef_init_i, 
-                intercept_init=intercept_init_i, 
-                sample_weight=sample_weight
-            )
+            self.base_model.coef_[hour,:] = self._regressors[hour].coef_
+            self.base_model.intercept_[hour] = self._regressors[hour].intercept_
 
         return self
 
@@ -128,13 +189,12 @@ class SGDMultiTargetRegressor:
     def is_fit(self):
         """Check if the model is fitted."""
         is_fit = True
-        for regressor in self.regressors_:
-            if not hasattr(regressor, "coef_"):
-                is_fit = False
-                break
-            if not hasattr(regressor, "intercept_"):
-                is_fit = False
-                break
+
+        if not hasattr(self.base_model, "coef_"):
+            is_fit = False
+
+        if not hasattr(self.base_model, "intercept_"):
+            is_fit = False
 
         return is_fit
     
@@ -155,72 +215,34 @@ class SGDMultiTargetRegressor:
         if not self.is_fit:
             raise RuntimeError("Model must be fit before predictions can be made.")
 
-        y = np.empty((X.shape[0], 24))
-        for n in range(24):
-            y[:,n] = self.regressors_[n].predict(X)
+        y = self.base_model.predict(X)
 
         return y
     
     @property
     def coef_(self):
         """Get model coefficients."""
-        if not all([hasattr(est, "coef_") for est in self.regressors_]):
+        if not hasattr(self.base_model, "coef_"):
             raise RuntimeError("Model coefficients must be set before accessed.")
         
-        coef = np.vstack([est.coef_ for est in self.regressors_])
-        coef = np.ascontiguousarray(coef)
-        
-        return coef
+        return self.base_model.coef_
         
     @coef_.setter
     def coef_(self, val):
-        """Set model coefficients"""
-        for i, est in enumerate(self.regressors_):
-            est.coef_ = val[i]
+        self.base_model.coef_ = val
 
     @property
     def intercept_(self):
         """Get model intercepts."""
-        if not all([hasattr(est, "intercept_") for est in self.regressors_]):
+        if not hasattr(self.base_model, "intercept_"):
             raise RuntimeError("Model intercepts must be set before accessed.")
-        
-        intercept = np.array([est.intercept_ for est in self.regressors_])
 
-        return intercept
+        return self.base_model.intercept_
         
     @intercept_.setter
     def intercept_(self, val):
         """Set model intercepts"""
-        for i, est in enumerate(self.regressors_):
-            if not isinstance(val[i], np.ndarray) or val[i].ndim != 1:
-                est.intercept_ = np.array([val[i]])
-            else:
-                est.intercept_ = val[i]
-
-    @property
-    def epsilon(self):       
-        """Get model epsilon."""
-        epsilon = np.array([est.epsilon for est in self.regressors_])
-
-        return epsilon
-
-    @epsilon.setter
-    def epsilon(self, val):
-        """Set model epsilon"""
-        for i, est in enumerate(self.regressors_):
-            est.epsilon = val[i]
-
-    @property
-    def num_parameters(self):
-        """Get number of model parameters."""
-        if not self.is_fit:
-            raise RuntimeError("Model must be fit before number of parameters can be accessed.")
-        
-        num_parameters = 0
-        for est in self.regressors_:
-            num_parameters += np.count_nonzero(est.coef_) + np.count_nonzero(est.intercept_)
-        
-        return int(num_parameters)
+        self.base_model.intercept_ = val
 
 
 class HourlyModel:
@@ -341,28 +363,8 @@ class HourlyModel:
                 if model == ElasticNet:
                     self._model.l1_ratio = settings.l1_ratio
 
-        elif self.settings.base_model == _settings.BaseModel.SGDREGRESSOR:
-            settings = self.settings.sgd_regressor
-            self._model = SGDMultiTargetRegressor(
-                loss=settings.loss,
-                penalty=settings._penalty,
-                alpha=settings.alpha,
-                l1_ratio=settings.l1_ratio,
-                epsilon=settings.epsilon,
-                fit_intercept=settings.fit_intercept,
-                max_iter=settings.max_iter,
-                tol=settings.tol,
-                learning_rate=settings.learning_rate,
-                eta0=settings.eta0,
-                power_t=settings.power_t,
-                shuffle=settings.shuffle,
-                early_stopping=settings.early_stopping,
-                validation_fraction=settings.validation_fraction,
-                n_iter_no_change=settings.n_iter_no_change,
-                warm_start=settings.warm_start,
-                random_state=settings._seed,
-                verbose=0,
-            )
+            if self.settings.adaptive_weights.enabled:
+                self._model = AdaptiveElasticNetRegressor(self._model, self.settings)
                 
         elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
             settings = self.settings.kernel_ridge
@@ -417,13 +419,7 @@ class HourlyModel:
             model_mismatch_warning.warn()
             self.warnings.append(model_mismatch_warning)
 
-        if self.settings.adaptive_weighted_days.enabled:
-            self._adaptive_fit(baseline_data)
-        elif ((self.settings.base_model == _settings.BaseModel.SGDREGRESSOR) and 
-            self.settings.sgd_regressor.adaptive_epsilon_enabled):
-            self._SGD_update_fit(baseline_data)
-        else:
-            self._fit(baseline_data)
+        self._fit(baseline_data)
 
         if not self._model_fit_is_acceptable():
             model_fit_warning = EEMeterWarning(
@@ -457,204 +453,17 @@ class HourlyModel:
 
         # get number of model parameters
         if self.settings.base_model == _settings.BaseModel.ELASTICNET:
-            num_parameters = np.count_nonzero(self._model.coef_) + np.count_nonzero(
-                self._model.intercept_
+            if self.settings.adaptive_weights.enabled:
+                model = self._model.base_model
+            else:
+                model = self._model
+
+            num_parameters = np.count_nonzero(model.coef_) + np.count_nonzero(
+                model.intercept_
             )
-        elif self.settings.base_model == _settings.BaseModel.SGDREGRESSOR:
-            num_parameters = self._model.num_parameters
         elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
             num_parameters = np.count_nonzero(self._model.dual_coef_)
         
-        # get model prediction of baseline
-        df_meter = self._predict(meter_data, X=X)
-
-        # calculate baseline metrics on non-interpolated data
-        cols = [col for col in df_meter.columns if col.startswith("interpolated_")]
-        interpolated = df_meter[cols].any(axis=1)
-
-        self.baseline_metrics = BaselineMetrics(
-            df=df_meter.loc[~interpolated], num_model_params=num_parameters
-        )
-        self.baseline_timezone = meter_data.tz
-
-        return self
-
-    def _SGD_update_fit(self, meter_data):
-        settings = self.settings.sgd_regressor
-
-        self.is_fitted = False
-
-        # Initialize dataframe
-        df_meter = meter_data.df  # used to have a copy here
-
-        # Prepare feature arrays/matrices
-        X, y, fit_mask = self._prepare_features(df_meter)
-        X_fit = X[fit_mask, :]
-        y_fit = y[fit_mask]
-
-        epsilon = np.empty(24)
-        for i in range(settings.adaptive_epsilon_iter):
-            if i == 0:
-                # initialize elastic net model
-                enet_settings = self.settings.model_dump()
-                enet_settings["base_model"] = _settings.BaseModel.ELASTICNET
-                enet_model = HourlyModel(settings=enet_settings)
-
-                # initialize SGD elastic net model
-                # SGD_enet_settings = self.settings.model_dump()
-                # SGD_enet_settings["sgd_regressor"]["loss"] = "squared_error"
-                # SGD_enet_model = HourlyModel(settings=SGD_enet_settings)
-
-                # fit elastic net model
-                enet_model._model.fit(X_fit, y_fit)
-                y_predict = enet_model._model.predict(X_fit)
-        
-                # fit SGD elastic net model    
-                # SGD_enet_model._model.fit(
-                #     X_fit, 
-                #     y_fit, 
-                #     coef_init=enet_model._model.coef_,
-                #     intercept_init=enet_model._model.intercept_,
-                # )
-                # y_predict = SGD_enet_model._model.predict(X_fit)
-            
-            else:
-                # update epsilon
-                self._model.epsilon = epsilon_prior
-                
-                self._model.fit(
-                    X_fit, 
-                    y_fit,
-                    coef_init=coef_init,
-                    intercept_init=intercept_init,
-                )
-                y_predict = self._model.predict(X_fit)
-
-            eps_algo = "mad"
-            for n in range(24):
-                resid = y_fit[:,n] - y_predict[:,n]
-                
-                if eps_algo == "stdev":
-                    epsilon[n] = settings.adaptive_epsilon_sigma_threshold * np.std(resid)
-
-                elif eps_algo == "iqr":
-                    resid = np.abs(resid)
-
-                    Q1 = np.percentile(resid, 25)
-                    Q3 = np.percentile(resid, 75)
-                    IQR = Q3 - Q1
-                    q13_scalar = 0.7413 * settings.adaptive_epsilon_sigma_threshold - 0.5
-
-                    epsilon[n] = Q3 + q13_scalar * IQR
-                elif eps_algo == "mad":
-                    resid_median = np.median(resid)
-                    MAD = np.median(np.abs(resid - resid_median))
-
-                    epsilon[n] = settings.adaptive_epsilon_sigma_threshold * 1.4826 * MAD
-
-            if i > 0:
-                rel_diff = np.mean(np.abs((epsilon - epsilon_prior)) / epsilon_prior)
-
-                # if not changing much, break
-                if np.abs(rel_diff) < settings.adaptive_epsilon_tolerance:
-                    break
-
-            epsilon_prior = epsilon
-
-            if i == 0:
-                # coef_init = SGD_enet_model._model.coef_
-                # intercept_init = SGD_enet_model._model.intercept_
-
-                coef_init = enet_model._model.coef_
-                intercept_init = enet_model._model.intercept_
-
-            else:
-                coef_init = self._model.coef_
-                intercept_init = self._model.intercept_
-
-        self.is_fitted = True
-
-        # get number of model parameters
-        num_parameters = self._model.num_parameters
-        
-        # get model prediction of baseline
-        df_meter = self._predict(meter_data, X=X)
-
-        # calculate baseline metrics on non-interpolated data
-        cols = [col for col in df_meter.columns if col.startswith("interpolated_")]
-        interpolated = df_meter[cols].any(axis=1)
-
-        self.baseline_metrics = BaselineMetrics(
-            df=df_meter.loc[~interpolated], num_model_params=num_parameters
-        )
-        self.baseline_timezone = meter_data.tz
-
-
-    def _adaptive_fit(self, meter_data):
-        adaptive_settings = self.settings.adaptive_weighted_days
-
-        self.is_fitted = False
-
-        # Set warm_start to True
-        self._model.warm_start = True
-
-        # Initialize dataframe
-        df_meter = meter_data.df  # used to have a copy here
-
-        # Prepare feature arrays/matrices
-        X, y, fit_mask = self._prepare_features(df_meter)
-        X_fit = X[fit_mask, :]
-        y_fit = y[fit_mask]
-
-        weights = 1
-        rmse_annual_prior = np.inf
-        # fit the model
-        for i in range(adaptive_settings.max_iter):
-            self._model.fit(X_fit, y_fit, sample_weight=weights)
-
-            y_predict = self._model.predict(X_fit)
-
-            # calculate residuals and annual rmse
-            resid = y_fit - y_predict
-
-            rmse_annual = np.sqrt(np.mean(resid ** 2))
-
-            if i > 0:
-                rel_diff = (rmse_annual - rmse_annual_prior) / rmse_annual_prior
-
-                # if rmse is not changing much, break
-                if rel_diff < adaptive_settings.tol:
-                    break
-
-            rmse_annual_prior = rmse_annual
-
-            # for each day, calculate rmse to downweight outlier days
-            rmse_daily = np.sqrt(np.mean(resid**2, axis=1))
-
-            weights_prior = copy(weights)
-
-            weights, _, alpha = adaptive_weights(
-                rmse_daily, 
-                alpha="adaptive", 
-                sigma=2.698, 
-                quantile=0.25, 
-                min_weight=0.0
-            )
-            weights *= weights_prior
-
-            if alpha == 2:
-                break
-
-        self.is_fitted = True
-
-        # get number of model parameters
-        if self.settings.base_model == _settings.BaseModel.ELASTICNET:
-            num_parameters = np.count_nonzero(self._model.coef_) + np.count_nonzero(
-                self._model.intercept_
-            )
-        elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
-            num_parameters = np.count_nonzero(self._model.dual_coef_)
-
         # get model prediction of baseline
         df_meter = self._predict(meter_data, X=X)
 
