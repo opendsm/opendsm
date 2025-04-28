@@ -240,17 +240,17 @@ class AdaptiveWeightsSettings(BaseSettings):
         default=True,
     )
 
+    """Sigma threshold for calculating C"""
+    sigma: Optional[float] = pydantic.Field(
+        default=3.0,
+        gt=0,
+    )
+
     """Adaptive weights window size"""
     window_size: Optional[int] = pydantic.Field(
         default=1,
         ge=1,
         le=12,
-    )
-
-    """Sigma threshold for calculating C"""
-    sigma: Optional[float] = pydantic.Field(
-        default=3.0,
-        gt=0,
     )
 
     """Algorithm to use for calculating C"""
@@ -266,7 +266,7 @@ class AdaptiveWeightsSettings(BaseSettings):
 
     """Relative difference in weights to stop iteration"""
     tol: Optional[float] = pydantic.Field(
-        default=1E-4,   # Previously was using 1e-4
+        default=1E-3,   # Previously was using 1e-4
         ge=0,
     )
 

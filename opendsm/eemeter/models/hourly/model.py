@@ -159,6 +159,15 @@ class AdaptiveElasticNetRegressor(MultiOutputRegressor):
 
                 # update weights and alpha_prior
                 alpha_prior[hour] = alpha
+
+                # trim weights to hour size
+                if window_size > 0:
+                    # get index of hour in window_idx
+                    idx = window_idx.index(hour)
+                    hour_len = int(len(weights_update)/len(window_idx))
+
+                    weights_update = weights_update[idx*hour_len:(idx+1)*hour_len]
+
                 weights[:, hour] *= weights_update
 
                 # fit
