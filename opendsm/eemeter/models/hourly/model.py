@@ -103,7 +103,6 @@ class AdaptiveElasticNetRegressor(MultiOutputRegressor):
 
         # fit the base model as an initial guess
         self.base_model.fit(X, y, sample_weight=sample_weight)
-        y_fit = self.base_model.predict(X)
 
         # # check that X is contiguous
         # if not np.iscontiguousarray(X):
@@ -116,8 +115,12 @@ class AdaptiveElasticNetRegressor(MultiOutputRegressor):
 
         num_hours = len(self._regressors)
         hour_fit = [False for _ in range(num_hours)]
-        alpha_prior = [2.0 for _ in range(num_hours)]
+        alpha_prior = np.array([2.0 for _ in range(num_hours)])
         for i in range(settings.max_iter):
+            # get prediction and residuals for all hours
+            y_fit = self.base_model.predict(X)
+            resid = y - y_fit
+
             for hour in range(num_hours):
                 if all(hour_fit):
                     break
@@ -138,13 +141,10 @@ class AdaptiveElasticNetRegressor(MultiOutputRegressor):
 
                 # unique values in idx only
                 window_idx = list(set(window_idx))
-
-                # calculate residuals for window
-                resid = y[:,window_idx] - y_fit[:,window_idx]
   
                 # calculate weights
                 weights_update, _, alpha = adaptive_weights(
-                    resid.flatten(), 
+                    resid[:,window_idx].flatten(), 
                     alpha="adaptive", 
                     sigma=settings.sigma, 
                     quantile=0.25, 
@@ -176,22 +176,16 @@ class AdaptiveElasticNetRegressor(MultiOutputRegressor):
                     y[:, hour], 
                     sample_weight=weights[:, hour]
                 )
-                y_fit[:, hour] = self._regressors[hour].predict(X)
+                
+                # update base model               
+                self.base_model.coef_[hour,:] = self._regressors[hour].coef_
+                self.base_model.intercept_[hour] = self._regressors[hour].intercept_
 
         # save info to class
         self.adaptive_iterations = i
         self.alpha = alpha_prior
         self.weights = weights
-
-        # update the base model coefs and intercepts with the fitted regressors
-        for hour in range(num_hours):
-            # if coef doesn't exist, it's because alpha was 2
-            if not hasattr(self._regressors[hour], "coef_"):
-                continue
-            
-            self.base_model.coef_[hour,:] = self._regressors[hour].coef_
-            self.base_model.intercept_[hour] = self._regressors[hour].intercept_
-
+           
         return self
 
     @property
