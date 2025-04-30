@@ -69,15 +69,14 @@ from opendsm import __version__
 
 
 
-class AdaptiveElasticNetRegressor(MultiOutputRegressor):  
+class AdaptiveElasticNetRegressor:  
     def __init__(self, base_model, settings):
         self.settings = settings
 
         self.base_model = base_model
         self.base_model.warm_start = True
 
-        n = 24 # 24 models for each hour of the day
-        self._regressors = [copy(self.base_model) for _ in range(n)]
+        self._hour_model = copy(self.base_model)
 
     
     def fit(self, X, y, sample_weight=None):
@@ -101,30 +100,31 @@ class AdaptiveElasticNetRegressor(MultiOutputRegressor):
         window_size = self.settings.adaptive_weights.window_size - 1
         tol = self.settings.adaptive_weights.tol
 
+        num_hours = y.shape[1]
+
+        hour_model = copy(self.base_model)
+
         # fit the base model as an initial guess
         self.base_model.fit(X, y, sample_weight=sample_weight)
 
-        # # check that X is contiguous
-        # if not np.iscontiguousarray(X):
-        #     X = np.ascontiguousarray(X)
-
         if sample_weight is None:
-            weights = np.ones((X.shape[0], len(self._regressors)))
+            weights = np.ones((X.shape[0], num_hours))
         else:
             weights = sample_weight
 
-        num_hours = len(self._regressors)
         hour_fit = [False for _ in range(num_hours)]
         alpha_prior = np.array([2.0 for _ in range(num_hours)])
         for i in range(settings.max_iter):
+            if all(hour_fit):
+                i -= 1
+                break
+
             # get prediction and residuals for all hours
             y_fit = self.base_model.predict(X)
             resid = y - y_fit
 
             for hour in range(num_hours):
-                if all(hour_fit):
-                    break
-                # elif hour_fit[hour]:
+                # if hour_fit[hour]:
                 #     continue
 
                 # Update weights
@@ -156,6 +156,8 @@ class AdaptiveElasticNetRegressor(MultiOutputRegressor):
                 if (alpha == 2) or (np.abs(alpha - alpha_prior[hour]) <= tol):
                     hour_fit[hour] = True
                     continue
+                else:
+                    hour_fit[hour] = False
 
                 # update weights and alpha_prior
                 alpha_prior[hour] = alpha
@@ -169,22 +171,26 @@ class AdaptiveElasticNetRegressor(MultiOutputRegressor):
                     weights_update = weights_update[idx*hour_len:(idx+1)*hour_len]
 
                 weights[:, hour] *= weights_update
+                
+                # update hour model from base model
+                self._hour_model.coef_ = self.base_model.coef_[hour,:]
+                self._hour_model.intercept_ = self.base_model.intercept_[hour]
 
                 # fit
-                self._regressors[hour].fit(
+                self._hour_model.fit(
                     X, 
                     y[:, hour], 
                     sample_weight=weights[:, hour]
                 )
                 
-                # update base model               
-                self.base_model.coef_[hour,:] = self._regressors[hour].coef_
-                self.base_model.intercept_[hour] = self._regressors[hour].intercept_
+                # update base model from refit hour model            
+                self.base_model.coef_[hour,:] = self._hour_model.coef_
+                self.base_model.intercept_[hour] = self._hour_model.intercept_
 
-        # save info to class
-        self.adaptive_iterations = i
-        self.alpha = alpha_prior
-        self.weights = weights
+        # save info to base_model
+        self.base_model.adaptive_iterations = i
+        self.base_model.adaptive_alpha = alpha_prior
+        self.base_model.adaptive_weights = weights
            
         return self
 
@@ -457,12 +463,10 @@ class HourlyModel:
         # get number of model parameters
         if self.settings.base_model == _settings.BaseModel.ELASTICNET:
             if self.settings.adaptive_weights.enabled:
-                model = self._model.base_model
-            else:
-                model = self._model
+                self._model = self._model.base_model
 
-            num_parameters = np.count_nonzero(model.coef_) + np.count_nonzero(
-                model.intercept_
+            num_parameters = np.count_nonzero(self._model.coef_) + np.count_nonzero(
+                self._model.intercept_
             )
         elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
             num_parameters = np.count_nonzero(self._model.dual_coef_)
