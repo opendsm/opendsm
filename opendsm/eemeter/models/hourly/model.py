@@ -686,17 +686,34 @@ class HourlyModel:
                     )
 
             elif settings.method == "fixed_bins":
-                min_temp = np.floor(df["temperature"].min())
-                max_temp = np.ceil(df["temperature"].max())
+                temp =  df["temperature"].values
+                min_temp = np.floor(np.min(temp))
+                max_temp = np.ceil(np.max(temp))
 
                 T_bin_edges = np.array(settings.fixed_bins)
+                T_bin_edges = np.array([-np.inf, *T_bin_edges, np.inf])
 
-                # remove bins outside of min and max
-                T_bin_edges = T_bin_edges[
-                    (T_bin_edges >= min_temp) & (T_bin_edges <= max_temp)
-                ]
+                # if less than 20 values from df["temperature"] are in a bin, remove bin edge starting from edges and moving inwards
+                idx_remove = []
 
-                T_bin_edges = np.array([min_temp, *T_bin_edges, max_temp])
+                # count from left
+                for i in range(len(T_bin_edges) - 1):
+                    bin_count = ((temp >= T_bin_edges[i]) & (temp < T_bin_edges[i + 1])).sum()
+                    if bin_count < settings.min_bin_count:
+                        idx_remove.append(i+1)
+                    else:
+                        break
+
+                # count from right
+                for i in range(len(T_bin_edges) - 1, 0, -1):
+                    bin_count = ((temp >= T_bin_edges[i - 1]) & (temp < T_bin_edges[i])).sum()
+                    if bin_count < settings.min_bin_count:
+                        idx_remove.append(i - 1)
+                    else:
+                        break
+
+                # remove idx_remove from T_bin_edges
+                T_bin_edges = np.delete(T_bin_edges, idx_remove)
 
             else:
                 raise ValueError("Invalid temperature binning method")

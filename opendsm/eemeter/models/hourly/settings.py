@@ -69,6 +69,17 @@ class TemperatureBinSettings(BaseSettings):
         ge=1,
     )
 
+    """specified fixed temperature bins in fahrenheit"""
+    fixed_bins: Optional[list[float]] = pydantic.Field(
+        default=None,
+    )
+
+    "minimum bin count"
+    min_bin_count: Optional[int] = pydantic.Field(
+        default=20,
+        ge=1,
+    )
+
     """use edge bins bool"""
     include_edge_bins: bool = pydantic.Field(
         default=True, 
@@ -92,41 +103,40 @@ class TemperatureBinSettings(BaseSettings):
         ge=0,
     )
 
-    """specified fixed temperature bins in fahrenheit"""
-    fixed_bins: Optional[list[float]] = pydantic.Field(
-        default=None,
-    )
-
     @pydantic.model_validator(mode="after")
     def _check_temperature_bins(self):
-        return self
-        # check that temperature bin count is set based on binning method
-        if self.method is None:
-            if self.n_bins is not None:
-                raise ValueError("'n_bins' must be None if 'method' is None.")
-            if self.bin_width is not None:
-                raise ValueError("'n_bins' must be None if 'method' is None.")
-        else:
-            if self.method == BinningChoice.SET_BIN_WIDTH:
-                if self.bin_width is None:
-                    raise ValueError(
-                        "'n_bins' must be specified if 'method' is 'set_bin_width'."
-                    )
-                elif isinstance(self.bin_width, float):
-                    if self.bin_width <= 0:
-                        raise ValueError("'bin_width' must be greater than 0.")
+        if self.method == BinningChoice.EQUAL_SAMPLE_COUNT:
+            if self.n_bins is None:
+                raise ValueError(
+                    "'n_bins' must be specified if 'method' is 'equal_sample_count'."
+                )
+            if self.n_bins < 1:
+                raise ValueError("'n_bins' must be greater than 0.")
 
-                if self.n_bins is not None:
-                    raise ValueError(
-                        "'n_bins' must be None if 'method' is 'set_bin_width'."
-                    )
-            else:
-                if self.n_bins is None:
-                    raise ValueError(
-                        "'n_bins' must be specified if 'method' is not None."
-                    )
-                if self.bin_width is not None:
-                    raise ValueError("'n_bins' must be None if 'method' is not None.")
+        elif self.method == BinningChoice.EQUAL_BIN_WIDTH:
+            if self.bin_width is None:
+                raise ValueError(
+                    "'bin_width' must be specified if 'method' is 'equal_bin_width'."
+                )
+            if self.bin_width < 1:
+                raise ValueError("'bin_width' must be greater than 0.")
+
+        elif self.method == BinningChoice.SET_BIN_WIDTH:
+            if self.bin_width is None:
+                raise ValueError(
+                    "'bin_width' must be specified if 'method' is 'set_bin_width'."
+                )
+            if self.bin_width < 1:
+                raise ValueError("'bin_width' must be greater than 0.")
+
+        elif self.method == BinningChoice.FIXED_BINS:
+            if self.fixed_bins is None:
+                raise ValueError(
+                    "'fixed_bins' must be specified if 'method' is 'fixed_bins'."
+                )
+
+        else:
+            raise ValueError(f"Invalid method: {self.method}")
 
         return self
 
