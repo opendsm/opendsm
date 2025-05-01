@@ -685,6 +685,19 @@ class HourlyModel:
                         [min_temp, *np.linspace(*bin_range, step_num), max_temp]
                     )
 
+            elif settings.method == "fixed_bins":
+                min_temp = np.floor(df["temperature"].min())
+                max_temp = np.ceil(df["temperature"].max())
+
+                T_bin_edges = np.array(settings.fixed_bins)
+
+                # remove bins outside of min and max
+                T_bin_edges = T_bin_edges[
+                    (T_bin_edges >= min_temp) & (T_bin_edges <= max_temp)
+                ]
+
+                T_bin_edges = np.array([min_temp, *T_bin_edges, max_temp])
+
             else:
                 raise ValueError("Invalid temperature binning method")
 

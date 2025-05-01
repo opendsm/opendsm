@@ -33,6 +33,7 @@ class BinningChoice(str, Enum):
     EQUAL_SAMPLE_COUNT = "equal_sample_count"
     EQUAL_BIN_WIDTH = "equal_bin_width"
     SET_BIN_WIDTH = "set_bin_width"
+    FIXED_BINS = "fixed_bins"
 
 
 class DefaultTrainingFeatures(str, Enum):
@@ -91,8 +92,14 @@ class TemperatureBinSettings(BaseSettings):
         ge=0,
     )
 
+    """specified fixed temperature bins in fahrenheit"""
+    fixed_bins: Optional[list[float]] = pydantic.Field(
+        default=None,
+    )
+
     @pydantic.model_validator(mode="after")
     def _check_temperature_bins(self):
+        return self
         # check that temperature bin count is set based on binning method
         if self.method is None:
             if self.n_bins is not None:
