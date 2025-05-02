@@ -142,12 +142,6 @@ class TemperatureBinSettings(BaseSettings):
 
     @pydantic.model_validator(mode="after")
     def _check_edge_bins(self):
-        if self.method != BinningChoice.SET_BIN_WIDTH:
-            if self.include_edge_bins:
-                raise ValueError(
-                    "'include_edge_bins' must be False if 'method' is not 'set_bin_width'."
-                )
-
         if self.include_edge_bins:
             if self.edge_bin_rate is None:
                 raise ValueError(
@@ -156,6 +150,10 @@ class TemperatureBinSettings(BaseSettings):
             if self.edge_bin_percent is None:
                 raise ValueError(
                     "'edge_bin_days' must be specified if 'include_edge_bins' is True."
+                )
+            if self.edge_bin_temperature_range_offset is None:
+                raise ValueError(
+                    "'edge_bin_temperature_range_offset' must be specified if 'include_edge_bins' is True."
                 )
 
         else:
@@ -166,6 +164,10 @@ class TemperatureBinSettings(BaseSettings):
             if self.edge_bin_percent is not None:
                 raise ValueError(
                     "'edge_bin_days' must be None if 'include_edge_bins' is False."
+                )
+            if self.edge_bin_temperature_range_offset is not None:
+                raise ValueError(
+                    "'edge_bin_temperature_range_offset' must be None if 'include_edge_bins' is False."
                 )
 
         return self
