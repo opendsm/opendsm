@@ -381,7 +381,7 @@ class SpectralSettings(BaseSettings):
 
     """gamma for RBF, polynomial, sigmoid, laplacian, and chi2 kernels"""
     gamma: float = pydantic.Field(
-        default=2.906796,
+        default=1.05,
         ge=0, # could be wrong? maybe gt?
     )
 

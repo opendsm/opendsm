@@ -54,7 +54,7 @@ class BaseModel(str, Enum):
 class TemperatureBinSettings(BaseSettings):
     """how to bin temperature data"""
     method: BinningChoice = pydantic.Field(
-        default=BinningChoice.SET_BIN_WIDTH,
+        default=BinningChoice.FIXED_BINS,
     )
 
     """number of temperature bins"""
@@ -71,7 +71,7 @@ class TemperatureBinSettings(BaseSettings):
 
     """specified fixed temperature bins in fahrenheit"""
     fixed_bins: Optional[list[float]] = pydantic.Field(
-        default=None,
+        default=[10, 30, 50, 65, 75, 90, 105],
     )
 
     "minimum bin count"
@@ -87,12 +87,12 @@ class TemperatureBinSettings(BaseSettings):
 
     """rate for edge temperature bins"""
     edge_bin_rate: Optional[Union[float, Literal["heuristic"]]] = pydantic.Field(
-        default="heuristic", # prior "heuristic"
+        default="heuristic",
     )
 
     """percent of total data in edge bins"""
     edge_bin_percent: Optional[float] = pydantic.Field(
-        default=0.087329, # prior 0.045
+        default=0.075,
         gt=0,
         le=0.45,
     )
@@ -177,13 +177,13 @@ class ElasticNetSettings(BaseSettings):
     """ElasticNet alpha parameter"""
 
     alpha: float = pydantic.Field(
-        default=0.009613,
+        default=0.0139,
         ge=0,
     )
 
     """ElasticNet l1_ratio parameter"""
     l1_ratio: float = pydantic.Field(
-        default=1.0,
+        default=0.871,
         ge=0,
         le=1,
     )
@@ -261,13 +261,13 @@ class AdaptiveWeightsSettings(BaseSettings):
 
     """Sigma threshold for calculating C"""
     sigma: Optional[float] = pydantic.Field(
-        default=3.0,
+        default=4.55,
         gt=0,
     )
 
     """Adaptive weights window size"""
     window_size: Optional[int] = pydantic.Field(
-        default=1,
+        default=3,
         ge=1,
         le=12,
     )
@@ -279,7 +279,7 @@ class AdaptiveWeightsSettings(BaseSettings):
 
     """Number of iterations to iterate weights"""
     max_iter: Optional[int] = pydantic.Field(
-        default=25,   # Previously was using 100 as it exits early where appropriate
+        default=100,   # Exits early based on tol
         ge=1,
     )
 
@@ -348,7 +348,7 @@ class BaseHourlySettings(BaseSettings):
 
     """temporal cluster/temperature bin/temperature interaction scalar"""
     interaction_scalar: float = pydantic.Field(
-        default=0.109947,
+        default=0.524,
         gt=0,
     )
 
