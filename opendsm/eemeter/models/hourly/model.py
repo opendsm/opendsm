@@ -46,8 +46,7 @@ from scipy.sparse import csr_matrix
 
 from scipy.spatial.distance import cdist
 
-from sklearn.multioutput import MultiOutputRegressor
-from sklearn.linear_model import ElasticNet, LinearRegression, Ridge, Lasso, SGDRegressor
+from sklearn.linear_model import ElasticNet, LinearRegression, Ridge, Lasso
 from sklearn.kernel_ridge import KernelRidge
 from sklearn.preprocessing import StandardScaler, RobustScaler
 
@@ -887,10 +886,16 @@ class HourlyModel:
 
         else:
             self._df_temporal_clusters = correct_missing_temporal_clusters(df)
-            n_clusters = 0
+
+            # Get all unique temporal clusters from categorical features
+            temporal_cluster = []
             for col in self._categorical_features:
-                if col.startswith("temporal_cluster") and "temp_bin" not in col:
-                    n_clusters += 1
+                if "temporal_cluster" in col:
+                    match = re.match(r'^temporal_cluster_(\d+)*', col)
+                    if match and int(match.group(1)) not in temporal_cluster:
+                        temporal_cluster.append(int(match.group(1)))
+
+            n_clusters = len(temporal_cluster)
 
         # join df_temporal_clusters to df
         df = pd.merge(
@@ -1162,6 +1167,11 @@ class HourlyModel:
 
         # concat df with col_dict
         df = pd.concat([df, pd.DataFrame(col_dict, index=df.index)], axis=1)
+
+        # TODO: Model is better without this, but not sure why
+        # remove temporal cluster columns from categorical features
+        # cluster_cols = [c for c in df.columns if re.match(r'^temporal_cluster_\d+(?!_)', c)]
+        # self._categorical_features = [c for c in self._categorical_features if c not in cluster_cols]
 
         # add extreme temperature bins to global temperature bins
         if settings.include_edge_bins:

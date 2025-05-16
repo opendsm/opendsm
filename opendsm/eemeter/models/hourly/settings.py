@@ -92,7 +92,7 @@ class TemperatureBinSettings(BaseSettings):
 
     """percent of total data in edge bins"""
     edge_bin_percent: Optional[float] = pydantic.Field(
-        default=0.075,
+        default=None,
         gt=0,
         le=0.45,
     )
@@ -147,7 +147,7 @@ class TemperatureBinSettings(BaseSettings):
                 raise ValueError(
                     "'edge_bin_rate' must be specified if 'include_edge_bins' is True."
                 )
-            if self.edge_bin_percent is None:
+            if self.edge_bin_percent is None and self.method != BinningChoice.FIXED_BINS:
                 raise ValueError(
                     "'edge_bin_days' must be specified if 'include_edge_bins' is True."
                 )
