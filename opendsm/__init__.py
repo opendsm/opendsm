@@ -45,7 +45,7 @@ if platform.system() == "Windows":
 from .common import (
     abstract_data_processor,
     abstract_data_settings,
-    adaptive_loss_tck,
+    adaptive_loss_Z,
     adaptive_loss,
     const,
     data_settings,
@@ -72,7 +72,7 @@ __all__ = (
     "__copyright__",
     "abstract_data_processor",
     "abstract_data_settings",
-    "adaptive_loss_tck",
+    "adaptive_loss_Z",
     "adaptive_loss",
     "const",
     "data_settings",

@@ -19,10 +19,9 @@
 """
 import numba
 import numpy as np
-from scipy.interpolate import BSpline
 from scipy.optimize import minimize_scalar
 
-from opendsm.common.adaptive_loss_tck import TCK
+from opendsm.common.adaptive_loss_Z import ln_Z
 from opendsm.common.utils import OoM_numba
 
 LOSS_ALPHA_MIN = -100.0
@@ -387,32 +386,6 @@ def generalized_loss_weights(x: np.ndarray, a: float = 2, min_weight: float = 0.
             w[i] = (xi**2 / np.abs(a - 2) + 1) ** (0.5 * a - 1)
 
     return w * (1 - min_weight) + min_weight
-
-
-# approximate partition function for C=1, tau(alpha < 0)=1E5, tau(alpha >= 0)=inf
-# error < 4E-7
-ln_Z_fit = BSpline.construct_fast(*TCK)
-ln_Z_inf = 11.206072645530174
-
-
-def ln_Z(alpha, alpha_min=-1e6):
-    """
-    Function to fit a spline onto the data points. Since some points may have higher changes in their local neighborhood,
-    we need to fit more points in that region via the spline. The spline is fit on the data points for alpha >= alpha_min.
-
-    Parameters:
-    alpha (float): The alpha value for which the spline of Z is to be calculated.
-    alpha_min (float, optional): The minimum value of alpha. Defaults to -1E6.
-
-    Returns:
-    float: The spline fit on Z for the given alpha. If alpha is less than or equal to alpha_min,
-    the function returns the value at infinity, i.e. 11.2.
-    """
-
-    if alpha <= alpha_min:
-        return ln_Z_inf
-
-    return ln_Z_fit(alpha)
 
 
 # penalize the loss function using approximate partition function
