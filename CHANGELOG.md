@@ -19,6 +19,7 @@ opendsm-1.1.0
 * Disallow negative CVRMSE in Hourly model
 * Added daily CVRMSE >= 0 and PNRMSE sufficiency requirements
 * Partially updated Daily model to use baseline_metrics
+* Changed extreme values warning flag to check using IQR rule instead of median +- IQR which is incorrect
 * Fix warning data on `high_frequency_temperature_data` warning.
 * Squash numpy divide-by-zero warnings in caltrack Hourly metrics.
 
