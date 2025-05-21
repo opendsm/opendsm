@@ -4,10 +4,24 @@ Changelog
 Development
 -----------
 
+* 
+
+opendsm-1.1.0
+-----
+
+* Modified the Hourly model
+* Performed new optimization for Hourly model configuration
+* Developed adaptive robust weighting per hour-of-day for the hourly model
+* Altered clustering methodology, it now uses spectral clustering
+* Changed temperature binning to be fixed bins
+* Made temporal bins/temperature bins act together on temperature
+* Disallow negative CVRMSE in Hourly model
+* Added daily CVRMSE >= 0 and PNRMSE sufficiency requirements
+* Partially updated Daily model to use baseline_metrics
 * Fix warning data on `high_frequency_temperature_data` warning.
 * Squash numpy divide-by-zero warnings in caltrack hourly metrics.
 
-1.0.0
+opendsm-1.0.0
 -----
 
 * Initial OpenDSM release
