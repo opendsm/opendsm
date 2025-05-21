@@ -19,10 +19,9 @@
 """
 import numba
 import numpy as np
-from scipy.interpolate import BSpline
 from scipy.optimize import minimize_scalar
 
-from opendsm.common.adaptive_loss_tck import TCK
+from opendsm.common.adaptive_loss_Z import ln_Z
 from opendsm.common.utils import OoM_numba
 
 LOSS_ALPHA_MIN = -100.0
@@ -205,9 +204,8 @@ def rolling_IQR_outlier(x, y, sigma_threshold=3, quantile=0.25, window=0.05, ste
     return outlier_threshold
 
 
-# TODO: uncertain if these C functions should use np.min, np.mean, or np.max
 @numba.jit(nopython=True, error_model="numpy", cache=True)
-def get_C(resid, mu, sigma, quantile=0.25):
+def get_C(resid, mu, sigma, quantile=0.25, algo="iqr_legacy"):
     """
     This function calculates the maximum absolute value of the Interquartile Range (IQR) of the residuals
     from a given mean (mu) and standard deviation (sigma). If the maximum absolute value is zero,
@@ -222,14 +220,36 @@ def get_C(resid, mu, sigma, quantile=0.25):
     Returns:
     float: The maximum absolute value of the IQR of the residuals, or the order of magnitude of the maximum value of the IQR.
     """
+    # remove non-finite values
+    resid = resid[np.isfinite(resid)]
 
-    q13 = IQR_outlier(
-        resid - mu, weights=None, sigma_threshold=sigma, quantile=quantile
-    )
-    C = np.max(np.abs(q13))
+    if algo == "iqr_legacy":
+        # TODO: uncertain if these C functions should use np.min, np.mean, or np.max
+        # suspect we can switch to IQR below, but need to test
+        bounds = IQR_outlier(
+            resid - mu, weights=None, sigma_threshold=sigma, quantile=quantile
+        )
+        C = np.max(np.abs(bounds))
+
+    elif algo == "iqr":
+        resid = np.abs(resid)
+
+        bounds = IQR_outlier(
+            resid - mu, weights=None, sigma_threshold=sigma, quantile=quantile
+        )
+        C = np.max(np.abs(bounds))
+
+    elif algo == "mad":
+        resid_median = np.median(resid)
+        MAD = np.median(np.abs(resid - resid_median))
+
+        C = sigma * 1.4826 * MAD
+
+    elif algo == "stdev":
+        C = sigma * np.std(resid)
 
     if C == 0:
-        C = OoM_numba(np.array([np.max(q13)]), method="floor")[0]
+        C = OoM_numba(np.array([C]), method="floor")[0]
 
     return C
 
@@ -368,32 +388,6 @@ def generalized_loss_weights(x: np.ndarray, a: float = 2, min_weight: float = 0.
     return w * (1 - min_weight) + min_weight
 
 
-# approximate partition function for C=1, tau(alpha < 0)=1E5, tau(alpha >= 0)=inf
-# error < 4E-7
-ln_Z_fit = BSpline.construct_fast(*TCK)
-ln_Z_inf = 11.206072645530174
-
-
-def ln_Z(alpha, alpha_min=-1e6):
-    """
-    Function to fit a spline onto the data points. Since some points may have higher changes in their local neighborhood,
-    we need to fit more points in that region via the spline. The spline is fit on the data points for alpha >= alpha_min.
-
-    Parameters:
-    alpha (float): The alpha value for which the spline of Z is to be calculated.
-    alpha_min (float, optional): The minimum value of alpha. Defaults to -1E6.
-
-    Returns:
-    float: The spline fit on Z for the given alpha. If alpha is less than or equal to alpha_min,
-    the function returns the value at infinity, i.e. 11.2.
-    """
-
-    if alpha <= alpha_min:
-        return ln_Z_inf
-
-    return ln_Z_fit(alpha)
-
-
 # penalize the loss function using approximate partition function
 # default to L2 loss
 def penalized_loss_fcn(x, a=2, use_penalty=True):
@@ -526,7 +520,13 @@ def adaptive_loss_fcn(x, mu=0, c=1, alpha="adaptive", replace_nonfinite=True):
 
 # Assumes that x has not been standardized
 def adaptive_weights(
-    x, alpha="adaptive", sigma=3, quantile=0.25, min_weight=0.00, replace_nonfinite=True
+    x, 
+    alpha="adaptive", 
+    sigma=3, 
+    quantile=0.25, 
+    min_weight=0.00, 
+    C_algo="iqr_legacy", 
+    replace_nonfinite=True
 ):
     """
     This function calculates the adaptive weights for a given data set.
@@ -546,10 +546,11 @@ def adaptive_weights(
     x_no_outlier, _ = remove_outliers(x, sigma_threshold=sigma, quantile=0.25)
 
     # TODO: Should x be abs or not?
+    # likely should be abs
     # mu = np.median(np.abs(x_no_outlier))
     mu = np.median(x_no_outlier)
 
-    C = get_C(x, mu, sigma, quantile)
+    C = get_C(x, mu, sigma, quantile, C_algo)
     x = (x - mu) / C
 
     if alpha == "adaptive":

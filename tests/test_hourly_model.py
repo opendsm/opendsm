@@ -291,13 +291,13 @@ def test_hourly_fit_daily_threshold(baseline):
     b1 = baseline.copy()
     b1.loc["2018-01-08":"2018-01-08 11", "temperature"] = np.nan
     b1 = m._add_categorical_features(b1)
-    b1 = m._daily_sufficiency(b1)
+    b1 = m._daily_fitting_sufficiency(b1)
     assert b1.loc["2018-01-08", "include_date"].sum() == 24
 
     b2 = baseline.copy()
     b2.loc["2018-01-08":"2018-01-08 12", "temperature"] = np.nan
     b2 = m._add_categorical_features(b2)
-    b2 = m._daily_sufficiency(b2)
+    b2 = m._daily_fitting_sufficiency(b2)
     assert b2.loc["2018-01-08", "include_date"].sum() == 0
     assert b2.loc["2018-01-09", "include_date"].sum() == 24
 

@@ -52,7 +52,7 @@ from opendsm.eemeter.models.daily.utilities.settings import (
 )
 from opendsm.eemeter.models.daily.utilities.ellipsoid_test import ellipsoid_split_filter
 from opendsm.eemeter.models.daily.utilities.selection_criteria import selection_criteria
-
+from opendsm.common.metrics import BaselineMetrics
 
 class DailyModel:
     """
@@ -176,13 +176,16 @@ class DailyModel:
         self.disqualification = baseline_data.disqualification
         df = getattr(baseline_data, self._data_df_name)
         self._fit(df)
-        if self.error["CVRMSE"] > self.settings.cvrmse_threshold:
+        if not self._model_fit_is_acceptable():
             cvrmse_warning = EEMeterWarning(
-                qualified_name="eemeter.model_fit_metrics.cvrmse",
-                description=(
-                    f"Fit model has CVRMSE > {self.settings.cvrmse_threshold}"
-                ),
-                data={"CVRMSE": self.error["CVRMSE"]},
+                qualified_name="eemeter.model_fit_metrics",
+                description="Model disqualified due to poor fit.",
+                data={
+                    "cvrmse_threshold": self.settings.cvrmse_threshold,
+                    "cvrmse": self.error["CVRMSE"],
+                    "pnrmse_threshold": self.settings.pnrmse_threshold,
+                    "pnrmse": self.error["PNRMSE"],
+                },
             )
             cvrmse_warning.warn()
             self.disqualification.append(cvrmse_warning)
@@ -198,7 +201,7 @@ class DailyModel:
         self.fit_components = self._fit_components()
 
         # calculate mean bias error for no splits
-        self.wRMSE_base = self._get_error_metrics("fw-su_sh_wi")[0]
+        self.wRMSE_base = self._get_error_metrics("fw-su_sh_wi").wrmse
 
         # find best combination
         self.best_combination = self._best_combination(print_out=False)
@@ -206,14 +209,12 @@ class DailyModel:
 
         self.id = meter_data.index.unique()[0]
 
-        wRMSE, RMSE, MAE, CVRMSE, PNRMSE = self._get_error_metrics(
-            self.best_combination
-        )
-        self.error["wRMSE"] = float(wRMSE)
-        self.error["RMSE"] = float(RMSE)
-        self.error["MAE"] = float(MAE)
-        self.error["CVRMSE"] = float(CVRMSE)
-        self.error["PNRMSE"] = float(PNRMSE)
+        self.baseline_metrics = self._get_error_metrics(self.best_combination)
+        self.error["wRMSE"] = self.baseline_metrics.wrmse
+        self.error["RMSE"] = self.baseline_metrics.rmse
+        self.error["MAE"] = self.baseline_metrics.mae
+        self.error["CVRMSE"] = self.baseline_metrics.cvrmse
+        self.error["PNRMSE"] = self.baseline_metrics.pnrmse
 
         self.params = self._create_params_from_fit_model()
         self.is_fitted = True
@@ -319,6 +320,23 @@ class DailyModel:
         df_eval = pd.concat([df_eval, dropped_rows])
 
         return df_eval.sort_index()
+
+    def _model_fit_is_acceptable(self):
+        cvrmse = self.error["CVRMSE"]
+        pnrmse = self.error["PNRMSE"]
+
+        # sufficient is (0 <= cvrmse <= threshold) or (0 <= pnrmse <= threshold)
+
+        if cvrmse is not None:
+            if (0 <= cvrmse) and (cvrmse <= self.settings.cvrmse_threshold):
+                return True
+            
+        if pnrmse is not None:
+            # less than 0 is not possible, but just in case
+            if (0 <= pnrmse) and (pnrmse <= self.settings.pnrmse_threshold):
+                return True
+
+        return False
 
     def to_dict(self) -> dict:
         """Returns a dictionary of model parameters.
@@ -845,7 +863,7 @@ class DailyModel:
         if combination == "fw-su_sh_wi":
             wRMSE = self.wRMSE_base
         else:
-            wRMSE = self._get_error_metrics(combination)[0]
+            wRMSE = self._get_error_metrics(combination).wrmse
 
         loss = wRMSE / self.wRMSE_base
 
@@ -948,27 +966,35 @@ class DailyModel:
             combination = self.best_combination
 
         N = 0
+        num_coeffs = 0
         wSSE = 0
-        resid = []
         obs = []
+        predicted = []
         for component in combination.split("__"):
             fit_component = self.fit_components[component]
 
             wSSE += fit_component.wSSE
             N += fit_component.N
-            resid.append(fit_component.resid)
+            num_coeffs += fit_component.num_coeffs
             obs.append(fit_component.obs)
+            predicted.append(fit_component.model)
+        
+        obs = np.hstack(obs)   
+        predicted = np.hstack(predicted)
+        
+        df_meter = pd.DataFrame({
+            'observed': obs,
+            'predicted': predicted,
+        })
 
-        resid = np.hstack(resid)
-        obs = np.hstack(obs)
+        metrics = BaselineMetrics(
+            df=df_meter, num_model_params=num_coeffs
+        )
 
         wRMSE = np.sqrt(wSSE / N)
-        RMSE = np.mean(resid**2) ** 0.5
-        MAE = np.mean(np.abs(resid))
-        CVRMSE = RMSE / np.mean(obs)
-        PNRMSE = RMSE / np.diff(np.quantile(obs, [0.05, 0.95]))[0]
+        metrics.wrmse = wRMSE
 
-        return wRMSE, RMSE, MAE, CVRMSE, PNRMSE
+        return metrics
 
     def _predict_submodel(self, submodel, T):
         """

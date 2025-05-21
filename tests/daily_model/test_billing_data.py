@@ -536,12 +536,9 @@ def test_billing_baseline_data_with_specific_monthly_input():
     assert cls.df is not None
     assert len(cls.df) == (meter.index[-1] - meter.index[0]).days
     assert round(cls.df.observed.sum(), 2) == round(meter.value.sum(), 2)
-    assert len(cls.warnings) == 2
+    assert len(cls.warnings) == 1
     assert set([warning.qualified_name for warning in cls.warnings]) == set(
-        [
-            "eemeter.data_quality.utc_index",
-            "eemeter.sufficiency_criteria.extreme_values_detected",
-        ]
+        ["eemeter.data_quality.utc_index"]
     )
     assert len(cls.disqualification) == 0
 

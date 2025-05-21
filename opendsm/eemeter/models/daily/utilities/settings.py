@@ -193,8 +193,8 @@ class Split_Selection_Definition(BaseSettings):
         return self
 
 
-def _check_developer_mode(cls):   
-    for k, v in cls.model_fields.items():
+def _check_developer_mode(cls):  
+    for k, v in type(cls).model_fields.items():
         if isinstance(getattr(cls, k), BaseSettings):
             _check_developer_mode(getattr(cls, k))
 
@@ -381,6 +381,13 @@ class DailySettings(BaseSettings):
         description="Threshold for the CVRMSE to disqualify a model",
     )
 
+    pnrmse_threshold: float = CustomField(
+        default=1.6,
+        ge=0,
+        developer=True,
+        description="Threshold for the PNRMSE to disqualify a model",
+    )
+
 
     @pydantic.model_validator(mode="after")
     def _check_developer_mode(self):
@@ -449,12 +456,12 @@ class DailySettings(BaseSettings):
         text_all.append(type(self).__name__)
 
         # get all keys
-        keys = list(self.model_fields.keys())
+        keys = list(type(self).model_fields.keys())
 
         # print away
         key_max = max([len(k) for k in keys]) + 2
         for key in keys:
-            if not self.model_fields[key].repr:
+            if not type(self).model_fields[key].repr:
                 continue
 
             val = getattr(self, key)

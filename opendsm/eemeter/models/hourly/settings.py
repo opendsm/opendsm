@@ -11,6 +11,7 @@ from typing import Optional, Literal, Union, TypeVar, Dict
 import pywt
 
 from opendsm.common.base_settings import BaseSettings
+from opendsm.common.clustering.settings import ClusteringSettings
 from opendsm.common.metrics import BaselineMetrics
 
 from opendsm.eemeter.common.warnings import EEMeterWarning
@@ -24,32 +25,15 @@ class SelectionChoice(str, Enum):
 
 
 class ScalingChoice(str, Enum):
-    ROBUSTSCALER = "robustscaler"
-    STANDARDSCALER = "standardscaler"
+    ROBUST_SCALER = "robustscaler"
+    STANDARD_SCALER = "standardscaler"
 
 
 class BinningChoice(str, Enum):
     EQUAL_SAMPLE_COUNT = "equal_sample_count"
     EQUAL_BIN_WIDTH = "equal_bin_width"
     SET_BIN_WIDTH = "set_bin_width"
-
-
-class ClusterScoringMetric(str, Enum):
-    SILHOUETTE = "silhouette"
-    SILHOUETTE_MEDIAN = "silhouette_median"
-    VARIANCE_RATIO = "variance_ratio"
-    DAVIES_BOULDIN = "davies-bouldin"
-
-
-class DistanceMetric(str, Enum):
-    """
-    what distance method to use
-    """
-
-    EUCLIDEAN = "euclidean"
-    SEUCLIDEAN = "seuclidean"
-    MANHATTAN = "manhattan"
-    COSINE = "cosine"
+    FIXED_BINS = "fixed_bins"
 
 
 class DefaultTrainingFeatures(str, Enum):
@@ -57,11 +41,20 @@ class DefaultTrainingFeatures(str, Enum):
     NONSOLAR = ["temperature"]
 
 
+class AggregationMethod(str, Enum):
+    MEAN = "mean"
+    MEDIAN = "median"
+
+
+class BaseModel(str, Enum):
+    ELASTICNET = "elasticnet"
+    KERNEL_RIDGE = "kernel_ridge"
+
+
 class TemperatureBinSettings(BaseSettings):
     """how to bin temperature data"""
-
     method: BinningChoice = pydantic.Field(
-        default=BinningChoice.SET_BIN_WIDTH,
+        default=BinningChoice.FIXED_BINS,
     )
 
     """number of temperature bins"""
@@ -72,13 +65,24 @@ class TemperatureBinSettings(BaseSettings):
 
     """temperature bin width in fahrenheit"""
     bin_width: Optional[float] = pydantic.Field(
-        default=12,
+        default=25,
+        ge=1,
+    )
+
+    """specified fixed temperature bins in fahrenheit"""
+    fixed_bins: Optional[list[float]] = pydantic.Field(
+        default=[10, 30, 50, 65, 75, 90, 105],
+    )
+
+    "minimum bin count"
+    min_bin_count: Optional[int] = pydantic.Field(
+        default=20,
         ge=1,
     )
 
     """use edge bins bool"""
     include_edge_bins: bool = pydantic.Field(
-        default=True,
+        default=True, 
     )
 
     """rate for edge temperature bins"""
@@ -88,65 +92,68 @@ class TemperatureBinSettings(BaseSettings):
 
     """percent of total data in edge bins"""
     edge_bin_percent: Optional[float] = pydantic.Field(
-        default=0.0425,
-        ge=0,
+        default=None,
+        gt=0,
         le=0.45,
     )
 
     """offset normalized temperature range for edge bins (keeps exp from blowing up)"""
     edge_bin_temperature_range_offset: Optional[float] = pydantic.Field(
-        default=1.0,
+        default=1.0, # prior 1.0
         ge=0,
     )
 
     @pydantic.model_validator(mode="after")
     def _check_temperature_bins(self):
-        # check that temperature bin count is set based on binning method
-        if self.method is None:
-            if self.n_bins is not None:
-                raise ValueError("'n_bins' must be None if 'method' is None.")
-            if self.bin_width is not None:
-                raise ValueError("'n_bins' must be None if 'method' is None.")
-        else:
-            if self.method == BinningChoice.SET_BIN_WIDTH:
-                if self.bin_width is None:
-                    raise ValueError(
-                        "'n_bins' must be specified if 'method' is 'set_bin_width'."
-                    )
-                elif isinstance(self.bin_width, float):
-                    if self.bin_width <= 0:
-                        raise ValueError("'bin_width' must be greater than 0.")
+        if self.method == BinningChoice.EQUAL_SAMPLE_COUNT:
+            if self.n_bins is None:
+                raise ValueError(
+                    "'n_bins' must be specified if 'method' is 'equal_sample_count'."
+                )
+            if self.n_bins < 1:
+                raise ValueError("'n_bins' must be greater than 0.")
 
-                if self.n_bins is not None:
-                    raise ValueError(
-                        "'n_bins' must be None if 'method' is 'set_bin_width'."
-                    )
-            else:
-                if self.n_bins is None:
-                    raise ValueError(
-                        "'n_bins' must be specified if 'method' is not None."
-                    )
-                if self.bin_width is not None:
-                    raise ValueError("'n_bins' must be None if 'method' is not None.")
+        elif self.method == BinningChoice.EQUAL_BIN_WIDTH:
+            if self.bin_width is None:
+                raise ValueError(
+                    "'bin_width' must be specified if 'method' is 'equal_bin_width'."
+                )
+            if self.bin_width < 1:
+                raise ValueError("'bin_width' must be greater than 0.")
+
+        elif self.method == BinningChoice.SET_BIN_WIDTH:
+            if self.bin_width is None:
+                raise ValueError(
+                    "'bin_width' must be specified if 'method' is 'set_bin_width'."
+                )
+            if self.bin_width < 1:
+                raise ValueError("'bin_width' must be greater than 0.")
+
+        elif self.method == BinningChoice.FIXED_BINS:
+            if self.fixed_bins is None:
+                raise ValueError(
+                    "'fixed_bins' must be specified if 'method' is 'fixed_bins'."
+                )
+
+        else:
+            raise ValueError(f"Invalid method: {self.method}")
 
         return self
 
     @pydantic.model_validator(mode="after")
     def _check_edge_bins(self):
-        if self.method != BinningChoice.SET_BIN_WIDTH:
-            if self.include_edge_bins:
-                raise ValueError(
-                    "'include_edge_bins' must be False if 'method' is not 'set_bin_width'."
-                )
-
         if self.include_edge_bins:
             if self.edge_bin_rate is None:
                 raise ValueError(
                     "'edge_bin_rate' must be specified if 'include_edge_bins' is True."
                 )
-            if self.edge_bin_percent is None:
+            if self.edge_bin_percent is None and self.method != BinningChoice.FIXED_BINS:
                 raise ValueError(
                     "'edge_bin_days' must be specified if 'include_edge_bins' is True."
+                )
+            if self.edge_bin_temperature_range_offset is None:
+                raise ValueError(
+                    "'edge_bin_temperature_range_offset' must be specified if 'include_edge_bins' is True."
                 )
 
         else:
@@ -158,83 +165,10 @@ class TemperatureBinSettings(BaseSettings):
                 raise ValueError(
                     "'edge_bin_days' must be None if 'include_edge_bins' is False."
                 )
-
-        return self
-
-
-class TemporalClusteringSettings(BaseSettings):
-    """wavelet decomposition level"""
-
-    wavelet_n_levels: int = pydantic.Field(
-        default=5,
-        ge=1,
-        # le=5,  #TODO investigate upper limit
-    )
-
-    """wavelet choice for wavelet decomposition"""
-    wavelet_name: str = pydantic.Field(
-        default="haar",  # maybe db3?
-    )
-
-    """signal extension mode for wavelet decomposition"""
-    wavelet_mode: str = pydantic.Field(
-        default="periodization",
-    )
-
-    """minimum variance ratio for PCA clustering"""
-    pca_min_variance_ratio_explained: float = pydantic.Field(
-        default=0.725,
-        ge=0.5,
-        le=1,
-    )
-
-    """number of times to recluster"""
-    recluster_count: int = pydantic.Field(
-        default=3,
-        ge=1,
-    )
-
-    """lower bound for number of clusters"""
-    n_cluster_lower: int = pydantic.Field(
-        default=2,
-        ge=2,
-    )
-
-    """upper bound for number of clusters"""
-    n_cluster_upper: int = pydantic.Field(
-        default=24,
-        ge=2,
-    )
-
-    """minimum cluster size"""
-    min_cluster_size: int = pydantic.Field(
-        default=1,
-        ge=1,
-    )
-
-    """scoring method for clustering"""
-    score_metric: ClusterScoringMetric = pydantic.Field(
-        default=ClusterScoringMetric.VARIANCE_RATIO,
-    )
-
-    """distance metric for clustering"""
-    distance_metric: DistanceMetric = pydantic.Field(
-        default=DistanceMetric.EUCLIDEAN,
-    )
-
-    @pydantic.model_validator(mode="after")
-    def _check_wavelet(self):
-        all_wavelets = pywt.wavelist(kind="discrete")
-        if self.wavelet_name not in all_wavelets:
-            raise ValueError(
-                f"'wavelet_name' must be a valid wavelet in PyWavelets: \n{all_wavelets}"
-            )
-
-        all_modes = pywt.Modes.modes
-        if self.wavelet_mode not in all_modes:
-            raise ValueError(
-                f"'wavelet_mode' must be a valid mode in PyWavelets: \n{all_modes}"
-            )
+            if self.edge_bin_temperature_range_offset is not None:
+                raise ValueError(
+                    "'edge_bin_temperature_range_offset' must be None if 'include_edge_bins' is False."
+                )
 
         return self
 
@@ -243,13 +177,13 @@ class ElasticNetSettings(BaseSettings):
     """ElasticNet alpha parameter"""
 
     alpha: float = pydantic.Field(
-        default=0.0425,
+        default=0.0139,
         ge=0,
     )
 
     """ElasticNet l1_ratio parameter"""
     l1_ratio: float = pydantic.Field(
-        default=0.5,
+        default=0.871,
         ge=0,
         le=1,
     )
@@ -266,7 +200,7 @@ class ElasticNetSettings(BaseSettings):
 
     """ElasticNet max_iter parameter"""
     max_iter: int = pydantic.Field(
-        default=1000,
+        default=3000,
         ge=1,
         le=2**32 - 1,
     )
@@ -278,7 +212,7 @@ class ElasticNetSettings(BaseSettings):
 
     """ElasticNet tol parameter"""
     tol: float = pydantic.Field(
-        default=1e-4,
+        default=1e-3,
         gt=0,
     )
 
@@ -287,45 +221,91 @@ class ElasticNetSettings(BaseSettings):
         default=SelectionChoice.CYCLIC,
     )
 
-    """Adaptive Daily Weights for ElasticNet"""
-    adaptive_weights: bool = pydantic.Field(
+    """ElasticNet warm_start parameter"""
+    warm_start: bool = pydantic.Field(
         default=False,
     )
 
+
+class KernelRidgeSettings(BaseSettings):
+    """Kernel Ridge alpha parameter"""
+    alpha: float = pydantic.Field(
+        default=0.0425,
+        ge=0,
+    )
+
+    """Kernel Ridge kernel parameter"""
+    kernel: str = pydantic.Field(
+        default="rbf",
+    )
+
+    """Kernel Ridge gamma parameter"""
+    gamma: Optional[float] = pydantic.Field(
+        default=None,
+        gt=0,
+    )
+
+
+class CAlgoChoice(str, Enum):
+    IQR_LEGACY = "iqr_legacy"
+    IQR = "iqr"
+    MAD = "mad"
+    STDEV = "stdev"
+
+
+class AdaptiveWeightsSettings(BaseSettings):
+    """Adaptive Weights for ElasticNet"""
+    enabled: bool = pydantic.Field(
+        default=True,
+    )
+
+    """Sigma threshold for calculating C"""
+    sigma: Optional[float] = pydantic.Field(
+        default=4.55,
+        gt=0,
+    )
+
+    """Adaptive weights window size"""
+    window_size: Optional[int] = pydantic.Field(
+        default=3,
+        ge=1,
+        le=12,
+    )
+
+    """Algorithm to use for calculating C"""
+    c_algo: Optional[CAlgoChoice] = pydantic.Field(
+        default=CAlgoChoice.IQR,
+    )
+
     """Number of iterations to iterate weights"""
-    adaptive_weight_max_iter: Optional[int] = pydantic.Field(
-        default=None,   # Previously was using 100 as it exits early where appropriate
+    max_iter: Optional[int] = pydantic.Field(
+        default=100,   # Exits early based on tol
         ge=1,
     )
 
     """Relative difference in weights to stop iteration"""
-    adaptive_weight_tol: Optional[float] = pydantic.Field(
-        default=None,   # Previously was using 1e-4
+    tol: Optional[float] = pydantic.Field(
+        default=1E-3,   # Previously was using 1e-4
         ge=0,
     )
 
     @pydantic.model_validator(mode="after")
     def _check_adaptive_weights(self):
-        if self.adaptive_weights:
-            if self.adaptive_weight_max_iter is None:
-                raise ValueError(
-                    "'adaptive_weight_iter' must be specified if 'adaptive_weights' is True."
-                )
-            if self.adaptive_weight_tol is None:
-                raise ValueError(
-                    "'adaptive_weight_tol' must be specified if 'adaptive_weights' is True."
-                )
+        if self.enabled:
+            # iterate through all the parameters to check if they are set
+            # if any are None, raise an error
+            pass
         else:
-            if self.adaptive_weight_max_iter is not None:
-                raise ValueError(
-                    "'adaptive_weight_iter' must be None if 'adaptive_weights' is False."
-                )
-            if self.adaptive_weight_tol is not None:
-                raise ValueError(
-                    "'adaptive_weight_tol' must be None if 'adaptive_weights' is False."
-                )
+            # iterate through all the parameters to check if they are set
+            # if any are not None, raise an error
+            pass
 
         return self
+
+
+class Criterion(str, Enum):
+    AIC = "aic"
+    BIC = "bic"
 
 
 # analytic_features = ['GHI', 'Temperature', 'DHI', 'DNI', 'Relative Humidity', 'Wind Speed', 'Clearsky DHI', 'Clearsky DNI', 'Clearsky GHI', 'Cloud Type']
@@ -357,8 +337,19 @@ class BaseHourlySettings(BaseSettings):
     )
 
     """settings for temporal clustering"""
-    temporal_cluster: TemporalClusteringSettings = pydantic.Field(
-        default_factory=TemporalClusteringSettings,
+    temporal_cluster: ClusteringSettings = pydantic.Field(
+        default_factory=ClusteringSettings,
+    )
+
+    """temporal cluster aggregation method"""
+    temporal_cluster_aggregation: AggregationMethod = pydantic.Field(
+        default=AggregationMethod.MEDIAN,
+    )
+
+    """temporal cluster/temperature bin/temperature interaction scalar"""
+    interaction_scalar: float = pydantic.Field(
+        default=0.524,
+        gt=0,
     )
 
     """supplemental time series column names"""
@@ -371,14 +362,29 @@ class BaseHourlySettings(BaseSettings):
         default=None,
     )
 
+    """base model type"""
+    base_model: BaseModel = pydantic.Field(
+        default=BaseModel.ELASTICNET,
+    )
+
     """ElasticNet settings"""
-    elasticnet: ElasticNetSettings = pydantic.Field(
+    elasticnet: Optional[ElasticNetSettings] = pydantic.Field(
         default_factory=ElasticNetSettings,
+    )
+
+    """Kernel Ridge settings"""
+    kernel_ridge: Optional[KernelRidgeSettings] = pydantic.Field(
+        default_factory=KernelRidgeSettings,
+    )
+
+    """Adaptive Weights settings"""
+    adaptive_weights: AdaptiveWeightsSettings = pydantic.Field(
+        default_factory=AdaptiveWeightsSettings,
     )
 
     """Feature scaling method"""
     scaling_method: ScalingChoice = pydantic.Field(
-        default=ScalingChoice.STANDARDSCALER,
+        default=ScalingChoice.STANDARD_SCALER,
     )
 
     """seed for any random state assignment (ElasticNet, Clustering)"""
@@ -396,6 +402,19 @@ class BaseHourlySettings(BaseSettings):
 
         self.elasticnet._seed = self._seed
         self.temporal_cluster._seed = self._seed
+
+        return self
+
+    @pydantic.model_validator(mode="after")
+    def _remove_unselected_model_settings(self):
+        self.model_config["frozen"] = False
+        
+        if self.base_model == BaseModel.ELASTICNET:
+            self.kernel_ridge = None
+        elif self.base_model == BaseModel.KERNEL_RIDGE:
+            self.elasticnet = None
+
+        self.model_config["frozen"] = True
 
         return self
 

@@ -27,6 +27,8 @@ os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
+import re
+
 from pydantic import BaseModel, ConfigDict
 
 import numpy as np
@@ -44,11 +46,9 @@ from scipy.sparse import csr_matrix
 
 from scipy.spatial.distance import cdist
 
-from sklearn.linear_model import ElasticNet
+from sklearn.linear_model import ElasticNet, LinearRegression, Ridge, Lasso
+from sklearn.kernel_ridge import KernelRidge
 from sklearn.preprocessing import StandardScaler, RobustScaler
-from sklearn.decomposition import PCA, KernelPCA
-
-import pywt
 
 from timeit import default_timer as timer
 
@@ -61,13 +61,196 @@ from opendsm.eemeter.common.exceptions import (
     DisqualifiedModelError,
 )
 from opendsm.eemeter.common.warnings import EEMeterWarning
-from opendsm.common.clustering import (
-    bisect_k_means as _bisect_k_means,
-    scoring as _scoring,
-)
+from opendsm.common.clustering.cluster import cluster_features
 from opendsm.common.adaptive_loss import adaptive_weights
 from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict
 from opendsm import __version__
+
+
+
+class AdaptiveElasticNetRegressor:  
+    def __init__(self, base_model, settings):
+        self.settings = settings
+
+        self.base_model = base_model
+        self.base_model.warm_start = True
+
+        self._hour_model = copy(self.base_model)
+
+    
+    def fit(self, X, y, sample_weight=None):
+        """
+        Fit the model with X, y data.
+        
+        Parameters:
+        -----------
+        X : array-like of shape (n_samples, n_features)
+            The training input samples.
+        y : array-like of shape (n_samples,) or (n_samples, n_targets)
+            The target values.
+        sample_weight : array-like of shape (n_samples,), default=None
+            Sample weights.
+            
+        Returns:
+        --------
+        self : returns an instance of self.
+        """
+        settings = self.settings.adaptive_weights
+        window_size = self.settings.adaptive_weights.window_size - 1
+        tol = self.settings.adaptive_weights.tol
+
+        num_hours = y.shape[1]
+
+        hour_model = copy(self.base_model)
+
+        # fit the base model as an initial guess
+        self.base_model.fit(X, y, sample_weight=sample_weight)
+
+        if sample_weight is None:
+            weights = np.ones((X.shape[0], num_hours))
+        else:
+            weights = sample_weight
+
+        hour_fit = [False for _ in range(num_hours)]
+        alpha_prior = np.array([2.0 for _ in range(num_hours)])
+        for i in range(settings.max_iter):
+            if all(hour_fit):
+                i -= 1
+                break
+
+            # get prediction and residuals for all hours
+            y_fit = self.base_model.predict(X)
+            resid = y - y_fit
+
+            for hour in range(num_hours):
+                # if hour_fit[hour]:
+                #     continue
+
+                # Update weights
+                # Calculate weights using window of hours
+                window_idx = np.arange(hour - window_size, hour + window_size + 1)
+
+                # if idx_i < 0, roll to the end or if idx_i >= num_hours, roll to the beginning 
+                for idx_i in range(len(window_idx)):
+                    if window_idx[idx_i] < 0:
+                        window_idx[idx_i] = num_hours + window_idx[idx_i]
+
+                    if window_idx[idx_i] >= num_hours:
+                        window_idx[idx_i] = window_idx[idx_i] - num_hours
+
+                # unique values in idx only
+                window_idx = list(set(window_idx))
+  
+                # calculate weights
+                weights_update, _, alpha = adaptive_weights(
+                    resid[:,window_idx].flatten(), 
+                    alpha="adaptive", 
+                    sigma=settings.sigma, 
+                    quantile=0.25, 
+                    min_weight=0.0,
+                    C_algo=settings.c_algo,
+                )
+
+                # break criteria
+                if (alpha == 2) or (np.abs(alpha - alpha_prior[hour]) <= tol):
+                    hour_fit[hour] = True
+                    continue
+                else:
+                    hour_fit[hour] = False
+
+                # update weights and alpha_prior
+                alpha_prior[hour] = alpha
+
+                # trim weights to hour size
+                if window_size > 0:
+                    # get index of hour in window_idx
+                    idx = window_idx.index(hour)
+                    hour_len = int(len(weights_update)/len(window_idx))
+
+                    weights_update = weights_update[idx*hour_len:(idx+1)*hour_len]
+
+                weights[:, hour] *= weights_update
+                
+                # update hour model from base model
+                self._hour_model.coef_ = self.base_model.coef_[hour,:]
+                self._hour_model.intercept_ = self.base_model.intercept_[hour]
+
+                # fit
+                self._hour_model.fit(
+                    X, 
+                    y[:, hour], 
+                    sample_weight=weights[:, hour]
+                )
+                
+                # update base model from refit hour model            
+                self.base_model.coef_[hour,:] = self._hour_model.coef_
+                self.base_model.intercept_[hour] = self._hour_model.intercept_
+
+        # save info to base_model
+        self.base_model.adaptive_iterations = i
+        self.base_model.adaptive_alpha = alpha_prior
+        self.base_model.adaptive_weights = weights
+           
+        return self
+
+    @property
+    def is_fit(self):
+        """Check if the model is fitted."""
+        is_fit = True
+
+        if not hasattr(self.base_model, "coef_"):
+            is_fit = False
+
+        if not hasattr(self.base_model, "intercept_"):
+            is_fit = False
+
+        return is_fit
+    
+    def predict(self, X):
+        """
+        Predict using the model.
+        
+        Parameters:
+        -----------
+        X : array-like of shape (n_samples, n_features)
+            The input samples.
+            
+        Returns:
+        --------
+        y : array of shape (n_samples,) or (n_samples, n_targets)
+            The predicted values.
+        """
+        if not self.is_fit:
+            raise RuntimeError("Model must be fit before predictions can be made.")
+
+        y = self.base_model.predict(X)
+
+        return y
+    
+    @property
+    def coef_(self):
+        """Get model coefficients."""
+        if not hasattr(self.base_model, "coef_"):
+            raise RuntimeError("Model coefficients must be set before accessed.")
+        
+        return self.base_model.coef_
+        
+    @coef_.setter
+    def coef_(self, val):
+        self.base_model.coef_ = val
+
+    @property
+    def intercept_(self):
+        """Get model intercepts."""
+        if not hasattr(self.base_model, "intercept_"):
+            raise RuntimeError("Model intercepts must be set before accessed.")
+
+        return self.base_model.intercept_
+        
+    @intercept_.setter
+    def intercept_(self, val):
+        """Set model intercepts"""
+        self.base_model.intercept_ = val
 
 
 class HourlyModel:
@@ -78,6 +261,10 @@ class HourlyModel:
         settings (dict): A dictionary of settings.
         baseline_metrics (dict): A dictionary of metrics based on input baseline data and model fit.
     """
+    
+    # thresholds for switching model types
+    _alpha_model_threshold = 1E-5
+    _l1_ratio_model_threshold = 1E-3
 
     # set priority columns for sorting
     # this is critical for ensuring predict column order matches fit column order
@@ -119,27 +306,11 @@ class HourlyModel:
             self.settings = settings
 
         # Initialize model
-        if self.settings.scaling_method == _settings.ScalingChoice.STANDARDSCALER:
-            self._feature_scaler = StandardScaler()
-            self._y_scaler = StandardScaler()
-        elif self.settings.scaling_method == _settings.ScalingChoice.ROBUSTSCALER:
-            self._feature_scaler = RobustScaler(unit_variance=True)
-            self._y_scaler = RobustScaler(unit_variance=True)
-
-        self._T_edge_bin_coeffs = None
-
-        self._model = ElasticNet(
-            alpha=self.settings.elasticnet.alpha,
-            l1_ratio=self.settings.elasticnet.l1_ratio,
-            fit_intercept=self.settings.elasticnet.fit_intercept,
-            precompute=self.settings.elasticnet.precompute,
-            max_iter=self.settings.elasticnet.max_iter,
-            tol=self.settings.elasticnet.tol,
-            selection=self.settings.elasticnet.selection,
-            random_state=self.settings.elasticnet._seed,
-        )
+        self._set_scalers()
+        self._set_model()
 
         self._T_bin_edges = None
+        self._T_edge_bin_coeffs = None
         self._T_edge_bin_rate = None
         self._df_temporal_clusters = None
         self._categorical_features = None
@@ -158,6 +329,59 @@ class HourlyModel:
         self.baseline_timezone = None
         self.error = dict()
         self.version = __version__
+
+    
+    def _set_scalers(self):
+        # set scalers
+        if self.settings.scaling_method == _settings.ScalingChoice.STANDARD_SCALER:
+            self._feature_scaler = StandardScaler()
+            self._y_scaler = StandardScaler()
+        elif self.settings.scaling_method == _settings.ScalingChoice.ROBUST_SCALER:
+            self._feature_scaler = RobustScaler(unit_variance=True)
+            self._y_scaler = RobustScaler(unit_variance=True)
+
+
+    def _set_model(self):
+        # set base model
+        if self.settings.base_model == _settings.BaseModel.ELASTICNET:
+            settings = self.settings.elasticnet
+            if settings.alpha <= self._alpha_model_threshold:
+                self._model = LinearRegression(
+                    fit_intercept=settings.fit_intercept
+                )
+            else:
+                if settings.l1_ratio <= self._l1_ratio_model_threshold:
+                    model = Ridge
+                elif settings.l1_ratio >= (1 - self._l1_ratio_model_threshold):
+                    model = Lasso
+                else:
+                    model = ElasticNet
+
+                self._model = model(
+                    alpha=settings.alpha,
+                    fit_intercept=settings.fit_intercept,
+                    precompute=settings.precompute,
+                    max_iter=settings.max_iter,
+                    tol=settings.tol,
+                    selection=settings.selection,
+                    warm_start=settings.warm_start,
+                    random_state=settings._seed,
+                )
+
+                if model == ElasticNet:
+                    self._model.l1_ratio = settings.l1_ratio
+
+            if self.settings.adaptive_weights.enabled:
+                self._model = AdaptiveElasticNetRegressor(self._model, self.settings)
+                
+        elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
+            settings = self.settings.kernel_ridge
+            self._model = KernelRidge(
+                alpha=settings.alpha,
+                kernel=settings.kernel,
+                gamma=settings.gamma,
+            )
+
 
     def fit(
         self, baseline_data: HourlyBaselineData, ignore_disqualification: bool = False
@@ -203,10 +427,7 @@ class HourlyModel:
             model_mismatch_warning.warn()
             self.warnings.append(model_mismatch_warning)
 
-        if self.settings.elasticnet.adaptive_weights:
-            self._adaptive_fit(baseline_data)
-        else:
-            self._fit(baseline_data)
+        self._fit(baseline_data)
 
         if not self._model_fit_is_acceptable():
             model_fit_warning = EEMeterWarning(
@@ -224,92 +445,33 @@ class HourlyModel:
         return self
 
     def _fit(self, meter_data):
-        # Initialize dataframe
         self.is_fitted = False
 
+        # Initialize dataframe
         df_meter = meter_data.df  # used to have a copy here
 
         # Prepare feature arrays/matrices
-        X_fit, X_predict, y_fit = self._prepare_features(df_meter)
+        X, y, fit_mask = self._prepare_features(df_meter)
+        X_fit = X[fit_mask, :]
+        y_fit = y[fit_mask]
 
         # fit the model
         self._model.fit(X_fit, y_fit)
         self.is_fitted = True
 
         # get number of model parameters
-        num_parameters = np.count_nonzero(self._model.coef_) + np.count_nonzero(
-            self._model.intercept_
-        )
+        if self.settings.base_model == _settings.BaseModel.ELASTICNET:
+            if self.settings.adaptive_weights.enabled:
+                self._model = self._model.base_model
 
-        # get model prediction of baseline
-        df_meter = self._predict(meter_data, X=X_predict)
-
-        # calculate baseline metrics on non-interpolated data
-        cols = [col for col in df_meter.columns if col.startswith("interpolated_")]
-        interpolated = df_meter[cols].any(axis=1)
-
-        self.baseline_metrics = BaselineMetrics(
-            df=df_meter.loc[~interpolated], num_model_params=num_parameters
-        )
-        self.baseline_timezone = meter_data.tz
-
-        return self
-
-    def _adaptive_fit(self, meter_data):
-        # Initialize dataframe
-        self.is_fitted = False
-
-        df_meter = meter_data.df  # used to have a copy here
-
-        # Prepare feature arrays/matrices
-        X_fit, X_predict, y_fit = self._prepare_features(df_meter)
-
-        weights = 1
-        rmse_annual_prior = np.inf
-        # fit the model
-        for i in range(self.settings.elasticnet.adaptive_weight_max_iter):
-            self._model.fit(X_fit, y_fit, sample_weight=weights)
-
-            y_predict = self._model.predict(X_fit)
-
-            # calculate residuals and annual rmse
-            resid = y_fit - y_predict
-
-            rmse_annual = np.sqrt(np.mean(resid ** 2))
-
-            rel_diff = (rmse_annual - rmse_annual_prior) / rmse_annual_prior
-            rmse_annual_prior = rmse_annual
-
-            # if rmse is not changing much, break
-            if rel_diff < self.settings.elasticnet.adaptive_weight_tol:
-                break
-
-            # for each day, calculate rmse to downweight outlier days
-            rmse_daily = np.sqrt(np.mean(resid**2, axis=1))
-
-            weights_prior = copy(weights)
-
-            weights, _, alpha = adaptive_weights(
-                rmse_daily, 
-                alpha="adaptive", 
-                sigma=2.698, 
-                quantile=0.25, 
-                min_weight=0.0
+            num_parameters = np.count_nonzero(self._model.coef_) + np.count_nonzero(
+                self._model.intercept_
             )
-            weights *= weights_prior
-
-            if alpha == 2:
-                break
-
-        self.is_fitted = True
-
-        # get number of model parameters
-        num_parameters = np.count_nonzero(self._model.coef_) + np.count_nonzero(
-            self._model.intercept_
-        )
-
+        elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
+            num_parameters = np.count_nonzero(self._model.dual_coef_)
+        
         # get model prediction of baseline
-        df_meter = self._predict(meter_data, X=X_predict)
+        df_meter = self._predict(meter_data, X=X)
 
         # calculate baseline metrics on non-interpolated data
         cols = [col for col in df_meter.columns if col.startswith("interpolated_")]
@@ -399,7 +561,7 @@ class HourlyModel:
             columns.remove("datetime")  # index in output, not column
 
         if X is None:
-            _, X, _ = self._prepare_features(df_eval)
+            X, _, _ = self._prepare_features(df_eval)
 
         y_predict_scaled = self._model.predict(X)
         y_predict = self._y_scaler.inverse_transform(y_predict_scaled)
@@ -435,7 +597,6 @@ class HourlyModel:
         - A pandas DataFrame containing the initialized meter data
         """
         dst_indices = _get_dst_indices(meter_data)
-        initial_index = meter_data.index
         meter_data = self._add_categorical_features(meter_data)
         self._add_supplemental_features(meter_data)
 
@@ -443,9 +604,9 @@ class HourlyModel:
             self._ts_features, self._categorical_features
         )
 
-        meter_data = self._daily_sufficiency(meter_data)
+        meter_data = self._daily_fitting_sufficiency(meter_data)
         meter_data = self._normalize_features(meter_data)
-        meter_data = self._add_temperature_bin_masked_ts(meter_data)
+        meter_data = self._add_temperature_interactions(meter_data)
 
         # save actual df used for later inspection
         self._ts_feature_norm, _ = self._sort_features(self._ts_feature_norm)
@@ -456,32 +617,12 @@ class HourlyModel:
         self._processed_meter_data = self._processed_meter_data_full[selected_features]
 
         # get feature matrices
-        X_predict, _ = self._get_feature_matrices(meter_data, dst_indices)
+        X, y, fit_mask = self._get_feature_matrices(meter_data, dst_indices)
 
-        # Convert X to sparse matrices
-        X_predict = csr_matrix(X_predict.astype(float))
+        # Convert to sparse matrix
+        X = csr_matrix(X.astype(float))
 
-        if not self.is_fitted:
-            meter_data = meter_data.set_index(initial_index)
-            # remove insufficient days from fit data
-            meter_data = meter_data[meter_data["include_date"]]
-
-            # recalculate DST indices with removed days
-            dst_indices = _get_dst_indices(meter_data)
-
-            # index shouldn't matter since it's being aggregated on date col inside _get_feature_matrices,
-            # but just keeping the input consistent with initial call
-            meter_data = meter_data.reset_index()
-
-            X_fit, y_fit = self._get_feature_matrices(meter_data, dst_indices)
-
-            # Convert to sparse matrix
-            X_fit = csr_matrix(X_fit.astype(float))
-
-        else:
-            X_fit, y_fit = None, None
-
-        return X_fit, X_predict, y_fit
+        return X, y, fit_mask
 
     def _add_temperature_bins(self, df):
         # TODO: do we need to do something about empty bins in prediction? I think not but maybe
@@ -543,6 +684,36 @@ class HourlyModel:
                         [min_temp, *np.linspace(*bin_range, step_num), max_temp]
                     )
 
+            elif settings.method == "fixed_bins":
+                temp =  df["temperature"].values
+                min_temp = np.floor(np.min(temp))
+                max_temp = np.ceil(np.max(temp))
+
+                T_bin_edges = np.array(settings.fixed_bins)
+                T_bin_edges = np.array([-np.inf, *T_bin_edges, np.inf])
+
+                # if less than 20 values from df["temperature"] are in a bin, remove bin edge starting from edges and moving inwards
+                idx_remove = []
+
+                # count from left
+                for i in range(len(T_bin_edges) - 1):
+                    bin_count = ((temp >= T_bin_edges[i]) & (temp < T_bin_edges[i + 1])).sum()
+                    if bin_count < settings.min_bin_count:
+                        idx_remove.append(i+1)
+                    else:
+                        break
+
+                # count from right
+                for i in range(len(T_bin_edges) - 1, 0, -1):
+                    bin_count = ((temp >= T_bin_edges[i - 1]) & (temp < T_bin_edges[i])).sum()
+                    if bin_count < settings.min_bin_count:
+                        idx_remove.append(i - 1)
+                    else:
+                        break
+
+                # remove idx_remove from T_bin_edges
+                T_bin_edges = np.delete(T_bin_edges, idx_remove)
+
             else:
                 raise ValueError("Invalid temperature binning method")
 
@@ -575,7 +746,7 @@ class HourlyModel:
         def set_initial_temporal_clusters(df):
             fit_df_grouped = (
                 df.groupby(self._temporal_cluster_cols + ["hour_of_day"])["observed"]
-                .mean()
+                .agg(self.settings.temporal_cluster_aggregation)
                 .reset_index()
             )
             # pivot table to get 2D array of observed values
@@ -585,20 +756,9 @@ class HourlyModel:
                 values="observed",
             )
 
-            settings = self.settings.temporal_cluster
-            labels = _cluster_temporal_features(
-                fit_df_grouped.values,
-                settings.wavelet_n_levels,
-                settings.wavelet_name,
-                settings.wavelet_mode,
-                settings.pca_min_variance_ratio_explained,
-                settings.recluster_count,
-                settings.n_cluster_lower,
-                settings.n_cluster_upper,
-                settings.score_metric,
-                settings.distance_metric,
-                settings.min_cluster_size,
-                settings._seed,
+            labels = cluster_features(
+                fit_df_grouped,
+                self.settings.temporal_cluster
             )
 
             df_temporal_clusters = pd.DataFrame(
@@ -637,7 +797,7 @@ class HourlyModel:
                         df_missing.groupby(
                             self._temporal_cluster_cols + ["hour_of_day"]
                         )["observed"]
-                        .mean()
+                        .agg(self.settings.temporal_cluster_aggregation)
                         .reset_index()
                     )
                     df_missing_grouped = df_missing_grouped.pivot_table(
@@ -726,13 +886,16 @@ class HourlyModel:
 
         else:
             self._df_temporal_clusters = correct_missing_temporal_clusters(df)
-            n_clusters = len(
-                [
-                    c
-                    for c in self._categorical_features
-                    if c.startswith("temporal_cluster_")
-                ]
-            )
+
+            # Get all unique temporal clusters from categorical features
+            temporal_cluster = []
+            for col in self._categorical_features:
+                if "temporal_cluster" in col:
+                    match = re.match(r'^temporal_cluster_(\d+)*', col)
+                    if match and int(match.group(1)) not in temporal_cluster:
+                        temporal_cluster.append(int(match.group(1)))
+
+            n_clusters = len(temporal_cluster)
 
         # join df_temporal_clusters to df
         df = pd.merge(
@@ -801,7 +964,7 @@ class HourlyModel:
         return features["ts"], features["cat"]
 
     # TODO rename to avoid confusion with data sufficiency
-    def _daily_sufficiency(self, df):
+    def _daily_fitting_sufficiency(self, df):
         # remove days with insufficient data
         min_hours = self.settings.min_daily_training_hours
 
@@ -848,8 +1011,8 @@ class HourlyModel:
             )
 
         return df
-
-    def _add_temperature_bin_masked_ts(self, df):
+    
+    def _add_extreme_temperature_bins(self, df, bin_range):
         settings = self.settings.temperature_bin
 
         def get_k(int_col, a, b):
@@ -872,104 +1035,148 @@ class HourlyModel:
                     pass
 
             k = np.abs(np.array(k))
-            k = np.mean(k[k < 5])
+            k_valid = k[k < 5]
+
+            if len(k_valid) > 0:
+                k = np.mean(k_valid)
+            else:
+                k = 1 # if no valid k, set to 1
+
+            # if k is too small, set to minimum
+            k_min = 1/np.log(1E6)
+            if k < k_min:
+                k = k_min
 
             return k
+
+        if self._T_edge_bin_coeffs is None:
+            self._T_edge_bin_coeffs = {}
+
+        cols = bin_range
+        # maybe add nonlinear terms to second and second to last columns?
+        # cols = [0, 1, last_temp_bin - 1, last_temp_bin]
+        # cols = list(set(cols))
+        # all columns?
+        # cols = range(cols[0], cols[1] + 1)
+
+        # Add all columns using col_dict at end
+        col_dict = {}
+        for n in cols:
+            base_col = f"temp_bin_{n}"
+            int_col = f"{base_col}_ts"
+            T_col = f"{base_col}_T"
+
+            # get k for exponential growth/decay
+            if not self.is_fitted:
+                # determine temperature conversion for bin
+                range_offset = settings.edge_bin_temperature_range_offset
+                T_range = [
+                    df[int_col].min() - range_offset,
+                    df[int_col].max() + range_offset,
+                ]
+                new_range = [-1, 1]
+
+                T_a = (new_range[1] - new_range[0]) / (T_range[1] - T_range[0])
+                T_b = new_range[1] - T_a * T_range[1]
+
+                # The best rate for exponential
+                if settings.edge_bin_rate == "heuristic":
+                    k = get_k(int_col, T_a, T_b)
+                else:
+                    k = settings.edge_bin_rate
+
+                # get A for exponential
+                A = 1 / (np.exp(1 / k * new_range[1]) - 1)
+
+                self._T_edge_bin_coeffs[n] = {
+                    "t_a": float(T_a),
+                    "t_b": float(T_b),
+                    "k": float(k),
+                    "a": float(A),
+                }
+
+            T_a = self._T_edge_bin_coeffs[n]["t_a"]
+            T_b = self._T_edge_bin_coeffs[n]["t_b"]
+            k = self._T_edge_bin_coeffs[n]["k"]
+            A = self._T_edge_bin_coeffs[n]["a"]
+
+            col_dict[T_col] = np.where(
+                df[base_col].values, T_a * df[int_col].values + T_b, 0
+            )
+
+            for pos_neg in ["pos", "neg"]:
+                # if first or last column, add additional column
+                # testing exp, previously squaring worked well
+
+                s = 1
+                if "neg" in pos_neg:
+                    s = -1
+
+                # set rate exponential
+                ts_col = f"{base_col}_{pos_neg}_exp_ts"
+
+                col_dict[ts_col] = np.where(
+                    df[base_col].values, A * np.exp(s / k * col_dict[T_col]) - A, 0
+                )
+
+                self._ts_feature_norm.append(ts_col)
+
+        # create new df with col_dict
+        df = pd.concat([df, pd.DataFrame(col_dict, index=df.index)], axis=1)
+
+        return df
+
+
+    def _add_temperature_interactions(self, df):
+        settings = self.settings.temperature_bin
 
         # TODO: if this permanent then it should not create, erase, make anew
         self._ts_feature_norm.remove("temperature_norm")
 
-        # get all the temp_bin columns
-        # get list of columns beginning with "daily_temp_" and ending in a number
-        for interaction_col in ["temp_bin_", "temporal_cluster_"]:
-            cols = [
-                col
-                for col in df.columns
-                if col.startswith(interaction_col) and col[-1].isdigit()
-            ]
-            for col in cols:
-                # splits temperature_norm into unique columns if that temp_bin column is True
-                ts_col = f"{col}_ts"
-                df[ts_col] = df["temperature_norm"] * df[col]
+        temp_bin_cols = [c for c in df.columns if re.match(r'^temp_bin_\d+$', c)]
+        cluster_cols = [c for c in df.columns if re.match(r'^temporal_cluster_\d+$', c)]
 
-                self._ts_feature_norm.append(ts_col)
+        col_dict = {}
 
-        # TODO: if this is permanent then it should be a function, not this mess
+        # add global temperature bins
+        for col in temp_bin_cols:
+            # splits temperature_norm into unique columns if that temp_bin column is True
+            ts_col = f"{col}_ts"
+            col_dict[ts_col] = df["temperature_norm"] * df[col]
+
+            self._ts_feature_norm.append(ts_col)
+
+        # add temporal cluster interactions
+        # multiply each temp_bin by each temporal cluster
+        # get all columns that start with temp_bin_ and are a number
+        s = self.settings.interaction_scalar
+        for temporal_cluster_col in cluster_cols:
+            for temp_bin_col in temp_bin_cols:
+                # add intercept term
+                interaction_col = f"{temporal_cluster_col}_{temp_bin_col}_interact"
+                col_dict[interaction_col] = df[temp_bin_col] * df[temporal_cluster_col]
+
+                # add slope term
+                interaction_ts_col = f"{interaction_col}_ts"
+                # df[interaction_ts_col] = df["temperature_norm"] * df[interaction_col]
+                col_dict[interaction_ts_col] = s*df["temperature_norm"] * col_dict[interaction_col]
+
+                # add to feature lists
+                self._categorical_features.append(interaction_col)
+                self._ts_feature_norm.append(interaction_ts_col)
+
+        # concat df with col_dict
+        df = pd.concat([df, pd.DataFrame(col_dict, index=df.index)], axis=1)
+
+        # TODO: Model is better without this, but not sure why
+        # remove temporal cluster columns from categorical features
+        # cluster_cols = [c for c in df.columns if re.match(r'^temporal_cluster_\d+(?!_)', c)]
+        # self._categorical_features = [c for c in self._categorical_features if c not in cluster_cols]
+
+        # add extreme temperature bins to global temperature bins
         if settings.include_edge_bins:
-            if self._T_edge_bin_coeffs is None:
-                self._T_edge_bin_coeffs = {}
-
-            cols = [
-                col
-                for col in df.columns
-                if col.startswith("temp_bin_") and col[-1].isdigit()
-            ]
-            cols = [0, int(cols[-1].replace("temp_bin_", ""))]
-            # maybe add nonlinear terms to second and second to last columns?
-            # cols = [0, 1, last_temp_bin - 1, last_temp_bin]
-            # cols = list(set(cols))
-            # all columns?
-            # cols = range(cols[0], cols[1] + 1)
-
-            for n in cols:
-                base_col = f"temp_bin_{n}"
-                int_col = f"{base_col}_ts"
-                T_col = f"{base_col}_T"
-
-                # get k for exponential growth/decay
-                if not self.is_fitted:
-                    # determine temperature conversion for bin
-                    range_offset = settings.edge_bin_temperature_range_offset
-                    T_range = [
-                        df[int_col].min() - range_offset,
-                        df[int_col].max() + range_offset,
-                    ]
-                    new_range = [-1, 1]
-
-                    T_a = (new_range[1] - new_range[0]) / (T_range[1] - T_range[0])
-                    T_b = new_range[1] - T_a * T_range[1]
-
-                    # The best rate for exponential
-                    if settings.edge_bin_rate == "heuristic":
-                        k = get_k(int_col, T_a, T_b)
-                    else:
-                        k = settings.edge_bin_rate
-
-                    # get A for exponential
-                    A = 1 / (np.exp(1 / k * new_range[1]) - 1)
-
-                    self._T_edge_bin_coeffs[n] = {
-                        "t_a": float(T_a),
-                        "t_b": float(T_b),
-                        "k": float(k),
-                        "a": float(A),
-                    }
-
-                T_a = self._T_edge_bin_coeffs[n]["t_a"]
-                T_b = self._T_edge_bin_coeffs[n]["t_b"]
-                k = self._T_edge_bin_coeffs[n]["k"]
-                A = self._T_edge_bin_coeffs[n]["a"]
-
-                df[T_col] = np.where(
-                    df[base_col].values, T_a * df[int_col].values + T_b, 0
-                )
-
-                for pos_neg in ["pos", "neg"]:
-                    # if first or last column, add additional column
-                    # testing exp, previously squaring worked well
-
-                    s = 1
-                    if "neg" in pos_neg:
-                        s = -1
-
-                    # set rate exponential
-                    ts_col = f"{base_col}_{pos_neg}_exp_ts"
-
-                    df[ts_col] = np.where(
-                        df[base_col].values, A * np.exp(s / k * df[T_col].values) - A, 0
-                    )
-
-                    self._ts_feature_norm.append(ts_col)
+            bin_range = [0, len(temp_bin_cols) - 1]
+            df = self._add_extreme_temperature_bins(df, bin_range)
 
         return df
 
@@ -995,7 +1202,8 @@ class HourlyModel:
                     mean = (feature[hour + 1] + feature.pop(hour)) / 2
                     feature[hour] = mean
 
-        agg_x = df.groupby("date").agg(agg_dict).values.tolist()
+        df_grouped = df.groupby("date")
+        agg_x = df_grouped.agg(agg_dict).values.tolist()
         correct_dst(agg_x)
 
         # get the features and target for each day
@@ -1007,14 +1215,14 @@ class HourlyModel:
 
         # get the first categorical features for each day for each sample
         unique_dummies = (
-            df[self._categorical_features + ["date"]].groupby("date").first()
+            df[["date"] + self._categorical_features].groupby("date").first()
         )
 
         X = np.concatenate((ts_feature, unique_dummies), axis=1)
 
         if not self.is_fitted:
             agg_y = (
-                df.groupby("date")
+                df_grouped
                 .agg({"observed_norm": lambda x: list(x)})
                 .values.tolist()
             )
@@ -1022,18 +1230,30 @@ class HourlyModel:
             y = np.array(agg_y)
             y = y.reshape(y.shape[0], y.shape[1] * y.shape[2])
 
+            fit_mask = df_grouped["include_date"].first().values
         else:
             y = None
+            fit_mask = None
 
-        return X, y
+        return X, y, fit_mask
 
     def _model_fit_is_acceptable(self):
         cvrmse = self.baseline_metrics.cvrmse_adj
         pnrmse = self.baseline_metrics.pnrmse_adj
-        if (cvrmse is not None and cvrmse < self.settings.cvrmse_threshold) or (
-            pnrmse is not None and pnrmse < self.settings.pnrmse_threshold
-        ):
-            return True
+
+        # sufficient is (0 <= cvrmse <= threshold) or (0 <= pnrmse <= threshold)
+
+        if cvrmse is not None:
+            if (0 <= cvrmse) and (cvrmse <= self.settings.cvrmse_threshold):
+                return True
+            
+        if pnrmse is not None:
+            # less than 0 is not possible, but just in case
+            if (0 <= pnrmse) and (pnrmse <= self.settings.pnrmse_threshold):
+                return True
+
+        return False
+
 
     def to_dict(self) -> dict:
         """Returns a dictionary of model parameters.
@@ -1042,7 +1262,7 @@ class HourlyModel:
             Model parameters.
         """
         feature_scaler = {}
-        if self.settings.scaling_method == _settings.ScalingChoice.STANDARDSCALER:
+        if self.settings.scaling_method == _settings.ScalingChoice.STANDARD_SCALER:
             for i, key in enumerate(self._ts_features):
                 feature_scaler[key] = [
                     self._feature_scaler.mean_[i],
@@ -1051,7 +1271,7 @@ class HourlyModel:
 
             y_scaler = [self._y_scaler.mean_.squeeze(), self._y_scaler.scale_.squeeze()]
 
-        elif self.settings.scaling_method == _settings.ScalingChoice.ROBUSTSCALER:
+        elif self.settings.scaling_method == _settings.ScalingChoice.ROBUST_SCALER:
             for i, key in enumerate(self._ts_features):
                 feature_scaler[key] = [
                     self._feature_scaler.center_[i],
@@ -1141,14 +1361,14 @@ class HourlyModel:
 
         y_scaler_values = data.get("y_scaler")
 
-        if settings.scaling_method == _settings.ScalingChoice.STANDARDSCALER:
+        if settings.scaling_method == _settings.ScalingChoice.STANDARD_SCALER:
             model_cls._feature_scaler.mean_ = np.array(feature_scaler_loc)
             model_cls._feature_scaler.scale_ = np.array(feature_scaler_scale)
 
             model_cls._y_scaler.mean_ = np.array(y_scaler_values[0])
             model_cls._y_scaler.scale_ = np.array(y_scaler_values[1])
 
-        elif settings.scaling_method == _settings.ScalingChoice.ROBUSTSCALER:
+        elif settings.scaling_method == _settings.ScalingChoice.ROBUST_SCALER:
             model_cls._feature_scaler.center_ = np.array(feature_scaler_loc)
             model_cls._feature_scaler.scale_ = np.array(feature_scaler_scale)
 
@@ -1200,159 +1420,6 @@ class HourlyModel:
         raise NotImplementedError
 
 
-class _LabelResult(BaseModel):
-    """
-    contains metrics about a cluster label returned from sklearn
-    """
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    labels: np.ndarray
-    score: float
-    score_unable_to_be_calculated: bool
-    n_clusters: int
-
-
-def _cluster_time_series(
-    data: np.ndarray,
-    recluster_count: int,
-    n_cluster_lower: int,
-    n_cluster_upper: int,
-    score_choice: str,
-    dist_metric: str,
-    min_cluster_size: int,
-    seed: int,
-):
-    """
-    clusters the temporal features of the dataframe
-    """
-    max_non_outlier_cluster_count = 200
-
-    results = []
-    for i in range(recluster_count):
-        algo = _bisect_k_means.BisectingKMeans(
-            n_clusters=n_cluster_upper,
-            init="k-means++",  # does not benefit from k-means++ like other k-means
-            n_init=5,  # default is 1
-            random_state=seed + i,  # can be set to None or seed_num
-            algorithm="elkan",  # ['lloyd', 'elkan']
-            bisecting_strategy="largest_cluster",  # ['biggest_inertia', 'largest_cluster']
-        )
-        algo.fit(data)
-        labels_dict = algo.labels_full
-
-        for n_cluster, labels in labels_dict.items():
-            score, score_unable_to_be_calculated = _scoring.score_clusters(
-                data,
-                labels,
-                n_cluster_lower,
-                score_choice,
-                dist_metric,
-                min_cluster_size,
-                max_non_outlier_cluster_count,
-            )
-
-            label_res = _LabelResult(
-                labels=labels,
-                score=score,
-                score_unable_to_be_calculated=score_unable_to_be_calculated,
-                n_clusters=n_cluster,
-            )
-            results.append(label_res)
-
-    # get the results index with the smallest score
-    HoF = None
-    for result in results:
-        if result.score_unable_to_be_calculated:
-            continue
-
-        if HoF is None or result.score < HoF.score:
-            HoF = result
-
-    return HoF.labels
-
-
-def _cluster_temporal_features(
-    data: np.ndarray,
-    wavelet_n_levels: int,
-    wavelet_name: str,
-    wavelet_mode: str,
-    min_var_ratio: float,
-    recluster_count: int,
-    n_cluster_lower: int,
-    n_cluster_upper: int,
-    score_choice: str,
-    dist_metric: str,
-    min_cluster_size: int,
-    seed: int,
-):
-    def _dwt_coeffs(data, wavelet="db1", wavelet_mode="periodization", n_levels=4):
-        all_features = []
-        # iterate through rows of numpy array
-        for row in range(len(data)):
-            decomp_coeffs = pywt.wavedec(
-                data[row], wavelet=wavelet, mode=wavelet_mode, level=n_levels
-            )
-            # remove last level
-            # if n_levels > 4:
-            # decomp_coeffs = decomp_coeffs[:-1]
-
-            decomp_coeffs = np.hstack(decomp_coeffs)
-
-            all_features.append(decomp_coeffs)
-
-        return np.vstack(all_features)
-
-    def _pca_coeffs(features, min_var_ratio=0.95):
-        # standardize the features
-        features = StandardScaler().fit_transform(features)
-
-        use_kernel_pca = False
-        if use_kernel_pca:
-            pca = KernelPCA(n_components=None, kernel="rbf")
-            pca_features = pca.fit_transform(features)
-
-            explained_variance_ratio = pca.eigenvalues_ / np.sum(pca.eigenvalues_)
-
-            # get the cumulative explained variance ratio
-            cumulative_explained_variance = np.cumsum(explained_variance_ratio)
-
-            # find number of components that explain pct% of the variance
-            n_components = np.argmax(cumulative_explained_variance > min_var_ratio)
-
-            # pca = PCA(n_components=n_components)
-            pca = KernelPCA(n_components=n_components, kernel="rbf")
-            pca_features = pca.fit_transform(features)
-
-        else:
-            pca = PCA(n_components=min_var_ratio)
-            pca_features = pca.fit_transform(features)
-
-        return pca_features
-
-    # calculate wavelet coefficients
-    with warnings.catch_warnings():
-        # TODO wavelet level 5 was chosen during hyperparam optimization, but
-        # worth investigating this further
-        warnings.filterwarnings("ignore", module="pywt._multilevel")
-        features = _dwt_coeffs(data, wavelet_name, wavelet_mode, wavelet_n_levels)
-    pca_features = _pca_coeffs(features, min_var_ratio)
-
-    # cluster the pca features
-    cluster_labels = _cluster_time_series(
-        pca_features,
-        recluster_count,
-        n_cluster_lower,
-        n_cluster_upper,
-        score_choice,
-        dist_metric,
-        min_cluster_size,
-        seed,
-    )
-
-    return cluster_labels
-
-
 def _fit_exp_growth_decay(x, y, k_only=True, is_x_sorted=False):
     # Courtsey: https://math.stackexchange.com/questions/1337601/fit-exponential-with-constant
     #           https://www.scribd.com/doc/14674814/Regressions-et-equations-integrales
@@ -1386,7 +1453,8 @@ def _fit_exp_growth_decay(x, y, k_only=True, is_x_sorted=False):
     b = np.array([xy_diff, ys_diff])
 
     _, c = np.linalg.solve(A, b)
-    k = 1 / c
+    with np.errstate(divide='ignore'):
+        k = 1 / c # ignore divide by zero, it will be filtered later
 
     if k_only:
         a, b = None, None

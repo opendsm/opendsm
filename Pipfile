@@ -12,6 +12,7 @@ nlopt = "*"
 numpy = "*"
 pandas = ">=1.0.0"
 pydantic = ">=2.0"
+pywavelets = "*"
 scipy = "*"
 statsmodels = "*"
 

@@ -323,32 +323,35 @@ class SufficiencyCriteria(BaseModel):
             return
         if not self.is_reporting_data:
             median = self.data.observed.median()
-            upper_quantile = self.data.observed.quantile(0.75)
             lower_quantile = self.data.observed.quantile(0.25)
+            upper_quantile = self.data.observed.quantile(0.75)
             iqr = upper_quantile - lower_quantile
-            extreme_value_limit = median + (3 * iqr)
+            lower_bound = lower_quantile - (3 * iqr)
+            upper_bound = upper_quantile + (3 * iqr)
             n_extreme_values = self.data.observed[
-                self.data.observed > extreme_value_limit
+                (self.data.observed < lower_bound) | (self.data.observed > upper_bound)
             ].shape[0]
+            min_value = float(self.data.observed.min())
             max_value = float(self.data.observed.max())
 
             if n_extreme_values > 0:
-                # CalTRACK 2.3.6
+                # Inspired by CalTRACK 2.3.6
                 self.warnings.append(
                     EEMeterWarning(
                         qualified_name=(
                             "eemeter.sufficiency_criteria" ".extreme_values_detected"
                         ),
                         description=(
-                            "Extreme values (greater than (median + (3 * IQR)),"
-                            " must be flagged for manual review."
+                            "Extreme values (outside 3x IQR) must be flagged for manual review."
                         ),
                         data={
                             "n_extreme_values": n_extreme_values,
                             "median": median,
                             "upper_quantile": upper_quantile,
                             "lower_quantile": lower_quantile,
-                            "extreme_value_limit": extreme_value_limit,
+                            "lower_bound": lower_bound,
+                            "upper_bound": upper_bound,
+                            "min_value": min_value,
                             "max_value": max_value,
                         },
                     )

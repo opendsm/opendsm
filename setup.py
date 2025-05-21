@@ -31,22 +31,22 @@ from setuptools import find_packages, setup, Command
 
 NAME = "opendsm"
 REQUIRED = [
-    "click",
-    "pandas>=1.1.0",
-    "statsmodels",
-    "scipy>=1.10.1",
-    "numba",
-    "nlopt",
-    "pydantic>=2.0",
     "attrs",
-    "requests",
-    "pyarrow",    # why?
-    "numpy>=1.24.4",
-    "scikit-learn>=1.3.0",
-    # "mkl-devel",  # needed for fdasrsf to work: https://github.com/jdtuck/fdasrsf_python/issues/41
+    "click",
     "fdasrsf>=2.4.1", # not sure if necessary anymore
+    # "mkl-devel",  # needed for fdasrsf to work: https://github.com/jdtuck/fdasrsf_python/issues/41
+    "nlopt",
+    "numba",
+    "numpy>=1.24.4",
+    "pandas>=1.1.0",
+    "pyarrow",    # why?
+    "pydantic>=2.0",
+    "pywavelets",
+    "requests",
     "scikit-fda",
-    "PyWavelets",
+    "scikit-learn>=1.3.0",
+    "scipy>=1.10.1",
+    "statsmodels",
 ]
 
 here = os.path.abspath(os.path.dirname(__file__))

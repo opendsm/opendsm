@@ -95,16 +95,11 @@ class TestFitModel:
 
         # Test that the error attribute values are as expected
         expected_model_error = {
-            "wRMSE": 16.95,
-            "RMSE": 16.95,
-            "MAE": 13.38,
-            "CVRMSE": 0.3206,
-            "PNRMSE": 0.2708,
-            "wRMSE": 16.95,
-            "RMSE": 16.95,
-            "MAE": 13.38,
-            "CVRMSE": 0.3206,
-            "PNRMSE": 0.2708,
+            "wRMSE": 16.96,
+            "RMSE": 16.96,
+            "MAE": 13.40,
+            "CVRMSE": 0.3207,
+            "PNRMSE": 0.6326,
         }
         for k in expected_model_error:
             assert np.isclose(fm.error[k], expected_model_error[k], rtol=1e-2)

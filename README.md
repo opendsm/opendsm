@@ -105,7 +105,8 @@ process.
 
 ### Technical goals
 
-1. Revert the billing model logic back to its previously approved state
+1. Revert the billing model logic back to its previously approved state or compare the
+   versions
 
 When OpenEEmeter 4.0 was released, an unintentional change was made to the billing model.
 The billing model currently inherits from the daily model so a change to the daily model
@@ -125,22 +126,13 @@ be realized in the DR model if it were finalized. It is currently in a functiona
 within a branch, but its parameters have not been optimized rendering it unusable for
 measurements. In the meantime, the existing DR model is still available.
 
-3. Develop and approve adaptive weighting for the hourly model
-
-At present, the hourly model does not down weight or remove any outliers during the
-fitting process. While this is still acceptable for measurement purposes, given that the
-model still meets all sufficiency requirements; it could be improved. There currently
-exists functionality within the settings to turn on adaptive daily weighting that would
-serve to down weight days which are significant outliers when fitting the hourly model,
-but it has not yet been tested at a population level.
-
-4. Reassess existing sufficiency and disqualification criteria
+3. Reassess existing sufficiency and disqualification criteria
 
 The existing sufficiency and disqualification criteria exist as conservative estimates
 from OpenEEmeter and CalTRACK recommendations. There is almost certainly room for these
 criteria to be revisited so that more meters would pass and be approved for measurement.
 
-5. Determine the sufficiency requirements of PV installation date in the hourly model
+4. Determine the sufficiency requirements of PV installation date in the hourly model
 
 The hourly EE model currently has the capability of ingesting a PV installation date and
 generating an additional feature that can much better represent a meter who installs a
@@ -149,7 +141,7 @@ experimental and not allowed for official measurement because we have not quanti
 much data is required post-installation to be able to accurately predict the meter's
 behavior in the reporting year.
 
-6. Improve the daily model
+5. Improve the daily model
 
 There are two potential areas of improvement of the daily model. First it could be extended
 to allow additional sources of information, but this must carefully be considered as the
@@ -159,7 +151,7 @@ cooling and heating regions such that the model would be able to change slope. T
 likely still be limited such that the model's slope in each region is appropriately
 constrained. A new smoothing function would also need to be developed.
 
-7. Integrate EEweather
+6. Integrate EEweather
 
 EEweather is commonly used to obtain weather information to be used within OpenDSM. If it 
 were more tightly coupled, it would streamline the most standard use of OpenDSM. As an 
@@ -167,20 +159,20 @@ example this could simplify several of the data classes such that the aggregatio
 weather data would be done within EEweather instead of within data classes where it is a
 more complex procedure
 
-8. Integrate GRIDmeter
+7. Integrate GRIDmeter
 
 GRIDmeter is frequently used after DR/EEmeter in order to correct models for external
 population-level effects by using non-participant meters. Similarly to EEweather, this 
 process could be streamlines and made more cohesive by fully integrating it into OpenDSM. 
 
-9. Organize and revise existing test suite
+8. Organize and revise existing test suite
 
 The existing testing suite is the last remaining vestige of the library prior to the 
 extensive reorganization and API changes made. It would be well served to update the
 testing suite to make it easier for future contributors to know how and where they 
 should develop their tests for any new features or bugs found.
 
-10. Greater weather coverage
+9. Greater weather coverage
 
 The weather station coverage in the EEweather package includes full coverage of US and
 Australia, but with some technical work, it could be expanded to include greater, or
