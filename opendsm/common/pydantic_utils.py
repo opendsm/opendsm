@@ -60,7 +60,7 @@ class PydanticDf(pydantic.BaseModel):
 
 
 class ArbitraryPydanticModel(pydantic.BaseModel):
-    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
+    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
 
 def PydanticFromDict(input_dict, name="PydanticModel"):
