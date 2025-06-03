@@ -22,6 +22,7 @@ opendsm-1.1.0
 * Changed extreme values warning flag to check using IQR rule instead of median +- IQR which is incorrect
 * Fix warning data on `high_frequency_temperature_data` warning.
 * Squash numpy divide-by-zero warnings in caltrack Hourly metrics.
+* Migrate to modern Python logger interface to solve deprecation warnings.
 
 opendsm-1.0.0
 -----
