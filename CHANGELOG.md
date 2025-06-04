@@ -4,7 +4,7 @@ Changelog
 Development
 -----------
 
-* 
+* Migrate to modern Python logger interface to solve deprecation warnings.
 
 opendsm-1.1.0
 -----

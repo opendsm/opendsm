@@ -140,7 +140,7 @@ class BisectingKMeans(_sklearn_BisectingKMeans):
             try:
                 cluster_to_bisect = self._bisecting_tree.get_cluster_to_bisect()
             except RecursionError:
-                logger.warn(
+                logger.warning(
                     f"encountered Recursion error during bisection for cluster size {i + 2}. Returning early"
                 )
                 return self
@@ -149,7 +149,7 @@ class BisectingKMeans(_sklearn_BisectingKMeans):
             try:
                 self._bisect(X, x_squared_norms, sample_weight, cluster_to_bisect)  # type: ignore
             except IndexError:
-                logger.warn(
+                logger.warning(
                     f"encountered IndexError during bisection for cluster size {i + 2}"
                 )
                 return self  # return early so that calculated labels can be returned until an error arose
