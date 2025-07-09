@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 import pydantic
-from typing import Optional
+from typing import Optional, Union
 from enum import Enum
 
 from functools import cached_property  # TODO: This requires Python 3.8
@@ -401,7 +401,7 @@ class ModelChoice(str, Enum):
 class ReportingMetrics(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
 
-    baseline_metrics: BaselineMetrics = pydantic.Field(exclude=True)
+    baseline_metrics: Union[BaselineMetrics, pydantic.BaseModel] = pydantic.Field(exclude=True)
 
     """Reporting dataframe to be used for metrics calculations"""
     reporting_df: pd.DataFrame = pydantic.Field(exclude=True)

@@ -101,8 +101,6 @@ class AdaptiveElasticNetRegressor:
 
         num_hours = y.shape[1]
 
-        hour_model = copy(self.base_model)
-
         # fit the base model as an initial guess
         self.base_model.fit(X, y, sample_weight=sample_weight)
 
@@ -113,6 +111,7 @@ class AdaptiveElasticNetRegressor:
 
         hour_fit = [False for _ in range(num_hours)]
         alpha_prior = np.array([2.0 for _ in range(num_hours)])
+        alpha_min = alpha_prior.copy()
         for i in range(settings.max_iter):
             if all(hour_fit):
                 i -= 1
@@ -160,6 +159,7 @@ class AdaptiveElasticNetRegressor:
 
                 # update weights and alpha_prior
                 alpha_prior[hour] = alpha
+                alpha_min[hour] = min(alpha_min[hour], alpha)
 
                 # trim weights to hour size
                 if window_size > 0:
@@ -188,7 +188,7 @@ class AdaptiveElasticNetRegressor:
 
         # save info to base_model
         self.base_model.adaptive_iterations = i
-        self.base_model.adaptive_alpha = alpha_prior
+        self.base_model.adaptive_alpha = alpha_min
         self.base_model.adaptive_weights = weights
            
         return self
