@@ -475,12 +475,16 @@ class ReportingMetrics(pydantic.BaseModel):
         n_prime = self._baseline.n_prime
         m = self.n
         t = self.t_stat
-        cvrmse_autocorr_adj = self._baseline.cvrmse_autocorr_adj
+        # cvrmse_autocorr_adj = self._baseline.cvrmse_autocorr_adj
+        cvrmse_adj = self._baseline.cvrmse_adj
 
         # part of approximation factor used in ashrae 14 guideline
-        approx_factor = np.sqrt(n / (m * n_prime) * (1 + (2 / n_prime)))
+        approx_factor = np.sqrt(n / n_prime * (1 + (2 / n_prime)) * m)
 
-        s_unc_base = E_reporting * (t * cvrmse_autocorr_adj * approx_factor)
+        try:
+            s_unc_base = np.abs(E_reporting / m * cvrmse_adj) * t * approx_factor
+        except:
+            return None
 
         if self.data_frequency == "hourly":
             s_unc = 1.26 * s_unc_base
@@ -488,6 +492,7 @@ class ReportingMetrics(pydantic.BaseModel):
         elif self.data_frequency in ["daily", "billing"]:
             M = len(self._df.index.month.unique())
 
+            # Sun & Baltazar 2013
             if self.data_frequency == "daily":
                 coefs = [-0.00024, 0.03535, 1.00286]
             else:
@@ -506,4 +511,7 @@ class ReportingMetrics(pydantic.BaseModel):
 
     @computed_field_cached_property()
     def predicted_data_point_unc(self) -> float:
+        if self.total_savings_uncertainty is None:
+            return None
+        
         return self.total_savings_uncertainty / np.sqrt(self.n)

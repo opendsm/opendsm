@@ -387,6 +387,14 @@ class BaseHourlySettings(BaseSettings):
         default=ScalingChoice.STANDARD_SCALER,
     )
 
+    """Significance level used for uncertainty calculations"""
+    uncertainty_alpha: float = pydantic.Field(
+        default=0.1,
+        ge=0,
+        le=1,
+        description="Significance level used for uncertainty calculations",
+    )
+
     """seed for any random state assignment (ElasticNet, Clustering)"""
     seed: Optional[int] = pydantic.Field(
         default=None,
