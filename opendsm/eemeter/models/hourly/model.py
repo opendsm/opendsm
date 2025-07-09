@@ -429,20 +429,8 @@ class HourlyModel:
             self.warnings.append(model_mismatch_warning)
 
         self._fit(baseline_data)
+        self._check_model_fit()
 
-        if not self._model_fit_is_acceptable():
-            model_fit_warning = EEMeterWarning(
-                qualified_name="eemeter.model_fit_metrics",
-                description="Model disqualified due to poor fit.",
-                data={
-                    "cvrmse_threshold": self.settings.cvrmse_threshold,
-                    "cvrmse_adj": self.baseline_metrics.cvrmse_adj,
-                    "pnrmse_threshold": self.settings.pnrmse_threshold,
-                    "pnrmse_adj": self.baseline_metrics.pnrmse_adj,
-                },
-            )
-            model_fit_warning.warn()
-            self.disqualification.append(model_fit_warning)
         return self
 
     def _fit(self, meter_data):
@@ -1260,22 +1248,39 @@ class HourlyModel:
 
         return X, y, fit_mask
 
-    def _model_fit_is_acceptable(self):
+    def _check_model_fit(self):
         cvrmse = self.baseline_metrics.cvrmse_adj
         pnrmse = self.baseline_metrics.pnrmse_adj
 
-        # sufficient is (0 <= cvrmse <= threshold) or (0 <= pnrmse <= threshold)
+        cvrmse_threshold = self.settings.cvrmse_threshold
+        pnrmse_threshold = self.settings.pnrmse_threshold
 
-        if cvrmse is not None:
-            if (0 <= cvrmse) and (cvrmse <= self.settings.cvrmse_threshold):
-                return True
-            
-        if pnrmse is not None:
-            # less than 0 is not possible, but just in case
-            if (0 <= pnrmse) and (pnrmse <= self.settings.pnrmse_threshold):
-                return True
+        def _model_fit_is_acceptable(cvrmse, pnrmse):
+            # sufficient is (0 <= cvrmse <= threshold) or (0 <= pnrmse <= threshold)
+            if cvrmse is not None:
+                if (0 <= cvrmse) and (cvrmse <= cvrmse_threshold):
+                    return True
+                
+            if pnrmse is not None:
+                # less than 0 is not possible, but just in case
+                if (0 <= pnrmse) and (pnrmse <= pnrmse_threshold):
+                    return True
 
-        return False
+            return False
+
+        if not _model_fit_is_acceptable(cvrmse, pnrmse):
+            model_fit_warning = EEMeterWarning(
+                qualified_name="eemeter.model_fit_metrics",
+                description="Model disqualified due to poor fit.",
+                data={
+                    "cvrmse_threshold": cvrmse_threshold,
+                    "cvrmse_adj": cvrmse,
+                    "pnrmse_threshold": pnrmse_threshold,
+                    "pnrmse_adj": pnrmse,
+                },
+            )
+            model_fit_warning.warn()
+            self.disqualification.append(model_fit_warning)
 
     def _calculate_predicted_uncertianty(self, df_eval):
         # initialize predicted_unc column with NaN

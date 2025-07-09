@@ -52,7 +52,7 @@ from opendsm.eemeter.models.daily.utilities.settings import (
 )
 from opendsm.eemeter.models.daily.utilities.ellipsoid_test import ellipsoid_split_filter
 from opendsm.eemeter.models.daily.utilities.selection_criteria import selection_criteria
-from opendsm.common.metrics import BaselineMetrics
+from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict
 
 class DailyModel:
     """
@@ -119,14 +119,6 @@ class DailyModel:
         }
         self.verbose = verbose
 
-        self.error = {
-            "wRMSE": np.nan,
-            "RMSE": np.nan,
-            "MAE": np.nan,
-            "CVRMSE": np.nan,
-            "PNRMSE": np.nan,
-        }
-
     def _initialize_settings(
         self,
         model: str = "current",
@@ -176,19 +168,8 @@ class DailyModel:
         self.disqualification = baseline_data.disqualification
         df = getattr(baseline_data, self._data_df_name)
         self._fit(df)
-        if not self._model_fit_is_acceptable():
-            cvrmse_warning = EEMeterWarning(
-                qualified_name="eemeter.model_fit_metrics",
-                description="Model disqualified due to poor fit.",
-                data={
-                    "cvrmse_threshold": self.settings.cvrmse_threshold,
-                    "cvrmse": self.error["CVRMSE"],
-                    "pnrmse_threshold": self.settings.pnrmse_threshold,
-                    "pnrmse": self.error["PNRMSE"],
-                },
-            )
-            cvrmse_warning.warn()
-            self.disqualification.append(cvrmse_warning)
+        self._check_model_fit()
+
         return self
 
     def _fit(self, meter_data):
@@ -210,11 +191,6 @@ class DailyModel:
         self.id = meter_data.index.unique()[0]
 
         self.baseline_metrics = self._get_error_metrics(self.best_combination)
-        self.error["wRMSE"] = self.baseline_metrics.wrmse
-        self.error["RMSE"] = self.baseline_metrics.rmse
-        self.error["MAE"] = self.baseline_metrics.mae
-        self.error["CVRMSE"] = self.baseline_metrics.cvrmse
-        self.error["PNRMSE"] = self.baseline_metrics.pnrmse
 
         self.params = self._create_params_from_fit_model()
         self.is_fitted = True
@@ -321,23 +297,40 @@ class DailyModel:
 
         return df_eval.sort_index()
 
-    def _model_fit_is_acceptable(self):
-        cvrmse = self.error["CVRMSE"]
-        pnrmse = self.error["PNRMSE"]
+    def _check_model_fit(self):
+        cvrmse = self.baseline_metrics.cvrmse
+        pnrmse = self.baseline_metrics.pnrmse
 
-        # sufficient is (0 <= cvrmse <= threshold) or (0 <= pnrmse <= threshold)
+        cvrmse_threshold = self.settings.cvrmse_threshold
+        pnrmse_threshold = self.settings.pnrmse_threshold
 
-        if cvrmse is not None:
-            if (0 <= cvrmse) and (cvrmse <= self.settings.cvrmse_threshold):
-                return True
+        def _model_fit_is_acceptable(cvrmse, pnrmse):
+            # sufficient is (0 <= cvrmse <= threshold) or (0 <= pnrmse <= threshold)
+            if cvrmse is not None:
+                if (0 <= cvrmse) and (cvrmse <= cvrmse_threshold):
+                    return True
+                
+            if pnrmse is not None:
+                # less than 0 is not possible, but just in case
+                if (0 <= pnrmse) and (pnrmse <= pnrmse_threshold):
+                    return True
+
+            return False
+
+        if not _model_fit_is_acceptable(cvrmse, pnrmse):
+            model_fit_warning = EEMeterWarning(
+                qualified_name="eemeter.model_fit_metrics",
+                description="Model disqualified due to poor fit.",
+                data={
+                    "cvrmse_threshold": cvrmse_threshold,
+                    "cvrmse": cvrmse,
+                    "pnrmse_threshold": pnrmse_threshold,
+                    "pnrmse": pnrmse,
+                },
+            )
+            model_fit_warning.warn()
+            self.disqualification.append(model_fit_warning)
             
-        if pnrmse is not None:
-            # less than 0 is not possible, but just in case
-            if (0 <= pnrmse) and (pnrmse <= self.settings.pnrmse_threshold):
-                return True
-
-        return False
-
     def to_dict(self) -> dict:
         """Returns a dictionary of model parameters.
 
@@ -393,7 +386,16 @@ class DailyModel:
         )
         daily_model.warnings = deserialize_warnings(info.get("warnings"))
         daily_model.baseline_timezone = info.get("baseline_timezone")
+        if info.get("metrics") is not None:
+            daily_model.baseline_metrics = BaselineMetricsFromDict(info.get("metrics"))
+        elif info.get("error") is not None:
+            # Make all keys in metrics_dict lowercase
+            # will contain ['wRMSE', 'RMSE', 'MAE', 'CVRMSE', 'PNRMSE']
+            metrics_dict_lower = {k.lower(): v for k, v in info.get("error").items()}
+            daily_model.baseline_metrics = BaselineMetricsFromDict(metrics_dict_lower)
+
         daily_model.is_fitted = True
+
         return daily_model
 
     @classmethod
@@ -477,7 +479,7 @@ class DailyModel:
             submodels=submodels,
             settings=self.settings.model_dump(),
             info={
-                "error": self.error,
+                "metrics": self.baseline_metrics.model_dump(),
                 "baseline_timezone": str(self.baseline_timezone),
                 "disqualification": [dq.json() for dq in self.disqualification],
                 "warnings": [warning.json() for warning in self.warnings],

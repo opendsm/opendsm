@@ -98,7 +98,9 @@ class ColumnMetrics(ArbitraryPydanticModel):
 
 
 def _safe_divide(numerator, denominator, min_denominator=1e-3):
-    if denominator <= min_denominator and numerator > 10 * min_denominator:
+    if denominator == 0:
+        return None
+    elif denominator <= min_denominator and numerator > 10 * min_denominator:
         return None
 
     return numerator / denominator
@@ -240,12 +242,14 @@ class BaselineMetrics(ArbitraryPydanticModel):
     @computed_field_cached_property()
     def n_prime(self) -> float:
         # lag should be 1 according to https://www.osti.gov/servlets/purl/1366449
-        autocorr = self._df["residuals"].autocorr(lag=1)
+        autocorr = acf(self._df["residuals"].values, lag_n=1, moving_mean_std=True)[1]
 
         _n_prime = float(self.n * (1 - autocorr) / (1 + autocorr))
 
         if not np.isfinite(_n_prime):
             # TODO: Create warning
+            _n_prime = 1
+        elif _n_prime < 1:
             _n_prime = 1
 
         return _n_prime
@@ -371,6 +375,7 @@ class BaselineMetrics(ArbitraryPydanticModel):
         res = _safe_divide(num, den, self._min_denominator)
         if res is None:
             return None
+        
         return 1 - res
 
     @computed_field_cached_property()
@@ -386,7 +391,8 @@ class BaselineMetrics(ArbitraryPydanticModel):
 
 def BaselineMetricsFromDict(input_dict):
     for k in ["observed", "predicted", "residuals"]:
-        input_dict[k] = PydanticFromDict(input_dict[k], name="ColumnMetrics")
+        if k in input_dict:
+            input_dict[k] = PydanticFromDict(input_dict[k], name="ColumnMetrics")
 
     return PydanticFromDict(input_dict, name="BaselineMetrics")
 
@@ -515,3 +521,37 @@ class ReportingMetrics(pydantic.BaseModel):
             return None
         
         return self.total_savings_uncertainty / np.sqrt(self.n)
+
+def acf(x, lag_n=None, moving_mean_std=False):
+    """
+    Computes the autocorrelation function (ACF) of a given time series. It is the correlation of a signal with a delayed copy of itself as a function of delay.
+    It allows finding repeating patterns, such as the presence of a periodic signal obscured by noise, or identifying the missing fundamental frequency in a signal implied by its harmonic frequencies.
+
+    Parameters:
+        x (array-like): The time series data.
+        lag_n (int, optional): The number of lags to compute the ACF for. If None, computes the ACF for all possible lags.
+        moving_mean_std (bool, optional): Whether to use a moving mean and standard deviation to compute the ACF. If False, uses the regular formula.
+
+    Returns:
+        array-like: The autocorrelation function values for the given time series and lags.
+    """
+
+    if lag_n is None:
+        lags = range(len(x) - 1)
+    else:
+        lags = range(lag_n + 1)
+
+    if moving_mean_std:
+        corr = [1.0 if l == 0 else np.corrcoef(x[l:], x[:-l])[0][1] for l in lags]
+
+        corr = np.array(corr)
+
+    else:
+        mean = x.mean()
+        var = np.var(x)
+        xp = x - mean
+        corr = np.correlate(xp, xp, "full")[len(x) - 1 :] / var / len(x)
+
+        corr = corr[: len(lags)]
+
+    return corr
