@@ -23,10 +23,8 @@ import numpy as np
 from opendsm.eemeter.models.daily.optimize_results import (
     get_k,
     reduce_model,
-    acf,
     OptimizedResult,
 )
-
 
 from opendsm.eemeter.models.daily.parameters import ModelCoefficients
 from opendsm.eemeter.models.daily.utilities.settings import DailySettings as Settings
@@ -181,23 +179,6 @@ def test_reduce_model(
 
     assert coef_id == expected_coef_id
     assert np.allclose(x, expected_x)
-
-
-def test_acf():
-    # Test case 1: Test with a simple input array
-    x = np.array([1, 2, 3, 4, 5])
-    expected_output = np.array([1.0, 0.4, -0.1, -0.4])
-    assert np.allclose(acf(x), expected_output)
-
-    # Test case 3: Test with a moving mean and standard deviation
-    x = np.array([1, 2, 3, 4, 5])
-    expected_output = np.array([1.0, 1.0, 1.0, 1.0])
-    assert np.allclose(acf(x, moving_mean_std=True), expected_output)
-
-    # Test case 4: Test with a specific lag_n
-    x = np.array([1, 2, 3, 4, 5])
-    expected_output = np.array([1.0, 0.4])
-    assert np.allclose(acf(x, lag_n=1), expected_output)
 
 
 class TestOptimizeResult:
