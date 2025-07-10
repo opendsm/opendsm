@@ -285,7 +285,7 @@ def test_billing_baseline_data_with_monthly_frequencies(get_datetime_index):
     # DQ because only 12 days worth of temperature data is available
     assert len(cls.disqualification) == 2
     assert [dq.qualified_name for dq in cls.disqualification] == [
-        "eemeter.sufficiency_criteria.too_many_days_with_missing_data",
+        "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
         "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data",
     ]
 
@@ -324,7 +324,7 @@ def test_billing_baseline_data_with_bimonthly_frequencies(get_datetime_index):
     assert len(cls.disqualification) == 2
     assert set([dq.qualified_name for dq in cls.disqualification]) == set(
         [
-            "eemeter.sufficiency_criteria.too_many_days_with_missing_data",
+            "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
             "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data",
         ]
     )
@@ -584,7 +584,7 @@ def test_billing_reporting_data_with_missing_half_hourly_frequencies(
     assert len(cls.disqualification) == 3
     expected_disqualifications = [
         "eemeter.sufficiency_criteria.missing_monthly_temperature_data",
-        "eemeter.sufficiency_criteria.too_many_days_with_missing_data",
+        "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
         "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data",
     ]
     assert all(
@@ -625,7 +625,7 @@ def test_billing_reporting_data_with_missing_daily_frequencies(get_datetime_inde
     assert len(cls.disqualification) == 3
     expected_disqualifications = [
         "eemeter.sufficiency_criteria.missing_monthly_temperature_data",
-        "eemeter.sufficiency_criteria.too_many_days_with_missing_data",
+        "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
         "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data",
     ]
     assert all(

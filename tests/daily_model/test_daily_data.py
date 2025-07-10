@@ -485,7 +485,7 @@ def test_daily_baseline_data_with_missing_hourly_temperature_data(
     )
     assert len(cls.disqualification) == 3
     expected_disqualifications = [
-        "eemeter.sufficiency_criteria.too_many_days_with_missing_data",
+        "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
         "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data",
         "eemeter.sufficiency_criteria.missing_monthly_temperature_data",
     ]
@@ -525,7 +525,7 @@ def test_daily_baseline_data_with_missing_half_hourly_temperature_data(
     )
     assert len(cls.disqualification) == 3
     expected_disqualifications = [
-        "eemeter.sufficiency_criteria.too_many_days_with_missing_data",
+        "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
         "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data",
         "eemeter.sufficiency_criteria.missing_monthly_temperature_data",
     ]
@@ -562,7 +562,7 @@ def test_daily_baseline_data_with_missing_daily_temperature_data(
     )
     assert len(cls.disqualification) == 3
     expected_disqualifications = [
-        "eemeter.sufficiency_criteria.too_many_days_with_missing_data",
+        "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
         "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data",
         "eemeter.sufficiency_criteria.missing_monthly_temperature_data",
     ]
@@ -595,8 +595,8 @@ def test_daily_baseline_data_with_missing_meter_data(
     # assert all(warning.qualified_name in expected_warnings for warning in cls.warnings)
     assert len(cls.disqualification) == 2
     expected_disqualifications = [
-        "eemeter.sufficiency_criteria.too_many_days_with_missing_data",
-        "eemeter.sufficiency_criteria.too_many_days_with_missing_meter_data",
+        "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
+        "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data",
     ]
     assert all(
         disqualification.qualified_name in expected_disqualifications
@@ -627,8 +627,8 @@ def test_daily_baseline_data_with_missing_meter_data_37_days(
     # assert all(warning.qualified_name in expected_warnings for warning in cls.warnings)
     assert len(cls.disqualification) == 2
     expected_disqualifications = [
-        "eemeter.sufficiency_criteria.too_many_days_with_missing_data",
-        "eemeter.sufficiency_criteria.too_many_days_with_missing_meter_data",
+        "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
+        "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data",
     ]
     assert all(
         disqualification.qualified_name in expected_disqualifications
@@ -720,7 +720,7 @@ def test_daily_reporting_data_with_missing_half_hourly_and_hourly_frequencies(
     )
     expected_disqualifications = [
         "eemeter.sufficiency_criteria.missing_monthly_temperature_data",
-        "eemeter.sufficiency_criteria.too_many_days_with_missing_data",
+        "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
         "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data",
     ]
     assert all(
@@ -785,7 +785,7 @@ def test_daily_reporting_data_with_missing_daily_frequencies(get_datetime_index)
     )
     expected_disqualifications = [
         "eemeter.sufficiency_criteria.missing_monthly_temperature_data",
-        "eemeter.sufficiency_criteria.too_many_days_with_missing_data",
+        "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
         "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data",
     ]
     assert all(

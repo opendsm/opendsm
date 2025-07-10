@@ -221,91 +221,43 @@ class SufficiencyCriteria(BaseSettings):
                 )
             )
 
-    def _check_valid_days_percentage(self):
-        if self.n_days_total > 0:
-            valid_days_pct = self.n_valid_days / float(self.n_days_total)
-        else:
-            valid_days_pct = 0
+    def _check_valid_days_percentage(self, col: Literal["temperature", "ghi", "observed", "joint"]):
+        if self.is_reporting_data and col == "observed":
+            return
+        
+        n_days_total = float(self.n_days_total)
 
-        min_pct = self.settings.temperature.min_pct_daily_coverage
-        if valid_days_pct < min_pct:
+        if col == "temperature":
+            valid_days = self.n_valid_temperature_days
+            min_pct = self.settings.temperature.min_pct_daily_coverage
+        elif col == "ghi":
+            raise NotImplementedError("GHI check not implemented yet")
+            valid_days = self.n_valid_ghi_days
+            min_pct = self.settings.ghi.min_pct_daily_coverage
+        elif col == "observed":
+            valid_days = self.n_valid_observed_days
+            min_pct = self.settings.observed.min_pct_daily_coverage
+        elif col == "joint":
+            valid_days = self.n_valid_days
+            min_pct = self.settings.temperature.min_pct_daily_coverage
+
+        valid_pct = 0
+        if n_days_total > 0:
+            valid_pct = valid_days / n_days_total
+
+        if valid_pct < min_pct:
             self.disqualification.append(
                 EEMeterWarning(
                     qualified_name=(
                         "eemeter.sufficiency_criteria"
-                        ".too_many_days_with_missing_data"
+                        f".too_many_days_with_missing_{col}_data"
                     ),
                     description=(
-                        "Too many days in data have missing meter data or"
-                        " temperature data."
+                        f"Too many days in data have missing {col} data."
                     ),
                     data={
-                        "n_valid_days": self.n_valid_days,
-                        "n_days_total": self.n_days_total,
-                    },
-                )
-            )
-
-    # def _check_valid_days_percentage(self, col: Literal["temperature", "ghi", "observed", "joint"]):
-    #     if col == "temperature":
-    #         valid_days = self.n_valid_temperature_days
-    #     elif col == "ghi":
-    #         valid_days = self.n_valid_ghi_days
-    #     elif col == "observed":
-    #         valid_days = self.n_valid_observed_days
-    #     elif col == "joint":
-    #         valid_days = self.n_valid_days
-
-    def _check_valid_temperature_days_percentage(self):
-        if self.n_days_total > 0:
-            valid_temperature_days_pct = self.n_valid_temperature_days / float(
-                self.n_days_total
-            )
-        else:
-            valid_temperature_days_pct = 0
-
-        min_pct = self.settings.temperature.min_pct_daily_coverage
-        if valid_temperature_days_pct < min_pct:
-            self.disqualification.append(
-                EEMeterWarning(
-                    qualified_name=(
-                        "eemeter.sufficiency_criteria"
-                        ".too_many_days_with_missing_temperature_data"
-                    ),
-                    description=(
-                        "Too many days in data have missing temperature data."
-                    ),
-                    data={
-                        "n_valid_temperature_data_days": self.n_valid_temperature_days,
-                        "n_days_total": self.n_days_total,
-                    },
-                )
-            )
-
-    def _check_valid_meter_readings_percentage(self):
-        if self.n_days_total > 0:
-            if not self.is_reporting_data:
-                valid_observed_days_pct = self.n_valid_observed_days / float(
-                    self.n_days_total
-                )
-        else:
-            valid_observed_days_pct = 0
-
-        min_pct = self.settings.observed.min_pct_daily_coverage
-        if (
-            not self.is_reporting_data
-            and valid_observed_days_pct < min_pct
-        ):
-            self.disqualification.append(
-                EEMeterWarning(
-                    qualified_name=(
-                        "eemeter.sufficiency_criteria"
-                        ".too_many_days_with_missing_meter_data"
-                    ),
-                    description=("Too many days in data have missing meter data."),
-                    data={
-                        "n_valid_meter_data_days": self.n_valid_observed_days,
-                        "n_days_total": self.n_days_total,
+                        f"n_valid_{col}_data_days": valid_days,
+                        "n_days_total": n_days_total,
                     },
                 )
             )
@@ -455,9 +407,9 @@ class DailySufficiencyCriteria(SufficiencyCriteria):
         # self._check_n_days_boundary_gap("end")
         self._check_negative_meter_values()
         self._check_baseline_day_length()
-        self._check_valid_days_percentage()
-        self._check_valid_meter_readings_percentage()
-        self._check_valid_temperature_days_percentage()
+        self._check_valid_days_percentage(col="joint")
+        self._check_valid_days_percentage(col="temperature")
+        self._check_valid_days_percentage(col="observed")
         self._check_monthly_temperature_values_percentage()
         self._check_extreme_values()
         # TODO : Maybe make these checks static? To work with the current data class
@@ -466,8 +418,8 @@ class DailySufficiencyCriteria(SufficiencyCriteria):
 
     def check_sufficiency_reporting(self):
         self._check_no_data()
-        self._check_valid_days_percentage()
-        self._check_valid_temperature_days_percentage()
+        self._check_valid_days_percentage(col="joint")
+        self._check_valid_days_percentage(col="temperature")
         self._check_monthly_temperature_values_percentage()
         # self._check_high_frequency_temperature_values()
 
@@ -598,9 +550,9 @@ class BillingSufficiencyCriteria(SufficiencyCriteria):
         # else :
         #     self._check_meter_data_billing_bimonthly()
         self._check_baseline_day_length()
-        self._check_valid_days_percentage()
-        self._check_valid_meter_readings_percentage()
-        self._check_valid_temperature_days_percentage()
+        self._check_valid_days_percentage(col="joint")
+        self._check_valid_days_percentage(col="temperature")
+        self._check_valid_days_percentage(col="observed")
         self._check_monthly_temperature_values_percentage()
         self._check_extreme_values()
         self._check_estimated_meter_values()
@@ -608,8 +560,8 @@ class BillingSufficiencyCriteria(SufficiencyCriteria):
 
     def check_sufficiency_reporting(self):
         self._check_no_data()
-        self._check_valid_days_percentage()
-        self._check_valid_temperature_days_percentage()
+        self._check_valid_days_percentage(col="joint")
+        self._check_valid_days_percentage(col="temperature")
         self._check_monthly_temperature_values_percentage()
         # self._check_high_frequency_temperature_values()
 
@@ -695,9 +647,9 @@ class HourlySufficiencyCriteria(SufficiencyCriteria):
         # self._check_n_days_boundary_gap("end")
         self._check_negative_meter_values()
         self._check_baseline_day_length()
-        self._check_valid_days_percentage()
-        self._check_valid_meter_readings_percentage()
-        self._check_valid_temperature_days_percentage()
+        self._check_valid_days_percentage(col="joint")
+        self._check_valid_days_percentage(col="temperature")
+        self._check_valid_days_percentage(col="observed")
         self._check_monthly_temperature_values_percentage()
         self._check_monthly_meter_readings_percentage()
         self._check_extreme_values()
@@ -709,8 +661,8 @@ class HourlySufficiencyCriteria(SufficiencyCriteria):
 
     def check_sufficiency_reporting(self):
         self._check_no_data()
-        self._check_valid_days_percentage()
-        self._check_valid_temperature_days_percentage()
+        self._check_valid_days_percentage(col="joint")
+        self._check_valid_days_percentage(col="temperature")
         self._check_monthly_temperature_values_percentage()
         self._check_monthly_ghi_percentage()
         # self._check_high_frequency_temperature_values()
