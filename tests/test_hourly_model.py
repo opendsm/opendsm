@@ -253,9 +253,9 @@ def test_monthly_percentage(baseline):
     assert_dq(
         baseline_data,
         [
-            "eemeter.sufficiency_criteria.too_many_days_with_missing_data",
-            "eemeter.sufficiency_criteria.missing_monthly_meter_data",
-            "eemeter.sufficiency_criteria.too_many_days_with_missing_meter_data",
+            "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
+            "eemeter.sufficiency_criteria.missing_monthly_observed_data",
+            "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data",
         ],
     )
     with pytest.raises(DataSufficiencyError):
