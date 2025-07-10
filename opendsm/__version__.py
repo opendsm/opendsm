@@ -20,7 +20,7 @@
 __title__ = "opendsm"
 __description__ = "Measure demand-side program impacts"
 __url__ = "http://github.com/opendsm/opendsm"
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 __author__ = "opendsm"
 __author_email__ = "opendsm@lists.lfenergy.org"
 __license__ = "Apache 2.0"
