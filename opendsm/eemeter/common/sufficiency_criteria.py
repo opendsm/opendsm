@@ -234,7 +234,7 @@ class SufficiencyCriteria(BaseSettings):
             valid_days = self.n_valid_temperature_days
             min_pct = self.settings.temperature.min_pct_daily_coverage
         elif col == "ghi":
-            name = col.uppercase()
+            name = col.upper()
             raise NotImplementedError("GHI valid days percentage check not implemented yet")
             valid_days = self.n_valid_ghi_days
             min_pct = self.settings.ghi.min_pct_daily_coverage
@@ -278,7 +278,7 @@ class SufficiencyCriteria(BaseSettings):
             name = col.capitalize()
             min_pct = self.settings.temperature.min_pct_monthly_coverage
         elif col == "ghi":
-            name = col.uppercase()
+            name = col.upper()
             min_pct = self.settings.ghi.min_pct_monthly_coverage
         elif col == "observed":
             name = col.capitalize()
