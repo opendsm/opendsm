@@ -175,9 +175,9 @@ def test_invalid_baseline_lengths(baseline):
     MIN_BASELINE_HOURS = ceil(MAX_BASELINE_HOURS * 0.9) - 24
     short_df = baseline.iloc[:MIN_BASELINE_HOURS]
 
-    extra_day = baseline.iloc[-24:]
-    extra_day.index += pd.Timedelta(days=1)
-    long_df = pd.concat([baseline, extra_day])
+    extra_days = baseline.iloc[-24*2:]
+    extra_days.index += pd.Timedelta(days=2)
+    long_df = pd.concat([baseline, extra_days])
 
     short_baseline = HourlyBaselineData(short_df, is_electricity_data=True)
     long_baseline = HourlyBaselineData(long_df, is_electricity_data=True)
