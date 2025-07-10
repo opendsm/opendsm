@@ -416,12 +416,17 @@ class BillingReportingData(_BillingData):
         warnings (list[EEMeterWarning]): A list of ssues with the data, but none that will severely reduce the quality of the model built.
     """
 
-    def __init__(self, df: pd.DataFrame, is_electricity_data: bool):
+    def __init__(
+        self,
+        df: pd.DataFrame, 
+        is_electricity_data: bool, 
+        settings: dict | None = None
+    ):
         df = df.copy()
         if "observed" not in df.columns:
             df["observed"] = np.nan
 
-        super().__init__(df, is_electricity_data)
+        super().__init__(df, is_electricity_data, settings=settings)
 
     @classmethod
     def from_series(
@@ -430,6 +435,7 @@ class BillingReportingData(_BillingData):
         temperature_data: pd.Series | pd.DataFrame,
         is_electricity_data: bool,
         tzinfo: datetime.tzinfo | None = None,
+        settings: dict | None = None,
     ):
         """Create a BillingReportingData instance from meter data and temperature data.
 
@@ -460,7 +466,7 @@ class BillingReportingData(_BillingData):
             raise ValueError(
                 "Pass meter_data=None to explicitly create a temperature-only reporting data instance."
             )
-        return super().from_series(meter_data, temperature_data, is_electricity_data)
+        return super().from_series(meter_data, temperature_data, is_electricity_data, settings=settings)
 
     def _check_data_sufficiency(self, sufficiency_df):
         """

@@ -31,7 +31,7 @@ from typing import Optional, Literal, Union, TypeVar, Dict, Any
 
 import pywt
 
-from opendsm.common.base_settings import BaseSettings
+from opendsm.common.base_settings import MutableBaseSettings
 from opendsm.common.clustering.settings import ClusteringSettings
 from opendsm.common.metrics import BaselineMetrics
 
@@ -39,7 +39,7 @@ from opendsm.eemeter.common.warnings import EEMeterWarning
 
 
 
-class ColumnSufficiencySettings(BaseSettings):
+class ColumnSufficiencySettings(MutableBaseSettings):
     min_pct_intrahour_coverage: float = pydantic.Field(
         default=0.5,
         gt=0,
@@ -69,7 +69,7 @@ class ColumnSufficiencySettings(BaseSettings):
     )
 
 
-class BaseSufficiencySettings(BaseSettings):
+class BaseSufficiencySettings(MutableBaseSettings):
     requested_start: Optional[pd.Timestamp] = pydantic.Field(
         default=None,
         description="Requested start date for the data. If None, use the data start date."
@@ -103,6 +103,13 @@ class BaseSufficiencySettings(BaseSettings):
     observed: ColumnSufficiencySettings = pydantic.Field(
         default_factory=ColumnSufficiencySettings,
     )
+
+    @pydantic.field_validator("min_baseline_length", "max_baseline_length", mode="before")
+    @classmethod
+    def convert_float_to_int(cls, v):
+        if isinstance(v, float) and v.is_integer():
+            return int(v)
+        return v
 
     @pydantic.model_validator(mode="after")
     def check_baseline_lengths(self):
@@ -141,6 +148,13 @@ class BillingDataSufficiencySettings(BaseSufficiencySettings):
         description="Maximum number of days in a billing period.",
     )
 
+    @pydantic.field_validator("min_days_in_period", "max_days_in_monthly_period", "max_days_in_bimonthly_period", mode="before")
+    @classmethod
+    def convert_float_to_int(cls, v):
+        if isinstance(v, float) and v.is_integer():
+            return int(v)
+        return v
+
     
 class HourlyTemperatureSufficiencySettings(ColumnSufficiencySettings):
     min_pct_intrahour_coverage: float = pydantic.Field(
@@ -177,13 +191,20 @@ class HourlyTemperatureSufficiencySettings(ColumnSufficiencySettings):
         description="Maximum number of consecutive missing hours to declare the day as missing.",
     )
 
+    @pydantic.field_validator("max_consecutive_hours_missing", mode="before")
+    @classmethod
+    def convert_float_to_int(cls, v):
+        if isinstance(v, float) and v.is_integer():
+            return int(v)
+        return v
+
 class HourlyDataSufficiencySettings(BaseSufficiencySettings):
     temperature: HourlyTemperatureSufficiencySettings = pydantic.Field(
         default_factory=HourlyTemperatureSufficiencySettings,
     )
 
 
-class BaseDataSettings(BaseSettings):
+class BaseDataSettings(MutableBaseSettings):
     """is electricity data"""
     is_electricity_data: bool = pydantic.Field(
         default=True, # TODO: if is_electricity_data removed from data, this needs to be required
@@ -194,17 +215,6 @@ class BaseDataSettings(BaseSettings):
         default=None,
         description="Time zone for the data, e.g., 'America/Los_Angeles'. If None, time zone is not set."
     )
-
-    def _set_attribute(self, attribute_name: str, value: Any):
-        # update settings with update_dict
-        settings_dict = self.model_dump()
-
-        if attribute_name not in settings_dict:
-            raise ValueError(f"Attribute {attribute_name} not found in DataSettings")
-        
-        settings_dict[attribute_name] = value
-
-        return self.__class__(**settings_dict)
 
 class DailyDataSettings(BaseDataSettings):
     sufficiency: DailyDataSufficiencySettings = pydantic.Field(

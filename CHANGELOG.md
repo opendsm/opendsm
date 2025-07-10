@@ -7,7 +7,7 @@ Development
 * Migrate to modern Python logger interface to solve deprecation warnings.
 * Add hourly model uncertainty
 * Daily model uses BaselineMetrics natively now and not as a stand in for error dictionary
-* Data classes now accept 
+* Data classes now accept dictionaries to modify DQ criteria
 
 opendsm-1.1.0
 -----

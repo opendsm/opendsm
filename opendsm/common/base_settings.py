@@ -51,6 +51,15 @@ class BaseSettings(pydantic.BaseModel):
         return v
 
 
+class MutableBaseSettings(BaseSettings):
+    model_config = pydantic.ConfigDict(
+        frozen = False,
+        arbitrary_types_allowed=True,
+        str_to_lower = True,
+        str_strip_whitespace = True,
+    )
+    
+
 # add developer field to pydantic Field
 def CustomField(developer=False, *args, **kwargs):
     field = pydantic.Field(json_schema_extra={"developer": developer}, *args, **kwargs)

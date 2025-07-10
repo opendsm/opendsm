@@ -179,7 +179,7 @@ class _HourlyData:
         elif isinstance(settings, dict):
             self.settings = HourlyDataSettings(**settings)
 
-        self.settings = self.settings._set_attribute("is_electricity_data", is_electricity_data)
+        self.settings.is_electricity_data = is_electricity_data
 
         # TODO not sure why we're keeping this copy, just set the attrs
         self._kwargs = copy.deepcopy(kwargs)
@@ -322,7 +322,7 @@ class _HourlyData:
                 )
             )
         self.tz = df.index.tz
-        self.settings = self.settings._set_attribute("time_zone", self.tz)
+        self.settings.time_zone = self.tz
 
         # prevent later issues when merging on generated datetimes, which default to ns precision
         # there is almost certainly a smoother way to accomplish this conversion, but this works
