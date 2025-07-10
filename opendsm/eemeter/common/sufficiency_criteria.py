@@ -206,20 +206,24 @@ class SufficiencyCriteria(BaseSettings):
             )
 
     def _check_negative_observed_values(self):
-        if not self.is_reporting_data and not self.is_electricity_data:
-            n_negative_observed_values = self.data.observed[self.data.observed < 0].shape[0]
+        if self.is_reporting_data:
+            return
+        elif self.is_electricity_data:
+            return
 
-            if n_negative_observed_values > 0:
-                # CalTrack 2.3.5
-                self.disqualification.append(
-                    EEMeterWarning(
-                        qualified_name=(
-                            "eemeter.sufficiency_criteria" ".negative_observed_values"
-                        ),
-                        description=("Found negative Observed values"),
-                        data={"n_negative_observed_values": n_negative_observed_values},
-                    )
+        n_negative_observed_values = self.data.observed[self.data.observed < 0].shape[0]
+
+        if n_negative_observed_values > 0:
+            # CalTrack 2.3.5
+            self.disqualification.append(
+                EEMeterWarning(
+                    qualified_name=(
+                        "eemeter.sufficiency_criteria" ".negative_observed_values"
+                    ),
+                    description=("Found negative Observed values"),
+                    data={"n_negative_observed_values": n_negative_observed_values},
                 )
+            )
     
     def _check_valid_days_percentage(self, col: Literal["temperature", "ghi", "observed", "joint"]):
         if self.is_reporting_data and col == "observed":
@@ -313,8 +317,11 @@ class SufficiencyCriteria(BaseSettings):
         )
 
     def _check_extreme_values(self):
-        if self.data["observed"].dropna().empty:
+        if self.is_reporting_data:
+            return    
+        elif self.data["observed"].dropna().empty:
             return
+        
         if not self.is_reporting_data:
             median = self.data.observed.median()
             lower_quantile = self.data.observed.quantile(0.25)
@@ -407,14 +414,24 @@ class SufficiencyCriteria(BaseSettings):
         )
 
     def check_sufficiency_baseline(self):
-        raise NotImplementedError(
-            "Use Hourly / Daily / Billing SufficiencyCriteria class for concrete implementation"
-        )
+        self._check_no_data()
+        self._check_baseline_day_length()
+        self._check_negative_observed_values()
+
+        self._check_valid_days_percentage(col="temperature")
+        self._check_valid_days_percentage(col="observed")
+        self._check_valid_days_percentage(col="joint")
+        self._check_valid_monthly_coverage(col="temperature")
+
+        self._check_extreme_values()
 
     def check_sufficiency_reporting(self):
-        raise NotImplementedError(
-            "Use Hourly / Daily / Billing SufficiencyCriteria class for concrete implementation"
-        )
+        self._check_no_data()
+
+        self._check_valid_days_percentage(col="temperature")
+        self._check_valid_days_percentage(col="joint")
+        self._check_valid_monthly_coverage(col="temperature")
+        # self._check_high_frequency_temperature_values()
 
 
 class DailySufficiencyCriteria(SufficiencyCriteria):
@@ -426,26 +443,16 @@ class DailySufficiencyCriteria(SufficiencyCriteria):
         super().__init__(*args, **kwargs)
 
     def check_sufficiency_baseline(self):
-        self._check_no_data()
+        super().check_sufficiency_baseline()
+
         # self._check_n_days_boundary_gap("start")
         # self._check_n_days_boundary_gap("end")
-        self._check_negative_observed_values()
-        self._check_baseline_day_length()
-        self._check_valid_days_percentage(col="joint")
-        self._check_valid_days_percentage(col="temperature")
-        self._check_valid_days_percentage(col="observed")
-        self._check_valid_monthly_coverage(col="temperature")
-        self._check_extreme_values()
         # TODO : Maybe make these checks static? To work with the current data class
         # self._check_high_frequency_meter_values()
         # self._check_high_frequency_temperature_values()
 
     def check_sufficiency_reporting(self):
-        self._check_no_data()
-        self._check_valid_days_percentage(col="joint")
-        self._check_valid_days_percentage(col="temperature")
-        self._check_valid_monthly_coverage(col="temperature")
-        # self._check_high_frequency_temperature_values()
+        super().check_sufficiency_reporting()
 
 
 class BillingSufficiencyCriteria(SufficiencyCriteria):
@@ -565,29 +572,19 @@ class BillingSufficiencyCriteria(SufficiencyCriteria):
             data = data[["value"]]  # remove the estimated column
 
     def check_sufficiency_baseline(self):
-        self._check_no_data()
+        super().check_sufficiency_baseline()
+
         # self._check_n_days_boundary_gap("start")
         # self._check_n_days_boundary_gap("end")
-        self._check_negative_observed_values()
         # if self.median_granularity == "billing_monthly":
         #     self._check_observed_data_billing_monthly()
         # else :
         #     self._check_observed_data_billing_bimonthly()
-        self._check_baseline_day_length()
-        self._check_valid_days_percentage(col="joint")
-        self._check_valid_days_percentage(col="temperature")
-        self._check_valid_days_percentage(col="observed")
-        self._check_valid_monthly_coverage(col="temperature")
-        self._check_extreme_values()
         self._check_estimated_observed_values()
         # self._check_high_frequency_temperature_values()
 
     def check_sufficiency_reporting(self):
-        self._check_no_data()
-        self._check_valid_days_percentage(col="joint")
-        self._check_valid_days_percentage(col="temperature")
-        self._check_valid_monthly_coverage(col="temperature")
-        # self._check_high_frequency_temperature_values()
+        super().check_sufficiency_reporting()
 
 
 class HourlySufficiencyCriteria(SufficiencyCriteria):
@@ -621,28 +618,19 @@ class HourlySufficiencyCriteria(SufficiencyCriteria):
             )
 
     def check_sufficiency_baseline(self):
+        super().check_sufficiency_baseline()
+        
         # TODO : add caltrack check number on top of each method
-        self._check_no_data()
         # self._check_n_days_boundary_gap("start")
         # self._check_n_days_boundary_gap("end")
-        self._check_negative_observed_values()
-        self._check_baseline_day_length()
-        self._check_valid_days_percentage(col="joint")
-        self._check_valid_days_percentage(col="temperature")
-        self._check_valid_days_percentage(col="observed")
-        self._check_valid_monthly_coverage(col="temperature")
         self._check_valid_monthly_coverage(col="ghi")
         self._check_valid_monthly_coverage(col="observed")
-        self._check_extreme_values()
         # TODO these will only apply to legacy, and currently do not work
         # self._check_high_frequency_observed_values()
         # self._check_high_frequency_temperature_values()
         # self._check_hourly_consecutive_temperature_data()
 
     def check_sufficiency_reporting(self):
-        self._check_no_data()
-        self._check_valid_days_percentage(col="joint")
-        self._check_valid_days_percentage(col="temperature")
-        self._check_valid_monthly_coverage(col="temperature")
+        super().check_sufficiency_reporting()
+        
         self._check_valid_monthly_coverage(col="ghi")
-        # self._check_high_frequency_temperature_values()
