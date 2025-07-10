@@ -17,6 +17,10 @@
    limitations under the License.
 
 """
+from __future__ import annotations
+
+from typing import Literal
+
 import numpy as np
 import pandas as pd
 import pytz
@@ -143,67 +147,43 @@ class SufficiencyCriteria(BaseSettings):
             return False
         return True
 
-    def _check_n_days_start_gap(self):
-        requested_start = self.settings.requested_start
-        data_start = self.data.dropna().index.min()
-
-        if requested_start is not None:
-            # check for gap at beginning
-            requested_start = requested_start.astimezone(pytz.UTC)
-            n_days_start_gap = (data_start - requested_start).days
+    def _check_n_days_boundary_gap(self, gap_type: Literal["start", "end"]):
+        gap = 0
+        if gap_type == "start":
+            user_boundary = self.settings.requested_start
+            
+            if user_boundary is not None:
+                data_boundary = self.data.dropna().index.min()
+                gap = (data_boundary - user_boundary).days
         else:
-            n_days_start_gap = 0
+            if user_boundary is not None:
+                data_boundary = self.data.dropna().index.max()
+                gap = (user_boundary - data_boundary).days
 
-        if n_days_start_gap < 0:
+        if gap < 0:
             # CalTRACK 2.2.4
+            if gap_type == "start":
+                err = "before"
+            else:
+                err = "after"
+
             self.disqualification.append(
                 EEMeterWarning(
                     qualified_name=(
                         "eemeter.sufficiency_criteria"
-                        ".extra_data_before_requested_start_date"
+                        f".extra_data_{err}_requested_{gap_type}_date"
                     ),
-                    description=("Extra data found before requested start date."),
+                    description=(f"Extra data found {err} requested {gap_type} date."),
                     data={
-                        "requested_start": requested_start.isoformat(),
-                        "data_start": data_start.isoformat(),
+                        f"requested_{gap_type}": user_boundary.isoformat(),
+                        f"data_{gap_type}": data_boundary.isoformat(),
                     },
                 )
             )
-            n_days_start_gap = 0
-    
-    def _check_n_days_end_gap(self):
-        requested_end = self.settings.requested_end
-        data_end = self.data.dropna().index.max()
-
-        if requested_end is not None:
-            # check for gap at end
-            requested_end = requested_end.astimezone(pytz.UTC)
-            n_days_end_gap = (requested_end - data_end).days
-        else:
-            n_days_end_gap = 0
-
-        if n_days_end_gap < 0:
-            # CalTRACK 2.2.4
-            self.disqualification.append(
-                EEMeterWarning(
-                    qualified_name=(
-                        "eemeter.sufficiency_criteria"
-                        ".extra_data_after_requested_end_date"
-                    ),
-                    description=("Extra data found after requested end date."),
-                    data={
-                        "requested_end": requested_end.isoformat(),
-                        "data_end": data_end.isoformat(),
-                    },
-                )
-            )
-        n_days_end_gap = 0
 
     def _check_negative_meter_values(self):
         if not self.is_reporting_data and not self.is_electricity_data:
-            n_negative_meter_values = self.data.observed[self.data.observed < 0].shape[
-                0
-            ]
+            n_negative_meter_values = self.data.observed[self.data.observed < 0].shape[0]
 
             if n_negative_meter_values > 0:
                 # CalTrack 2.3.5
@@ -217,22 +197,21 @@ class SufficiencyCriteria(BaseSettings):
                     )
                 )
 
-    def _check_baseline_length_daily_billing_model(self):
-        min_baseline_length = self.settings.min_baseline_length
-        max_baseline_length = self.settings.max_baseline_length
-        if (
-            not self.is_reporting_data
-            # TODO can throw with Optional. check if actually optional vs using -1 as default?
-            and self.n_days_total > max_baseline_length
-            or self.n_days_total < min_baseline_length
-        ):
+    def _check_baseline_day_length(self):
+        min_length = self.settings.min_baseline_length
+        max_length = self.settings.max_baseline_length
+
+        if self.is_reporting_data:
+            return
+        
+        if self.n_days_total < min_length or self.n_days_total > max_length:
             self.disqualification.append(
                 EEMeterWarning(
                     qualified_name=(
                         "eemeter.sufficiency_criteria" ".incorrect_number_of_total_days"
                     ),
                     description=(
-                        f"Baseline length is not within the expected range of {min_baseline_length}-{max_baseline_length} days."
+                        f"Baseline length is not within the expected range of {min_length}-{max_length} days."
                     ),
                     data={"n_days_total": self.n_days_total},
                 )
@@ -525,8 +504,10 @@ class HourlySufficiencyCriteria(SufficiencyCriteria):
     def check_sufficiency_baseline(self):
         # TODO : add caltrack check number on top of each method
         self._check_no_data()
+        # self._check_n_days_boundary_gap("start")
+        # self._check_n_days_boundary_gap("end")
         self._check_negative_meter_values()
-        self._check_baseline_length_daily_billing_model()
+        self._check_baseline_day_length()
         self._check_valid_days_percentage()
         self._check_valid_meter_readings_percentage()
         self._check_valid_temperature_values_percentage()
@@ -558,8 +539,10 @@ class DailySufficiencyCriteria(SufficiencyCriteria):
 
     def check_sufficiency_baseline(self):
         self._check_no_data()
+        # self._check_n_days_boundary_gap("start")
+        # self._check_n_days_boundary_gap("end")
         self._check_negative_meter_values()
-        self._check_baseline_length_daily_billing_model()
+        self._check_baseline_day_length()
         self._check_valid_days_percentage()
         self._check_valid_meter_readings_percentage()
         self._check_valid_temperature_values_percentage()
@@ -695,12 +678,14 @@ class BillingSufficiencyCriteria(SufficiencyCriteria):
 
     def check_sufficiency_baseline(self):
         self._check_no_data()
+        # self._check_n_days_boundary_gap("start")
+        # self._check_n_days_boundary_gap("end")
         self._check_negative_meter_values()
         # if self.median_granularity == "billing_monthly":
         #     self._check_meter_data_billing_monthly()
         # else :
         #     self._check_meter_data_billing_bimonthly()
-        self._check_baseline_length_daily_billing_model()
+        self._check_baseline_day_length()
         self._check_valid_days_percentage()
         self._check_valid_meter_readings_percentage()
         self._check_valid_temperature_values_percentage()

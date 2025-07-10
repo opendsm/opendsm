@@ -17,7 +17,6 @@
    limitations under the License.
 
 """
-
 from __future__ import annotations
 
 import numpy as np
@@ -26,7 +25,7 @@ import pandas as pd
 import pydantic
 import datetime
 
-from typing import Optional
+from typing import Optional, Union
 
 from opendsm.common.base_settings import MutableBaseSettings
 
@@ -80,7 +79,7 @@ class BaseSufficiencySettings(MutableBaseSettings):
     )
 
     max_baseline_length: int = pydantic.Field(
-        default=365,
+        default=366, # 366 for leap year
         ge=2,
         description="Maximum number of days in the baseline.",
     )
@@ -220,7 +219,7 @@ class BillingDataSettings(BaseDataSettings):
     )
 
 class HourlyDataSettings(BaseDataSettings):
-    pv_start: datetime.date | str | None = pydantic.Field(
+    pv_start: Optional[Union[datetime.date, str]] = pydantic.Field(
         default=None,
         description="Date of the solar installation. If None, assume solar status is static."
     )
