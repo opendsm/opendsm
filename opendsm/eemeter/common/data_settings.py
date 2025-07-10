@@ -30,20 +30,56 @@ from typing import Optional, Union
 from opendsm.common.base_settings import MutableBaseSettings
 
 
-
+# TODO: use this in future for all columns
 class ColumnSufficiencySettings(MutableBaseSettings):
-    min_pct_intrahour_coverage: float = pydantic.Field(
+    min_pct_hourly_coverage: float = pydantic.Field(
         default=0.5,
         gt=0,
         le=1,
         description="Minimum percentage of intrahour coverage.",
     )
-
-    min_pct_hourly_coverage_per_month: float = pydantic.Field(
+    
+    min_pct_daily_coverage: float = pydantic.Field(
         default=0.9,
         gt=0,
         le=1,
-        description="Minimum percentage of hourly coverage.",
+        description="Minimum percentage of daily coverage.",
+    )
+    
+    min_pct_monthly_coverage: float = pydantic.Field(
+        default=0.9,
+        gt=0,
+        le=1,
+        description="Minimum percentage of monthly coverage.",
+    )
+
+    min_pct_period_coverage: float = pydantic.Field(
+        default=0.9,
+        gt=0,
+        le=1,
+        description="Minimum percentage of period coverage.",
+    )
+
+
+class TemperatureSufficiencySettings(ColumnSufficiencySettings):
+    pass
+
+
+class GhiSufficiencySettings(MutableBaseSettings):
+    min_pct_monthly_coverage: float = pydantic.Field(
+        default=0.9,
+        gt=0,
+        le=1,
+        description="Minimum percentage of monthly coverage.",
+    )
+
+
+class ObservedSufficiencySettings(MutableBaseSettings):
+    min_pct_hourly_coverage: float = pydantic.Field(
+        default=0.5,
+        gt=0,
+        le=1,
+        description="Minimum percentage of intrahour coverage.",
     )
     
     min_pct_daily_coverage: float = pydantic.Field(
@@ -84,16 +120,16 @@ class BaseSufficiencySettings(MutableBaseSettings):
         description="Maximum number of days in the baseline.",
     )
 
-    temperature: ColumnSufficiencySettings = pydantic.Field(
-        default_factory=ColumnSufficiencySettings,
+    temperature: TemperatureSufficiencySettings = pydantic.Field(
+        default_factory=TemperatureSufficiencySettings,
     )
 
-    ghi: ColumnSufficiencySettings = pydantic.Field(
-        default_factory=ColumnSufficiencySettings,
+    ghi: GhiSufficiencySettings = pydantic.Field(
+        default_factory=GhiSufficiencySettings,
     )
 
-    observed: ColumnSufficiencySettings = pydantic.Field(
-        default_factory=ColumnSufficiencySettings,
+    observed: ObservedSufficiencySettings = pydantic.Field(
+        default_factory=ObservedSufficiencySettings,
     )
 
     @pydantic.field_validator("min_baseline_length", "max_baseline_length", mode="before")
@@ -148,35 +184,7 @@ class BillingDataSufficiencySettings(BaseSufficiencySettings):
         return v
 
     
-class HourlyTemperatureSufficiencySettings(ColumnSufficiencySettings):
-    min_pct_intrahour_coverage: float = pydantic.Field(
-        default=0.5,
-        gt=0,
-        le=1,
-        description="Minimum percentage of intrahour coverage.",
-    )
-
-    min_pct_hourly_coverage_per_month: float = pydantic.Field(
-        default=0.9,
-        gt=0,
-        le=1,
-        description="Minimum percentage of hourly coverage.",
-    )
-    
-    min_pct_daily_coverage: float = pydantic.Field(
-        default=0.9,
-        gt=0,
-        le=1,
-        description="Minimum percentage of daily coverage.",
-    )
-    
-    min_pct_monthly_coverage: float = pydantic.Field(
-        default=0.9,
-        gt=0,
-        le=1,
-        description="Minimum percentage of monthly coverage.",
-    )
-
+class HourlyTemperatureSufficiencySettings(TemperatureSufficiencySettings):
     max_consecutive_hours_missing: int = pydantic.Field(
         default=6,
         ge=0,

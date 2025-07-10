@@ -61,6 +61,10 @@ class SufficiencyCriteria(BaseSettings):
     warnings: list = []
 
     @computed_field_cached_property()
+    def _has_ghi(self) -> bool:
+        return "ghi" in self.data.columns
+
+    @computed_field_cached_property()
     def n_days_total(self) -> int:
         requested_start = self.settings.requested_start
         requested_end = self.settings.requested_end
@@ -90,7 +94,7 @@ class SufficiencyCriteria(BaseSettings):
         return n_days_total
 
     def _compute_valid_day_counts(self):
-        min_pct = self.settings.temperature.min_pct_hourly_coverage_per_month
+        min_pct = self.settings.temperature.min_pct_period_coverage
         valid_temperature_rows = (
             self.data.temperature_not_null
             / (self.data.temperature_not_null + self.data.temperature_null)
@@ -242,7 +246,17 @@ class SufficiencyCriteria(BaseSettings):
                 )
             )
 
-    def _check_valid_temperature_values_percentage(self):
+    # def _check_valid_days_percentage(self, col: Literal["temperature", "ghi", "observed", "joint"]):
+    #     if col == "temperature":
+    #         valid_days = self.n_valid_temperature_days
+    #     elif col == "ghi":
+    #         valid_days = self.n_valid_ghi_days
+    #     elif col == "observed":
+    #         valid_days = self.n_valid_observed_days
+    #     elif col == "joint":
+    #         valid_days = self.n_valid_days
+
+    def _check_valid_temperature_days_percentage(self):
         if self.n_days_total > 0:
             valid_temperature_days_pct = self.n_valid_temperature_days / float(
                 self.n_days_total
@@ -364,7 +378,7 @@ class SufficiencyCriteria(BaseSettings):
     def _check_high_frequency_temperature_values(self):
         # TODO broken as written
         # If high frequency data check for 50% data coverage in rollup
-        min_pct = self.settings.temperature.min_pct_intrahour_coverage
+        min_pct = self.settings.temperature.min_pct_hourly_coverage
         if len(temperature_features[temperature_features.coverage <= min_pct]) > 0:
             self.warnings.append(
                 EEMeterWarning(
@@ -398,7 +412,7 @@ class SufficiencyCriteria(BaseSettings):
             temperature_features = temperature_features.drop(columns=["coverage"])
 
     def _check_high_frequency_meter_values(self):
-        min_pct = self.settings.observed.min_pct_intrahour_coverage
+        min_pct = self.settings.observed.min_pct_hourly_coverage
         if not self.data[self.data.coverage <= min_pct].empty:
             self.warnings.append(
                 EEMeterWarning(
@@ -425,6 +439,179 @@ class SufficiencyCriteria(BaseSettings):
         raise NotImplementedError(
             "Use Hourly / Daily / Billing SufficiencyCriteria class for concrete implementation"
         )
+
+
+class DailySufficiencyCriteria(SufficiencyCriteria):
+    """
+    Sufficiency Criteria class for daily models
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def check_sufficiency_baseline(self):
+        self._check_no_data()
+        # self._check_n_days_boundary_gap("start")
+        # self._check_n_days_boundary_gap("end")
+        self._check_negative_meter_values()
+        self._check_baseline_day_length()
+        self._check_valid_days_percentage()
+        self._check_valid_meter_readings_percentage()
+        self._check_valid_temperature_days_percentage()
+        self._check_monthly_temperature_values_percentage()
+        self._check_extreme_values()
+        # TODO : Maybe make these checks static? To work with the current data class
+        # self._check_high_frequency_meter_values()
+        # self._check_high_frequency_temperature_values()
+
+    def check_sufficiency_reporting(self):
+        self._check_no_data()
+        self._check_valid_days_percentage()
+        self._check_valid_temperature_days_percentage()
+        self._check_monthly_temperature_values_percentage()
+        # self._check_high_frequency_temperature_values()
+
+
+class BillingSufficiencyCriteria(SufficiencyCriteria):
+    """
+    Sufficiency Criteria class for billing models - monthly / bimonthly
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def _check_meter_data_billing_monthly(self):
+        if self.data["value"].dropna().empty:
+            return
+
+        diff = list((data.index[1:] - data.index[:-1]).days)
+        filter_ = pd.Series(diff + [np.nan], index=data.index)
+
+        min_days = self.settings.min_days_in_period
+        max_days = self.settings.max_days_in_monthly_period
+
+        # CalTRACK 2.2.3.4, 2.2.3.5
+        # Billing Monthly data frequency check
+        data = data[(min_days <= filter_) & (filter_ <= max_days)].reindex(  # keep these, inclusive
+            data.index
+        )
+
+        if len(data[(max_days < filter_) | (filter_ < min_days)]) > 0:
+            self.disqualification.append(
+                EEMeterWarning(
+                    qualified_name="eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data",
+                    description=(
+                        f"Off-cycle reads found in billing monthly data having a duration less than {min_days} days or greater than {max_days} days"
+                    ),
+                    data=(data[(max_days < filter_) | (filter_ < min_days)].index.to_list()),
+                )
+            )
+
+    def _check_meter_data_billing_bimonthly(self):
+        if self.data["value"].dropna().empty:
+            return
+
+        diff = list((data.index[1:] - data.index[:-1]).days)
+        filter_ = pd.Series(diff + [np.nan], index=data.index)
+
+        min_days = self.settings.min_days_in_period
+        max_days = self.settings.max_days_in_bimonthly_period
+
+        # CalTRACK 2.2.3.4, 2.2.3.5
+        data = data[(min_days <= filter_) & (filter_ <= max_days)].reindex(  # keep these, inclusive
+            data.index
+        )
+
+        if len(data[(max_days < filter_) | (filter_ < min_days)]) > 0:
+            self.disqualification.append(
+                EEMeterWarning(
+                    qualified_name="eemeter.sufficiency_criteria.offcycle_reads_in_billing_bimonthly_data",
+                    description=(
+                        f"Off-cycle reads found in billing bimonthly data having a duration less than {min_days} days or greater than {max_days} days"
+                    ),
+                    data=(data[(max_days < filter_) | (filter_ < min_days)].index.to_list()),
+                )
+            )
+
+    def _check_estimated_meter_values(self):
+        # CalTRACK 2.2.3.1
+        """
+        Adds estimate to subsequent read if there aren't more than one estimate in a row
+        and then removes the estimated row.
+
+        Input:
+        index   value   estimated
+        1       2       False
+        2       3       False
+        3       5       True
+        4       4       False
+        5       6       True
+        6       3       True
+        7       4       False
+        8       NaN     NaN
+
+        Output:
+        index   value
+        1       2
+        2       3
+        4       9
+        5       NaN
+        7       7
+        8       NaN
+        """
+        add_estimated = []
+        remove_estimated_fixed_rows = []
+        data = self.data
+        if "estimated" in data.columns:
+            data["unestimated_value"] = (
+                data[:-1].value[(data[:-1].estimated == False)].reindex(data.index)
+            )
+            data["estimated_value"] = (
+                data[:-1].value[(data[:-1].estimated)].reindex(data.index)
+            )
+            for i, (index, row) in enumerate(data[:-1].iterrows()):
+                # ensures there is a prev_row and previous row value is null
+                if i > 0 and pd.isnull(prev_row["unestimated_value"]):
+                    # current row value is not null
+                    add_estimated.append(prev_row["estimated_value"])
+                    if not pd.isnull(row["unestimated_value"]):
+                        # get all rows that had only estimated reads that will be
+                        # added to the subsequent row meaning this row
+                        # needs to be removed
+                        remove_estimated_fixed_rows.append(prev_index)
+                else:
+                    add_estimated.append(0)
+                prev_row = row
+                prev_index = index
+            add_estimated.append(np.nan)
+            data["value"] = data["unestimated_value"] + add_estimated
+            data = data[~data.index.isin(remove_estimated_fixed_rows)]
+            data = data[["value"]]  # remove the estimated column
+
+    def check_sufficiency_baseline(self):
+        self._check_no_data()
+        # self._check_n_days_boundary_gap("start")
+        # self._check_n_days_boundary_gap("end")
+        self._check_negative_meter_values()
+        # if self.median_granularity == "billing_monthly":
+        #     self._check_meter_data_billing_monthly()
+        # else :
+        #     self._check_meter_data_billing_bimonthly()
+        self._check_baseline_day_length()
+        self._check_valid_days_percentage()
+        self._check_valid_meter_readings_percentage()
+        self._check_valid_temperature_days_percentage()
+        self._check_monthly_temperature_values_percentage()
+        self._check_extreme_values()
+        self._check_estimated_meter_values()
+        # self._check_high_frequency_temperature_values()
+
+    def check_sufficiency_reporting(self):
+        self._check_no_data()
+        self._check_valid_days_percentage()
+        self._check_valid_temperature_days_percentage()
+        self._check_monthly_temperature_values_percentage()
+        # self._check_high_frequency_temperature_values()
 
 
 class HourlySufficiencyCriteria(SufficiencyCriteria):
@@ -510,7 +697,7 @@ class HourlySufficiencyCriteria(SufficiencyCriteria):
         self._check_baseline_day_length()
         self._check_valid_days_percentage()
         self._check_valid_meter_readings_percentage()
-        self._check_valid_temperature_values_percentage()
+        self._check_valid_temperature_days_percentage()
         self._check_monthly_temperature_values_percentage()
         self._check_monthly_meter_readings_percentage()
         self._check_extreme_values()
@@ -523,180 +710,7 @@ class HourlySufficiencyCriteria(SufficiencyCriteria):
     def check_sufficiency_reporting(self):
         self._check_no_data()
         self._check_valid_days_percentage()
-        self._check_valid_temperature_values_percentage()
+        self._check_valid_temperature_days_percentage()
         self._check_monthly_temperature_values_percentage()
         self._check_monthly_ghi_percentage()
-        # self._check_high_frequency_temperature_values()
-
-
-class DailySufficiencyCriteria(SufficiencyCriteria):
-    """
-    Sufficiency Criteria class for daily models
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def check_sufficiency_baseline(self):
-        self._check_no_data()
-        # self._check_n_days_boundary_gap("start")
-        # self._check_n_days_boundary_gap("end")
-        self._check_negative_meter_values()
-        self._check_baseline_day_length()
-        self._check_valid_days_percentage()
-        self._check_valid_meter_readings_percentage()
-        self._check_valid_temperature_values_percentage()
-        self._check_monthly_temperature_values_percentage()
-        self._check_extreme_values()
-        # TODO : Maybe make these checks static? To work with the current data class
-        # self._check_high_frequency_meter_values()
-        # self._check_high_frequency_temperature_values()
-
-    def check_sufficiency_reporting(self):
-        self._check_no_data()
-        self._check_valid_days_percentage()
-        self._check_valid_temperature_values_percentage()
-        self._check_monthly_temperature_values_percentage()
-        # self._check_high_frequency_temperature_values()
-
-
-class BillingSufficiencyCriteria(SufficiencyCriteria):
-    """
-    Sufficiency Criteria class for billing models - monthly / bimonthly
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def _check_meter_data_billing_monthly(self):
-        if self.data["value"].dropna().empty:
-            return
-
-        diff = list((data.index[1:] - data.index[:-1]).days)
-        filter_ = pd.Series(diff + [np.nan], index=data.index)
-
-        min_days = self.settings.min_number_days_in_period
-        max_days = self.settings.max_number_days_in_monthly_period
-
-        # CalTRACK 2.2.3.4, 2.2.3.5
-        # Billing Monthly data frequency check
-        data = data[(min_days <= filter_) & (filter_ <= max_days)].reindex(  # keep these, inclusive
-            data.index
-        )
-
-        if len(data[(max_days < filter_) | (filter_ < min_days)]) > 0:
-            self.disqualification.append(
-                EEMeterWarning(
-                    qualified_name="eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data",
-                    description=(
-                        f"Off-cycle reads found in billing monthly data having a duration less than {min_days} days or greater than {max_days} days"
-                    ),
-                    data=(data[(max_days < filter_) | (filter_ < min_days)].index.to_list()),
-                )
-            )
-
-    def _check_meter_data_billing_bimonthly(self):
-        if self.data["value"].dropna().empty:
-            return
-
-        diff = list((data.index[1:] - data.index[:-1]).days)
-        filter_ = pd.Series(diff + [np.nan], index=data.index)
-
-        min_days = self.settings.min_number_days_in_period
-        max_days = self.settings.max_number_days_in_bimonthly_period
-
-        # CalTRACK 2.2.3.4, 2.2.3.5
-        data = data[(min_days <= filter_) & (filter_ <= max_days)].reindex(  # keep these, inclusive
-            data.index
-        )
-
-        if len(data[(max_days < filter_) | (filter_ < min_days)]) > 0:
-            self.disqualification.append(
-                EEMeterWarning(
-                    qualified_name="eemeter.sufficiency_criteria.offcycle_reads_in_billing_bimonthly_data",
-                    description=(
-                        f"Off-cycle reads found in billing bimonthly data having a duration less than {min_days} days or greater than {max_days} days"
-                    ),
-                    data=(data[(max_days < filter_) | (filter_ < min_days)].index.to_list()),
-                )
-            )
-
-    def _check_estimated_meter_values(self):
-        # CalTRACK 2.2.3.1
-        """
-        Adds estimate to subsequent read if there aren't more than one estimate in a row
-        and then removes the estimated row.
-
-        Input:
-        index   value   estimated
-        1       2       False
-        2       3       False
-        3       5       True
-        4       4       False
-        5       6       True
-        6       3       True
-        7       4       False
-        8       NaN     NaN
-
-        Output:
-        index   value
-        1       2
-        2       3
-        4       9
-        5       NaN
-        7       7
-        8       NaN
-        """
-        add_estimated = []
-        remove_estimated_fixed_rows = []
-        data = self.data
-        if "estimated" in data.columns:
-            data["unestimated_value"] = (
-                data[:-1].value[(data[:-1].estimated == False)].reindex(data.index)
-            )
-            data["estimated_value"] = (
-                data[:-1].value[(data[:-1].estimated)].reindex(data.index)
-            )
-            for i, (index, row) in enumerate(data[:-1].iterrows()):
-                # ensures there is a prev_row and previous row value is null
-                if i > 0 and pd.isnull(prev_row["unestimated_value"]):
-                    # current row value is not null
-                    add_estimated.append(prev_row["estimated_value"])
-                    if not pd.isnull(row["unestimated_value"]):
-                        # get all rows that had only estimated reads that will be
-                        # added to the subsequent row meaning this row
-                        # needs to be removed
-                        remove_estimated_fixed_rows.append(prev_index)
-                else:
-                    add_estimated.append(0)
-                prev_row = row
-                prev_index = index
-            add_estimated.append(np.nan)
-            data["value"] = data["unestimated_value"] + add_estimated
-            data = data[~data.index.isin(remove_estimated_fixed_rows)]
-            data = data[["value"]]  # remove the estimated column
-
-    def check_sufficiency_baseline(self):
-        self._check_no_data()
-        # self._check_n_days_boundary_gap("start")
-        # self._check_n_days_boundary_gap("end")
-        self._check_negative_meter_values()
-        # if self.median_granularity == "billing_monthly":
-        #     self._check_meter_data_billing_monthly()
-        # else :
-        #     self._check_meter_data_billing_bimonthly()
-        self._check_baseline_day_length()
-        self._check_valid_days_percentage()
-        self._check_valid_meter_readings_percentage()
-        self._check_valid_temperature_values_percentage()
-        self._check_monthly_temperature_values_percentage()
-        self._check_extreme_values()
-        self._check_estimated_meter_values()
-        # self._check_high_frequency_temperature_values()
-
-    def check_sufficiency_reporting(self):
-        self._check_no_data()
-        self._check_valid_days_percentage()
-        self._check_valid_temperature_values_percentage()
-        self._check_monthly_temperature_values_percentage()
         # self._check_high_frequency_temperature_values()
