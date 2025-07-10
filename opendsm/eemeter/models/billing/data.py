@@ -31,9 +31,13 @@ from opendsm.eemeter.common.data_processor_utilities import (
     compute_minimum_granularity,
 )
 from opendsm.eemeter.common.features import compute_temperature_features
-from opendsm.eemeter.common.warnings import EEMeterWarning
+from opendsm.eemeter.common.data_settings import BillingDataSettings
 from opendsm.eemeter.common.sufficiency_criteria import BillingSufficiencyCriteria
 from opendsm.eemeter.models.daily.data import _DailyData
+
+from opendsm.eemeter.common.warnings import EEMeterWarning
+
+
 
 """TODO there is still a ton of unecessarily duplicated code between billing+daily.
     we should be able to perform a few transforms within the billing baseclass, and then call super() for the rest
@@ -52,6 +56,8 @@ class _BillingData(_DailyData):
     2.2.3.5. For pseudo-monthly billing cycles, periods spanning more than 35 days should be dropped from analysis.
     For bi-monthly billing cycles, periods spanning more than 70 days should be dropped from the analysis.
     """
+
+    _settings_class = BillingDataSettings
 
     def _compute_meter_value_df(self, df: pd.DataFrame):
         """
@@ -372,7 +378,10 @@ class BillingBaselineData(_BillingData):
 
         """
         bsc = BillingSufficiencyCriteria(
-            data=sufficiency_df, is_electricity_data=self.is_electricity_data
+            data=sufficiency_df, 
+            is_electricity_data=self.is_electricity_data,
+            is_reporting_data=False,
+            settings=self.settings.sufficiency,
         )
         bsc.check_sufficiency_baseline()
         disqualification = bsc.disqualification
@@ -469,7 +478,12 @@ class BillingReportingData(_BillingData):
             warnings (list): List of warnings
 
         """
-        bsc = BillingSufficiencyCriteria(data=sufficiency_df, is_reporting_data=True)
+        bsc = BillingSufficiencyCriteria(
+            data=sufficiency_df, 
+            is_electricity_data=self.is_electricity_data,
+            is_reporting_data=True,
+            settings=self.settings.sufficiency,
+        )
         bsc.check_sufficiency_reporting()
         disqualification = bsc.disqualification
         warnings = bsc.warnings

@@ -48,7 +48,6 @@ from .common import (
     adaptive_loss_Z,
     adaptive_loss,
     const,
-    data_settings,
     test_data,
     utils,
 )
@@ -75,7 +74,6 @@ __all__ = (
     "adaptive_loss_Z",
     "adaptive_loss",
     "const",
-    "data_settings",
     "test_data",
     "utils",
     "eemeter",

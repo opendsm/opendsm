@@ -32,18 +32,8 @@ from opendsm.common.pydantic_utils import (
     ArbitraryPydanticModel,
     PydanticDf,
     PydanticFromDict,
+    computed_field_cached_property,
 )
-
-
-def computed_field_cached_property():
-    decs = [pydantic.computed_field, cached_property]
-
-    def deco(f):
-        for dec in reversed(decs):
-            f = dec(f)
-        return f
-
-    return deco
 
 
 class ColumnMetrics(ArbitraryPydanticModel):

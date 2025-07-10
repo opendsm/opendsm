@@ -23,17 +23,18 @@ import copy
 from typing import Optional, Union
 from datetime import date
 
+import numpy as np
+import pandas as pd
+
 from opendsm.eemeter.common.data_processor_utilities import (
-    compute_minimum_granularity,
     remove_duplicates,
 )
 from opendsm.common.hourly_interpolation import interpolate
-from opendsm.eemeter.common.features import compute_temperature_features
+from opendsm.eemeter.common.data_settings import HourlyDataSettings
 from opendsm.eemeter.common.sufficiency_criteria import HourlySufficiencyCriteria
+
 from opendsm.eemeter.common.warnings import EEMeterWarning
 
-import numpy as np
-import pandas as pd
 
 
 class NREL_Weather_API:
@@ -147,18 +148,22 @@ class _HourlyData:
     Will raise exception during data sufficiency check if instantiated
     """
 
+    _settings_class = HourlyDataSettings
+
     def __init__(
         self,
         df: pd.DataFrame,
         is_electricity_data: bool,
         pv_start: Union[date, str, None] = None,
+        settings: dict | None = None,
         **kwargs: dict,
     ):
         self._df = None
-        self.warnings = []
-        self.disqualification = []
         self.is_electricity_data = is_electricity_data
         self.tz = None
+
+        self.warnings = []
+        self.disqualification = []
 
         # TODO copied from HourlyData
         self._to_be_interpolated_columns = []
@@ -167,6 +172,14 @@ class _HourlyData:
         self.pv_start = None
         if pv_start is not None:
             self.pv_start = pd.to_datetime(pv_start).date()
+
+        # Initialize settings
+        if settings is None:
+            self.settings = HourlyDataSettings()
+        elif isinstance(settings, dict):
+            self.settings = HourlyDataSettings(**settings)
+
+        self.settings = self.settings._set_attribute("is_electricity_data", is_electricity_data)
 
         # TODO not sure why we're keeping this copy, just set the attrs
         self._kwargs = copy.deepcopy(kwargs)
@@ -309,6 +322,7 @@ class _HourlyData:
                 )
             )
         self.tz = df.index.tz
+        self.settings = self.settings._set_attribute("time_zone", self.tz)
 
         # prevent later issues when merging on generated datetimes, which default to ns precision
         # there is almost certainly a smoother way to accomplish this conversion, but this works
@@ -356,7 +370,10 @@ class HourlyBaselineData(_HourlyData):
     def _check_data_sufficiency(self):
         data = _create_sufficiency_df(self.df)
         hsc = HourlySufficiencyCriteria(
-            data=data, is_electricity_data=self.is_electricity_data
+            data=data, 
+            is_electricity_data=self.is_electricity_data,
+            is_reporting_data=False,
+            settings=self.settings.sufficiency,
         )
         hsc.check_sufficiency_baseline()
         disqualification = hsc.disqualification
@@ -393,18 +410,22 @@ class HourlyReportingData(_HourlyData):
         df: pd.DataFrame,
         is_electricity_data: bool,
         pv_start: Union[date, str, None] = None,
+        settings: dict | None = None,
         **kwargs: dict,
     ):
         df = df.copy()
         if "observed" not in df.columns:
             df["observed"] = np.nan
 
-        super().__init__(df, is_electricity_data, pv_start, **kwargs)
+        super().__init__(df, is_electricity_data, pv_start, settings, **kwargs)
 
     def _check_data_sufficiency(self):
         data = _create_sufficiency_df(self.df)
         hsc = HourlySufficiencyCriteria(
-            data=data, is_electricity_data=self.is_electricity_data
+            data=data, 
+            is_electricity_data=self.is_electricity_data,
+            is_reporting_data=True,
+            settings=self.settings.sufficiency,
         )
         hsc.check_sufficiency_reporting()
         disqualification = hsc.disqualification

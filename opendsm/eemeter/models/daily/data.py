@@ -32,8 +32,11 @@ from opendsm.eemeter.common.data_processor_utilities import (
     remove_duplicates,
 )
 from opendsm.eemeter.common.features import compute_temperature_features
-from opendsm.eemeter.common.warnings import EEMeterWarning
+from opendsm.eemeter.common.data_settings import DailyDataSettings
 from opendsm.eemeter.common.sufficiency_criteria import DailySufficiencyCriteria
+
+from opendsm.eemeter.common.warnings import EEMeterWarning
+
 
 
 class _DailyData:
@@ -46,13 +49,30 @@ class _DailyData:
         is_electricity_data (bool): A flag indicating whether the data represents electricity data. This is required as electricity data with 0 values are converted to NaNs.
     """
 
-    def __init__(self, df: pd.DataFrame, is_electricity_data: bool):
+    # Abstract the settings class for easier inheritance and alteration
+    _settings_class = DailyDataSettings
+
+    def __init__(
+        self, 
+        df: pd.DataFrame, 
+        is_electricity_data: bool, 
+        settings: dict | None = None
+    ):
         self._df = None
-        self.warnings = []
-        self.disqualification = []
         self.is_electricity_data = is_electricity_data
         self.tz = None
 
+        self.warnings = []
+        self.disqualification = []
+
+        # Initialize settings using the abstracted class
+        if settings is None:
+            self.settings = self._settings_class()
+        elif isinstance(settings, dict):
+            self.settings = self._settings_class(**settings)
+
+        self.settings = self.settings._set_attribute("is_electricity_data", is_electricity_data)
+            
         # TODO re-examine dq/warning pattern. keep consistent between
         # either implicitly setting as side effects, or returning and assigning outside
         self._df, temp_coverage = self._set_data(df)
@@ -511,6 +531,7 @@ class _DailyData:
                 )
             )
         self.tz = df.index.tz
+        self.settings = self.settings._set_attribute("time_zone", self.tz)
 
         # prevent later issues when merging on generated datetimes, which default to ns precision
         # there is almost certainly a smoother way to accomplish this conversion, but this works
@@ -568,7 +589,10 @@ class DailyBaselineData(_DailyData):
         """
         # 90% coverage per period only required for billing models
         dsc = DailySufficiencyCriteria(
-            data=sufficiency_df, is_electricity_data=self.is_electricity_data
+            data=sufficiency_df, 
+            is_electricity_data=self.is_electricity_data,
+            is_reporting_data=False,
+            settings=self.settings.sufficiency,
         )
         dsc.check_sufficiency_baseline()
         disqualification = dsc.disqualification
@@ -665,7 +689,12 @@ class DailyReportingData(_DailyData):
 
         """
         # 90% coverage per period only required for billing models
-        dsc = DailySufficiencyCriteria(data=sufficiency_df, is_reporting_data=True)
+        dsc = DailySufficiencyCriteria(
+            data=sufficiency_df, 
+            is_electricity_data=self.is_electricity_data,
+            is_reporting_data=True,
+            settings=self.settings.sufficiency,
+        )
         dsc.check_sufficiency_reporting()
         disqualification = dsc.disqualification
         warnings = dsc.warnings
