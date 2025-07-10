@@ -17,47 +17,127 @@
    limitations under the License.
 
 """
-from math import ceil
+from __future__ import annotations
+
+from typing import Literal
 
 import numpy as np
 import pandas as pd
 import pytz
-from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+import pydantic
+
+from opendsm.common.base_settings import BaseSettings
+from opendsm.common.pydantic_utils import computed_field_cached_property
+
+from opendsm.eemeter.common.data_processor_utilities import day_counts
+from opendsm.eemeter.common.data_settings import BaseSufficiencySettings
 
 from opendsm.eemeter.common.warnings import EEMeterWarning
-from opendsm.eemeter.common.data_processor_utilities import day_counts
+
 
 # TODO implement as registered functions rather than needing to call everything manually
 # probably easiest to use two decorators, can be stacked, for baseline/reporting
 
 
-class SufficiencyCriteria(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+class SufficiencyCriteria(BaseSettings):
+    model_config = pydantic.ConfigDict(
+        frozen = False,
+        arbitrary_types_allowed=True,
+        str_to_lower = True,
+        str_strip_whitespace = True,
+    )
 
     data: pd.DataFrame
-    requested_start: Optional[pd.Timestamp] = None
-    requested_end: Optional[pd.Timestamp] = None
-    num_days: int = 365
-    min_fraction_daily_coverage: float = 0.9
-    min_fraction_hourly_temperature_coverage_per_period: float = 0.9
-    is_reporting_data: bool = False
-    is_electricity_data: bool = True
-    # note that pydantic creates mutable defaults on each init
-    # so this does not run into the issue that mutable default params in functions have
+    is_electricity_data: bool
+    is_reporting_data: bool
+    settings: BaseSufficiencySettings
+
+    _n_valid_observed_days = None
+    _n_valid_days = None
+    _n_valid_temperature_days = None
+
     disqualification: list = []
     warnings: list = []
-    n_days_total: Optional[int] = None
 
-    n_valid_meter_value_days: Optional[int] = None
-    n_valid_days: Optional[int] = None
-    n_valid_temperature_days: Optional[int] = None
+    @computed_field_cached_property()
+    def _has_ghi(self) -> bool:
+        return "ghi" in self.data.columns
 
-    # TODO probably use a model validator rather than this blanket call
-    def model_post_init(self, __context):
-        self._compute_n_days_total()
-        self._compute_valid_meter_temperature_days()
+    @computed_field_cached_property()
+    def n_days_total(self) -> int:
+        requested_start = self.settings.requested_start
+        requested_end = self.settings.requested_end
+
+        data_end = self.data.dropna().index.max()
+        data_start = self.data.dropna().index.min()
+        n_days_data = (
+            data_end - data_start
+        ).days + 1  # TODO confirm. no longer using last row nan
+
+        if requested_start is not None:
+            # check for gap at beginning
+            requested_start = requested_start.astimezone(pytz.UTC)
+            n_days_start_gap = (data_start - requested_start).days
+        else:
+            n_days_start_gap = 0
+
+        if requested_end is not None:
+            # check for gap at end
+            requested_end = requested_end.astimezone(pytz.UTC)
+            n_days_end_gap = (requested_end - data_end).days
+        else:
+            n_days_end_gap = 0
+
+        n_days_total = n_days_data + n_days_start_gap + n_days_end_gap
+
+        return n_days_total
+
+    def _compute_valid_day_counts(self):
+        min_pct = self.settings.temperature.min_pct_period_coverage
+        valid_temperature_rows = (
+            self.data.temperature_not_null
+            / (self.data.temperature_not_null + self.data.temperature_null)
+        ) > min_pct
+
+        # get number of days per period - for daily this should be a series of ones
+        row_day_counts = day_counts(self.data.index)
+
+        # get valid rows
+        valid_rows = valid_temperature_rows
+
+        if not self.is_reporting_data:
+            valid_observed_rows = self.data.observed.notnull()
+            valid_rows = valid_rows & valid_observed_rows
+
+            n_valid_observed_days = (valid_observed_rows * row_day_counts).sum()
+            self._n_valid_observed_days = int(n_valid_observed_days)
+        else:
+            self._n_valid_observed_days = None
+
+        self._n_valid_temperature_days = int((valid_temperature_rows * row_day_counts).sum())
+        self._n_valid_days = int((valid_rows * row_day_counts).sum())
+    
+    @computed_field_cached_property()
+    def n_valid_temperature_days(self) -> int:
+        if self._n_valid_temperature_days is None:
+            self._compute_valid_day_counts()
+
+        return self._n_valid_temperature_days
+
+    @computed_field_cached_property()
+    def n_valid_observed_days(self) -> int:
+        if self._n_valid_observed_days is None:
+            self._compute_valid_day_counts()
+
+        return self._n_valid_observed_days
+
+    @computed_field_cached_property()
+    def n_valid_days(self) -> int:
+        if self._n_valid_days is None:
+            self._compute_valid_day_counts()
+
+        return self._n_valid_days
 
     def _check_no_data(self):
         if self.data.dropna().empty:
@@ -71,244 +151,162 @@ class SufficiencyCriteria(BaseModel):
             return False
         return True
 
-    def _check_n_days_end_gap(self):
-        data_end = self.data.dropna().index.max()
-
-        if self.requested_end is not None:
-            # check for gap at end
-            self.requested_end = self.requested_end.astimezone(pytz.UTC)
-            n_days_end_gap = (self.requested_end - data_end).days
+    def _check_n_days_boundary_gap(self, gap_type: Literal["start", "end"]):
+        gap = 0
+        if gap_type == "start":
+            user_boundary = self.settings.requested_start
+            
+            if user_boundary is not None:
+                data_boundary = self.data.dropna().index.min()
+                gap = (data_boundary - user_boundary).days
         else:
-            n_days_end_gap = 0
+            if user_boundary is not None:
+                data_boundary = self.data.dropna().index.max()
+                gap = (user_boundary - data_boundary).days
 
-        if n_days_end_gap < 0:
+        if gap < 0:
             # CalTRACK 2.2.4
+            if gap_type == "start":
+                err = "before"
+            else:
+                err = "after"
+
             self.disqualification.append(
                 EEMeterWarning(
                     qualified_name=(
                         "eemeter.sufficiency_criteria"
-                        ".extra_data_after_requested_end_date"
+                        f".extra_data_{err}_requested_{gap_type}_date"
                     ),
-                    description=("Extra data found after requested end date."),
+                    description=(f"Extra data found {err} requested {gap_type} date."),
                     data={
-                        "requested_end": self.requested_end.isoformat(),
-                        "data_end": data_end.isoformat(),
+                        f"requested_{gap_type}": user_boundary.isoformat(),
+                        f"data_{gap_type}": data_boundary.isoformat(),
                     },
                 )
             )
-        n_days_end_gap = 0
 
-    def _check_n_days_start_gap(self):
-        data_start = self.data.dropna().index.min()
+    def _check_baseline_day_length(self):
+        min_length = self.settings.min_baseline_length
+        max_length = self.settings.max_baseline_length
 
-        if self.requested_start is not None:
-            # check for gap at beginning
-            self.requested_start = self.requested_start.astimezone(pytz.UTC)
-            n_days_start_gap = (data_start - self.requested_start).days
-        else:
-            n_days_start_gap = 0
-
-        if n_days_start_gap < 0:
-            # CalTRACK 2.2.4
-            self.disqualification.append(
-                EEMeterWarning(
-                    qualified_name=(
-                        "eemeter.sufficiency_criteria"
-                        ".extra_data_before_requested_start_date"
-                    ),
-                    description=("Extra data found before requested start date."),
-                    data={
-                        "requested_start": self.requested_start.isoformat(),
-                        "data_start": data_start.isoformat(),
-                    },
-                )
-            )
-            n_days_start_gap = 0
-
-    def _check_negative_meter_values(self):
-        if not self.is_reporting_data and not self.is_electricity_data:
-            n_negative_meter_values = self.data.observed[self.data.observed < 0].shape[
-                0
-            ]
-
-            if n_negative_meter_values > 0:
-                # CalTrack 2.3.5
-                self.disqualification.append(
-                    EEMeterWarning(
-                        qualified_name=(
-                            "eemeter.sufficiency_criteria" ".negative_meter_values"
-                        ),
-                        description=("Found negative meter data values"),
-                        data={"n_negative_meter_values": n_negative_meter_values},
-                    )
-                )
-
-    def _compute_n_days_total(self):
-        data_end = self.data.dropna().index.max()
-        data_start = self.data.dropna().index.min()
-        n_days_data = (
-            data_end - data_start
-        ).days + 1  # TODO confirm. no longer using last row nan
-
-        if self.requested_start is not None:
-            # check for gap at beginning
-            self.requested_start = self.requested_start.astimezone(pytz.UTC)
-            n_days_start_gap = (data_start - self.requested_start).days
-        else:
-            n_days_start_gap = 0
-
-        if self.requested_end is not None:
-            # check for gap at end
-            self.requested_end = self.requested_end.astimezone(pytz.UTC)
-            n_days_end_gap = (self.requested_end - data_end).days
-        else:
-            n_days_end_gap = 0
-
-        n_days_total = n_days_data + n_days_start_gap + n_days_end_gap
-
-        self.n_days_total = n_days_total
-
-    def _check_baseline_length_daily_billing_model(self):
-        MAX_BASELINE_LENGTH = 365
-        MIN_BASELINE_LENGTH = ceil(0.9 * MAX_BASELINE_LENGTH)
-        if (
-            not self.is_reporting_data
-            # TODO can throw with Optional. check if actually optional vs using -1 as default?
-            and self.n_days_total > MAX_BASELINE_LENGTH
-            or self.n_days_total < MIN_BASELINE_LENGTH
-        ):
+        if self.is_reporting_data:
+            return
+        
+        if self.n_days_total < min_length or self.n_days_total > max_length:
             self.disqualification.append(
                 EEMeterWarning(
                     qualified_name=(
                         "eemeter.sufficiency_criteria" ".incorrect_number_of_total_days"
                     ),
                     description=(
-                        f"Baseline length is not within the expected range of {MIN_BASELINE_LENGTH}-{MAX_BASELINE_LENGTH} days."
+                        f"Baseline length is not within the expected range of {min_length}-{max_length} days."
                     ),
-                    data={"num_days": self.num_days, "n_days_total": self.n_days_total},
+                    data={"n_days_total": self.n_days_total},
                 )
             )
 
-    def _compute_valid_meter_temperature_days(self):
-        if not self.is_reporting_data:
-            valid_meter_value_rows = self.data.observed.notnull()
-        valid_temperature_rows = (
-            self.data.temperature_not_null
-            / (self.data.temperature_not_null + self.data.temperature_null)
-        ) > self.min_fraction_hourly_temperature_coverage_per_period
+    def _check_negative_observed_values(self):
+        if self.is_reporting_data:
+            return
+        elif self.is_electricity_data:
+            return
 
-        if not self.is_reporting_data:
-            valid_rows = valid_meter_value_rows & valid_temperature_rows
-        else:
-            valid_rows = valid_temperature_rows
+        n_negative_observed_values = self.data.observed[self.data.observed < 0].shape[0]
 
-        # get number of days per period - for daily this should be a series of ones
-        row_day_counts = day_counts(self.data.index)
-
-        # apply masks, giving total
-        if not self.is_reporting_data:
-            self.n_valid_meter_value_days = int(
-                (valid_meter_value_rows * row_day_counts).sum()
+        if n_negative_observed_values > 0:
+            # CalTrack 2.3.5
+            self.disqualification.append(
+                EEMeterWarning(
+                    qualified_name=(
+                        "eemeter.sufficiency_criteria" ".negative_observed_values"
+                    ),
+                    description=("Found negative Observed values"),
+                    data={"n_negative_observed_values": n_negative_observed_values},
+                )
             )
-        n_valid_temperature_days = int((valid_temperature_rows * row_day_counts).sum())
-        n_valid_days = int((valid_rows * row_day_counts).sum())
+    
+    def _check_valid_days_percentage(self, col: Literal["temperature", "ghi", "observed", "joint"]):
+        if self.is_reporting_data and col == "observed":
+            return
+        elif col == "ghi" and not self._has_ghi:
+            return
+        
+        n_days_total = float(self.n_days_total)
 
-        self.n_valid_days = n_valid_days
-        self.n_valid_temperature_days = n_valid_temperature_days
+        if col == "temperature":
+            name = col.capitalize()
+            valid_days = self.n_valid_temperature_days
+            min_pct = self.settings.temperature.min_pct_daily_coverage
+        elif col == "ghi":
+            name = col.upper()
+            raise NotImplementedError("GHI valid days percentage check not implemented yet")
+            valid_days = self.n_valid_ghi_days
+            min_pct = self.settings.ghi.min_pct_daily_coverage
+        elif col == "observed":
+            name = col.capitalize()
+            valid_days = self.n_valid_observed_days
+            min_pct = self.settings.observed.min_pct_daily_coverage
+        elif col == "joint":
+            name = col.capitalize()
+            valid_days = self.n_valid_days
+            min_pct = self.settings.joint.min_pct_daily_coverage
 
-    def _check_valid_days_percentage(self):
-        if self.n_days_total > 0:
-            fraction_valid_days = self.n_valid_days / float(self.n_days_total)
-        else:
-            fraction_valid_days = 0
+        valid_pct = 0
+        if n_days_total > 0:
+            valid_pct = valid_days / n_days_total
 
-        if fraction_valid_days < self.min_fraction_daily_coverage:
+        if valid_pct < min_pct:
             self.disqualification.append(
                 EEMeterWarning(
                     qualified_name=(
                         "eemeter.sufficiency_criteria"
-                        ".too_many_days_with_missing_data"
+                        f".too_many_days_with_missing_{col}_data"
                     ),
                     description=(
-                        "Too many days in data have missing meter data or"
-                        " temperature data."
+                        f"Too many days in data have missing {name} data."
                     ),
                     data={
-                        "n_valid_days": self.n_valid_days,
-                        "n_days_total": self.n_days_total,
+                        f"n_valid_{col}_data_days": valid_days,
+                        "n_days_total": n_days_total,
                     },
                 )
             )
 
-    def _check_valid_meter_readings_percentage(self):
-        if self.n_days_total > 0:
-            if not self.is_reporting_data:
-                fraction_valid_meter_value_days = self.n_valid_meter_value_days / float(
-                    self.n_days_total
-                )
-        else:
-            fraction_valid_meter_value_days = 0
+    def _check_valid_monthly_coverage(self, col: Literal["temperature", "ghi", "observed", "joint"]):
+        if self.is_reporting_data and col == "observed":
+            return
+        elif col == "ghi" and not self._has_ghi:
+            return
 
-        if (
-            not self.is_reporting_data
-            and fraction_valid_meter_value_days < self.min_fraction_daily_coverage
-        ):
-            self.disqualification.append(
-                EEMeterWarning(
-                    qualified_name=(
-                        "eemeter.sufficiency_criteria"
-                        ".too_many_days_with_missing_meter_data"
-                    ),
-                    description=("Too many days in data have missing meter data."),
-                    data={
-                        "n_valid_meter_data_days": self.n_valid_meter_value_days,
-                        "n_days_total": self.n_days_total,
-                    },
-                )
-            )
-
-    def _check_valid_temperature_values_percentage(self):
-        if self.n_days_total > 0:
-            fraction_valid_temperature_days = self.n_valid_temperature_days / float(
-                self.n_days_total
-            )
-        else:
-            fraction_valid_temperature_days = 0
-
-        if fraction_valid_temperature_days < self.min_fraction_daily_coverage:
-            self.disqualification.append(
-                EEMeterWarning(
-                    qualified_name=(
-                        "eemeter.sufficiency_criteria"
-                        ".too_many_days_with_missing_temperature_data"
-                    ),
-                    description=(
-                        "Too many days in data have missing temperature data."
-                    ),
-                    data={
-                        "n_valid_temperature_data_days": self.n_valid_temperature_days,
-                        "n_days_total": self.n_days_total,
-                    },
-                )
-            )
-
-    def _check_monthly_temperature_values_percentage(self):
-        non_null_temp_percentage_per_month = (
-            self.data["temperature"]
+        if col == "temperature":
+            name = col.capitalize()
+            min_pct = self.settings.temperature.min_pct_monthly_coverage
+        elif col == "ghi":
+            name = col.upper()
+            min_pct = self.settings.ghi.min_pct_monthly_coverage
+        elif col == "observed":
+            name = col.capitalize()
+            min_pct = self.settings.observed.min_pct_monthly_coverage
+        elif col == "joint":
+            name = col.capitalize()
+            raise NotImplementedError("Joint monthly coverage check not implemented yet")
+            min_pct = self.settings.joint.min_pct_monthly_coverage
+        
+        non_null_pct_per_month = (
+            self.data[col]
             .groupby(self.data.index.month)
             .apply(lambda x: x.notna().mean())
         )
-        if (
-            non_null_temp_percentage_per_month < self.min_fraction_daily_coverage
-        ).any():
+
+        if (non_null_pct_per_month < min_pct).any():
             self.disqualification.append(
                 EEMeterWarning(
-                    qualified_name="eemeter.sufficiency_criteria.missing_monthly_temperature_data",
+                    qualified_name=f"eemeter.sufficiency_criteria.missing_monthly_{col}_data",
                     description=(
-                        "More than 10% of the monthly temperature data is missing."
+                        f"More than {(1-min_pct)*100}% of the monthly {name} data is missing."
                     ),
                     data={
-                        # TODO report percentage
+                        "lowest_monthly_coverage": non_null_pct_per_month.min(),
                     },
                 )
             )
@@ -319,8 +317,11 @@ class SufficiencyCriteria(BaseModel):
         )
 
     def _check_extreme_values(self):
-        if self.data["observed"].dropna().empty:
+        if self.is_reporting_data:
+            return    
+        elif self.data["observed"].dropna().empty:
             return
+        
         if not self.is_reporting_data:
             median = self.data.observed.median()
             lower_quantile = self.data.observed.quantile(0.25)
@@ -360,17 +361,18 @@ class SufficiencyCriteria(BaseModel):
     def _check_high_frequency_temperature_values(self):
         # TODO broken as written
         # If high frequency data check for 50% data coverage in rollup
-        if len(temperature_features[temperature_features.coverage <= 0.5]) > 0:
+        min_pct = self.settings.temperature.min_pct_hourly_coverage
+        if len(temperature_features[temperature_features.coverage <= min_pct]) > 0:
             self.warnings.append(
                 EEMeterWarning(
                     qualified_name="eemeter.sufficiency_criteria.missing_high_frequency_temperature_data",
                     description=(
-                        "More than 50% of the high frequency Temperature data is missing."
+                        f"More than {(1-min_pct)*100}% of the high frequency Temperature data is missing."
                     ),
                     data={
                         "high_frequency_data_missing_count": len(
                             temperature_features[
-                                temperature_features.coverage <= 0.5
+                                temperature_features.coverage <= min_pct
                             ].index.to_list()
                         )
                     },
@@ -378,13 +380,13 @@ class SufficiencyCriteria(BaseModel):
             )
 
         # Set missing high frequency data to NaN
-        temperature_features.value[temperature_features.coverage > 0.5] = (
-            temperature_features[temperature_features.coverage > 0.5].value
-            / temperature_features[temperature_features.coverage > 0.5].coverage
+        temperature_features.value[temperature_features.coverage > min_pct] = (
+            temperature_features[temperature_features.coverage > min_pct].value
+            / temperature_features[temperature_features.coverage > min_pct].coverage
         )
 
         temperature_features = (
-            temperature_features[temperature_features.coverage > 0.5]
+            temperature_features[temperature_features.coverage > min_pct]
             .reindex(temperature_features.index)[["value"]]
             .rename(columns={"value": "temperature_mean"})
         )
@@ -392,128 +394,43 @@ class SufficiencyCriteria(BaseModel):
         if "coverage" in temperature_features.columns:
             temperature_features = temperature_features.drop(columns=["coverage"])
 
-    def _check_high_frequency_meter_values(self):
-        if not self.data[self.data.coverage <= 0.5].empty:
+    def _check_high_frequency_observed_values(self):
+        min_pct = self.settings.observed.min_pct_hourly_coverage
+        if not self.data[self.data.coverage <= min_pct].empty:
             self.warnings.append(
                 EEMeterWarning(
-                    qualified_name="eemeter.sufficiency_criteria.missing_high_frequency_meter_data",
+                    qualified_name="eemeter.sufficiency_criteria.missing_high_frequency_observed_data",
                     description=(
-                        "More than 50% of the high frequency Meter data is missing."
+                        f"More than {(1-min_pct)*100}% of the high frequency Observed data is missing."
                     ),
-                    data=(self.data[self.data.coverage <= 0.5].index.to_list()),
+                    data=(self.data[self.data.coverage <= min_pct].index.to_list()),
                 )
             )
 
         # CalTRACK 2.2.2.1 - interpolate with average of non-null values
-        self.data.value[self.data.coverage > 0.5] = (
-            self.data[self.data.coverage > 0.5].value
-            / self.data[self.data.coverage > 0.5].coverage
+        self.data.value[self.data.coverage > min_pct] = (
+            self.data[self.data.coverage > min_pct].value
+            / self.data[self.data.coverage > min_pct].coverage
         )
 
     def check_sufficiency_baseline(self):
-        raise NotImplementedError(
-            "Use Hourly / Daily / Billing SufficiencyCriteria class for concrete implementation"
-        )
-
-    def check_sufficiency_reporting(self):
-        raise NotImplementedError(
-            "Use Hourly / Daily / Billing SufficiencyCriteria class for concrete implementation"
-        )
-
-
-class HourlySufficiencyCriteria(SufficiencyCriteria):
-    """
-    Sufficiency Criteria class for hourly models
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def _check_baseline_length_hourly_model(self):
-        pass
-
-    def _check_monthly_meter_readings_percentage(self):
-        if not self.is_reporting_data:
-            non_null_meter_percentage_per_month = (
-                self.data["observed"]
-                .groupby(self.data.index.month)
-                .apply(lambda x: x.notna().mean())
-            )
-            if (
-                non_null_meter_percentage_per_month < self.min_fraction_daily_coverage
-            ).any():
-                self.disqualification.append(
-                    EEMeterWarning(
-                        qualified_name="eemeter.sufficiency_criteria.missing_monthly_meter_data",
-                        description=(
-                            "More than 10% of the monthly meter data is missing."
-                        ),
-                        data={
-                            "lowest_monthly_coverage": non_null_meter_percentage_per_month.min(),
-                        },
-                    )
-                )
-
-    def _check_hourly_consecutive_temperature_data(self):
-        # TODO : Check implementation wrt Caltrack 2.2.4.1
-        # Resample to hourly by taking the first non NaN value
-        hourly_data = self.data["temperature"].resample("H").first()
-        mask = hourly_data.isna().any(axis=1)
-        grouped = mask.groupby((mask != mask.shift()).cumsum())
-        max_consecutive_nans = grouped.sum().max()
-        if max_consecutive_nans > 6:
-            self.disqualification.append(
-                EEMeterWarning(
-                    qualified_name="eemeter.sufficiency_criteria.too_many_consecutive_hours_temperature_data_missing",
-                    description=(
-                        "More than 6 hours of consecutive hourly data is missing."
-                    ),
-                    data={"Max_consecutive_hours_missing": int(max_consecutive_nans)},
-                )
-            )
-
-    def _check_monthly_ghi_percentage(self):
-        if "ghi" not in self.data.columns:
-            return
-        non_null_temp_ghi_per_month = (
-            self.data["ghi"]
-            .groupby(self.data.index.month)
-            .apply(lambda x: x.notna().mean())
-        )
-        if (non_null_temp_ghi_per_month < self.min_fraction_daily_coverage).any():
-            self.disqualification.append(
-                EEMeterWarning(
-                    qualified_name="eemeter.sufficiency_criteria.missing_monthly_ghi_data",
-                    description=("At least one month is missing over 10% of GHI data."),
-                    data={
-                        "lowest_monthly_coverage": non_null_temp_ghi_per_month.min(),
-                    },
-                )
-            )
-
-    def check_sufficiency_baseline(self):
-        # TODO : add caltrack check number on top of each method
         self._check_no_data()
-        self._check_negative_meter_values()
-        self._check_baseline_length_daily_billing_model()
-        self._check_valid_days_percentage()
-        self._check_valid_meter_readings_percentage()
-        self._check_valid_temperature_values_percentage()
-        self._check_monthly_temperature_values_percentage()
-        self._check_monthly_meter_readings_percentage()
+        self._check_baseline_day_length()
+        self._check_negative_observed_values()
+
+        self._check_valid_days_percentage(col="temperature")
+        self._check_valid_days_percentage(col="observed")
+        self._check_valid_days_percentage(col="joint")
+        self._check_valid_monthly_coverage(col="temperature")
+
         self._check_extreme_values()
-        self._check_monthly_ghi_percentage()
-        # TODO these will only apply to legacy, and currently do not work
-        # self._check_high_frequency_meter_values()
-        # self._check_high_frequency_temperature_values()
-        # self._check_hourly_consecutive_temperature_data()
 
     def check_sufficiency_reporting(self):
         self._check_no_data()
-        self._check_valid_days_percentage()
-        self._check_valid_temperature_values_percentage()
-        self._check_monthly_temperature_values_percentage()
-        self._check_monthly_ghi_percentage()
+
+        self._check_valid_days_percentage(col="temperature")
+        self._check_valid_days_percentage(col="joint")
+        self._check_valid_monthly_coverage(col="temperature")
         # self._check_high_frequency_temperature_values()
 
 
@@ -526,24 +443,16 @@ class DailySufficiencyCriteria(SufficiencyCriteria):
         super().__init__(*args, **kwargs)
 
     def check_sufficiency_baseline(self):
-        self._check_no_data()
-        self._check_negative_meter_values()
-        self._check_baseline_length_daily_billing_model()
-        self._check_valid_days_percentage()
-        self._check_valid_meter_readings_percentage()
-        self._check_valid_temperature_values_percentage()
-        self._check_monthly_temperature_values_percentage()
-        self._check_extreme_values()
+        super().check_sufficiency_baseline()
+
+        # self._check_n_days_boundary_gap("start")
+        # self._check_n_days_boundary_gap("end")
         # TODO : Maybe make these checks static? To work with the current data class
         # self._check_high_frequency_meter_values()
         # self._check_high_frequency_temperature_values()
 
     def check_sufficiency_reporting(self):
-        self._check_no_data()
-        self._check_valid_days_percentage()
-        self._check_valid_temperature_values_percentage()
-        self._check_monthly_temperature_values_percentage()
-        # self._check_high_frequency_temperature_values()
+        super().check_sufficiency_reporting()
 
 
 class BillingSufficiencyCriteria(SufficiencyCriteria):
@@ -554,54 +463,60 @@ class BillingSufficiencyCriteria(SufficiencyCriteria):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def _check_meter_data_billing_monthly(self):
+    def _check_observed_data_billing_monthly(self):
         if self.data["value"].dropna().empty:
             return
 
         diff = list((data.index[1:] - data.index[:-1]).days)
         filter_ = pd.Series(diff + [np.nan], index=data.index)
+
+        min_days = self.settings.min_days_in_period
+        max_days = self.settings.max_days_in_monthly_period
 
         # CalTRACK 2.2.3.4, 2.2.3.5
         # Billing Monthly data frequency check
-        data = data[(filter_ <= 35) & (filter_ >= 25)].reindex(  # keep these, inclusive
+        data = data[(min_days <= filter_) & (filter_ <= max_days)].reindex(  # keep these, inclusive
             data.index
         )
 
-        if len(data[(filter_ > 35) | (filter_ < 25)]) > 0:
+        if len(data[(max_days < filter_) | (filter_ < min_days)]) > 0:
             self.disqualification.append(
                 EEMeterWarning(
                     qualified_name="eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data",
                     description=(
-                        "Off-cycle reads found in billing monthly data having a duration of less than 25 days"
+                        f"Off-cycle reads found in billing monthly data having a duration less than {min_days} days or greater than {max_days} days"
                     ),
-                    data=(data[(filter_ > 35) | (filter_ < 25)].index.to_list()),
+                    data=(data[(max_days < filter_) | (filter_ < min_days)].index.to_list()),
                 )
             )
 
-    def _check_meter_data_billing_bimonthly(self):
+    def _check_observed_data_billing_bimonthly(self):
         if self.data["value"].dropna().empty:
             return
 
         diff = list((data.index[1:] - data.index[:-1]).days)
         filter_ = pd.Series(diff + [np.nan], index=data.index)
 
+        min_days = self.settings.min_days_in_period
+        max_days = self.settings.max_days_in_bimonthly_period
+
         # CalTRACK 2.2.3.4, 2.2.3.5
-        data = data[(filter_ <= 70) & (filter_ >= 25)].reindex(  # keep these, inclusive
+        data = data[(min_days <= filter_) & (filter_ <= max_days)].reindex(  # keep these, inclusive
             data.index
         )
 
-        if len(data[(filter_ > 70) | (filter_ < 25)]) > 0:
+        if len(data[(max_days < filter_) | (filter_ < min_days)]) > 0:
             self.disqualification.append(
                 EEMeterWarning(
-                    qualified_name="eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data",
+                    qualified_name="eemeter.sufficiency_criteria.offcycle_reads_in_billing_bimonthly_data",
                     description=(
-                        "Off-cycle reads found in billing monthly data having a duration of less than 25 days"
+                        f"Off-cycle reads found in billing bimonthly data having a duration less than {min_days} days or greater than {max_days} days"
                     ),
-                    data=(data[(filter_ > 70) | (filter_ < 25)].index.to_list()),
+                    data=(data[(max_days < filter_) | (filter_ < min_days)].index.to_list()),
                 )
             )
 
-    def _check_estimated_meter_values(self):
+    def _check_estimated_observed_values(self):
         # CalTRACK 2.2.3.1
         """
         Adds estimate to subsequent read if there aren't more than one estimate in a row
@@ -657,24 +572,65 @@ class BillingSufficiencyCriteria(SufficiencyCriteria):
             data = data[["value"]]  # remove the estimated column
 
     def check_sufficiency_baseline(self):
-        self._check_no_data()
-        self._check_negative_meter_values()
+        super().check_sufficiency_baseline()
+
+        # self._check_n_days_boundary_gap("start")
+        # self._check_n_days_boundary_gap("end")
         # if self.median_granularity == "billing_monthly":
-        #     self._check_meter_data_billing_monthly()
+        #     self._check_observed_data_billing_monthly()
         # else :
-        #     self._check_meter_data_billing_bimonthly()
-        self._check_baseline_length_daily_billing_model()
-        self._check_valid_days_percentage()
-        self._check_valid_meter_readings_percentage()
-        self._check_valid_temperature_values_percentage()
-        self._check_monthly_temperature_values_percentage()
-        self._check_extreme_values()
-        self._check_estimated_meter_values()
+        #     self._check_observed_data_billing_bimonthly()
+        self._check_estimated_observed_values()
         # self._check_high_frequency_temperature_values()
 
     def check_sufficiency_reporting(self):
-        self._check_no_data()
-        self._check_valid_days_percentage()
-        self._check_valid_temperature_values_percentage()
-        self._check_monthly_temperature_values_percentage()
+        super().check_sufficiency_reporting()
+
+
+class HourlySufficiencyCriteria(SufficiencyCriteria):
+    """
+    Sufficiency Criteria class for hourly models
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def _check_baseline_length_hourly_model(self):
+        pass
+
+    def _check_hourly_consecutive_temperature_data(self):
+        # TODO : Check implementation wrt Caltrack 2.2.4.1
+        # Resample to hourly by taking the first non NaN value
+        hourly_data = self.data["temperature"].resample("H").first()
+        mask = hourly_data.isna().any(axis=1)
+        grouped = mask.groupby((mask != mask.shift()).cumsum())
+        max_consecutive_nans = grouped.sum().max()
+        allowed_consecutive_nans = self.settings.temperature.max_consecutive_hours_missing
+        if max_consecutive_nans > allowed_consecutive_nans:
+            self.disqualification.append(
+                EEMeterWarning(
+                    qualified_name="eemeter.sufficiency_criteria.too_many_consecutive_hours_temperature_data_missing",
+                    description=(
+                        f"More than {allowed_consecutive_nans} hours of consecutive hourly Temperature data is missing."
+                    ),
+                    data={"Max_consecutive_hours_missing": int(max_consecutive_nans)},
+                )
+            )
+
+    def check_sufficiency_baseline(self):
+        super().check_sufficiency_baseline()
+        
+        # TODO : add caltrack check number on top of each method
+        # self._check_n_days_boundary_gap("start")
+        # self._check_n_days_boundary_gap("end")
+        self._check_valid_monthly_coverage(col="ghi")
+        self._check_valid_monthly_coverage(col="observed")
+        # TODO these will only apply to legacy, and currently do not work
+        # self._check_high_frequency_observed_values()
         # self._check_high_frequency_temperature_values()
+        # self._check_hourly_consecutive_temperature_data()
+
+    def check_sufficiency_reporting(self):
+        super().check_sufficiency_reporting()
+        
+        self._check_valid_monthly_coverage(col="ghi")

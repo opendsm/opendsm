@@ -24,6 +24,8 @@ import pydantic
 
 from typing import Any, Optional
 
+from functools import cached_property  # TODO: This requires Python 3.8
+
 
 class PydanticDf(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
@@ -81,3 +83,14 @@ def PydanticFromDict(input_dict, name="PydanticModel"):
     )
 
     return model(**input_dict)
+
+
+def computed_field_cached_property():
+    decs = [pydantic.computed_field, cached_property]
+
+    def deco(f):
+        for dec in reversed(decs):
+            f = dec(f)
+        return f
+
+    return deco

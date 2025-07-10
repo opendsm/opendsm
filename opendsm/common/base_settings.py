@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import pydantic
 
-from enum import Enum
 from typing import Any
 
 
@@ -49,6 +48,15 @@ class BaseSettings(pydantic.BaseModel):
         if isinstance(v, str):
             return v.lower().strip()
         return v
+
+
+class MutableBaseSettings(BaseSettings):
+    model_config = pydantic.ConfigDict(
+        frozen = False,
+        arbitrary_types_allowed=True,
+        str_to_lower = True,
+        str_strip_whitespace = True,
+    )
 
 
 # add developer field to pydantic Field
