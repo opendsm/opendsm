@@ -205,7 +205,7 @@ def test_low_freq_meter(baseline):
     baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
     assert_dq(
         baseline_data,
-        ["eemeter.sufficiency_criteria.too_many_days_with_missing_meter_data"],
+        ["eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data"],
     )
     with pytest.raises(DataSufficiencyError):
         HourlyModel().fit(baseline_data)
@@ -241,7 +241,7 @@ def test_monthly_percentage(baseline):
     assert_dq(
         baseline_data,
         [
-            "eemeter.sufficiency_criteria.too_many_days_with_missing_data",
+            "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
             "eemeter.sufficiency_criteria.missing_monthly_temperature_data",
             "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data",
         ],

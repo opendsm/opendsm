@@ -398,7 +398,7 @@ def test_daily_baseline_data_with_extreme_and_negative_values_in_daily_and_hourl
     assert len(cls.disqualification) == 1
     assert (
         cls.disqualification[0].qualified_name
-        == "eemeter.sufficiency_criteria.negative_meter_values"
+        == "eemeter.sufficiency_criteria.negative_observed_values"
     )
 
 

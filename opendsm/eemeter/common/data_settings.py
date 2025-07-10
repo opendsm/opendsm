@@ -36,7 +36,7 @@ class ColumnSufficiencySettings(MutableBaseSettings):
         default=0.5,
         gt=0,
         le=1,
-        description="Minimum percentage of intrahour coverage.",
+        description="Minimum percentage of hourly coverage.",
     )
     
     min_pct_daily_coverage: float = pydantic.Field(
@@ -79,7 +79,7 @@ class ObservedSufficiencySettings(MutableBaseSettings):
         default=0.5,
         gt=0,
         le=1,
-        description="Minimum percentage of intrahour coverage.",
+        description="Minimum percentage of hourly coverage.",
     )
     
     min_pct_daily_coverage: float = pydantic.Field(
@@ -94,6 +94,15 @@ class ObservedSufficiencySettings(MutableBaseSettings):
         gt=0,
         le=1,
         description="Minimum percentage of monthly coverage.",
+    )
+
+
+class JointSufficiencySettings(MutableBaseSettings):
+    min_pct_daily_coverage: float = pydantic.Field(
+        default=0.9,
+        gt=0,
+        le=1,
+        description="Minimum percentage of daily coverage.",
     )
 
 
@@ -130,6 +139,10 @@ class BaseSufficiencySettings(MutableBaseSettings):
 
     observed: ObservedSufficiencySettings = pydantic.Field(
         default_factory=ObservedSufficiencySettings,
+    )
+
+    joint: JointSufficiencySettings = pydantic.Field(
+        default_factory=JointSufficiencySettings,
     )
 
     @pydantic.field_validator("min_baseline_length", "max_baseline_length", mode="before")
