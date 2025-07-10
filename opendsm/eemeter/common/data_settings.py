@@ -26,16 +26,9 @@ import pandas as pd
 import pydantic
 import datetime
 
-from enum import Enum
-from typing import Optional, Literal, Union, TypeVar, Dict, Any
-
-import pywt
+from typing import Optional
 
 from opendsm.common.base_settings import MutableBaseSettings
-from opendsm.common.clustering.settings import ClusteringSettings
-from opendsm.common.metrics import BaselineMetrics
-
-from opendsm.eemeter.common.warnings import EEMeterWarning
 
 
 
@@ -227,7 +220,7 @@ class BillingDataSettings(BaseDataSettings):
     )
 
 class HourlyDataSettings(BaseDataSettings):
-    pv_start: Union[datetime.date, str, None] = pydantic.Field(
+    pv_start: datetime.date | str | None = pydantic.Field(
         default=None,
         description="Date of the solar installation. If None, assume solar status is static."
     )

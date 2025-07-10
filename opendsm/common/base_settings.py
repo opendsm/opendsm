@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import pydantic
 
-from enum import Enum
 from typing import Any
 
 
@@ -58,7 +57,7 @@ class MutableBaseSettings(BaseSettings):
         str_to_lower = True,
         str_strip_whitespace = True,
     )
-    
+
 
 # add developer field to pydantic Field
 def CustomField(developer=False, *args, **kwargs):

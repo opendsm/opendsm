@@ -21,7 +21,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import copy
-from typing import Optional, Union
 from datetime import date
 
 import numpy as np
@@ -155,7 +154,7 @@ class _HourlyData:
         self,
         df: pd.DataFrame,
         is_electricity_data: bool,
-        pv_start: Union[date, str, None] = None,
+        pv_start: date | str | None = None,
         settings: dict | None = None,
         **kwargs: dict,
     ):
@@ -410,7 +409,7 @@ class HourlyReportingData(_HourlyData):
         self,
         df: pd.DataFrame,
         is_electricity_data: bool,
-        pv_start: Union[date, str, None] = None,
+        pv_start: date | str | None = None,
         settings: dict | None = None,
         **kwargs: dict,
     ):

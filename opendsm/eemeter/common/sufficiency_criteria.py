@@ -17,12 +17,9 @@
    limitations under the License.
 
 """
-from math import ceil
-
 import numpy as np
 import pandas as pd
 import pytz
-from typing import Optional
 
 import pydantic
 
