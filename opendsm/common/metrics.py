@@ -2,19 +2,19 @@
 # -*- coding: utf-8 -*-
 """
 
-   Copyright 2014-2025 OpenDSM contributors
+Copyright 2014-2025 OpenDSM contributors
 
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-       http://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 """
 
@@ -232,7 +232,7 @@ class BaselineMetrics(ArbitraryPydanticModel):
     @computed_field_cached_property()
     def n_prime(self) -> float:
         # lag should be 1 according to https://www.osti.gov/servlets/purl/1366449
-        autocorr = acf(self._df["residuals"].values, lag_n=1, moving_mean_std=True)[1]
+        autocorr = self._df["residuals"].autocorr(lag=1)
 
         _n_prime = float(self.n * (1 - autocorr) / (1 + autocorr))
 
@@ -365,7 +365,7 @@ class BaselineMetrics(ArbitraryPydanticModel):
         res = _safe_divide(num, den, self._min_denominator)
         if res is None:
             return None
-        
+
         return 1 - res
 
     @computed_field_cached_property()
@@ -397,7 +397,9 @@ class ModelChoice(str, Enum):
 class ReportingMetrics(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
 
-    baseline_metrics: Union[BaselineMetrics, pydantic.BaseModel] = pydantic.Field(exclude=True)
+    baseline_metrics: Union[BaselineMetrics, pydantic.BaseModel] = pydantic.Field(
+        exclude=True
+    )
 
     """Reporting dataframe to be used for metrics calculations"""
     reporting_df: pd.DataFrame = pydantic.Field(exclude=True)
@@ -509,8 +511,9 @@ class ReportingMetrics(pydantic.BaseModel):
     def predicted_data_point_unc(self) -> float:
         if self.total_savings_uncertainty is None:
             return None
-        
+
         return self.total_savings_uncertainty / np.sqrt(self.n)
+
 
 def acf(x, lag_n=None, moving_mean_std=False):
     """
