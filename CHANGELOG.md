@@ -4,6 +4,11 @@ Changelog
 Development
 -----------
 
+opendsm-1.2.1
+-----
+
+* Revert how autocorr is calculated prior to 1.2.0
+
 opendsm-1.2.0
 -----
 

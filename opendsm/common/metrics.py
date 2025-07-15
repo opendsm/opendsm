@@ -232,7 +232,7 @@ class BaselineMetrics(ArbitraryPydanticModel):
     @computed_field_cached_property()
     def n_prime(self) -> float:
         # lag should be 1 according to https://www.osti.gov/servlets/purl/1366449
-        autocorr = acf(self._df["residuals"].values, lag_n=1, moving_mean_std=True)[1]
+        autocorr = self._df["residuals"].autocorr(lag=1)
 
         _n_prime = float(self.n * (1 - autocorr) / (1 + autocorr))
 
