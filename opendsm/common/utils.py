@@ -201,7 +201,7 @@ def unc_factor(n, interval="PI", alpha=0.10):
 MAD_k = 1 / norm_dist.ppf(0.75)
 
 
-def median_absolute_deviation(x, median=None):
+def median_absolute_deviation(x, median=None, axis=None):
     """
     This function calculates the Median Absolute Deviation (MAD) of a given array.
 
@@ -215,9 +215,9 @@ def median_absolute_deviation(x, median=None):
 
     mu = median
     if mu is None:
-        mu = np.median(x)
+        mu = np.median(x, axis=axis)
 
-    sigma = np.median(np.abs(x - mu)) * MAD_k
+    sigma = np.median(np.abs(x - mu), axis=axis) * MAD_k
 
     return sigma
 

@@ -232,7 +232,7 @@ class BaselineMetrics(ArbitraryPydanticModel):
     @computed_field_cached_property()
     def n_prime(self) -> float:
         # lag should be 1 according to https://www.osti.gov/servlets/purl/1366449
-        autocorr = self._df["residuals"].autocorr(lag=1)
+        autocorr = acf(self._df["residuals"].values, lag_n=1, ac_type="moving_stats")[1]
 
         _n_prime = float(self.n * (1 - autocorr) / (1 + autocorr))
 
@@ -511,8 +511,18 @@ class ReportingMetrics(pydantic.BaseModel):
             return None
         
         return self.total_savings_uncertainty / np.sqrt(self.n)
+    
 
-def acf(x, lag_n=None, moving_mean_std=False):
+class AutocorrelationMethod(Enum):
+    MOVING_STATS = "moving_stats"
+    STATIONARY_CORRELATE = "stationary_correlate"
+    STATIONARY_STATS_FFT = "stationary_stats_fft"
+
+def acf(
+    x, 
+    lag_n=None, 
+    ac_type: AutocorrelationMethod=AutocorrelationMethod.MOVING_STATS
+):
     """
     Computes the autocorrelation function (ACF) of a given time series. It is the correlation of a signal with a delayed copy of itself as a function of delay.
     It allows finding repeating patterns, such as the presence of a periodic signal obscured by noise, or identifying the missing fundamental frequency in a signal implied by its harmonic frequencies.
@@ -520,28 +530,41 @@ def acf(x, lag_n=None, moving_mean_std=False):
     Parameters:
         x (array-like): The time series data.
         lag_n (int, optional): The number of lags to compute the ACF for. If None, computes the ACF for all possible lags.
-        moving_mean_std (bool, optional): Whether to use a moving mean and standard deviation to compute the ACF. If False, uses the regular formula.
+        ac_type (AutocorrelationMethod, optional): How to compute the ACF
 
     Returns:
         array-like: The autocorrelation function values for the given time series and lags.
     """
+
+    if isinstance(ac_type, AutocorrelationMethod):
+        ac_type = ac_type.value
 
     if lag_n is None:
         lags = range(len(x) - 1)
     else:
         lags = range(lag_n + 1)
 
-    if moving_mean_std:
+    if ac_type == AutocorrelationMethod.MOVING_STATS.value:
+        # mean and std are computed in a rolling window
         corr = [1.0 if l == 0 else np.corrcoef(x[l:], x[:-l])[0][1] for l in lags]
 
         corr = np.array(corr)
 
-    else:
+    elif "stationary" in ac_type:
+        # mean and std are computed over the entire series
+        n = len(x)
         mean = x.mean()
         var = np.var(x)
-        xp = x - mean
-        corr = np.correlate(xp, xp, "full")[len(x) - 1 :] / var / len(x)
+        xc = x - mean
 
-        corr = corr[: len(lags)]
+        if ac_type == AutocorrelationMethod.STATIONARY_CORRELATE.value:
+            corr = np.correlate(xc, xc, "full")[(n - 1):] / var / n
+
+        elif ac_type == AutocorrelationMethod.STATIONARY_STATS_FFT.value:
+            cf = np.fft.fft(xc)
+            sf = cf.conjugate()*cf
+            corr = np.fft.ifft(sf).real/var/len(x)
+
+        corr = corr[:len(lags)]
 
     return corr
