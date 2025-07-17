@@ -291,7 +291,7 @@ class DailyModel:
 
         # 3.5.1.1. If a day is missing a temperature value, the corresponding consumption value for that day should be masked.
         if mask_observed_with_missing_temperature:
-            dropped_rows.loc[dropped_rows["temperature"].isna(), "observed"] = np.nan
+            dropped_rows[dropped_rows["temperature"].isna()]["observed"] = np.nan
 
         df_eval = pd.concat([df_eval, dropped_rows])
 

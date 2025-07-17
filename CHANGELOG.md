@@ -4,6 +4,12 @@ Changelog
 Development
 -----------
 
+opendsm-1.2.2
+-----
+
+* Change daily model to use CVRMSE_adj and PNRMSE_adj as intended
+* Autocorrelation function is now consistent
+
 opendsm-1.2.1
 -----
 
