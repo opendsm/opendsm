@@ -33,7 +33,7 @@ def test_acf():
     # Test case 3: Test with a moving mean and standard deviation
     x = np.array([1, 2, 3, 4, 5])
     expected_output = np.array([1.0, 1.0, 1.0, 1.0])
-    assert np.allclose(acf(x, moving_mean_std=True), expected_output)
+    assert np.allclose(acf(x, ac_type="moving_stats"), expected_output)
 
     # Test case 4: Test with a specific lag_n
     x = np.array([1, 2, 3, 4, 5])

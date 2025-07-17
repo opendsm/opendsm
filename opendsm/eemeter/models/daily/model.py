@@ -298,8 +298,8 @@ class DailyModel:
         return df_eval.sort_index()
 
     def _check_model_fit(self):
-        cvrmse = self.baseline_metrics.cvrmse
-        pnrmse = self.baseline_metrics.pnrmse
+        cvrmse = self.baseline_metrics.cvrmse_adj
+        pnrmse = self.baseline_metrics.pnrmse_adj
 
         cvrmse_threshold = self.settings.cvrmse_threshold
         pnrmse_threshold = self.settings.pnrmse_threshold
@@ -392,6 +392,9 @@ class DailyModel:
             # Make all keys in metrics_dict lowercase
             # will contain ['wRMSE', 'RMSE', 'MAE', 'CVRMSE', 'PNRMSE']
             metrics_dict_lower = {k.lower(): v for k, v in info.get("error").items()}
+            # do not have adjusted metrics in prior versions, so we use unadjusted metrics
+            metrics_dict_lower["cvrmse_adj"] = metrics_dict_lower["cvrmse"]
+            metrics_dict_lower["pnrmse_adj"] = metrics_dict_lower["pnrmse"]
             daily_model.baseline_metrics = BaselineMetricsFromDict(metrics_dict_lower)
 
         daily_model.is_fitted = True
