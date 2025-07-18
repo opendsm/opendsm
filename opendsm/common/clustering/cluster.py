@@ -264,6 +264,9 @@ def _spectral_clustering(
     min_cluster_size = settings.spectral.scoring.min_cluster_size
     max_non_outlier_cluster_count = 200
 
+    np_state = np.random.get_state()
+    np.random.seed(settings._seed)
+
     # transform data as spectral clustering doesn't like negative values
     # data = np.exp(-data / np.std(data))
 
@@ -284,6 +287,7 @@ def _spectral_clustering(
             gamma=settings.spectral.gamma,
             eigen_tol=settings.spectral.eigen_tol,
             assign_labels=settings.spectral.assign_labels,
+            random_state=settings._seed
         )
 
         # hide UserWarning from sklearn
@@ -291,7 +295,8 @@ def _spectral_clustering(
             warnings.filterwarnings("ignore", category=UserWarning)
             labels = algo.fit_predict(X)
 
-        X = algo.affinity_matrix_
+        if n_clusters == n_cluster_lower:
+            X = algo.affinity_matrix_
 
         # Calculate a score for the clustering
         score, score_unable_to_be_calculated = _scoring.score_clusters(
@@ -321,6 +326,8 @@ def _spectral_clustering(
 
         if HoF is None or result.score < HoF.score:
             HoF = result
+
+    np.random.set_state(np_state)
 
     return HoF.labels
 

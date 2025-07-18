@@ -507,14 +507,16 @@ class ClusteringSettings(BaseSettings):
         ge=0,
     )
 
+    _seed: Optional[int] = pydantic.PrivateAttr(
+        default=None
+    )
+
     @pydantic.model_validator(mode="after")
     def _check_seed(self):
-        if self.seed is None:
+        if self.seed is None and self._seed is None:
             self._seed = np.random.randint(0, 2**32 - 1, dtype=np.int64)
         else:
             self._seed = self.seed
-
-        self._seed = self._seed
 
         return self
 
