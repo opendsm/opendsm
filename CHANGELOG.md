@@ -4,6 +4,12 @@ Changelog
 Development
 -----------
 
+opendsm-1.2.3
+-----
+
+* Spectral clustering is now seeded appropriately
+* Fixed bug making seed in main hourly settings not be passed to clustering settings
+
 opendsm-1.2.2
 -----
 
