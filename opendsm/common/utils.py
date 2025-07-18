@@ -19,6 +19,7 @@
 """
 import numba
 import numpy as np
+import pandas as pd
 from numba.extending import overload
 from scipy.stats import norm as norm_dist
 from scipy.stats import t as t_dist
@@ -90,6 +91,75 @@ def np_clip(a, a_min, a_max):
         return _clip(a, a_min, a_max)
 
     return clip_impl
+
+def safe_divide(num, den, min_denominator=1e-3, return_all=True):
+    """
+    Safely divide numerator by denominator, returning np.nan for invalid cases.
+    Works on scalars or numpy arrays.
+
+    Parameters:
+    numerator: scalar or array-like
+    denominator: scalar or array-like
+    min_denominator: float, minimum allowed denominator
+
+    Returns:
+    result: scalar or numpy array, or np.nan where division is unsafe
+    """
+    min_den = min_denominator
+
+    input_num_type = type(num)
+    input_den_type = type(den)
+
+    num = np.asarray(num)
+    den = np.asarray(den)
+
+    # Create mask for invalid denominators
+    invalid_mask = (den == 0) | ((den <= min_den) & (num > 10 * min_den))
+
+    # Prepare result array
+    # Determine the maximum shape that can broadcast num and den
+    result_shape = np.broadcast(num, den).shape
+    result = np.empty(result_shape, dtype=np.float64)
+
+    # Where valid, perform division
+    valid_mask = ~invalid_mask
+    # Use numpy errstate to suppress divide by zero warnings and replace with nan
+    with np.errstate(divide='ignore', invalid='ignore'):
+        if num.ndim > 0 and den.ndim > 0:
+            temp_result = np.divide(num[valid_mask], den[valid_mask])
+            temp_result[np.isinf(temp_result)] = np.nan
+            result[valid_mask] = temp_result
+        elif num.ndim > 0 and den.ndim == 0:
+            temp_result = np.divide(num[valid_mask], den)
+            temp_result[np.isinf(temp_result)] = np.nan
+            result[valid_mask] = temp_result
+        elif num.ndim == 0 and den.ndim > 0:
+            temp_result = np.divide(num, den[valid_mask])
+            temp_result[np.isinf(temp_result)] = np.nan
+            result[valid_mask] = temp_result
+        else:
+            temp_result = np.divide(num, den)
+            if np.isinf(temp_result):
+                temp_result = np.nan
+            result[valid_mask] = temp_result
+
+    # Where invalid, set to np.nan
+    result[invalid_mask] = np.nan
+
+    # replace any non-finite values with np.nan
+    result = np.where(np.isfinite(result), result, np.nan)
+
+    # If input was scalar, return scalar
+    if input_num_type not in (np.ndarray, list, pd.Series) and input_den_type not in (np.ndarray, list, pd.Series):
+        if invalid_mask:
+            return np.nan
+        else:
+            return float(result)
+
+    if return_all:
+        return result
+    else:
+        return result[~invalid_mask]
 
 
 def OoM(x, method="round"):

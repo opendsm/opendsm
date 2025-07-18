@@ -18,16 +18,18 @@
 
 """
 
-import numpy as np
-import pandas as pd
-
 import pydantic
 from typing import Optional, Union
 from enum import Enum
 
+import numpy as np
+import pandas as pd
+
+from scipy.stats import pearsonr
+
 from functools import cached_property  # TODO: This requires Python 3.8
 
-from opendsm.common.utils import median_absolute_deviation, t_stat
+from opendsm.common.utils import median_absolute_deviation, t_stat, safe_divide
 from opendsm.common.pydantic_utils import (
     ArbitraryPydanticModel,
     PydanticDf,
@@ -85,15 +87,6 @@ class ColumnMetrics(ArbitraryPydanticModel):
     @computed_field_cached_property()
     def kurtosis(self) -> float:
         return self.series.kurtosis()
-
-
-def _safe_divide(numerator, denominator, min_denominator=1e-3):
-    if denominator == 0:
-        return None
-    elif denominator <= min_denominator and numerator > 10 * min_denominator:
-        return None
-
-    return numerator / denominator
 
 
 class BaselineMetrics(ArbitraryPydanticModel):
@@ -279,28 +272,36 @@ class BaselineMetrics(ArbitraryPydanticModel):
         return ColumnMetrics(series=self._df["residuals"])
 
     @computed_field_cached_property()
+    def max_error(self) -> float:
+        return np.max(np.abs(self._df["residuals"].values))
+
+    @computed_field_cached_property()
     def mae(self) -> float:
-        return self._df["residuals"].abs().mean()
+        return np.mean(np.abs(self._df["residuals"].values))
 
     @computed_field_cached_property()
-    def nmae(self) -> Optional[float]:
-        return _safe_divide(self.mae, self.observed.mean, self._min_denominator)
+    def nmae(self) -> float:
+        return safe_divide(self.mae, self.observed.mean, self._min_denominator)
 
     @computed_field_cached_property()
-    def pnmae(self) -> Optional[float]:
-        return _safe_divide(self.mae, self.observed.iqr, self._min_denominator)
+    def pnmae(self) -> float:
+        return safe_divide(self.mae, self.observed.iqr, self._min_denominator)
+
+    @computed_field_cached_property()
+    def medae(self) -> float:
+        return np.median(np.abs(self._df["residuals"].values))
 
     @computed_field_cached_property()
     def mbe(self) -> float:
         return self.residuals.mean
 
     @computed_field_cached_property()
-    def nmbe(self) -> Optional[float]:
-        return _safe_divide(self.mbe, self.observed.mean, self._min_denominator)
+    def nmbe(self) -> float:
+        return safe_divide(self.mbe, self.observed.mean, self._min_denominator)
 
     @computed_field_cached_property()
-    def pnmbe(self) -> Optional[float]:
-        return _safe_divide(self.mbe, self.observed.iqr, self._min_denominator)
+    def pnmbe(self) -> float:
+        return safe_divide(self.mbe, self.observed.iqr, self._min_denominator)
 
     @computed_field_cached_property()
     def sse(self) -> float:
@@ -323,30 +324,30 @@ class BaselineMetrics(ArbitraryPydanticModel):
         return (self.sse / self.ddof_autocorr) ** 0.5
 
     @computed_field_cached_property()
-    def cvrmse(self) -> Optional[float]:
-        return _safe_divide(self.rmse, self.observed.mean, self._min_denominator)
+    def cvrmse(self) -> float:
+        return safe_divide(self.rmse, self.observed.mean, self._min_denominator)
 
     @computed_field_cached_property()
-    def cvrmse_adj(self) -> Optional[float]:
-        return _safe_divide(self.rmse_adj, self.observed.mean, self._min_denominator)
+    def cvrmse_adj(self) -> float:
+        return safe_divide(self.rmse_adj, self.observed.mean, self._min_denominator)
 
     @computed_field_cached_property()
-    def cvrmse_autocorr_adj(self) -> Optional[float]:
-        return _safe_divide(
+    def cvrmse_autocorr_adj(self) -> float:
+        return safe_divide(
             self.rmse_autocorr_adj, self.observed.mean, self._min_denominator
         )
 
     @computed_field_cached_property()
-    def pnrmse(self) -> Optional[float]:
-        return _safe_divide(self.rmse, self.observed.iqr, self._min_denominator)
+    def pnrmse(self) -> float:
+        return safe_divide(self.rmse, self.observed.iqr, self._min_denominator)
 
     @computed_field_cached_property()
-    def pnrmse_adj(self) -> Optional[float]:
-        return _safe_divide(self.rmse_adj, self.observed.iqr, self._min_denominator)
+    def pnrmse_adj(self) -> float:
+        return safe_divide(self.rmse_adj, self.observed.iqr, self._min_denominator)
 
     @computed_field_cached_property()
-    def pnrmse_autocorr_adj(self) -> Optional[float]:
-        return _safe_divide(
+    def pnrmse_autocorr_adj(self) -> float:
+        return safe_divide(
             self.rmse_autocorr_adj, self.observed.iqr, self._min_denominator
         )
 
@@ -355,28 +356,156 @@ class BaselineMetrics(ArbitraryPydanticModel):
         return self._df[["predicted", "observed"]].corr().iloc[0, 1] ** 2
 
     @computed_field_cached_property()
-    def r_squared_adj(self) -> Optional[float]:
+    def r_squared_adj(self) -> float:
         n = self.n
         n_adj = self.ddof
 
         num = (1 - self.r_squared) * (n - 1)
         den = n_adj - 1
 
-        res = _safe_divide(num, den, self._min_denominator)
-        if res is None:
-            return None
+        res = safe_divide(num, den, self._min_denominator)
         
         return 1 - res
 
     @computed_field_cached_property()
-    def mape(self) -> Optional[float]:
+    def mape(self) -> float:
+        # mean absolute percent error
         df = self._df
-        df_no_zeros = df[np.abs(df["observed"]) >= self._min_denominator]
 
-        if len(df_no_zeros) == 0:
-            return None
+        num = np.abs(df["residuals"].values)
+        den = np.abs(df["observed"].values)
 
-        return (df_no_zeros["residuals"] / df_no_zeros["observed"]).abs().mean()
+        inner = safe_divide(num, den, self._min_denominator, return_all=False)
+
+        return np.mean(inner)
+
+    @computed_field_cached_property()
+    def smape(self) -> float:
+        # symmetric mean absolute percent error
+        df = self._df
+
+        num = np.abs(df["residuals"].values)
+        obs = np.abs(df["observed"].values)
+        pred = np.abs(df["predicted"].values)
+        den = (obs + pred) / 2
+
+        inner = safe_divide(num, den, self._min_denominator, return_all=False)
+
+        return np.mean(inner)
+
+    @computed_field_cached_property()
+    def wape(self) -> float:
+        # weighted absolute percent error
+        df = self._df
+
+        num = np.abs(df["residuals"].values)
+        den = np.abs(df["observed"].values)
+
+        mask = np.isfinite(num) & np.isfinite(den)
+        num = np.sum(num[mask])
+        den = np.sum(den[mask])
+        
+        return safe_divide(num, den, self._min_denominator)
+
+    @computed_field_cached_property()
+    def swape(self) -> float:
+        # symmetric weighted absolute percent error
+        df = self._df
+        
+        num = np.abs(df["residuals"].values)
+        obs = np.abs(df["observed"].values)
+        pred = np.abs(df["predicted"].values)
+        den = (obs + pred) / 2
+        
+        mask = np.isfinite(num) & np.isfinite(den)
+        num = np.sum(num[mask])
+        den = np.sum(den[mask])
+        
+        return safe_divide(num, den, self._min_denominator)
+
+    @computed_field_cached_property()
+    def maape(self) -> float:
+        # mean arctangent absolute percent error
+        df = self._df
+
+        num = df["residuals"].values
+        den = df["observed"].values
+
+        inner = safe_divide(num, den, self._min_denominator, return_all=False)
+        inner = np.arctan(np.abs(inner))
+        
+        return np.mean(inner)
+
+    @computed_field_cached_property()
+    def wi(self) -> float:
+        # Willmott Index
+        df = self._df
+
+        num = df["residuals"].values**2
+
+        mean_obs = np.nanmean(df["observed"].values)
+        pred_shifted = df["predicted"].values - mean_obs
+        obs_shifted = df["observed"].values - mean_obs
+        den = (np.abs(pred_shifted) + np.abs(obs_shifted))**2
+
+        mask = np.isfinite(num) & np.isfinite(den)
+        num = np.sum(num[mask])
+        den = np.sum(den[mask])
+        
+        return 1 - safe_divide(num, den, self._min_denominator)
+
+    @computed_field_cached_property()
+    def index_of_agreement(self) -> float:
+        # index of agreement, a refinement of the willmott index
+        # https://rmets.onlinelibrary.wiley.com/doi/10.1002/joc.2419
+        df = self._df
+
+        num = np.nansum(np.abs(df["residuals"].values))
+        den = df["observed"].values - np.mean(df["observed"].values)
+        den = 2*np.nansum(np.abs(den))
+
+        if num <= den:
+            return 1 - safe_divide(num, den, self._min_denominator)
+        
+        return safe_divide(den, num, self._min_denominator) - 1
+    
+    @computed_field_cached_property()
+    def pearson_r(self) -> float:
+        return pearsonr(self._df["observed"].values, self._df["predicted"].values)[0]
+
+    @computed_field_cached_property()
+    def ci(self) -> float:
+        # Confidence Index
+        # https://doi.org/10.1016/j.asoc.2021.107282
+        return self.pearson_r*self.wi
+
+    @computed_field_cached_property()
+    def ci_rating(self) -> str:
+        ci = self.ci
+        if ci > 0.85:
+            return "excellent"
+        elif 0.76 <= ci <= 0.85:
+            return "very good"
+        elif 0.66 <= ci <= 0.75:
+            return "good"
+        elif 0.61 <= ci <= 0.65:
+            return "satisfactory"
+        elif 0.51 <= ci <= 0.60:
+            return "poor"
+        elif 0.41 <= ci <= 0.50:
+            return "bad"
+        else:
+            return "very bad"
+        
+    @computed_field_cached_property()
+    def explained_variance_score(self) -> float:
+        df = self._df
+
+        num = np.var(df["residuals"].values)
+        den = np.var(df["observed"].values)
+
+        return 1 - safe_divide(num, den, self._min_denominator)
+    
 
 
 def BaselineMetricsFromDict(input_dict):
