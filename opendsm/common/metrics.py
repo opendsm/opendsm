@@ -316,6 +316,10 @@ class BaselineMetrics(ArbitraryPydanticModel):
         return self.mse**0.5
 
     @computed_field_cached_property()
+    def rmse_autocorr(self) -> float:
+        return (self.sse / self.n_prime) ** 0.5
+
+    @computed_field_cached_property()
     def rmse_adj(self) -> float:
         return (self.sse / self.ddof) ** 0.5
 
