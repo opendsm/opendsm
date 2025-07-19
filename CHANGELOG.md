@@ -4,6 +4,8 @@ Changelog
 Development
 -----------
 
+* Added more metrics to BaselineMetrics
+
 opendsm-1.2.4
 -----
 
