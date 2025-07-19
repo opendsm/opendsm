@@ -316,6 +316,10 @@ class BaselineMetrics(ArbitraryPydanticModel):
         return self.mse**0.5
 
     @computed_field_cached_property()
+    def rmse_autocorr(self) -> float:
+        return (self.sse / self.n_prime) ** 0.5
+
+    @computed_field_cached_property()
     def rmse_adj(self) -> float:
         return (self.sse / self.ddof) ** 0.5
 
@@ -326,6 +330,10 @@ class BaselineMetrics(ArbitraryPydanticModel):
     @computed_field_cached_property()
     def cvrmse(self) -> float:
         return safe_divide(self.rmse, self.observed.mean, self._min_denominator)
+
+    @computed_field_cached_property()
+    def cvrmse_autocorr(self) -> float:
+        return safe_divide(self.rmse_autocorr, self.observed.mean, self._min_denominator)
 
     @computed_field_cached_property()
     def cvrmse_adj(self) -> float:
@@ -340,6 +348,10 @@ class BaselineMetrics(ArbitraryPydanticModel):
     @computed_field_cached_property()
     def pnrmse(self) -> float:
         return safe_divide(self.rmse, self.observed.iqr, self._min_denominator)
+
+    @computed_field_cached_property()
+    def pnrmse_autocorr(self) -> float:
+        return safe_divide(self.rmse_autocorr, self.observed.iqr, self._min_denominator)
 
     @computed_field_cached_property()
     def pnrmse_adj(self) -> float:
@@ -482,17 +494,17 @@ class BaselineMetrics(ArbitraryPydanticModel):
     @computed_field_cached_property()
     def ci_rating(self) -> str:
         ci = self.ci
-        if ci > 0.85:
+        if ci >= 0.85:
             return "excellent"
-        elif 0.76 <= ci <= 0.85:
+        elif 0.75 <= ci < 0.85:
             return "very good"
-        elif 0.66 <= ci <= 0.75:
+        elif 0.65 <= ci < 0.75:
             return "good"
-        elif 0.61 <= ci <= 0.65:
+        elif 0.60 <= ci < 0.65:
             return "satisfactory"
-        elif 0.51 <= ci <= 0.60:
+        elif 0.50 <= ci < 0.60:
             return "poor"
-        elif 0.41 <= ci <= 0.50:
+        elif 0.40 <= ci < 0.50:
             return "bad"
         else:
             return "very bad"
