@@ -19,7 +19,7 @@
 """
 
 import pydantic
-from typing import Optional, Union
+from typing import Union
 from enum import Enum
 
 import numpy as np
@@ -529,28 +529,29 @@ class BaselineMetrics(ArbitraryPydanticModel):
         return pearsonr(self._df["observed"].values, self._df["predicted"].values)[0]
 
     @computed_field_cached_property()
-    def ci(self) -> float:
-        # Confidence Index
+    def pi(self) -> float:
+        # Performance Index
         # https://doi.org/10.1016/j.asoc.2021.107282
         return self.pearson_r*self.wi
 
     @computed_field_cached_property()
-    def ci_rating(self) -> str:
-        ci = self.ci
-        if ci >= 0.85:
+    def pi_rating(self) -> str:
+        pi = self.pi
+
+        if pi >= 0.85:
             return "excellent"
-        elif 0.75 <= ci < 0.85:
+        elif 0.75 <= pi < 0.85:
             return "very good"
-        elif 0.65 <= ci < 0.75:
+        elif 0.65 <= pi < 0.75:
             return "good"
-        elif 0.60 <= ci < 0.65:
+        elif 0.60 <= pi < 0.65:
             return "satisfactory"
-        elif 0.50 <= ci < 0.60:
+        elif 0.50 <= pi < 0.60:
             return "poor"
-        elif 0.40 <= ci < 0.50:
+        elif 0.40 <= pi < 0.50:
             return "bad"
-        else:
-            return "very bad"
+        
+        return "very bad"
         
     @computed_field_cached_property()
     def explained_variance_score(self) -> float:
