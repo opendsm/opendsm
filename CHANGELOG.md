@@ -4,6 +4,11 @@ Changelog
 Development
 -----------
 
+opendsm-1.2.4
+-----
+
+* Bug fix of metrics that squeaked through
+
 opendsm-1.2.3
 -----
 
