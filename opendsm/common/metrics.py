@@ -25,7 +25,6 @@ from enum import Enum
 import numpy as np
 import pandas as pd
 
-from statistics import geometric_mean, harmonic_mean
 from scipy.stats import pearsonr
 
 from functools import cached_property  # TODO: This requires Python 3.8
