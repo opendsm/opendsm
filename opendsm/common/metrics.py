@@ -19,7 +19,7 @@
 """
 
 import pydantic
-from typing import Optional, Union
+from typing import Union
 from enum import Enum
 
 import numpy as np
@@ -88,6 +88,12 @@ class ColumnMetrics(ArbitraryPydanticModel):
     def kurtosis(self) -> float:
         return self.series.kurtosis()
 
+
+def A_n(x: np.ndarray, n: float) -> float:
+    X = np.zeros_like(x)
+    X[x <= n] = 1
+
+    return np.mean(X)
 
 class BaselineMetrics(ArbitraryPydanticModel):
     # TODO: Update the doc string
@@ -410,12 +416,8 @@ class BaselineMetrics(ArbitraryPydanticModel):
         # weighted absolute percent error
         df = self._df
 
-        num = np.abs(df["residuals"].values)
-        den = np.abs(df["observed"].values)
-
-        mask = np.isfinite(num) & np.isfinite(den)
-        num = np.sum(num[mask])
-        den = np.sum(den[mask])
+        num = self.mae*self.n
+        den = np.sum(np.abs(df["observed"].values))
         
         return safe_divide(num, den, self._min_denominator)
 
@@ -424,14 +426,10 @@ class BaselineMetrics(ArbitraryPydanticModel):
         # symmetric weighted absolute percent error
         df = self._df
         
-        num = np.abs(df["residuals"].values)
+        num = self.mae*self.n
         obs = np.abs(df["observed"].values)
         pred = np.abs(df["predicted"].values)
-        den = (obs + pred) / 2
-        
-        mask = np.isfinite(num) & np.isfinite(den)
-        num = np.sum(num[mask])
-        den = np.sum(den[mask])
+        den = np.sum((obs + pred) / 2)
         
         return safe_divide(num, den, self._min_denominator)
 
@@ -449,20 +447,58 @@ class BaselineMetrics(ArbitraryPydanticModel):
         return np.mean(inner)
 
     @computed_field_cached_property()
+    def nse(self) -> float:
+        # Nash-Sutcliffe Efficiency
+        df = self._df
+
+        num = self.sse
+        den = np.sum((df["observed"].values - self.observed.mean)**2)
+
+        return 1 - safe_divide(num, den, self._min_denominator)
+
+    @computed_field_cached_property()
+    def nnse(self) -> float:
+        # Normalized Nash-Sutcliffe Efficiency
+        return 1 / (2 - self.nse)
+
+    @computed_field_cached_property()
+    def kge(self) -> float:
+        # Kling-Gupta Efficiency
+        r = self.pearson_r
+        bias_ratio = self.predicted.mean / self.observed.mean
+        variability_ratio = self.predicted.cvstd / self.observed.cvstd
+
+        return 1 - np.sqrt((r - 1)**2 + (bias_ratio - 1)**2 + (variability_ratio - 1)**2)
+
+    @computed_field_cached_property()
+    def a10(self) -> float:
+        X = np.abs(self._df["residuals"].values)/self._df["observed"].values
+        
+        return A_n(X, 0.1)
+        
+    @computed_field_cached_property()
+    def a20(self) -> float:
+        X = np.abs(self._df["residuals"].values)/self._df["observed"].values
+
+        return A_n(X, 0.2)
+        
+    @computed_field_cached_property()
+    def a30(self) -> float:
+        X = np.abs(self._df["residuals"].values)/self._df["observed"].values
+
+        return A_n(X, 0.3)
+
+    @computed_field_cached_property()
     def wi(self) -> float:
         # Willmott Index
         df = self._df
 
-        num = df["residuals"].values**2
+        num = self.sse
 
-        mean_obs = np.nanmean(df["observed"].values)
+        mean_obs = self.observed.mean
         pred_shifted = df["predicted"].values - mean_obs
         obs_shifted = df["observed"].values - mean_obs
-        den = (np.abs(pred_shifted) + np.abs(obs_shifted))**2
-
-        mask = np.isfinite(num) & np.isfinite(den)
-        num = np.sum(num[mask])
-        den = np.sum(den[mask])
+        den = np.sum((np.abs(pred_shifted) + np.abs(obs_shifted))**2)
         
         return 1 - safe_divide(num, den, self._min_denominator)
 
@@ -472,9 +508,8 @@ class BaselineMetrics(ArbitraryPydanticModel):
         # https://rmets.onlinelibrary.wiley.com/doi/10.1002/joc.2419
         df = self._df
 
-        num = np.nansum(np.abs(df["residuals"].values))
-        den = df["observed"].values - np.mean(df["observed"].values)
-        den = 2*np.nansum(np.abs(den))
+        num = self.mae*self.n
+        den = 2*np.sum(np.abs(df["observed"].values - self.observed.mean))
 
         if num <= den:
             return 1 - safe_divide(num, den, self._min_denominator)
@@ -486,39 +521,37 @@ class BaselineMetrics(ArbitraryPydanticModel):
         return pearsonr(self._df["observed"].values, self._df["predicted"].values)[0]
 
     @computed_field_cached_property()
-    def ci(self) -> float:
-        # Confidence Index
+    def pi(self) -> float:
+        # Performance Index
         # https://doi.org/10.1016/j.asoc.2021.107282
         return self.pearson_r*self.wi
 
     @computed_field_cached_property()
-    def ci_rating(self) -> str:
-        ci = self.ci
-        if ci >= 0.85:
+    def pi_rating(self) -> str:
+        pi = self.pi
+
+        if pi >= 0.85:
             return "excellent"
-        elif 0.75 <= ci < 0.85:
+        elif 0.75 <= pi < 0.85:
             return "very good"
-        elif 0.65 <= ci < 0.75:
+        elif 0.65 <= pi < 0.75:
             return "good"
-        elif 0.60 <= ci < 0.65:
+        elif 0.60 <= pi < 0.65:
             return "satisfactory"
-        elif 0.50 <= ci < 0.60:
+        elif 0.50 <= pi < 0.60:
             return "poor"
-        elif 0.40 <= ci < 0.50:
+        elif 0.40 <= pi < 0.50:
             return "bad"
-        else:
-            return "very bad"
+        
+        return "very bad"
         
     @computed_field_cached_property()
     def explained_variance_score(self) -> float:
-        df = self._df
-
-        num = np.var(df["residuals"].values)
-        den = np.var(df["observed"].values)
+        num = self.residuals.variance
+        den = self.observed.variance
 
         return 1 - safe_divide(num, den, self._min_denominator)
     
-
 
 def BaselineMetricsFromDict(input_dict):
     for k in ["observed", "predicted", "residuals"]:
