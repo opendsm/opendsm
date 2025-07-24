@@ -357,6 +357,11 @@ class AffinityMatrixOptions(str, Enum):
     SIGMOID = "sigmoid"
     COSINE = "cosine"
 
+class SpectralAssignLabels(str, Enum):
+    KMEANS = "kmeans"
+    DISCRETIZE = "discretize"
+    CLUSTER_QR = "cluster_qr"
+    
 class SpectralSettings(BaseSettings):
     """eigen solver to use"""
     eigen_solver: Optional[SpectralEigenSolver] = pydantic.Field(
@@ -391,8 +396,8 @@ class SpectralSettings(BaseSettings):
     )
 
     """label assignment method"""
-    assign_labels: Literal["cluster_qr"] = pydantic.Field(
-        default="cluster_qr",
+    assign_labels: SpectralAssignLabels = pydantic.Field(
+        default=SpectralAssignLabels.CLUSTER_QR,
     )
 
     n_cluster: ClusterRangeSettings = pydantic.Field(
