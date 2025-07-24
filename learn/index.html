@@ -1,0 +1,999 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+        <link rel="prev" href="..">
+      
+      
+        <link rel="next" href="daily_billing_model/">
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.0, mkdocs-material-9.5.29">
+    
+    
+      
+        <title>General Concepts - EEmeter</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.76a95c52.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../css/custom.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce((e,_)=>(e<<5)-e+_.charCodeAt(0),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="light-blue" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#why-predict-energy-usage" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="EEmeter" class="md-header__button md-logo" aria-label="EEmeter" data-md-component="logo">
+      
+  <img src="../images/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2Z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            EEmeter
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              General Concepts
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="light-blue" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12c0-2.42-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69Z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="light-blue" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69Z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var media,input,key,value,palette=__md_get("__palette");if(palette&&palette.color){"(prefers-color-scheme)"===palette.color.media&&(media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']"),palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent"));for([key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5Z"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5Z"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12Z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41Z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+    
+  
+  EEmeter
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="./" class="md-tabs__link">
+          
+  
+  Learn
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../reference/eemeter/daily_model/" class="md-tabs__link">
+          
+  
+  Reference - Code API
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="EEmeter" class="md-nav__button md-logo" aria-label="EEmeter" data-md-component="logo">
+      
+  <img src="../images/logo.png" alt="logo">
+
+    </a>
+    EEmeter
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    EEmeter
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  <span class="md-ellipsis">
+    Learn
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Learn
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    General Concepts
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    General Concepts
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#why-predict-energy-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why Predict Energy Usage?
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quantifying-energy-savings" class="md-nav__link">
+    <span class="md-ellipsis">
+      Quantifying Energy Savings
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Quantifying Energy Savings">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#deemed-savings-engineering-estimates" class="md-nav__link">
+    <span class="md-ellipsis">
+      Deemed Savings / Engineering Estimates
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#contrasting-current-usage-with-prior-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      Contrasting Current Usage with Prior Usage
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#randomized-control-trial" class="md-nav__link">
+    <span class="md-ellipsis">
+      Randomized Control Trial
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#estimate-usage-with-a-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Estimate Usage with a Model
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#intervention-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      Intervention Lifecycle
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_2" id="__nav_2_2_label" tabindex="">
+            
+  
+  <span class="md-ellipsis">
+    EEmeter
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_2">
+            <span class="md-nav__icon md-icon"></span>
+            EEmeter
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="daily_billing_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Daily / Billing Model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="hourly_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hourly Model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference - Code API
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Reference - Code API
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    eemeter Modules
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            eemeter Modules
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/eemeter/daily_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Daily Model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/eemeter/billing_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Billing Model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/eemeter/daily_model_settings/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Daily Model Settings
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/eemeter/hourly_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hourly Model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/eemeter/utilities/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Utilities
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#why-predict-energy-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why Predict Energy Usage?
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quantifying-energy-savings" class="md-nav__link">
+    <span class="md-ellipsis">
+      Quantifying Energy Savings
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Quantifying Energy Savings">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#deemed-savings-engineering-estimates" class="md-nav__link">
+    <span class="md-ellipsis">
+      Deemed Savings / Engineering Estimates
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#contrasting-current-usage-with-prior-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      Contrasting Current Usage with Prior Usage
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#randomized-control-trial" class="md-nav__link">
+    <span class="md-ellipsis">
+      Randomized Control Trial
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#estimate-usage-with-a-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Estimate Usage with a Model
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#intervention-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      Intervention Lifecycle
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  <h1>General Concepts</h1>
+
+<p>In this section we will cover general concepts in regards to predicting energy usage and calculating energy savings. Other sections will contain model overviews and examples of using the library to create models and predict energy usage.</p>
+<h3 id="why-predict-energy-usage">Why Predict Energy Usage?<a class="headerlink" href="#why-predict-energy-usage" title="Permanent link">&para;</a></h3>
+<p>If you are new to the energy industry, you may be asking yourself what the use cases for predicting energy usage are. In truth, there are many use cases for predicting energy usage, and the ability to do so accurately has far-reaching consequences from the economics of a single household to the stability of the entire grid.</p>
+<p><strong>Common Use Cases Include:</strong></p>
+<ul>
+<li>Forecasting load using weather forecasts to ensure adequate energy supply for the days, weeks, months, and years ahead.</li>
+<li>Determining the impact of interventions such as energy efficiency and demand response. This includes:<ul>
+<li>Understanding the financial impact of installed interventions to accurately track ROI.</li>
+<li>Utilities measuring the impact of these interventions on the utility grid and effectively utilizing them as grid resources.</li>
+</ul>
+</li>
+<li>Implementing "continuous commissioning" at buildings to track changes in energy usage and diagnose equipment issues.</li>
+<li>And many more...</li>
+</ul>
+<p>In this documentation we'll be focused on determining energy savings. After exploring this use case, you will have all the tools needed to apply EEmeter for any use case desired.</p>
+<h3 id="quantifying-energy-savings">Quantifying Energy Savings<a class="headerlink" href="#quantifying-energy-savings" title="Permanent link">&para;</a></h3>
+<p>Within the realm of energy efficiency, there are many different ways to calculate energy savings. The fundamental problem in calculating energy savings is the production of a "counterfactual". What would the energy usage have been in the absence of a specific intervention such as a new HVAC system? This is impossible to truly know, but several techniques are commonly used to accomplish this.</p>
+<h4 id="deemed-savings-engineering-estimates">Deemed Savings / Engineering Estimates<a class="headerlink" href="#deemed-savings-engineering-estimates" title="Permanent link">&para;</a></h4>
+<p>This method involves contrasting the current condition of the building with the future condition of the building. This may mean comparing an existing refrigeration system with a newly installed one that is twice as efficient, or perhaps estimating the impact of behavioral changes at a site that is adapting new working procedures.</p>
+<p>The fundamental problem with this method is that it involves many assumptions. For example, what if the house that just installed the ultra-efficient refrigerator moves their old one into the garage? What if workers do not adapt the new working procedures as expected? Engineers and analysts can attempt to increase the accuracy of their calculations by spending more time tuning calculations to a specific site, but this increases overhead and takes time without any guarantee of increasing accuracy.</p>
+<h4 id="contrasting-current-usage-with-prior-usage">Contrasting Current Usage with Prior Usage<a class="headerlink" href="#contrasting-current-usage-with-prior-usage" title="Permanent link">&para;</a></h4>
+<p>This method involves simply comparing the current year's usage vs. the previous year. Although this is quickly done and leverages real meter data, it disregards the difference in conditions between the two years - in particular, temperature - which can have a huge impact on the energy usage at a site.</p>
+<h4 id="randomized-control-trial">Randomized Control Trial<a class="headerlink" href="#randomized-control-trial" title="Permanent link">&para;</a></h4>
+<p>This method involves finding "nearly identical" sites that are not receiving interventions and comparing the energy usage to those receiving interventions. This side steps the temporal issue of different conditions in each year, but also introduces new challenges with finding "nearly identical" building to match with those receiving interventions. This can be difficult since no building is truly identical with its energy usage, but this can be compensated for with higher sample sizes and is best for residential programs.</p>
+<h4 id="estimate-usage-with-a-model">Estimate Usage with a Model<a class="headerlink" href="#estimate-usage-with-a-model" title="Permanent link">&para;</a></h4>
+<p>This method involves using a model to predict energy usage and then comparing it to the actual usage to determine savings. With EEmeter, this approach relies entirely on temperature and meter data to create a model that can be used to predict energy usage. </p>
+<p>The pros of this method include:</p>
+<ul>
+<li>No need for ad-hoc assumptions - only actual meter data and temperature impact the model.</li>
+<li>Temperature data is used to accurately predict energy usage and contrast energy usage between different time periods.</li>
+<li>No need for finding "nearly identical" buildings.</li>
+<li>Method is suitable for most buildings.</li>
+</ul>
+<p>In addition, when using EEmeter with default configuration, users can be assured of consistent methods to determine energy savings. This is a fundamentally important point when calculating energy savings - consistency. If five different people come up with five different answers, which one do you trust? If estimates are coming from parties that stand to benefit from higher savings estimates (such as energy service companies, engineers, contractors, etc), these numbers are even harder to trust. By using standardized methods, the savings calculations are deterministic and avoid dangerous assumptions.</p>
+<h3 id="intervention-lifecycle">Intervention Lifecycle<a class="headerlink" href="#intervention-lifecycle" title="Permanent link">&para;</a></h3>
+<p>When calculating savings from an intervention, it is important to define temporal periods as these impact how we train and use our model. For a typical efficiency intervention, we will define three periods:</p>
+<div style="text-align: center">
+    <img src="../images/intervention_lifecycle.png" alt="Intervention Lifecycle">
+</div>
+
+<ul>
+<li><strong>Baseline Period</strong>: The period leading up to the intervention period that the model is trained on. For efficiency projects, this is 365 days. For demand response, the period may be shorter.</li>
+<li><strong>Blackout Period</strong>: The period in which the intervention is being installed that should not be included in either baseline or reporting periods. During this period, energy usage is often erratic due to the installation process. For some interventions, the blackout period may be months, and for others there may be no blackout period (i.e. demand response).</li>
+<li><strong>Reporting Period</strong>: The post-blackout period in which we can compare the model counterfactual to the observed energy usage to calculate savings. Reporting periods for efficiency projects typically last at least 365 days but may go far beyond this. For demand response, the reporting period is typically just the event day.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.b8dbb3d2.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.fe8b6f2b.min.js"></script>
+      
+    
+  </body>
+</html>
