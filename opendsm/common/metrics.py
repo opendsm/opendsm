@@ -25,6 +25,7 @@ from enum import Enum
 import numpy as np
 import pandas as pd
 
+from statistics import geometric_mean, harmonic_mean
 from scipy.stats import pearsonr
 
 from functools import cached_property  # TODO: This requires Python 3.8
@@ -51,14 +52,6 @@ class ColumnMetrics(ArbitraryPydanticModel):
     @computed_field_cached_property()
     def mean(self) -> float:
         return self.sum / len(self.series)
-
-    @computed_field_cached_property()
-    def geometric_mean(self) -> float:
-        return np.exp(np.mean(np.log(self.series)))
-
-    @computed_field_cached_property()
-    def harmonic_mean(self) -> float:
-        return len(self.series) / np.sum(1.0 / self.series)
 
     @computed_field_cached_property()
     def variance(self) -> float:

@@ -4,6 +4,11 @@ Changelog
 Development
 -----------
 
+
+opendsm-1.2.5
+-----------
+
+* Expose SpectralClustering's assign_labels options. `discretize` and `cluster_qr` are not always deterministic with
 * Added more metrics to BaselineMetrics
 
 opendsm-1.2.4
