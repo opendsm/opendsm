@@ -30,6 +30,7 @@ from pydantic import BaseModel, ConfigDict
 import pywt
 
 from scipy.signal import find_peaks
+from scipy.spatial.distance import cdist, pdist, squareform
 
 
 from sklearn.preprocessing import StandardScaler, RobustScaler
@@ -419,6 +420,64 @@ def _transform_data(
     return pca_features
 
 
+def _cluster_merge(
+    cluster_labels: np.ndarray,
+    data: np.ndarray,
+    settings: _settings.ClusteringSettings,
+    W: float = 0.5,
+):
+    
+    # get unique labels
+    unique_labels = np.unique(cluster_labels)
+
+    # get the distance between all rows in data
+    distances = cdist(data, data)
+
+    intra_cluster_similarity = np.zeros(len(unique_labels))
+    inter_cluster_similarity = np.zeros((len(unique_labels), len(unique_labels)))
+    for i in range(len(unique_labels)):
+        idx_i = np.where(cluster_labels == unique_labels[i])[0]
+        for j in range(len(unique_labels)):
+            idx_j = np.where(cluster_labels == unique_labels[j])[0]
+
+            if i == j:
+                intra_cluster_similarity[i] = np.mean(distances[idx_i, :][:, idx_i])
+                inter_cluster_similarity[i, j] = 0
+                continue
+            elif i < j:
+                continue
+
+            inter_cluster_similarity[i, j] = np.sum(distances[idx_i, :][:, idx_j])
+            inter_cluster_similarity[j, i] = np.nan
+
+    # if there are only two clusters, merge them if the similarity is less than W
+    if unique_labels.shape[0] == 2:
+        cluster_similarity = inter_cluster_similarity[0, 1]
+        mean_similarity = np.mean(distances[distances != 0])
+
+        ratio = cluster_similarity / mean_similarity
+
+        if ratio < W:
+            return np.zeros(len(cluster_labels))
+        
+        return cluster_labels
+
+    # if there are more than two clusters, merge them if the similarity is less than W
+    mean_similarity = np.mean(inter_cluster_similarity)
+
+    for i in reversed(range(len(unique_labels))):
+        for j in reversed(range(len(unique_labels))):
+            if i == j:
+                continue
+
+            ratio = inter_cluster_similarity[i, j] / mean_similarity
+
+            if ratio < W:
+                cluster_labels[cluster_labels == unique_labels[j]] = unique_labels[i]
+
+    return cluster_labels
+
+
 def cluster_reorder(
     data: pd.DataFrame, 
     cluster_labels: np.ndarray,
@@ -491,7 +550,6 @@ def cluster_reorder(
     return cluster_map
 
 
-
 def cluster_features(
     df: pd.DataFrame,
     settings: _settings.ClusteringSettings,
@@ -528,6 +586,13 @@ def cluster_features(
         raise ValueError(f"Unknown clustering algorithm: {settings.algorithm_selection}")
     
     cluster_labels = cluster_fcn(data, settings)
+
+    # if np.unique(cluster_labels).shape[0] == 2:
+    #     cluster_labels = _cluster_merge(cluster_labels, data, settings)
+
+    
+
+    cluster_labels = _cluster_merge(cluster_labels, data, settings)
 
     if settings.sort_clusters:
         cluster_remap_dict = cluster_reorder(df, cluster_labels, settings)
