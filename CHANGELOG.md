@@ -5,6 +5,11 @@ Development
 -----------
 
 
+opendsm-1.2.6
+-----------
+
+* Fixed bug in `from_series` instantiation of daily data class
+
 opendsm-1.2.5
 -----------
 
