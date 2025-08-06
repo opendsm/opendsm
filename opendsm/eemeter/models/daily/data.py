@@ -115,11 +115,6 @@ class _DailyData:
         Returns:
             An instance of the Data class with the dataframe populated with the corrected data, along with warnings and disqualifications based on the input.
         """
-        if settings is None:
-            settings = {}
-        elif isinstance(settings, dict):
-            settings = cls._settings_class(**settings)
-
         if isinstance(meter_data, pd.Series):
             meter_data = meter_data.to_frame()
         if isinstance(temperature_data, pd.Series):
