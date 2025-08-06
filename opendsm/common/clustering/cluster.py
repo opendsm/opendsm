@@ -22,7 +22,11 @@ import pandas as pd
 from pydantic import BaseModel, ConfigDict
 
 from scipy.signal import find_peaks
+from scipy.spatial.distance import cdist, pdist, squareform
 
+
+from sklearn.preprocessing import StandardScaler, RobustScaler
+from sklearn.decomposition import PCA, KernelPCA
 from sklearn.cluster import DBSCAN, HDBSCAN, Birch, SpectralClustering
 
 from opendsm.common.clustering import (
@@ -317,6 +321,153 @@ def _spectral_clustering(
     return HoF.labels
 
 
+def _transform_data(
+    data: np.ndarray,
+    settings: _settings.ClusteringSettings
+):
+    """
+    Transforms the data using the wavelet transform settings
+    """
+    settings = settings.transform_settings
+
+    def _dwt_coeffs(data, wavelet="db1", wavelet_mode="periodization", n_levels=4):
+        all_features = []
+        # iterate through rows of numpy array
+        for row in range(len(data)):
+            # get max level of decomposition
+            dwt_max_level = pywt.dwt_max_level(data[row].shape[0], wavelet)
+            if n_levels > dwt_max_level:
+                n_levels = dwt_max_level
+            
+            decomp_coeffs = pywt.wavedec(
+                data[row], wavelet=wavelet, mode=wavelet_mode, level=n_levels
+            )
+
+            decomp_coeffs = np.hstack(decomp_coeffs)
+
+            all_features.append(decomp_coeffs)
+
+        return np.vstack(all_features)
+
+    def _pca_coeffs(features, method, min_var_ratio_explained=0.95, n_components=None):
+        if min_var_ratio_explained is not None:
+            n_components = min_var_ratio_explained
+
+        # kernel pca is not fully developed
+        if method == "kernel_pca":
+            if n_components ==  "mle":
+                pca = PCA(n_components=n_components)
+                pca_features = pca.fit_transform(features)
+
+            pca = KernelPCA(n_components=None, kernel="rbf")
+            pca_features = pca.fit_transform(features)
+
+            if min_var_ratio_explained is not None:
+                explained_variance_ratio = pca.eigenvalues_ / np.sum(pca.eigenvalues_)
+
+                # get the cumulative explained variance ratio
+                cumulative_explained_variance = np.cumsum(explained_variance_ratio)
+
+                # find number of components that explain pct% of the variance
+                n_components = np.argmax(cumulative_explained_variance > n_components).astype(int)
+
+            if not isinstance(n_components, (int, np.integer)):
+                raise ValueError("n_components must be an integer for kernel PCA")
+
+            # pca = PCA(n_components=n_components)
+            pca = KernelPCA(n_components=n_components, kernel="rbf")
+            pca_features = pca.fit_transform(features)
+
+        else:
+            pca = PCA(n_components=n_components)
+            pca_features = pca.fit_transform(features)
+
+        return pca_features
+
+    # calculate wavelet coefficients
+    with warnings.catch_warnings():
+        features = _dwt_coeffs(
+            data, 
+            settings.wavelet_name, 
+            settings.wavelet_mode, 
+            settings.wavelet_n_levels
+        )
+
+    pca_features = _pca_coeffs(
+        features,
+        settings.pca_method,
+        settings.pca_min_variance_ratio_explained,
+        settings.pca_n_components,
+    )
+
+    # normalize pca features
+    if settings._standardize:
+        pca_features = (pca_features - pca_features.mean()) / pca_features.std()
+
+    if settings.pca_include_median:
+        pca_features = np.hstack([pca_features, np.median(data, axis=1)[:, None]])
+
+    return pca_features
+
+
+def _cluster_merge(
+    cluster_labels: np.ndarray,
+    data: np.ndarray,
+    settings: _settings.ClusteringSettings,
+    W: float = 0.5,
+):
+    
+    # get unique labels
+    unique_labels = np.unique(cluster_labels)
+
+    # get the distance between all rows in data
+    distances = cdist(data, data)
+
+    intra_cluster_similarity = np.zeros(len(unique_labels))
+    inter_cluster_similarity = np.zeros((len(unique_labels), len(unique_labels)))
+    for i in range(len(unique_labels)):
+        idx_i = np.where(cluster_labels == unique_labels[i])[0]
+        for j in range(len(unique_labels)):
+            idx_j = np.where(cluster_labels == unique_labels[j])[0]
+
+            if i == j:
+                intra_cluster_similarity[i] = np.mean(distances[idx_i, :][:, idx_i])
+                inter_cluster_similarity[i, j] = 0
+                continue
+            elif i < j:
+                continue
+
+            inter_cluster_similarity[i, j] = np.sum(distances[idx_i, :][:, idx_j])
+            inter_cluster_similarity[j, i] = np.nan
+
+    # if there are only two clusters, merge them if the similarity is less than W
+    if unique_labels.shape[0] == 2:
+        cluster_similarity = inter_cluster_similarity[0, 1]
+        mean_similarity = np.mean(distances[distances != 0])
+
+        ratio = cluster_similarity / mean_similarity
+
+        if ratio < W:
+            return np.zeros(len(cluster_labels))
+        
+        return cluster_labels
+
+    # if there are more than two clusters, merge them if the similarity is less than W
+    mean_similarity = np.mean(inter_cluster_similarity)
+
+    for i in reversed(range(len(unique_labels))):
+        for j in reversed(range(len(unique_labels))):
+            if i == j:
+                continue
+
+            ratio = inter_cluster_similarity[i, j] / mean_similarity
+
+            if ratio < W:
+                cluster_labels[cluster_labels == unique_labels[j]] = unique_labels[i]
+
+    return cluster_labels
+
+
 def cluster_reorder(
     data: pd.DataFrame, 
     cluster_labels: np.ndarray,
@@ -389,8 +540,8 @@ def cluster_reorder(
     return cluster_map
 
 
-def _cluster_features(
-    data: np.ndarray,
+def cluster_features(
+    df: pd.DataFrame,
     settings: _settings.ClusteringSettings,
 ) -> np.ndarray:
 
@@ -425,26 +576,12 @@ def _cluster_features(
     
     cluster_labels = cluster_fcn(data, settings)
 
-    return cluster_labels
+    # if np.unique(cluster_labels).shape[0] == 2:
+    #     cluster_labels = _cluster_merge(cluster_labels, data, settings)
 
-
-def cluster_features(
-    df: pd.DataFrame,
-    settings: _settings.ClusteringSettings,
-):
-    # convert data to numpy array
-    data = df.to_numpy()
     
-    # bypass clustering if cluster count is >= data
-    if settings.algorithm_selection not in ["dbscan", "hdbscan"]:
-        algo = f"{settings.algorithm_selection.value}"
-        algo_settings = getattr(settings, algo)
-        if algo_settings.n_cluster.lower >= len(data):
-            return np.arange(len(data))
 
-    data = _transform.transform_features(data, settings)
-
-    cluster_labels = _cluster_features(data, settings)
+    cluster_labels = _cluster_merge(cluster_labels, data, settings)
 
     if settings.sort_clusters:
         cluster_remap_dict = cluster_reorder(df, cluster_labels, settings)
