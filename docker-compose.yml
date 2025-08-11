@@ -1,4 +1,3 @@
-version: '3'
 services:
   shell:
     build: .
@@ -9,16 +8,17 @@ services:
     entrypoint: /bin/sh
     volumes:
       - .:/app
-      - /app/tests/__pycache__/
 
   docs:
     image: eemeter_shell
+    stdin_open: true
+    tty: true
     ports:
-      - "${HOST_PORT_DOCS:-8000}:8000"
-    entrypoint: make -C docs livehtml
+      - "127.0.0.1:${HOST_PORT_DOCS:-8000}:${HOST_PORT_DOCS:-8000}"
+      - "[::1]:${HOST_PORT_DOCS:-8000}:${HOST_PORT_DOCS:-8000}"
+    entrypoint: mkdocs serve -f docs/mkdocs.yml --dev-addr="0.0.0.0:${HOST_PORT_DOCS:-8000}"
     volumes:
       - .:/app
-      - /app/tests/__pycache__/
 
   test:
     image: eemeter_shell
@@ -29,19 +29,20 @@ services:
 
   jupyter:
     image: eemeter_shell
+    platform: linux/amd64
+    stdin_open: true
+    tty: true
     ports:
-      - "${HOST_PORT_JUPYTER:-8888}:${HOST_PORT_JUPYTER:-8888}"
+      - "127.0.0.1:${HOST_PORT_JUPYTER:-8888}:${HOST_PORT_JUPYTER:-8888}"
+      - "[::1]:${HOST_PORT_JUPYTER:-8888}:${HOST_PORT_JUPYTER:-8888}"
     entrypoint: |
       jupyter lab scripts/ --ip=0.0.0.0 --port=${HOST_PORT_JUPYTER:-8888} --allow-root --no-browser
     volumes:
       - .:/app
-      - /app/tests/__pycache__/
 
-  pipenv:
+  uv:
     image: eemeter_shell
-    entrypoint: pipenv
-    environment:
-      - PIPENV_CACHE_DIR=/app/.docker-pipenv-cache  # if you get weird caching behavior remove this dir
+    entrypoint: uv
     volumes:
       - .:/app
 

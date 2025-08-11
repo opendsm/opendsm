@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opendsm"
+description = "Measure demand-side program impacts"   # set directly
+dynamic = ["version"]                                  # only version is dynamic
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "opendsm", email = "opendsm@lists.lfenergy.org" }]
+classifiers = [
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+  "attrs",
+  "click",
+  "fdasrsf>=2.4.1",
+  "nlopt",
+  "numba",
+  "numpy>=1.24.4",
+  "pandas>=1.1.0",
+  "pyarrow",
+  "pydantic>=2.0",
+  "pywavelets",
+  "requests",
+  "scikit-fda",
+  "scikit-learn>=1.3.0",
+  "scipy>=1.10.1",
+  "statsmodels",
+]
+
+[project.optional-dependencies]
+dev = [
+  "sqlalchemy",
+  "eeweather>=0.3.12",
+  "black",
+  "coverage",
+  "jupyterlab",
+  "nbsphinx",
+  "pytest",
+  "pytest-cov",
+  "pytest-profiling",
+  "pytest-xdist",
+  "snapshottest==0.6.0",
+  "tox",
+  "twine",
+  "typing",
+  "mkdocs>=1.6",
+  "mkdocs-material>=9.5",
+  "mkdocs-include-markdown-plugin>=6.0",
+  "mkdocstrings[python]>=0.30.0",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+exclude = ["tests", "tests.*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "opendsm.__version__.__version__" }  # keep this
+
+[project.urls]
+Homepage = "http://github.com/opendsm/opendsm"
+Repository = "http://github.com/opendsm/opendsm"
+Issues = "http://github.com/opendsm/opendsm/issues"
+
+[project.scripts]
+opendsm = "opendsm.cli:main"

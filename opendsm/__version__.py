@@ -17,11 +17,19 @@
    limitations under the License.
 
 """
-__title__ = "opendsm"
-__description__ = "Measure demand-side program impacts"
-__url__ = "http://github.com/opendsm/opendsm"
+
+from importlib.metadata import metadata, PackageNotFoundError
+
 __version__ = "1.2.6"
-__author__ = "opendsm"
-__author_email__ = "opendsm@lists.lfenergy.org"
-__license__ = "Apache 2.0"
+try:
+    _meta = metadata("opendsm")
+except PackageNotFoundError:
+    _meta = {}
+
+__title__ = _meta.get("Name", "opendsm")
+__description__ = _meta.get("Summary", "")
+__author__ = _meta.get("Author", "")
+__author_email__ = _meta.get("Author-email", "")
+__license__ = _meta.get("License", "")
+__url__ = "http://github.com/opendsm/opendsm"
 __copyright__ = "Copyright 2014-2025 OpenDSM contributors"
