@@ -11,9 +11,12 @@ services:
 
   docs:
     image: eemeter_shell
+    stdin_open: true
+    tty: true
     ports:
-      - "${HOST_PORT_DOCS:-8000}:8000"
-    entrypoint: make -C docs livehtml
+      - "127.0.0.1:${HOST_PORT_DOCS:-8000}:${HOST_PORT_DOCS:-8000}"
+      - "[::1]:${HOST_PORT_DOCS:-8000}:${HOST_PORT_DOCS:-8000}"
+    entrypoint: mkdocs serve -f docs/mkdocs.yml --dev-addr="0.0.0.0:${HOST_PORT_DOCS:-8000}"
     volumes:
       - .:/app
 
