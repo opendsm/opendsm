@@ -4,6 +4,7 @@ Changelog
 Development
 -----------
 
+* Switch build to use pyproject.toml and uv 
 
 opendsm-1.2.6
 -----------
