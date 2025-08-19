@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import sys
 import pydantic
-from typing import Union, Optional
+from typing import Union, Optional, Literal
 from enum import Enum
 
 import numpy as np
@@ -39,6 +39,10 @@ from opendsm.common.pydantic_utils import (
     PydanticFromDict,
     computed_field_cached_property,
 )
+from opendsm.common.clustering.clustering_metrics.density_based_clustering_validation import dbcv
+
+# TODO Delete this import
+from permetrics import ClusteringMetric
 
 
 
@@ -57,7 +61,8 @@ class DistanceMetric(str, Enum):
     what distance method to use
     """
     EUCLIDEAN = "euclidean"
-    SEUCLIDEAN = "seuclidean"
+    STANDARDIZED_EUCLIDEAN = "seuclidean"
+    SQUARED_EUCLIDEAN = "sqeuclidean"
     MANHATTAN = "manhattan"
     COSINE = "cosine"
 
@@ -78,7 +83,7 @@ class ClusterPairDistanceMetrics(ArbitraryPydanticModel):
     )
 
     @computed_field_cached_property()
-    def n(self) -> float:
+    def n(self) -> int:
         return self.distance.size
 
     @computed_field_cached_property()
@@ -130,7 +135,7 @@ class SingleClusterMetrics(ArbitraryPydanticModel):
         default=None,
     )
 
-    n: float = pydantic.Field()
+    n: int = pydantic.Field()
 
     mean: np.array = pydantic.Field()
 
@@ -141,7 +146,59 @@ class SingleClusterMetrics(ArbitraryPydanticModel):
     distance_to_mean: dict[int | str, ClusterPairDistanceMetrics] | ClusterPairDistanceMetrics = pydantic.Field()
 
     distance_to_median: dict[int | str, ClusterPairDistanceMetrics] | ClusterPairDistanceMetrics = pydantic.Field()
-    
+
+    mean_distance_intra_cluster: Optional[np.array] = pydantic.Field(
+        default=None,
+        exclude=True,
+        repr=False,
+    )
+
+    median_distance_intra_cluster: Optional[np.array] = pydantic.Field(
+        default=None,
+        exclude=True,
+        repr=False,
+    )
+
+    mean_distance_to_nearest_cluster: Optional[np.array] = pydantic.Field(
+        default=None,
+        exclude=True,
+        repr=False,
+    )
+
+    median_distance_to_nearest_cluster: Optional[np.array] = pydantic.Field(
+        default=None,
+        exclude=True,
+        repr=False,
+    )
+
+    @computed_field_cached_property()
+    def mean_silhouette_coefficient(self) -> np.array:
+        if self.mean_distance_intra_cluster is None: 
+            return None
+
+        silhouette = np.empty(self.n)
+        for idx in range(self.n):
+            a = self.mean_distance_intra_cluster[idx]
+            b = self.mean_distance_to_nearest_cluster[idx]
+
+            silhouette[idx] = (b - a) / np.max([b, a])
+
+        return silhouette
+
+    @computed_field_cached_property()
+    def median_silhouette_coefficient(self) -> np.array:
+        if self.median_distance_intra_cluster is None:
+            return None
+
+        silhouette = np.empty(self.n)
+        for idx in range(self.n):
+            a = self.median_distance_intra_cluster[idx]
+            b = self.median_distance_to_nearest_cluster[idx]
+            
+            silhouette[idx] = (b - a) / np.max([b, a])
+
+        return silhouette
+
 
 class ClusterMetrics(ArbitraryPydanticModel):
     # TODO: Update the doc string
@@ -158,6 +215,11 @@ class ClusterMetrics(ArbitraryPydanticModel):
 
     distance_metric: DistanceMetric = pydantic.Field(
         default=DistanceMetric.EUCLIDEAN,
+    )
+
+    index_direction: Literal["minimize", "maximize"] = pydantic.Field(
+        default="minimize",
+        description="Force the indice direction to `minimize` or `maximize` as best",
     )
 
     _min_denominator: float = 1e-3
@@ -295,7 +357,67 @@ class ClusterMetrics(ArbitraryPydanticModel):
                 data[label_i, label_j] = self._distance_to_median[np.ix_(idx_i, idx_j)].flatten()
 
         return data
+
+    def _labeled_distance_to_nearest_cluster(self, agg: str = "mean") -> dict[int, np.array]:
+        data = {}
+        for label_i in self.unique_labels:
+            n = self._labeled_distance[label_i, label_i].shape[0]
+            dist_to_nearest = np.ones(n) * np.inf
+            for idx_i in range(n):
+                for label_j in self.unique_labels:
+                    if label_i == label_j:
+                        continue
+
+                    dist_matrix = self._labeled_distance[label_i, label_j]
+                    if agg == "mean":
+                        avg_dist = np.mean(dist_matrix[idx_i, :])
+                    else:
+                        avg_dist = np.median(dist_matrix[idx_i, :])
+
+                    if avg_dist < dist_to_nearest[idx_i]:
+                        dist_to_nearest[idx_i] = avg_dist
+
+            data[label_i] = dist_to_nearest
+
+        return data 
     
+    @computed_field_cached_property()
+    def _labeled_mean_distance_to_nearest_cluster(self) -> dict[int, np.array]:
+        return self._labeled_distance_to_nearest_cluster(agg="mean")
+    
+    @computed_field_cached_property()
+    def _labeled_median_distance_to_nearest_cluster(self) -> dict[int, np.array]:
+        return self._labeled_distance_to_nearest_cluster(agg="median")
+
+    def _labeled_distance_intra_cluster(self, agg: str = "mean") -> dict[int, np.array]:
+        data = {}
+        for label_i in self.unique_labels:
+            n = self._labeled_distance[label_i, label_i].shape[0]
+
+            distance_array = self._labeled_distance[label_i, label_i]
+            dist_to_nearest = np.empty(n)
+            for idx in range(n):
+                mask = np.ones(n, dtype=bool)
+                mask[idx] = False
+                distance_masked = distance_array[idx][mask]
+
+                if agg == "mean":
+                    dist_to_nearest[idx] = np.mean(distance_masked)
+                else:
+                    dist_to_nearest[idx] = np.median(distance_masked)
+
+            data[label_i] = dist_to_nearest
+
+        return data
+    
+    @computed_field_cached_property()
+    def _labeled_mean_distance_intra_cluster(self) -> dict[int, np.array]:
+        return self._labeled_distance_intra_cluster(agg="mean")
+    
+    @computed_field_cached_property()
+    def _labeled_median_distance_intra_cluster(self) -> dict[int, np.array]:
+        return self._labeled_distance_intra_cluster(agg="median")
+        
     @computed_field_cached_property()
     def all(self) -> SingleClusterMetrics:
         key = (self._all, self._all)
@@ -360,6 +482,11 @@ class ClusterMetrics(ArbitraryPydanticModel):
                     cluster_ids=key,
                     distance=self._labeled_distance_to_median[key],
                 )
+
+            mean_distance_intra_cluster = self._labeled_mean_distance_intra_cluster[label]
+            median_distance_intra_cluster = self._labeled_median_distance_intra_cluster[label]
+            mean_distance_to_nearest_cluster = self._labeled_mean_distance_to_nearest_cluster[label]
+            median_distance_to_nearest_cluster = self._labeled_median_distance_to_nearest_cluster[label]
             
             data[label] = SingleClusterMetrics(
                 cluster_id=label,
@@ -369,6 +496,10 @@ class ClusterMetrics(ArbitraryPydanticModel):
                 distance=distance,
                 distance_to_mean=distance_to_mean,
                 distance_to_median=distance_to_median,
+                mean_distance_intra_cluster=mean_distance_intra_cluster,
+                median_distance_intra_cluster=median_distance_intra_cluster,
+                mean_distance_to_nearest_cluster=mean_distance_to_nearest_cluster,
+                median_distance_to_nearest_cluster=median_distance_to_nearest_cluster,
             )
 
         return data
@@ -376,28 +507,121 @@ class ClusterMetrics(ArbitraryPydanticModel):
     @computed_field_cached_property()
     def duda_hart_index(self) -> float:
         # Duda and Hart Index
-        pass
+        # Range is 0 to inf, 0 is the best
+
+        intracluster_distance = 0
+        intercluster_distance = 0
+        for label in self.unique_labels:
+            intracluster_distance +=self.cluster[label].distance_to_mean[label].mean
+
+            intra_idx = np.argwhere(self.labels == label).flatten()
+            inter_idx = np.argwhere(self.labels != label).flatten()
+
+            intercluster_distance += np.mean(self._distance[np.ix_(intra_idx, inter_idx)])
+
+        res = intracluster_distance / intercluster_distance
+
+        if self.index_direction == "maximize":
+            res *= -1
+
+        return res
+
 
     @computed_field_cached_property()
-    def ssei_index(self) -> float:
-        # Sum of Squared Errors Index
-        pass
+    def density_based_clustering_validation_index(self) -> float:
+        # Density-Based Clustering Validation Index
+        # https://epubs.siam.org/doi/pdf/10.1137/1.9781611973440.96
+        # Metric is between -1 and 1, 1 is the best
+
+        precomputed_distances = self._distance
+        # if self.distance_metric == DistanceMetric.EUCLIDEAN:
+        #     precomputed_distances = np.power(precomputed_distances, 2)
+
+        dbcvi = dbcv(
+            X = self.data,
+            y = self.labels,
+            precomputed_distances = precomputed_distances,
+            metric = self.distance_metric,
+            noise_id = -1, # what label is the noise index
+            check_duplicates = False,
+            n_processes = 1,
+            enable_dynamic_precision = False,
+            bits_of_precision = 512,
+            use_original_mst_implementation = False
+        )
+
+        if self.index_direction == "minimize":
+            dbcvi *= -1
+
+        return dbcvi
 
     @computed_field_cached_property()
-    def beale_index(self) -> float:
-        # aka “variance ratio criterion” or the “F-ratio”
-        pass
+    def ball_hall_index(self) -> float:
+        # Ball and Hall Index
+        # Range is 0 to inf, 0 is the best
+        cm = ClusteringMetric(
+            X=self.data,
+            y_pred=self.labels,
+        )
+
+        res = cm.ball_hall_index()
+
+        if self.index_direction == "maximize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def hartigan_index(self) -> float:
+        # Hartigan Index
+        # Range is 0 to inf, inf is the best
+        cm = ClusteringMetric(
+            X=self.data,
+            y_pred=self.labels,
+        )
+
+        res = cm.hartigan_index()
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
 
     @computed_field_cached_property()
     def silhouette_index(self) -> float:
-        pass
+        # range is -1 to 1, 1 is the best
+        silhouette_coefficients = []
+        for cluster_id in self.unique_labels:
+            silhouette_coefficients.append(self.cluster[cluster_id].mean_silhouette_coefficient)
 
+        silhouette_coefficients = np.hstack(silhouette_coefficients)
+
+        res = np.mean(silhouette_coefficients)
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+    
     @computed_field_cached_property()
-    def inverse_silhouette_index(self) -> float:
-        pass
+    def silhouette_median_index(self) -> float:
+        # range is -1 to 1, 1 is the best
+        silhouette_coefficients = []
+        for cluster_id in self.unique_labels:
+            silhouette_coefficients.append(self.cluster[cluster_id].median_silhouette_coefficient)
+
+        silhouette_coefficients = np.hstack(silhouette_coefficients)
+
+        res = np.median(silhouette_coefficients)
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
 
     @computed_field_cached_property()
     def calinski_harabasz_index(self) -> float:
+        # range is 0 to inf, inf is the best
         k = self.label_count # number of clusters
         n = self.n_total # number of data points
         mean_all = self._mean[0]
@@ -418,11 +642,22 @@ class ClusterMetrics(ArbitraryPydanticModel):
         if WCSS == 0:
             return 1.0
 
-        return (BCSS / WCSS) * ((n - k) / (k - 1.0))
+        res = (BCSS / WCSS) * ((n - k) / (k - 1.0))
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def variance_ratio_criterion(self) -> float:
+        return self.calinski_harabasz_index
 
     @computed_field_cached_property()
     def davies_bouldin_index(self) -> float:
+        # range is 0 to inf, 0 is the best
         k = self.label_count
+        # Could abstract with scipy.stats.moment
 
         intracluster_distance = []
         for label in self.unique_labels:
@@ -448,4 +683,164 @@ class ClusterMetrics(ArbitraryPydanticModel):
 
                 similarity[i, j] = (dist_i + dist_j) / dist_ij
 
-        return np.sum(np.max(similarity, axis=1)) / k
+        res = np.sum(np.max(similarity, axis=1)) / k
+
+        if self.index_direction == "maximize":
+            res *= -1
+
+        return res
+
+
+    @computed_field_cached_property()
+    def xie_beni_index(self) -> float:
+        # Range is 0 to inf, 0 is the best
+        cm = ClusteringMetric(
+            X=self.data,
+            y_pred=self.labels,
+        )
+
+        res = cm.xie_beni_index()
+
+        if self.index_direction == "maximize":
+            res *= -1
+
+        return res
+    
+    @computed_field_cached_property()
+    def banfeld_raftery_index(self) -> float:
+        # Range is -inf to inf, -inf is the best
+        cm = ClusteringMetric(
+            X=self.data,
+            y_pred=self.labels,
+        )
+
+        res = cm.banfeld_raftery_index()
+
+        if self.index_direction == "maximize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def ksq_detw_index(self) -> float:
+        # Range is -inf to inf, inf is the best
+        cm = ClusteringMetric(
+            X=self.data,
+            y_pred=self.labels,
+        )
+
+        res = cm.ksq_detw_index()
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def det_ratio_index(self) -> float:
+        # Range is 0 to inf, inf is the best
+        cm = ClusteringMetric(
+            X=self.data,
+            y_pred=self.labels,
+        )
+
+        res = cm.det_ratio_index()
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+    
+    @computed_field_cached_property()
+    def dunn_index(self) -> float:
+        # Dunn Index
+        # Range is 0 to inf, inf is the best
+        cm = ClusteringMetric(
+            X=self.data,
+            y_pred=self.labels,
+        )
+
+        res = cm.dunn_index()
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+    
+    @computed_field_cached_property()
+    def log_det_ratio_index(self) -> float:
+        # Range is -inf to inf, inf is the best
+        cm = ClusteringMetric(
+            X=self.data,
+            y_pred=self.labels,
+        )
+
+        res = cm.log_det_ratio_index()
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+    
+    @computed_field_cached_property()
+    def log_ss_ratio_index(self) -> float:
+        # Range is -inf to inf, inf is the best
+        cm = ClusteringMetric(
+            X=self.data,
+            y_pred=self.labels,
+        )
+
+        res = cm.log_ss_ratio_index()
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+    
+    @computed_field_cached_property()
+    def sum_of_squared_errors_index(self) -> float:
+        # Sum of Squared Errors Index
+        # Range is 0 to inf, 0 is the best
+        cm = ClusteringMetric(
+            X=self.data,
+            y_pred=self.labels,
+        )
+
+        res = cm.sum_squared_error_index()
+
+        if self.index_direction == "maximize":
+            res *= -1
+
+        return res
+    
+    @computed_field_cached_property()
+    def mean_squared_error_index(self) -> float:
+        # Mean Squared Error Index
+        # Range is 0 to inf, 0 is the best
+        cm = ClusteringMetric(
+            X=self.data,
+            y_pred=self.labels,
+        )
+
+        res = cm.mean_squared_error_index()
+
+        if self.index_direction == "maximize":
+            res *= -1
+
+        return res
+    
+    @computed_field_cached_property()
+    def r_squared_index(self) -> float:
+        # R-Squared Index
+        # Range is -inf to 1, 1 is the best
+        cm = ClusteringMetric(
+            X=self.data,
+            y_pred=self.labels,
+        )
+
+        res = cm.r_squared_index()
+
+        if self.index_direction == "minimize":
+            res = 1 - res
+
+        return res
