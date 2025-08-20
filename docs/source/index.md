@@ -5,7 +5,8 @@
 </style>
 
 <p align="center" id="opendsm">
-  <a href="https://lfenergy.org/projects/opendsm/"><img src="./images/common/opendsm-horizontal-color.svg" alt="OpenDSM"></a>
+  <a href="https://lfenergy.org/projects/opendsm/"><img src="./images/common/opendsm-horizontal-color.svg#only-light" alt="OpenDSM"></a>
+  <a href="https://lfenergy.org/projects/opendsm/"><img src="./images/common/opendsm-horizontal-white.svg#only-dark" alt="OpenDSM"></a>
 </p>
 
 <p align="center">
@@ -57,7 +58,7 @@ Create models fit on historical data to generate predictions of energy consumpti
 
 ### GRIDmeter
 
-Create comparison groups (CGs) to correct OpenEEmeter models using non-participant population
+Assign comparison groups (CGs) to correct OpenEEmeter models using non-participant population through one of the following methods
 
 - **Comparison Group Clustering**: Cluster on model error profiles to select unique CG for each treatment meter
 - **Individual Meter Matching**: Create population-level corrections by choosing the nearest *n* meters using Euclidean distance
