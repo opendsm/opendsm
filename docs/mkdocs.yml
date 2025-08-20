@@ -1,4 +1,4 @@
-site_name: EEmeter
+site_name: OpenDSM
 
 docs_dir: "source"
 extra_css:
@@ -6,6 +6,7 @@ extra_css:
 
 plugins:
   - search
+  - macros
   - mkdocstrings:
       handlers:
         python:
@@ -23,25 +24,30 @@ plugins:
             show_docstring_modules: false
 
 nav:
-  - EEmeter: index.md
+  - OpenDSM: index.md
+
   - Learn:
     - General Concepts: learn/index.md
-    - EEmeter:
+    - OpenEEmeter:
       - Daily / Billing Model: learn/daily_billing_model.md
       - Hourly Model: learn/hourly_model.md
 
   - Reference - Code API: 
-    - eemeter Modules: 
+    - OpenEEmeter Modules: 
       - Daily Model: reference/eemeter/daily_model.md
       - Billing Model: reference/eemeter/billing_model.md
       - Daily Model Settings: reference/eemeter/daily_model_settings.md
       - Hourly Model: reference/eemeter/hourly_model.md
       - Utilities: reference/eemeter/utilities.md
     
+  - Documentation:
+    - OpenEEmeter:
+      - Daily/Billing Model: documentation/eemeter/daily_billing_model.md
+      - Hourly Model: documentation/eemeter/hourly_model.md
 
 theme:
   name: "material"
-  logo: "images/logo.png"
+  logo: "images/common/opendsm-icon-white.svg"
   features:
     - navigation.tabs
     - navigation.sections
@@ -75,6 +81,11 @@ markdown_extensions:
       anchor_linenums: true
   - pymdownx.arithmatex:
       generic: 
+  - pymdownx.pathconverter:
+      base_path: 'opendsm' # default: ''
+      relative_path: '' # default ''
+      absolute: false # default: false
+      tags: 'a script img link object embed'
   - footnotes
   - attr_list
   - pymdownx.inlinehilite
@@ -86,3 +97,7 @@ markdown_extensions:
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - toc:
       permalink: true
+
+extra:
+  daily_billing_model_pdf_url: "../../../documentation_src/daily_billing_model_specification_results.pdf"
+  hourly_model_pdf_url: "../../../documentation_src/hourly_model_report.pdf"

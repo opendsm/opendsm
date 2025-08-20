@@ -51,7 +51,7 @@ In addition, when using EEmeter with default configuration, users can be assured
 When calculating savings from an intervention, it is important to define temporal periods as these impact how we train and use our model. For a typical efficiency intervention, we will define three periods:
 
 <div style="text-align: center">
-    <img src="../images/intervention_lifecycle.png" alt="Intervention Lifecycle">
+    <img src="../images/general_concepts/intervention_lifecycle.png" alt="Intervention Lifecycle">
 </div>
 
 - **Baseline Period**: The period leading up to the intervention period that the model is trained on. For efficiency projects, this is 365 days. For demand response, the period may be shorter.

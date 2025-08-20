@@ -9,7 +9,7 @@ The daily model is trained using daily energy usage intervals and also predicts 
 The daily model, at its core, utilizes a piecewise linear regression model that predicts energy usage relative to temperature. The model determines temperature balance points at which energy usage starts changing relative to temperature.
 
 <div style="text-align: center">
-    <img src="../../images/daily_model_balance_points.png" alt="Daily Model Balance Points">
+    <img src="../../images/eemeter/daily_billing/daily_model_balance_points.png" alt="Daily Model Balance Points">
 </div>
 
 The key terms to understand here are:
@@ -25,7 +25,7 @@ Based on the site behavior, there are four different model types that may be gen
 - Temperature Independent Load
 
 <div style="text-align: center; margin-top: 30px">
-    <img src="../../images/heating_cooling_load.png" alt="Different Model Types">
+    <img src="../../images/eemeter/daily_billing/heating_cooling_load.png" alt="Different Model Types">
 </div>
 
 When the model is fit, each site will receive its own unique model fit and coefficients. The general model fitting process is as follows:
@@ -42,8 +42,8 @@ The process described above is effective but may have shortcomings in real life 
 For example, what if a site is more populated during a particular season (for example, a Summer House or Ski Lodge) or during weekdays (for example, offices and most homes). This may result in models that fail to accurately predict energy usage because they are trying to account for all time periods at once.
 
 <div style="display: flex; justify-content: center; margin-top: 30px">
-    <img src="../../images/season_problems.png" alt="Seasonal Misalignment" style="max-width: 50%">
-    <img src="../../images/weekday_problems.png" alt="Weekday Misalignment" style="max-width: 50%">
+    <img src="../../images/eemeter/daily_billing/season_problems.png" alt="Seasonal Misalignment" style="max-width: 50%">
+    <img src="../../images/eemeter/daily_billing/weekday_problems.png" alt="Weekday Misalignment" style="max-width: 50%">
 </div>
 
 To combat this, the model will create "splits" that will store independent models for different seasons or weekday/weekend combinations, but only if necessary. 
@@ -58,7 +58,7 @@ The general process is as follows:
 This provides a standardized process for splitting the model to better predict energy usage by certain time periods (if the benefit outweighs the additional model complexity).
 
 <div style="text-align: center; margin-top: 30px">
-    <img src="../../images/split_model_season.png" alt="Model split by season">
+    <img src="../../images/eemeter/daily_billing/split_model_season.png" alt="Model split by season">
 </div>
 
 ## Using the Daily Model
@@ -158,7 +158,7 @@ plt.show()
 
 ??? Returns
     <div style="text-align: center; margin-top: 30px">
-        <img src="../../images/baseline_data_daily.png" alt="Daily Baseline Data">
+        <img src="../../images/eemeter/daily_billing/baseline_data_daily.png" alt="Daily Baseline Data">
     </div>
 
 If we observe the data we can see a full year of data with observed usage peaking in the winter and lowering in the summer with warmer temperatures. It's clear that this site is located in a colder climate and uses more electricity in the winter.
@@ -236,7 +236,7 @@ daily_model.plot(baseline_data)
 
 ??? Returns
     <div style="text-align: center; margin-top: 30px">
-        <img src="../../images/daily_baseline_vs_model.png" alt="Daily Baseline Observed vs. Model">
+        <img src="../../images/eemeter/daily_billing/daily_baseline_vs_model.png" alt="Daily Baseline Observed vs. Model">
     </div>
 
 From this graph we can also observe model splits and model types as described in the [Model Splits](#model-splits) section. We can observe the following models:
@@ -255,7 +255,7 @@ daily_model.plot(reporting_data)
 
 ??? Returns
     <div style="text-align: center; margin-top: 30px">
-        <img src="../../images/daily_reporting_vs_model.png" alt="Daily Reporting Observed vs. Model">
+        <img src="../../images/eemeter/daily_billing/daily_reporting_vs_model.png" alt="Daily Reporting Observed vs. Model">
     </div>
 
 In this plot we can see that the site is using significantly less energy in colder temperatures compared to the model / baseline period. Perhaps this site installed an efficiency intervention that saves energy in colder temperatures?
@@ -294,7 +294,7 @@ plt.show()
 
 ??? Returns
     <div style="text-align: center; margin-top: 30px">
-        <img src="../../images/predicted_vs_observed_daily.png" alt="Daily Reporting Observed vs. Model">
+        <img src="../../images/eemeter/daily_billing/predicted_vs_observed_daily.png" alt="Daily Reporting Observed vs. Model">
     </div>
 
 From here, we can easily calculate savings by subtracting observed usage from predicted usage.
