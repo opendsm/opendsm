@@ -2,7 +2,7 @@
     options:
       show_submodules: true
       filters:
-      - "!^_"
+      - "!^_[^_]"
       - "!^from_2_0"
       - "!seasonal_options"
       - "!day_options"
@@ -14,7 +14,7 @@
 ::: opendsm.eemeter.models.daily.utilities.settings
     options:
       filters:
-      - "!^__repr"
+      - "!^_[^_]"
       - "!"
       members:
       - DailySettings
@@ -23,7 +23,7 @@
     options:
       show_submodules: true
       filters:
-      - "!^_"
+      - "!^_[^_]"
       - "!log_warnings"
       members:
       - DailyBaselineData

@@ -19,10 +19,13 @@ plugins:
             show_source: false
             inherited_members: true
             members_order: source
+            docstring_options:
+              ignore_init_summary: false
             merge_init_into_class: true
             show_symbol_type_heading: true
             show_symbol_type_toc: true
             show_docstring_modules: false
+            docstring_section_style: table
 
 nav:
   - Home: index.md
@@ -30,6 +33,8 @@ nav:
 
   - Documentation:
     - General Concepts: documentation/general_concepts.md
+    - Philosophy: documentation/philosophy.md
+    - History: documentation/history.md
     - OpenEEmeter: 
       - Hourly Model:
         - Methodology: documentation/eemeter/hourly_model/methodology.md
@@ -46,6 +51,13 @@ nav:
         - Example: documentation/eemeter/billing_model/example.md
         - API: documentation/eemeter/billing_model/api.md
         - References: documentation/eemeter/billing_model/references.md
+    - DRmeter:
+      - New Model: documentation/drmeter/new_model/index.md
+      - CalTRACK: 
+        - Methodology: documentation/drmeter/caltrack/methodology.md
+        - Example: documentation/drmeter/caltrack/example.md
+        - API: documentation/drmeter/caltrack/api.md
+        - References: documentation/drmeter/caltrack/references.md
 
   - Community: community.md
 

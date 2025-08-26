@@ -172,7 +172,7 @@ daily_model.plot(baseline_data)
         <img src="../../images/eemeter/daily_billing/daily_baseline_vs_model.png" alt="Daily Baseline Observed vs. Model">
     </div>
 
-From this graph we can also observe model splits and model types as described in the [Model Splits](#model-splits) section. We can observe the following models:
+From this graph we can also observe model splits and model types as described in the [Model Splits](../documentation/eemeter/billing_model/methodology/#model-splits) section. We can observe the following models:
 
 1. Shoulder/Winter - Weekday
 2. Summer - Weekday
