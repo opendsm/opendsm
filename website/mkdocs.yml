@@ -1,0 +1,120 @@
+site_name: OpenDSM
+
+docs_dir: "src"
+extra_css:
+  - "css/custom.css"
+
+plugins:
+  - search
+  - macros
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [..]
+          options:
+            show_bases: false
+            show_if_no_docstring: true
+            show_root_heading: false
+            show_root_toc_entry: false
+            show_source: false
+            inherited_members: true
+            members_order: source
+            docstring_options:
+              ignore_init_summary: false
+            merge_init_into_class: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            show_docstring_modules: false
+            docstring_section_style: table
+
+nav:
+  - Home: index.md
+  - Install: install.md
+
+  - Documentation:
+    - General Concepts: documentation/general_concepts.md
+    - Philosophy: documentation/philosophy.md
+    - History: documentation/history.md
+    - OpenEEmeter: 
+      - Hourly Model:
+        - Methodology: documentation/eemeter/hourly_model/methodology.md
+        - Example: documentation/eemeter/hourly_model/example.md
+        - API: documentation/eemeter/hourly_model/api.md
+        - References: documentation/eemeter/hourly_model/references.md
+      - Daily Model: 
+        - Methodology: documentation/eemeter/daily_model/methodology.md
+        - Example: documentation/eemeter/daily_model/example.md
+        - API: documentation/eemeter/daily_model/api.md
+        - References: documentation/eemeter/daily_model/references.md
+      - Billing Model: 
+        - Methodology: documentation/eemeter/billing_model/methodology.md
+        - Example: documentation/eemeter/billing_model/example.md
+        - API: documentation/eemeter/billing_model/api.md
+        - References: documentation/eemeter/billing_model/references.md
+    - DRmeter:
+      - New Model: documentation/drmeter/new_model/index.md
+      - CalTRACK: 
+        - Methodology: documentation/drmeter/caltrack/methodology.md
+        - Example: documentation/drmeter/caltrack/example.md
+        - API: documentation/drmeter/caltrack/api.md
+        - References: documentation/drmeter/caltrack/references.md
+
+  - Community: community.md
+
+theme:
+  name: "material"
+  logo: "images/common/opendsm-icon-white.svg"
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  
+  language: en
+
+  palette:
+    - scheme: default
+      primary: light blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+
+    - scheme: slate
+      primary: light blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mod
+    
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.arithmatex:
+      generic: 
+  - pymdownx.pathconverter:
+      base_path: 'opendsm' # default: ''
+      relative_path: '' # default ''
+      absolute: true # default: false
+      tags: 'a script img link object embed'
+  - footnotes
+  - attr_list
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.keys
+  - admonition
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - toc:
+      permalink: true
+
+extra:
+  daily_billing_model_pdf_url: "/refs_src/daily_billing_model_specification_results.pdf"
+  hourly_model_pdf_url: "/refs_src/hourly_model_report.pdf"
