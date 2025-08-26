@@ -13,7 +13,7 @@ From here, the data is treated as daily interval data and uses the daily model i
 The daily model, at its core, utilizes a piecewise linear regression model that predicts energy usage relative to temperature. The model determines temperature balance points at which energy usage starts changing relative to temperature.
 
 <div style="text-align: center">
-    <img src="../../images/eemeter/billing_model/basic_model.png" alt="Billing Model">
+    <img src="/../../../images/eemeter/billing_model/basic_model.png" alt="Billing Model">
 </div>
 
 #### Key Concepts
@@ -32,7 +32,7 @@ Based on the site behavior, there are four different model types that may be gen
 - Temperature Independent Load
 
 <div style="text-align: center; margin-top: 30px">
-    <img src="../../images/eemeter/common/model_archetypes.png" alt="Different model archetypes">
+    <img src="/../../../images/eemeter/common/model_archetypes.png" alt="Different model archetypes">
 </div>
 
 #### Smooth Transitions
@@ -59,7 +59,7 @@ The Lasso inspired penalization means that increased model complexity must be ju
 - Balance points are pushed towards the nearest edge (most extreme temperature)
 
 <div style="text-align: center; margin-top: 30px">
-    <img src="../../images/eemeter/billing_model/lasso_penalization.png" alt="Lasso penalization">
+    <img src="/../../../images/eemeter/billing_model/lasso_penalization.png" alt="Lasso penalization">
 </div>
 
 At this point the billing model is now fit and can be used for prediction.
@@ -73,7 +73,7 @@ Unlike the standard daily model, the billing model is configured to not allow sp
 Here are 6 examples of how the billing model performs on real data.
 
 <div style="text-align: center; margin-top: 30px">
-    <img src="../../images/eemeter/billing_model/real_examples.png" alt="Real world examples">
+    <img src="/../../../images/eemeter/billing_model/real_examples.png" alt="Real world examples">
 </div>
 
-*For additional information and validation details, see the [References](../documentation/eemeter/billing_model/references/) page.
+*For additional information and validation details, see the [References](/../documentation/eemeter/billing_model/references/) page.

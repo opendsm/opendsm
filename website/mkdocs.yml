@@ -99,9 +99,9 @@ markdown_extensions:
   - pymdownx.arithmatex:
       generic: 
   - pymdownx.pathconverter:
-      base_path: 'opendsm' # default: ''
+      base_path: '' # default: ''
       relative_path: '' # default ''
-      absolute: true # default: false
+      absolute: false # default: false
       tags: 'a script img link object embed'
   - footnotes
   - attr_list
