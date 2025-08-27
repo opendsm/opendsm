@@ -21,8 +21,8 @@ hide:
 </style>
 
 <p align="center" id="opendsm">
-  <a href="https://lfenergy.org/projects/opendsm/"><img src="/images/common/opendsm-horizontal-color.svg#only-light" alt="OpenDSM"></a>
-  <a href="https://lfenergy.org/projects/opendsm/"><img src="/images/common/opendsm-horizontal-white.svg#only-dark" alt="OpenDSM"></a>
+  <a href="https://lfenergy.org/projects/opendsm/"><img src="/../images/common/opendsm-horizontal-color.svg#only-light" alt="OpenDSM"></a>
+  <a href="https://lfenergy.org/projects/opendsm/"><img src="/../images/common/opendsm-horizontal-white.svg#only-dark" alt="OpenDSM"></a>
 </p>
 
 <p align="center">
