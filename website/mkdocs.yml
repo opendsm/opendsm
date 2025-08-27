@@ -7,6 +7,7 @@ extra_css:
 plugins:
   - search
   - macros
+  - section-index
   - mkdocstrings:
       handlers:
         python:
@@ -30,12 +31,14 @@ plugins:
 nav:
   - Home: index.md
   - Install: install.md
-
   - Documentation:
-    - General Concepts: documentation/general_concepts.md
-    - Philosophy: documentation/philosophy.md
+    - documentation/index.md
     - History: documentation/history.md
+    - Philosophy: documentation/philosophy.md
+    - General Concepts: documentation/general_concepts.md
     - OpenEEmeter: 
+      - documentation/eemeter/index.md
+      - Basics: documentation/eemeter/basics.md
       - Hourly Model:
         - Methodology: documentation/eemeter/hourly_model/methodology.md
         - Example: documentation/eemeter/hourly_model/example.md
@@ -52,18 +55,19 @@ nav:
         - API: documentation/eemeter/billing_model/api.md
         - References: documentation/eemeter/billing_model/references.md
     - DRmeter:
-      - New Model: documentation/drmeter/new_model/index.md
+      - documentation/drmeter/index.md
+      - Basics: documentation/drmeter/basics.md
       - CalTRACK: 
         - Methodology: documentation/drmeter/caltrack/methodology.md
         - Example: documentation/drmeter/caltrack/example.md
         - API: documentation/drmeter/caltrack/api.md
         - References: documentation/drmeter/caltrack/references.md
-
+      - New Model: documentation/drmeter/new_model/index.md
   - Community: community.md
 
 theme:
   name: "material"
-  logo: "images/common/opendsm-icon-white.svg"
+  logo: "/assets/images/common/opendsm-icon-white.svg"
   features:
     - navigation.tabs
     - navigation.sections
@@ -99,9 +103,9 @@ markdown_extensions:
   - pymdownx.arithmatex:
       generic: 
   - pymdownx.pathconverter:
-      base_path: '' # default: ''
-      relative_path: 'opendsm' # default ''
-      absolute: false # default: false
+      base_path: 'opendsm' # default: ''
+      relative_path: '' # default ''
+      absolute: true # default: false
       tags: 'a script img link object embed'
   - footnotes
   - attr_list
@@ -116,5 +120,5 @@ markdown_extensions:
       permalink: true
 
 extra:
-  daily_billing_model_pdf_url: "/refs_src/daily_billing_model_specification_results.pdf"
-  hourly_model_pdf_url: "/refs_src/hourly_model_report.pdf"
+  daily_billing_model_pdf_url: "/assets/reference_docs/daily_billing_model_specification_results.pdf"
+  hourly_model_pdf_url: "/assets/reference_docs/hourly_model_report.pdf"

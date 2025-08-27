@@ -26,7 +26,7 @@ The essential inputs to OpenDSM library functions are the following:
 3. Temperature data from a nearby weather station for both named `temperature`
 4. All data is expected to have a timezone-aware datetime index or column named `datetime`
 
-Users of the library are responsible for obtaining and formatting this data (to get weather data, see [eeweather](https://eeweather.openee.io/), which helps perform site to weather station matching and can pull and cache temperature data directly from public (US) data sources).
+Users of the library are responsible for obtaining and formatting this data (to get weather data, see [EEweather](https://eeweather.openee.io/), which helps perform site to weather station matching and can pull and cache temperature data directly from public (US) data sources).
 
 We utilize data classes to store meter data, perform transforms, and validate the data to ensure data compliance. The inputs into these data classes can either be [pandas](https://pandas.pydata.org/) `DataFrame` if initializing the classes directly or `Series` if initializing the classes using `.from_series`.
 
@@ -125,7 +125,7 @@ plt.show()
 
 ??? Returns
     <div style="text-align: center; margin-top: 30px">
-        <img src="/../../../images/eemeter/daily_model/example/baseline_data_daily.png" alt="Daily Baseline Data">
+        <img src="/assets/images/eemeter/daily_model/example/baseline_data_daily.png" alt="Daily Baseline Data">
     </div>
 
 If we observe the data we can see a full year of data with observed usage peaking in the winter and lowering in the summer with warmer temperatures. It's clear that this site is located in a colder climate and uses more electricity in the winter.
@@ -203,10 +203,10 @@ daily_model.plot(baseline_data)
 
 ??? Returns
     <div style="text-align: center; margin-top: 30px">
-        <img src="/../../../images/eemeter/daily_model/example/daily_baseline_vs_model.png" alt="Daily Baseline Observed vs. Model">
+        <img src="/assets/images/eemeter/daily_model/example/daily_baseline_vs_model.png" alt="Daily Baseline Observed vs. Model">
     </div>
 
-From this graph we can also observe model splits and model types as described in the [Model Splits](../documentation/eemeter/daily_model/methodology/#model-splits) section of the [Methodology](/../documentation/eemeter/daily_model/methodology) page. We can observe the following models:
+From this graph we can also observe model splits and model types as described in the [Model Splits](../documentation/eemeter/daily_model/methodology/#model-splits) section of the [Methodology](../documentation/eemeter/daily_model/methodology) page. We can observe the following models:
 
 1. Summer/Shoulder/Winter - Weekday
 2. Summer/Shoulder/Winter - Weekend
@@ -221,7 +221,7 @@ daily_model.plot(reporting_data)
 
 ??? Returns
     <div style="text-align: center; margin-top: 30px">
-        <img src="/../../../images/eemeter/daily_model/example/daily_reporting_vs_model.png" alt="Daily Reporting Observed vs. Model">
+        <img src="/assets/images/eemeter/daily_model/example/daily_reporting_vs_model.png" alt="Daily Reporting Observed vs. Model">
     </div>
 
 In this plot we can see that the site is using significantly less energy in colder temperatures compared to the model / baseline period. Perhaps this site installed an efficiency intervention that saves energy in colder temperatures?
@@ -259,7 +259,7 @@ plt.show()
 
 ??? Returns
     <div style="text-align: center; margin-top: 30px">
-        <img src="/../../../images/eemeter/daily_model/example/predicted_vs_observed_daily.png" alt="Daily Reporting Observed vs. Model">
+        <img src="/assets/images/eemeter/daily_model/example/predicted_vs_observed_daily.png" alt="Daily Reporting Observed vs. Model">
     </div>
 
 From here, we can easily calculate savings by subtracting observed usage from predicted usage.

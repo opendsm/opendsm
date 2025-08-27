@@ -1,4 +1,7 @@
-### OpenDSM History
+---
+hide:
+ - toc
+---
 
 OpenDSM's origin lies within the CalTRACK methodology. 
 

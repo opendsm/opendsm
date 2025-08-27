@@ -1,3 +1,8 @@
+---
+hide:
+ - toc
+---
+
 ### Model Structure
 
 Models are developed assuming that minimal information will be available for any given meter. The only assumptions made are that we will have a meter's location and usage data. Using the meter's location, its weather can be looked up using `EEweather`. This weather information can be used in place of a meter's location. 
