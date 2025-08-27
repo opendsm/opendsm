@@ -125,7 +125,7 @@ plt.show()
 
 ??? Returns
     <div style="text-align: center; margin-top: 30px">
-        <img src="/../../../images/eemeter/daily_model/example/baseline_data_daily.png" alt="Daily Baseline Data">
+        <img src="../../../images/eemeter/daily_model/example/baseline_data_daily.png" alt="Daily Baseline Data">
     </div>
 
 If we observe the data we can see a full year of data with observed usage peaking in the winter and lowering in the summer with warmer temperatures. It's clear that this site is located in a colder climate and uses more electricity in the winter.
@@ -203,7 +203,7 @@ daily_model.plot(baseline_data)
 
 ??? Returns
     <div style="text-align: center; margin-top: 30px">
-        <img src="/../../../images/eemeter/daily_model/example/daily_baseline_vs_model.png" alt="Daily Baseline Observed vs. Model">
+        <img src="../../../images/eemeter/daily_model/example/daily_baseline_vs_model.png" alt="Daily Baseline Observed vs. Model">
     </div>
 
 From this graph we can also observe model splits and model types as described in the [Model Splits](../documentation/eemeter/daily_model/methodology/#model-splits) section of the [Methodology](../documentation/eemeter/daily_model/methodology) page. We can observe the following models:
@@ -221,7 +221,7 @@ daily_model.plot(reporting_data)
 
 ??? Returns
     <div style="text-align: center; margin-top: 30px">
-        <img src="/../../../images/eemeter/daily_model/example/daily_reporting_vs_model.png" alt="Daily Reporting Observed vs. Model">
+        <img src="../../../images/eemeter/daily_model/example/daily_reporting_vs_model.png" alt="Daily Reporting Observed vs. Model">
     </div>
 
 In this plot we can see that the site is using significantly less energy in colder temperatures compared to the model / baseline period. Perhaps this site installed an efficiency intervention that saves energy in colder temperatures?
@@ -259,7 +259,7 @@ plt.show()
 
 ??? Returns
     <div style="text-align: center; margin-top: 30px">
-        <img src="/../../../images/eemeter/daily_model/example/predicted_vs_observed_daily.png" alt="Daily Reporting Observed vs. Model">
+        <img src="../../../images/eemeter/daily_model/example/predicted_vs_observed_daily.png" alt="Daily Reporting Observed vs. Model">
     </div>
 
 From here, we can easily calculate savings by subtracting observed usage from predicted usage.
