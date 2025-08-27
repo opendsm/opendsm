@@ -100,7 +100,7 @@ markdown_extensions:
       generic: 
   - pymdownx.pathconverter:
       base_path: '' # default: ''
-      relative_path: '' # default ''
+      relative_path: 'opendsm' # default ''
       absolute: false # default: false
       tags: 'a script img link object embed'
   - footnotes
