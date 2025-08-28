@@ -64,9 +64,9 @@ $ pip install opendsm
 - Model serialization
 - First-class warnings reporting
 
-## [Documentation](https://opendsm.github.io/opendsm/)
+## [Documentation](https://opendsm.github.io/opendsm-website/)
 
-Documenation for this library can be found [here](https://opendsm.github.io/opendsm/).
+Documenation for this library can be found [here](https://opendsm.github.io/opendsm-website/).
 Additionally, within the repository, the scripts directory contains Jupyter Notebooks, which
 function as interactive examples.
 
