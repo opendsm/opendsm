@@ -27,7 +27,8 @@ data_dir = current_dir.parents[1] / "data"
 
 # Set download information
 repo_full_name = "opendsm/opendsm"
-branch = "master"
+# branch = "master"
+branch = "etc/example_data_update"
 path = "data"
 
 
@@ -96,8 +97,6 @@ def _load_time_series_data(data_type):
     df["datetime"] = df["datetime"] + pd.Timedelta(hours=5)
     df["datetime"] = df["datetime"].dt.tz_convert("America/Chicago")
     df = df.set_index(["id", "datetime"])
-
-    print(df.columns)
 
     df_baseline = df[["temperature", "ghi_baseline", "observed_baseline"]]
     df_baseline = df_baseline.rename(columns={"observed_baseline": "observed", "ghi_baseline": "ghi"})

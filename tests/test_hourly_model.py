@@ -47,26 +47,13 @@ def baseline(hourly_data):
     baseline.loc[baseline["observed"] > 513, "observed"] = (
         0  # quick extreme value removal
     )
-    baseline["ghi"] = (
-        np.sin(np.linspace(0, 2 * np.pi * len(baseline), len(baseline))) * 40
-    ).round(2) + 40
     return baseline
 
 
 @pytest.fixture
 def reporting(hourly_data):
     _, reporting = hourly_data
-    reporting["ghi"] = (
-        np.sin(np.linspace(0, 2 * np.pi * len(reporting), len(reporting))) * 40
-    ).round(2) + 40
     return reporting
-
-
-@pytest.fixture
-def baseline_ghi(baseline):
-    # generate ghi as a sin wave daily period peaking afternoon
-    baseline["ghi"] = np.sin(np.linspace(0, 2 * np.pi, len(baseline)))
-    return baseline
 
 
 def test_good_data(baseline, reporting):
