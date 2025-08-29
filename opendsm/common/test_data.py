@@ -27,8 +27,7 @@ data_dir = current_dir.parents[1] / "data"
 
 # Set download information
 repo_full_name = "opendsm/opendsm"
-# branch = "master"
-branch = "etc/example_data_update"
+branch = "master"
 path = "data"
 
 
