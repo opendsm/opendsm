@@ -23,8 +23,10 @@ from opendsm.common.const import TutorialDataChoice
 current_dir = Path(__file__).resolve().parent
 data_dir = current_dir.parents[1] / "data"
 
-# Set download branch
+# Set download information
+repo_full_name = "opendsm/opendsm"
 branch = "master"
+path = "data"
 
 
 comparison_group_time_series = [
@@ -76,28 +78,6 @@ def load_test_data(data_type: str):
         return _load_other_data(data_type)
 
 
-def download_all_test_data():
-    """Downloads all the tutorial data to the data directory"""
-
-    # get all repo files
-    repo_full_name = "openeemeter/eemeter"
-    path = "data"
-
-    url = f"https://api.github.com/repos/{repo_full_name}/contents/{path}"
-
-    if branch != "master":
-        url += f"?ref={branch}"
-
-    r = requests.get(url)
-    r.raise_for_status()
-
-    files = [file["name"] for file in r.json() if file["type"] == "file"]
-
-    # download all repo files
-    for file in files:
-        _download_repo_data_file(file)
-
-
 def _load_time_series_data(data_type):
     if data_type in comparison_group_time_series:
         df = pd.concat(
@@ -115,11 +95,13 @@ def _load_time_series_data(data_type):
     df["datetime"] = df["datetime"].dt.tz_convert("America/Chicago")
     df = df.set_index(["id", "datetime"])
 
-    df_baseline = df[["temperature", "observed_baseline"]]
-    df_baseline = df_baseline.rename(columns={"observed_baseline": "observed"})
+    print(df.columns)
 
-    df_reporting = df[["temperature", "observed_reporting"]]
-    df_reporting = df_reporting.rename(columns={"observed_reporting": "observed"})
+    df_baseline = df[["temperature", "ghi_baseline", "observed_baseline"]]
+    df_baseline = df_baseline.rename(columns={"observed_baseline": "observed", "ghi_baseline": "ghi"})
+
+    df_reporting = df[["temperature", "ghi_reporting", "observed_reporting"]]
+    df_reporting = df_reporting.rename(columns={"observed_reporting": "observed", "ghi_reporting": "ghi"})
 
     df_reporting = df_reporting.reset_index()
     df_reporting["datetime"] = df_reporting["datetime"] + pd.Timedelta(days=365)
@@ -168,46 +150,25 @@ def _load_other_data(data_type):
     return df
 
 
-def _load_file(file):
-    attribution_file = data_dir / "attribution.txt"
-    file = data_dir / file
-    ext = file.suffix
+def _load_file(file: Path | str):
+    if isinstance(file, str):
+        file = Path(file)
 
-    # if file does not exist, download it
-    if not file.exists():
-        # always check for attribution file
-        if not attribution_file.exists():
-            _download_repo_data_file(attribution_file)
+    # url = f"https://raw.githubusercontent.com/{repo_full_name}/{branch}/{path}/{file.name}"
+    url = "/app/applied_data_science/opendsm/data/hourly_data_2.parquet"
 
-        _download_repo_data_file(file)
+    try:
+        if file.suffix == ".csv":
+            df = pd.read_csv(url)
 
-    if ext == ".csv":
-        df = pd.read_csv(file)
+        elif file.suffix == ".parquet":
+            df = pd.read_parquet(url)
 
-    elif ext == ".parquet":
-        df = pd.read_parquet(file)
-
-    else:
-        raise ValueError(f"File type {ext} not recognized.")
+    except Exception as e:
+        print(f"Error loading file {file}: {e}")
+        raise e
 
     return df
-
-
-def _download_repo_data_file(file: Path):
-    repo_full_name = "openeemeter/eemeter"
-    path = "data"
-
-    url = f"https://raw.githubusercontent.com/{repo_full_name}/{branch}/{path}/{file.name}"
-
-    r = requests.get(url)
-    r.raise_for_status()
-
-    # make directory if it doesn't exist
-    if not data_dir.exists():
-        data_dir.mkdir()
-
-    with open(data_dir / file, "wb") as f:
-        f.write(r.content)
 
 
 if __name__ == "__main__":

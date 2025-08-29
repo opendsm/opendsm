@@ -12,9 +12,8 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from opendsm.common.test_data import download_all_test_data, load_test_data
+from opendsm.common.test_data import load_test_data
 
 __all__ = (
     "load_test_data",
-    "download_all_test_data",
 )
