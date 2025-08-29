@@ -154,8 +154,7 @@ def _load_file(file: Path | str):
     if isinstance(file, str):
         file = Path(file)
 
-    # url = f"https://raw.githubusercontent.com/{repo_full_name}/{branch}/{path}/{file.name}"
-    url = "/app/applied_data_science/opendsm/data/hourly_data_2.parquet"
+    url = f"https://raw.githubusercontent.com/{repo_full_name}/{branch}/{path}/{file.name}"
 
     try:
         if file.suffix == ".csv":
