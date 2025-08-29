@@ -4,6 +4,8 @@ Changelog
 Development
 -----------
 
+* Update to example data to include GHI
+* Update `load_test_data` function to always pull from GitHub.
 
 opendsm-1.2.6
 -----------
