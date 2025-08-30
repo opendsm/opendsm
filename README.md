@@ -64,7 +64,7 @@ $ pip install opendsm
 - Model serialization
 - First-class warnings reporting
 
-## [Documentation](https://opendsm.github.io/opendsm-website/)
+## [Documentation](https://opendsm.energy/)
 
 Documenation for this library can be found [here](https://opendsm.energy/).
 
@@ -166,4 +166,5 @@ This project is licensed under [Apache 2.0](LICENSE).
 - [MAINTAINERS](https://github.com/opendsm/opendsm/blob/master/MAINTAINERS.md): An ordered list of project maintainers.
 - [CHARTER](https://github.com/opendsm/opendsm/blob/master/CHARTER.md): Open source project charter.
 - [CODE OF CONDUCT](https://github.com/opendsm/opendsm/blob/master/CODE_OF_CONDUCT.md): Code of conduct for contributors.
+
 
