@@ -59,17 +59,14 @@ $ pip install opendsm
   - Energy Efficiency Solar Hourly Model
   - Demand Response Hourly Model
 
-- Flexible sources of temperature data. See [EEweather](https://eeweather.openee.io).
+- Flexible sources of temperature data. See [EEweather](https://github.com/opendsm/eeweather).
 - Data sufficiency checking
 - Model serialization
 - First-class warnings reporting
 
 ## [Documentation](https://opendsm.github.io/opendsm-website/)
 
-Documenation for this library can be found [here](https://opendsm.github.io/opendsm-website/).
-Additionally, within the repository, the scripts directory contains Jupyter Notebooks, which
-function as interactive examples.
-
+Documenation for this library can be found [here](https://opendsm.energy/).
 
 ## Future Development
 
@@ -88,14 +85,7 @@ is laid out and how OpenDSM is architected. We have made giant steps in this are
 but there is additional organizational work to be done. This will continue to be an ongoing
 area of work.
 
-2. Improve project documentation and tutorials
-
-A number of users have expressed how hard it is to get started when tutorials are
-out of date. We will continue to dedicate time and energy to help create high quality
-tutorials that build upon the API documentation and existing tutorials. We hope that the 
-community will contribute to this effort.
-
-3. Make it easier to contribute
+2. Make it easier to contribute
 
 As our user base grows, the need and desire for users to contribute back to the library
 also grows, and we want to make this as seamless as possible. This means writing and
@@ -176,3 +166,4 @@ This project is licensed under [Apache 2.0](LICENSE).
 - [MAINTAINERS](https://github.com/opendsm/opendsm/blob/master/MAINTAINERS.md): An ordered list of project maintainers.
 - [CHARTER](https://github.com/opendsm/opendsm/blob/master/CHARTER.md): Open source project charter.
 - [CODE OF CONDUCT](https://github.com/opendsm/opendsm/blob/master/CODE_OF_CONDUCT.md): Code of conduct for contributors.
+
