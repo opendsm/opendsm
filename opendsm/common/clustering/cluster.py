@@ -19,7 +19,7 @@ import warnings
 import numpy as np
 import pandas as pd
 
-from pydantic import BaseModel, ConfigDict
+import pywt
 
 from scipy.signal import find_peaks
 from scipy.spatial.distance import cdist, pdist, squareform
@@ -28,26 +28,59 @@ from scipy.spatial.distance import cdist, pdist, squareform
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.decomposition import PCA, KernelPCA
 from sklearn.cluster import DBSCAN, HDBSCAN, Birch, SpectralClustering
+from sklearn.metrics.pairwise import pairwise_kernels
 
 from opendsm.common.clustering import (
     bisect_k_means as _bisect_k_means,
     scoring as _scoring,
     settings as _settings,
-    transform as _transform,
+    voting as _voting,
 )
+from opendsm.common.utils import median_absolute_deviation as MAD
 
 
-class _LabelResult(BaseModel):
+def score_council(settings: _settings.ClusteringSettings):
     """
-    contains metrics about a cluster label returned from sklearn
+    Set the score council for the given settings.
     """
+    score_council = {
+        'calinski_harabasz_index': settings.spectral.scoring.calinski_harabasz_weight,
+        'davies_bouldin_index': settings.spectral.scoring.davies_bouldin_weight,
+        'density_based_clustering_validation_index': settings.spectral.scoring.density_based_clustering_validation_weight,
+        'dunn_index': settings.spectral.scoring.dunn_weight,
+        'silhouette_index': settings.spectral.scoring.silhouette_weight,
+        'silhouette_median_index': settings.spectral.scoring.silhouette_median_weight,
+        'xie_beni_index': settings.spectral.scoring.xie_beni_weight,
+    }
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    return score_council
 
-    labels: np.ndarray
-    score: float
-    score_unable_to_be_calculated: bool
-    n_clusters: int
+
+def score_clusters(
+    data: np.ndarray,
+    labels: np.ndarray,
+    settings: _settings.ClusteringSettings
+):
+    """
+    Score clusters of the given data with the selected choices.
+    """
+    n_cluster_lower = settings.spectral.n_cluster.lower
+
+    dist_metric = settings.spectral.scoring.distance_metric
+    min_cluster_size = settings.spectral.scoring.min_cluster_size
+    max_non_outlier_cluster_count = 200
+    
+    label_res = _scoring.score_clusters(
+        data,
+        labels,
+        n_cluster_lower,
+        score_council(settings),
+        dist_metric,
+        min_cluster_size,
+        max_non_outlier_cluster_count,
+    )
+
+    return label_res
 
 
 def _bisecting_kmeans_clustering(
@@ -65,10 +98,7 @@ def _bisecting_kmeans_clustering(
     inner_algorithm = settings.bisecting_kmeans.inner_algorithm
     bisecting_strategy = settings.bisecting_kmeans.bisecting_strategy
 
-    score_choice = settings.bisecting_kmeans.scoring.score_metric
-    dist_metric = settings.bisecting_kmeans.scoring.distance_metric
-    min_cluster_size = settings.bisecting_kmeans.scoring.min_cluster_size
-    max_non_outlier_cluster_count = settings.bisecting_kmeans.scoring.max_non_outlier_cluster_count
+    window_size = settings.bisecting_kmeans.scoring.window_size
 
     seed = settings._seed
 
@@ -90,34 +120,20 @@ def _bisecting_kmeans_clustering(
             labels_dict = {n_cluster_lower: labels_dict[n_cluster_lower]}
 
         for n_cluster, labels in labels_dict.items():
-            score, score_unable_to_be_calculated = _scoring.score_clusters(
-                data,
-                labels,
-                n_cluster_lower,
-                score_choice,
-                dist_metric,
-                min_cluster_size,
-                max_non_outlier_cluster_count,
-            )
-
-            label_res = _LabelResult(
-                labels=labels,
-                score=score,
-                score_unable_to_be_calculated=score_unable_to_be_calculated,
-                n_clusters=n_cluster,
-            )
+            label_res = score_clusters(data, labels, settings)
             results.append(label_res)
 
-    # get the results index with the smallest score
-    HoF = None
-    for result in results:
-        if result.score_unable_to_be_calculated:
-            continue
+    df_votes = _voting.construct_voting_df(results)
+    winner, df_votes = _voting.shulze_voting(df_votes, score_council(settings), window_size)
 
-        if HoF is None or result.score < HoF.score:
-            HoF = result
+    # get labels of winner from results
+    winner_labels = None
+    for res in results:
+        if res.n_clusters == winner:
+            winner_labels = res.labels
+            break
 
-    return HoF.labels
+    return winner_labels
 
 
 def _birch_clustering(
@@ -133,10 +149,7 @@ def _birch_clustering(
     threshold = settings.birch.threshold
     branching_factor = settings.birch.branching_factor
 
-    score_choice = settings.birch.scoring.score_metric
-    dist_metric = settings.birch.scoring.distance_metric
-    min_cluster_size = settings.birch.scoring.min_cluster_size
-    max_non_outlier_cluster_count = settings.birch.scoring.max_non_outlier_cluster_count
+    window_size = settings.birch.scoring.window_size
 
     results = []
     for n_clusters in range(n_cluster_lower, n_cluster_upper + 1):
@@ -148,35 +161,21 @@ def _birch_clustering(
         labels = algo.fit_predict(data)
         
         # Calculate score for the clusters
-        score, score_unable_to_be_calculated = _scoring.score_clusters(
-                data,
-                labels,
-                n_cluster_lower,
-                score_choice,
-                dist_metric,
-                min_cluster_size,
-                max_non_outlier_cluster_count,
-            )
-        
-        label_res = _LabelResult(
-                labels=labels,
-                score=score,
-                score_unable_to_be_calculated=score_unable_to_be_calculated,
-                n_clusters=n_clusters,
-            )
+        label_res = score_clusters(data, labels, settings)
         
         results.append(label_res)
 
-    # get the results index with the smallest score
-    HoF = None
-    for result in results:
-        if result.score_unable_to_be_calculated:
-            continue
+    df_votes = _voting.construct_voting_df(results)
+    winner, df_votes = _voting.shulze_voting(df_votes, score_council(settings), window_size)
 
-        if HoF is None or result.score < HoF.score:
-            HoF = result
+    # get labels of winner from results
+    winner_labels = None
+    for res in results:
+        if res.n_clusters == winner:
+            winner_labels = res.labels
+            break
 
-    return HoF.labels
+    return winner_labels
 
 
 def _dbscan_clustering(
@@ -240,23 +239,98 @@ def _hdbscan_clustering(
     return labels
 
 
-def _spectral_clustering(
+from scipy.sparse import csgraph
+from scipy.sparse.linalg import eigsh
+
+def eigenDecomposition(A, topK = 5):
+    """
+    :param A: Affinity matrix
+    :param plot: plots the sorted eigen values for visual inspection
+    :return A tuple containing:
+    - the optimal number of clusters by eigengap heuristic
+    - all eigen values
+    - all eigen vectors
+    
+    This method performs the eigen decomposition on a given affinity matrix,
+    following the steps recommended in the paper:
+    1. Construct the normalized affinity matrix: L = D−1/2ADˆ −1/2.
+    2. Find the eigenvalues and their associated eigen vectors
+    3. Identify the maximum gap which corresponds to the number of clusters
+    by eigengap heuristic
+    
+    References:
+    https://papers.nips.cc/paper/2619-self-tuning-spectral-clustering.pdf
+    http://www.kyb.mpg.de/fileadmin/user_upload/files/publications/attachments/Luxburg07_tutorial_4488%5b0%5d.pdf
+    """
+    L = csgraph.laplacian(A, normed=True)
+    n_components = A.shape[0]
+    
+    # LM parameter : Eigenvalues with largest magnitude (eigs, eigsh), that is, largest eigenvalues in 
+    # the euclidean norm of complex numbers.
+#     eigenvalues, eigenvectors = eigsh(L, k=n_components, which="LM", sigma=1.0, maxiter=5000)
+    eigenvalues, eigenvectors = np.linalg.eig(L)
+        
+    # Identify the optimal number of clusters as the index corresponding
+    # to the larger gap between eigen values
+    index_largest_gap = np.argsort(np.diff(eigenvalues))[::-1]
+    nb_clusters = index_largest_gap + 1
+        
+    return nb_clusters, eigenvalues, eigenvectors
+
+def eigendecomp_cluster_count(
+    X,
+    settings: _settings.ClusteringSettings
+):
+    """
+    Votes on the optimal number of clusters using the eigen decomposition
+    """
+    min_clusters = settings.spectral.n_cluster.lower
+    max_clusters = settings.spectral.n_cluster.upper
+
+    nb_clusters, _, _ = eigenDecomposition(X)
+
+    # only include clusters in the range of min_clusters to max_clusters
+    nb_clusters = nb_clusters[nb_clusters >= min_clusters]
+    nb_clusters = nb_clusters[nb_clusters <= max_clusters]
+
+    return nb_clusters
+
+
+def _affinity_matrix(
+    data: np.ndarray,
+    algo: SpectralClustering,
+):
+    """
+    Computes the affinity matrix for the given data
+    """
+    params = algo.kernel_params
+    if params is None:
+        params = {}
+    if not callable(algo.affinity):
+        params["gamma"] = algo.gamma
+        params["degree"] = algo.degree
+        params["coef0"] = algo.coef0
+    X = pairwise_kernels(
+        data, metric=algo.affinity, filter_params=True, **params
+    )
+
+    return X
+
+def _single_spectral_clustering(
     data: np.ndarray,
     settings: _settings.ClusteringSettings
 ):
     """
     clusters features using Spectral Clustering algorithm
     """
+
     n_cluster_lower = settings.spectral.n_cluster.lower
     n_cluster_upper = settings.spectral.n_cluster.upper
-    
-    score_choice = settings.spectral.scoring.score_metric
-    dist_metric = settings.spectral.scoring.distance_metric
-    min_cluster_size = settings.spectral.scoring.min_cluster_size
-    max_non_outlier_cluster_count = settings.spectral.scoring.max_non_outlier_cluster_count
-    
+
+    window_size = settings.spectral.scoring.window_size
+
     algo = SpectralClustering(
-        n_clusters=1,
+        n_clusters=n_cluster_lower,
         eigen_solver=settings.spectral.eigen_solver,
         n_components=settings.spectral.n_components,
         affinity=settings.spectral.affinity,
@@ -270,14 +344,15 @@ def _spectral_clustering(
     # transform data as spectral clustering doesn't like negative values
     # data = np.exp(-data / np.std(data))
 
-    X = data
+    # X = _local_affinity_matrix(data)
+    X = _affinity_matrix(data, algo)
+    algo.affinity = "precomputed"
+
     results = []
-    for n_clusters in range(n_cluster_lower, n_cluster_upper + 1):
+    n_clusters_range = np.arange(n_cluster_lower, n_cluster_upper + 1)
+    for n_clusters in n_clusters_range:
         if n_clusters > n_cluster_lower:
             algo.n_clusters = n_clusters
-            algo.affinity = "precomputed"
-
-            X = algo.affinity_matrix_
 
         np_state = np.random.get_state()
         np.random.seed(settings._seed)
@@ -288,37 +363,271 @@ def _spectral_clustering(
             labels = algo.fit_predict(X)
 
         # Calculate a score for the clustering
-        score, score_unable_to_be_calculated = _scoring.score_clusters(
-                data,
-                labels,
-                n_cluster_lower,
-                score_choice,
-                dist_metric,
-                min_cluster_size,
-                max_non_outlier_cluster_count,
-            )
-        
-        label_res = _LabelResult(
-                labels=labels,
-                score=score,
-                score_unable_to_be_calculated=score_unable_to_be_calculated,
-                n_clusters=n_clusters,
-            )
+        label_res = score_clusters(data, labels, settings)
 
         np.random.set_state(np_state)
         
         results.append(label_res)
 
-    # get the results index with the smallest score
-    HoF = None
-    for result in results:
-        if result.score_unable_to_be_calculated:
-            continue
+    df_votes = _voting.construct_voting_df(results)
+    # df_votes.index = n_clusters_range
 
-        if HoF is None or result.score < HoF.score:
-            HoF = result
+    # # drop single cluster from df_votes
+    # df_votes = df_votes.drop(index=1, errors='ignore')
 
-    return HoF.labels
+    winner_idx, df_votes = _voting.shulze_voting(df_votes, score_council(settings), window_size)
+    df_votes.index = n_clusters_range
+
+    # get labels of winner from results
+    label_res = results[winner_idx]
+
+    return label_res, df_votes
+    
+
+def _local_affinity_matrix(X):
+    dim = X.shape[0]
+    dist_ = pdist(X)
+    pd = np.zeros([dim, dim])
+    dist = iter(dist_)
+    for i in range(dim):
+        for j in range(i+1, dim):  
+            d = next(dist)
+            pd[i,j] = d
+            pd[j,i] = d
+            
+    #calculate local sigma
+    sigmas = np.zeros(dim)
+    for i in range(len(pd)):
+        sigmas[i] = sorted(pd[i])[7]
+    
+    A = np.zeros([dim, dim])
+    dist = iter(dist_)
+    for i in range(dim):
+        for j in range(i+1, dim):  
+            d = np.exp(-1*next(dist)**2/(sigmas[i]*sigmas[j]))
+
+            A[i,j] = d
+            A[j,i] = d
+
+    return A
+
+def _spectral_clustering(
+    data: np.ndarray,
+    settings: _settings.ClusteringSettings
+):
+    """
+    clusters features using Spectral Clustering algorithm
+    """
+    recluster_count = settings.spectral.recluster_count
+    
+    results = []
+    df_votes_recluster = []
+    for n in range(recluster_count + 1):
+        if n > 0:
+            settings_dict = settings.model_dump()
+            settings_dict["seed"] = settings_dict["seed"] + 1
+            settings = _settings.ClusteringSettings(**settings_dict)
+        
+        label_res, df_votes = _single_spectral_clustering(data, settings)
+        
+        results.append(label_res)
+        df_votes_recluster.append(df_votes)
+
+    winner_idx = 0
+    if recluster_count > 0:
+        df_votes = _voting.construct_voting_df(results)
+        winner_idx, df_votes = _voting.shulze_voting(df_votes, score_council(settings), window_size=0)
+
+    # get labels of winner from results
+    winner_labels = results[winner_idx].labels
+    df_votes_recluster = df_votes_recluster[winner_idx]
+
+    return winner_labels, df_votes_recluster
+
+class RobustSpectralClustering:
+    """
+    Implementation of the method proposed in the paper:
+    'Robust Spectral Clustering for Noisy Data: Modeling Sparse Corruptions Improves Latent Embeddings'
+
+    If you publish material based on algorithms or evaluation measures obtained from this code,
+    then please note this in your acknowledgments and please cite the following paper:
+        Aleksandar Bojchevski, Yves Matkovic, and Stephan Günnemann.
+        2017. Robust Spectral Clustering for Noisy Data.
+        In Proceedings of KDD’17, August 13–17, 2017, Halifax, NS, Canada.
+
+    Copyright (C) 2017
+    Aleksandar Bojchevski
+    Yves Matkovic
+    Stephan Günnemann
+    Technical University of Munich, Germany
+    """
+
+    def __init__(self, k, nn=15, theta=20, m=0.5, laplacian=1, n_iter=50, normalize=False, affinity="local", verbose=False):
+        """
+        :param k: number of clusters
+        :param nn: number of neighbours to consider for constructing the KNN graph (excluding the node itself)
+        :param theta: number of corrupted edges to remove
+        :param m: minimum percentage of neighbours to keep per node (omega_i constraints)
+        :param n_iter: number of iterations of the alternating optimization procedure
+        :param laplacian: which graph Laplacian to use: 0: L, 1: L_rw, 2: L_sym
+        :param normalize: whether to row normalize the eigen vectors before performing k-means
+        :param verbose: verbosity
+        """
+
+        self.k = k
+        self.nn = nn
+        self.theta = theta
+        self.m = m
+        self.n_iter = n_iter
+        self.normalize = normalize
+        self.verbose = verbose
+        self.laplacian = laplacian
+        self.affinity = affinity
+
+        if laplacian == 0:
+            if self.verbose:
+                print('Using unnormalized Laplacian L')
+        elif laplacian == 1:
+            if self.verbose:
+                print('Using random walk based normalized Laplacian L_rw')
+        elif laplacian == 2:
+            raise NotImplementedError('The symmetric normalized Laplacian L_sym is not implemented yet.')
+        else:
+            raise ValueError('Choice of graph Laplacian not valid. Please use 0, 1 or 2.')
+
+    def __affinity_matrix(self, X):
+        # compute the KNN graph
+        A = kneighbors_graph(X=X, n_neighbors=self.nn, metric='euclidean', include_self=False, mode='connectivity')
+        A = A.maximum(A.T)  # make the graph undirected
+
+        return A
+
+    def __local_affinity_matrix(self, X):
+        dim = X.shape[0]
+        dist_ = pdist(X)
+        pd = np.zeros([dim, dim])
+        dist = iter(dist_)
+        for i in range(dim):
+            for j in range(i+1, dim):  
+                d = next(dist)
+                pd[i,j] = d
+                pd[j,i] = d
+                
+        #calculate local sigma
+        sigmas = np.zeros(dim)
+        for i in range(len(pd)):
+            sigmas[i] = sorted(pd[i])[7]
+        
+        A = np.zeros([dim, dim])
+        dist = iter(dist_)
+        for i in range(dim):
+            for j in range(i+1, dim):  
+                d = np.exp(-1*next(dist)**2/(sigmas[i]*sigmas[j]))
+
+                A[i,j] = d
+                A[j,i] = d
+
+        return A
+
+    def __latent_decomposition(self, X):
+        # compute the KNN graph
+        if self.affinity != "local":
+            A = self.__affinity_matrix(X)
+        else:   
+            A = self.__local_affinity_matrix(X)
+            
+        N = A.shape[0]  # number of nodes
+        deg = A.sum(0).A1  # node degrees
+
+        prev_trace = np.inf  # keep track of the trace for convergence
+        Ag = A.copy()
+
+        for it in range(self.n_iter):
+
+            # form the unnormalized Laplacian
+            D = sp.diags(Ag.sum(0).A1).tocsc()
+            L = D - Ag
+
+            # solve the normal eigenvalue problem
+            if self.laplacian == 0:
+                h, H = eigsh(L, self.k, which='SM')
+            # solve the generalized eigenvalue problem
+            elif self.laplacian == 1:
+                h, H = eigsh(L, self.k, D, which='SM')
+
+            trace = h.sum()
+
+            if self.verbose:
+                print('Iter: {} Trace: {:.4f}'.format(it, trace))
+
+            if self.theta == 0:
+                # no edges are removed
+                Ac = sp.coo_matrix((N, N), [np.int])
+                break
+
+            if prev_trace - trace < 1e-10:
+                # we have converged
+                break
+
+            allowed_to_remove_per_node = (deg * self.m).astype(np.int)
+            prev_trace = trace
+
+            # consider only the edges on the lower triangular part since we are symmetric
+            edges = sp.tril(A).nonzero()
+            removed_edges = []
+
+            if self.laplacian == 1:
+                # fix for potential numerical instability of the eigenvalues computation
+                h[np.isclose(h, 0)] = 0
+
+                # equation (5) in the paper
+                p = np.linalg.norm(H[edges[0]] - H[edges[1]], axis=1) ** 2 \
+                    - np.linalg.norm(H[edges[0]] * np.sqrt(h), axis=1) ** 2 \
+                    - np.linalg.norm(H[edges[1]] * np.sqrt(h), axis=1) ** 2
+            else:
+                # equation (4) in the paper
+                p = np.linalg.norm(H[edges[0]] - H[edges[1]], axis=1) ** 2
+
+            # greedly remove the worst edges
+            for ind in p.argsort()[::-1]:
+                e_i, e_j, p_e = edges[0][ind], edges[1][ind], p[ind]
+
+                # remove the edge if it satisfies the constraints
+                if allowed_to_remove_per_node[e_i] > 0 and allowed_to_remove_per_node[e_j] > 0 and p_e > 0:
+                    allowed_to_remove_per_node[e_i] -= 1
+                    allowed_to_remove_per_node[e_j] -= 1
+                    removed_edges.append((e_i, e_j))
+                    if len(removed_edges) == self.theta:
+                        break
+
+            removed_edges = np.array(removed_edges)
+            Ac = sp.coo_matrix((np.ones(len(removed_edges)), (removed_edges[:, 0], removed_edges[:, 1])), shape=(N, N))
+            Ac = Ac.maximum(Ac.T)
+            Ag = A - Ac
+
+        return Ag, Ac, H
+
+    def fit_predict(self, X):
+        """
+        :param X: array-like or sparse matrix, shape (n_samples, n_features)
+        :return: cluster labels ndarray, shape (n_samples,)
+        """
+
+        Ag, Ac, H = self.__latent_decomposition(X)
+        self.Ag = Ag
+        self.Ac = Ac
+
+        if self.normalize:
+            self.H = H / np.linalg.norm(H, axis=1)[:, None]
+        else:
+            self.H = H
+
+        centroids, labels, *_ = k_means(X=self.H, n_clusters=self.k)
+
+        self.centroids = centroids
+        self.labels = labels
+
+        return labels
 
 
 def _transform_data(
@@ -331,19 +640,25 @@ def _transform_data(
     settings = settings.transform_settings
 
     def _dwt_coeffs(data, wavelet="db1", wavelet_mode="periodization", n_levels=4):
-        all_features = []
-        # iterate through rows of numpy array
+        dwt_max_level = np.inf
         for row in range(len(data)):
             # get max level of decomposition
-            dwt_max_level = pywt.dwt_max_level(data[row].shape[0], wavelet)
-            if n_levels > dwt_max_level:
-                n_levels = dwt_max_level
-            
+            dwt_max_level_i = pywt.dwt_max_level(data[row].shape[0], wavelet)
+            if dwt_max_level_i < dwt_max_level:
+                dwt_max_level = dwt_max_level_i
+
+        if n_levels > dwt_max_level:
+            n_levels = dwt_max_level
+        
+        all_features = []
+        # iterate through rows of numpy array
+        for row in range(len(data)):            
             decomp_coeffs = pywt.wavedec(
                 data[row], wavelet=wavelet, mode=wavelet_mode, level=n_levels
             )
 
-            decomp_coeffs = np.hstack(decomp_coeffs)
+            # decomp_coeffs = np.hstack(decomp_coeffs[:-2])
+            decomp_coeffs = decomp_coeffs[0]
 
             all_features.append(decomp_coeffs)
 
@@ -379,7 +694,10 @@ def _transform_data(
             pca_features = pca.fit_transform(features)
 
         else:
-            pca = PCA(n_components=n_components)
+            pca = PCA(
+                n_components=n_components,
+                random_state=settings._seed,
+            )
             pca_features = pca.fit_transform(features)
 
         return pca_features
@@ -393,21 +711,68 @@ def _transform_data(
             settings.wavelet_n_levels
         )
 
-    pca_features = _pca_coeffs(
+    features = _pca_coeffs(
         features,
         settings.pca_method,
         settings.pca_min_variance_ratio_explained,
         settings.pca_n_components,
     )
 
-    # normalize pca features
-    if settings._standardize:
-        pca_features = (pca_features - pca_features.mean()) / pca_features.std()
+    if settings.include_scale_feature:
+        agg = "median"
 
-    if settings.pca_include_median:
-        pca_features = np.hstack([pca_features, np.median(data, axis=1)[:, None]])
+        if agg == "mean":
+            data_scale = np.mean(data, axis=1)[:, None]
 
-    return pca_features
+            mean = np.mean(data_scale)
+            std = np.std(data_scale)
+            data_scale = (data_scale - mean) / std
+
+        elif agg == "median":
+            data_scale = np.median(data, axis=1)[:, None]
+
+            # normalize data_median to pca_features percentiles
+            percentile = 5
+
+            data_min = np.percentile(data_scale, percentile)
+            data_max = np.percentile(data_scale, 100 - percentile)
+            data_range = data_max - data_min
+
+            pca_min = np.percentile(features, percentile)
+            pca_max = np.percentile(features, 100 - percentile)
+            pca_range = pca_max - pca_min
+            
+            data_scale = pca_range*(data_scale - data_min) / data_range + pca_min
+
+        features = np.hstack([features, data_scale])
+
+    # rescale = settings._rescale
+    rescale = False
+    if rescale:
+        features = (features - features.mean()) / features.std()
+        # mean = np.mean(features, axis=0)
+        # std = np.std(features, axis=0)
+        # features = (features - mean) / std
+
+        # normalize using median and mad
+        # median = np.median(features, axis=0)
+        # mad = MAD(features, median, axis=0)
+        # features = (features - median) / mad
+
+        # median = np.median(features)
+        # mad = MAD(features, median)
+        # features = (features - median) / mad
+
+        # Rescale features
+        # min_new = -1
+        # max_new = 1
+        # new_range = max_new - min_new
+        # min_base = np.min(features)
+        # max_base = np.max(features)
+        # base_range = max_base - min_base
+        # features = new_range * (features - min_base) / base_range + min_new
+
+    return features
 
 
 def _cluster_merge(
@@ -473,17 +838,19 @@ def cluster_reorder(
     cluster_labels: np.ndarray,
     settings: _settings.ClusteringSettings,
 ):
-    sort_method = settings.cluster_sort_options.method
-    agg_type = settings.cluster_sort_options.aggregation
-    reverse = settings.cluster_sort_options.reverse
+    sort_method = settings.cluster_sort.method
+    agg_type = settings.cluster_sort.aggregation
+    reverse = settings.cluster_sort.reverse
 
     # assign labels to data
     df = data.copy()
     df["label"] = cluster_labels
-    
-    # group by cluster and aggregate
-    df_cluster = df.groupby('label').agg(agg_type)
-    n_clusters = len(df_cluster)
+    n_clusters = len(np.unique(cluster_labels))
+
+    # exclude label -1 (outlier) from reordering
+    if -1 in df['label'].unique():
+        df = df[df['label'] != -1]
+        n_clusters = n_clusters - 1
 
     if sort_method == "size":
         # sort clusters by count
@@ -494,6 +861,9 @@ def cluster_reorder(
 
     elif sort_method == "peak":
         # TODO: This is a work in progress
+
+        # group by cluster and aggregate
+        df_cluster = df.groupby('label').agg(agg_type)
 
         # subtract each cluster's median from the cluster's median
         df_cluster_norm = df_cluster.sub(df_cluster.agg(agg_type, axis=1), axis=0)
@@ -532,10 +902,12 @@ def cluster_reorder(
         features = features.sort_values(by=["peak", "valley", "norm"], na_position='first')
 
     # create dictionary to remap cluster numbers to features order
+    cluster_map = {i: i for i in cluster_labels}
+
     if not reverse:
-        cluster_map = {features.index[i]: i for i in range(n_clusters)}
+        cluster_map.update({features.index[i]: i for i in range(n_clusters)})
     else:
-        cluster_map = {features.index[i]: i for i in range(n_clusters)[::-1]}
+        cluster_map.update({features.index[i]: i for i in range(n_clusters)[::-1]})
 
     return cluster_map
 
@@ -547,13 +919,13 @@ def cluster_features(
 
     # adjust upper cluster count if necessary
     if settings.algorithm_selection not in ["dbscan", "hdbscan"]:
-        algo = f"{settings.algorithm_selection.value}"
-        algo_settings = getattr(settings, algo)
+        algo = getattr(settings, f"{settings.algorithm_selection.value}")
+        if algo.n_cluster.lower >= len(data):
+            return np.arange(len(data))
 
-        data_count = len(data)
-        cluster_count = algo_settings.n_cluster.upper
-        min_cluster_size = algo_settings.scoring.min_cluster_size
-        min_required_data = min_cluster_size * cluster_count
+    # rescale the data by standardizing
+    if settings.rescale:
+        data = (data - data.mean()) / data.std()
 
         if data_count < min_required_data:
             settings_dict = settings.model_dump()
@@ -574,19 +946,15 @@ def cluster_features(
     else:
         raise ValueError(f"Unknown clustering algorithm: {settings.algorithm_selection}")
     
-    cluster_labels = cluster_fcn(data, settings)
+    cluster_labels, df_votes = cluster_fcn(data, settings) # TODO: remove df_votes from return in future
 
-    # if np.unique(cluster_labels).shape[0] == 2:
-    #     cluster_labels = _cluster_merge(cluster_labels, data, settings)
+    if np.unique(cluster_labels).shape[0] == 2:
+        cluster_labels = _cluster_merge(cluster_labels, data, settings)
 
-    
-
-    cluster_labels = _cluster_merge(cluster_labels, data, settings)
-
-    if settings.sort_clusters:
+    if settings.cluster_sort.enable:
         cluster_remap_dict = cluster_reorder(df, cluster_labels, settings)
 
         # remap cluster labels using cluster_remap_dict
         cluster_labels = np.vectorize(cluster_remap_dict.get)(cluster_labels)
 
-    return cluster_labels
+    return cluster_labels, df_votes

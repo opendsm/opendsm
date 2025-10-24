@@ -19,6 +19,10 @@ import sys
 import sklearn.metrics as _metrics
 import numpy as np
 
+from pydantic import BaseModel, ConfigDict
+
+from opendsm.common.clustering.metrics import ClusterMetrics
+
 
 def get_max_score_from_system_size() -> float:
     """
@@ -90,11 +94,32 @@ def merge_small_clusters(clusters: np.ndarray, min_cluster_size: int):
     return renumber_clusters(clusters, reorder=True)
 
 
+class _LabelResult(BaseModel):
+    """
+    contains metrics about a cluster label
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    labels: np.ndarray
+    score: dict[str, float]
+    score_unable_to_be_calculated: dict[str, bool]
+    n_clusters: int
+
+_score_council_init = {
+    'calinski_harabasz_index': 1.0,
+    'davies_bouldin_index': 1.0,
+    'density_based_clustering_validation_index': 1.0,
+    'dunn_index': 1.0,
+    'silhouette_index': 1.0,
+    'silhouette_median_index': 1.0,
+    'xie_beni_index': 1.0,
+}
 def score_clusters(
     data: np.ndarray,
     labels: np.ndarray,
     n_cluster_lower: int,
-    score_choice="silhouette",
+    score_council: _score_council_init, 
     dist_metric="euclidean",
     min_cluster_size=2,
     max_non_outlier_cluster_count=200,
@@ -116,71 +141,50 @@ def score_clusters(
         unable_to_calc_score (bool): Boolean that if true, means max score was used
     """
 
+    n_clusters = len(np.unique(labels))
+
     # merge clusters to outlier cluster
     labels = merge_small_clusters(labels, min_cluster_size)
 
     non_outlier_cluster_count = labels.max() + 1
-    if non_outlier_cluster_count < n_cluster_lower:
-        return get_max_score_from_system_size(), True
-
-    if non_outlier_cluster_count > max_non_outlier_cluster_count:
-        return get_max_score_from_system_size(), True
+    if non_outlier_cluster_count < n_cluster_lower or non_outlier_cluster_count > max_non_outlier_cluster_count:
+        return _LabelResult(
+            labels=labels,
+            score={voter: np.inf for voter in score_council.keys()},
+            score_unable_to_be_calculated={voter: True for voter in score_council.keys()},
+            n_clusters=n_clusters,
+        )
 
     # don't include outlier cluster in scoring
     idx = np.argwhere(labels != -1).flatten()
     data_non_outlier = data[idx, :]
     labels_non_outlier = labels[idx]
 
-    score_error = False
-    if score_choice == "silhouette":
-        try:
-            # if sample size is a number then it randomly samples within the group, None looks at all
-            # if using silhouette score for large datasets, might want to specify sample_size
-            score = float(
-                _metrics.silhouette_score(
-                    data_non_outlier,
-                    labels_non_outlier,
-                    metric=dist_metric,
-                    sample_size=10_000,
-                )
-            )
+    metrics = ClusterMetrics(
+        data=data_non_outlier,
+        labels=labels_non_outlier,
+        distance_metric=dist_metric,
+    )
+    score = {}
+    score_unable_to_be_calculated = {}
+    for score_choice, score_weight in score_council.items():
+        score[score_choice] = np.inf
+        score_unable_to_be_calculated[score_choice] = True
 
-        except Exception:
-            score = float(10.0)
-            score_error = True
+        if score_weight > 0:
+            try:
+                score[score_choice] = getattr(metrics, score_choice)
 
-    elif score_choice == "silhouette_median":
-        try:
-            # if this is too computationally intensive, could sample clusters instead
-            score_all = -10 * _metrics.silhouette_samples(
-                data_non_outlier, labels_non_outlier, metric=dist_metric
-            )  # type: ignore
-            score = float(np.median(score_all[idx]))
-        except Exception:
-            score = float(10.0)
-            score_error = True
+                if np.isfinite(score[score_choice]):
+                    score_unable_to_be_calculated[score_choice] = False
+            except:
+                continue
+    
+    label_res = _LabelResult(
+        labels=labels,
+        score=score,
+        score_unable_to_be_calculated=score_unable_to_be_calculated,
+        n_clusters=n_clusters,
+    )
 
-    elif score_choice in ["variance_ratio", "calinski-harabasz"]:
-        try:
-            score = -1 * _metrics.calinski_harabasz_score(
-                data_non_outlier, labels_non_outlier
-            )
-        except Exception:
-            score = get_max_score_from_system_size()
-            score_error = True
-
-    elif score_choice == "davies-bouldin":
-        try:
-            score = float(
-                _metrics.davies_bouldin_score(data_non_outlier, labels_non_outlier)
-            )
-        except Exception:
-            score = get_max_score_from_system_size()
-            score_error = True
-
-    else:
-        raise ValueError(
-            f"{score_choice} is not a recognized clustering scoring function"
-        )
-
-    return score, score_error
+    return label_res

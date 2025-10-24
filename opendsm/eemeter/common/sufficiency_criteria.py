@@ -413,19 +413,22 @@ class SufficiencyCriteria(BaseSettings):
         self._check_baseline_day_length()
         self._check_negative_observed_values()
 
+        self._check_valid_monthly_coverage(col="temperature")
+
         self._check_valid_days_percentage(col="temperature")
         self._check_valid_days_percentage(col="observed")
         self._check_valid_days_percentage(col="joint")
-        self._check_valid_monthly_coverage(col="temperature")
 
         self._check_extreme_values()
 
     def check_sufficiency_reporting(self):
         self._check_no_data()
 
+        self._check_valid_monthly_coverage(col="temperature")
+
         self._check_valid_days_percentage(col="temperature")
         self._check_valid_days_percentage(col="joint")
-        self._check_valid_monthly_coverage(col="temperature")
+
         # self._check_high_frequency_temperature_values()
 
 
