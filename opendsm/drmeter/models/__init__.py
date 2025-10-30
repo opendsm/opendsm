@@ -17,3 +17,4 @@ from .caltrack import (
     BaselineData as CaltrackDRBaselineData,
     ReportingData as CaltrackDRReportingData,
 )
+from .hourly import *
