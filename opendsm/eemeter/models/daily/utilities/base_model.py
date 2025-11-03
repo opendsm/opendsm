@@ -18,11 +18,7 @@ from scipy.optimize import minimize_scalar
 from scipy.special import lambertw
 from scipy.stats import linregress, theilslopes
 
-<<<<<<< HEAD:eemeter/eemeter/models/daily/utilities/base_model.py
-from eemeter.common.utils import _OoM
-=======
 from opendsm.common.utils import OoM_numba
->>>>>>> move-to-pyproject:opendsm/eemeter/models/daily/utilities/base_model.py
 
 
 def get_intercept(y, alpha=2):
@@ -120,7 +116,7 @@ def get_smooth_coeffs(hdd_bp, pct_hdd_k, cdd_bp, pct_cdd_k, min_pct_k=0.01):
 @numba.jit(nopython=True, error_model="numpy", cache=True)
 def fix_identical_bnds(bnds):
     for i in np.argwhere(bnds[:, 0] == bnds[:, 1]):
-        bnds[i, :] = bnds[i, :] + np.array([-1.0, 1.0]) * 10 ** _OoM(
+        bnds[i, :] = bnds[i, :] + np.array([-1.0, 1.0]) * 10 ** OoM_numba(
             bnds[i, 0], method="floor"
         )
 

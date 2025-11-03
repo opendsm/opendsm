@@ -19,13 +19,8 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 
-<<<<<<< HEAD:eemeter/eemeter/models/daily/plot.py
-from eemeter.common.stats.outliers import IQR_outlier
-from eemeter.eemeter.models.daily.utilities.ellipsoid_test import (
-=======
-from opendsm.common.adaptive_loss import IQR_outlier
+from opendsm.common.stats.outliers import IQR_outlier
 from opendsm.eemeter.models.daily.utilities.ellipsoid_test import (
->>>>>>> move-to-pyproject:opendsm/eemeter/models/daily/plot.py
     robust_confidence_ellipse,
 )
 

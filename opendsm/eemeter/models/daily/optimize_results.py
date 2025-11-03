@@ -16,7 +16,7 @@ from copy import deepcopy as copy
 
 import numpy as np
 
-from opendsm.common.utils import unc_factor
+from opendsm.common.stats.basic import unc_factor
 from opendsm.eemeter.models.daily.base_models.full_model import (
     full_model,
     get_full_model_x,

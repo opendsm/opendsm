@@ -27,6 +27,7 @@ import pywt
 from opendsm.common.base_settings import BaseSettings
 from opendsm.common.clustering.settings import ClusteringSettings
 from opendsm.common.metrics import BaselineMetrics
+from opendsm.common.const import CAlgoChoice
 
 from opendsm.eemeter.common.warnings import EEMeterWarning
 
@@ -258,13 +259,6 @@ class KernelRidgeSettings(BaseSettings):
         default=None,
         gt=0,
     )
-
-
-class CAlgoChoice(str, Enum):
-    IQR_LEGACY = "iqr_legacy"
-    IQR = "iqr"
-    MAD = "mad"
-    STDEV = "stdev"
 
 
 class AdaptiveWeightsSettings(BaseSettings):

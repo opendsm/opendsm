@@ -17,13 +17,8 @@ import json
 import numpy as np
 import pandas as pd
 
-<<<<<<< HEAD:eemeter/eemeter/models/hourly/wrapper.py
-from eemeter.common.stats.basic import t_stat
-from eemeter.eemeter.common.features import (
-=======
-from opendsm.common.utils import t_stat
+from opendsm.common.stats.basic import t_stat
 from opendsm.eemeter.common.features import (
->>>>>>> move-to-pyproject:opendsm/eemeter/models/hourly_caltrack/wrapper.py
     estimate_hour_of_week_occupancy,
     fit_temperature_bins,
 )

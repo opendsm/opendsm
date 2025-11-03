@@ -17,7 +17,7 @@ from __future__ import annotations
 import numpy as np
 import pydantic
 
-from opendsm.comparison_groups._utils.base_settings import BaseSettings
+from opendsm.common.base_settings import BaseSettings
 
 from typing import Optional, Literal
 
@@ -31,31 +31,31 @@ class HiGHS_Settings(BaseSettings):
     """Settings for HiGHS optimization solver"""
 
     """Presolve option"""
-    PRESOLVE: Literal["off", "choose", "on"] = pydantic.Field(
+    presolve: Literal["off", "choose", "on"] = pydantic.Field(
         default="choose",
         validate_default=True,
     )
 
     """If 'simplex'/'ipm'/'pdlp' is chosen then, for a MIP (QP) the integrality constraint (quadratic term) will be ignored"""
-    # SOLVER: Literal["simplex", "choose", "ipm", "pdlp"] = pydantic.Field(
+    # solver: Literal["simplex", "choose", "ipm", "pdlp"] = pydantic.Field(
     #     default="choose",
     #     validate_default=True,
     # )
 
     """Parallel option"""
-    PARALLEL: Literal["off", "choose", "on"] = pydantic.Field(
+    parallel: Literal["off", "choose", "on"] = pydantic.Field(
         default="off", # was "choose"
         validate_default=True,
     )
 
     """Run IPM crossover"""
-    RUN_CROSSOVER: Literal["off", "choose", "on"] = pydantic.Field(
+    run_crossover: Literal["off", "choose", "on"] = pydantic.Field(
         default="on",
         validate_default=True,
     )
 
     """Time limit (seconds)"""
-    TIME_LIMIT: float = pydantic.Field(
+    time_limit: float = pydantic.Field(
         default=float('inf'),
         ge=0,
         le=float('inf'),
@@ -63,13 +63,13 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Compute cost, bound, RHS and basic solution ranging"""
-    RANGING: Literal["off", "on"] = pydantic.Field(
+    ranging: Literal["off", "on"] = pydantic.Field(
         default="off",
         validate_default=True,
     )
 
     """Limit on |cost coefficient|: values greater than or equal to this will be treated as infinite"""
-    INFINITE_COST: float = pydantic.Field(
+    infinite_cost: float = pydantic.Field(
         default=1e+20,
         ge=1e+15,
         le=float('inf'),
@@ -77,7 +77,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Limit on |constraint bound|: values greater than or equal to this will be treated as infinite"""
-    INFINITE_BOUND: float = pydantic.Field(
+    infinite_bound: float = pydantic.Field(
         default=1e+20,
         ge=1e+15,
         le=float('inf'),
@@ -85,7 +85,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Lower limit on |matrix entries|: values less than or equal to this will be treated as zero"""
-    SMALL_MATRIX_VALUE: float = pydantic.Field(
+    small_matrix_value: float = pydantic.Field(
         default=1e-09,
         ge=1e-12,
         le=float('inf'),
@@ -93,7 +93,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Upper limit on |matrix entries|: values greater than or equal to this will be treated as infinite"""
-    LARGE_MATRIX_VALUE: float = pydantic.Field(
+    large_matrix_value: float = pydantic.Field(
         default=1e+15,
         ge=1,
         le=float('inf'),
@@ -101,7 +101,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Primal feasibility tolerance"""
-    PRIMAL_FEASIBILITY_TOLERANCE: float = pydantic.Field(
+    primal_feasibility_tolerance: float = pydantic.Field(
         default=1e-07,
         ge=1e-10,
         le=float('inf'),
@@ -109,7 +109,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Dual feasibility tolerance"""
-    DUAL_FEASIBILITY_TOLERANCE: float = pydantic.Field(
+    dual_feasibility_tolerance: float = pydantic.Field(
         default=1e-07,
         ge=1e-10,
         le=float('inf'),
@@ -117,7 +117,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """IPM optimality tolerance"""
-    IPM_OPTIMALITY_TOLERANCE: float = pydantic.Field(
+    ipm_optimality_tolerance: float = pydantic.Field(
         default=1e-08,
         ge=1e-12,
         le=float('inf'),
@@ -125,7 +125,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Objective bound for termination of the dual simplex solver"""
-    OBJECTIVE_BOUND: float = pydantic.Field(
+    objective_bound: float = pydantic.Field(
         default=float('inf'),
         ge=float('-inf'),
         le=float('inf'),
@@ -133,7 +133,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Objective target for termination of the MIP solver"""
-    OBJECTIVE_TARGET: float = pydantic.Field(
+    objective_target: float = pydantic.Field(
         default=float('-inf'),
         ge=float('-inf'),
         le=float('inf'),
@@ -141,7 +141,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Random seed used in HiGHS"""
-    RANDOM_SEED: Optional[int] = pydantic.Field(
+    random_seed: Optional[int] = pydantic.Field(
         default=None,
         ge=0,
         le=2147483647,
@@ -149,7 +149,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Number of threads used by HiGHS (0: automatic)"""
-    THREADS: int = pydantic.Field(
+    threads: int = pydantic.Field(
         default=0,
         ge=0,
         le=2147483647,
@@ -157,7 +157,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Exponent of power-of-two bound scaling for model"""
-    USER_BOUND_SCALE: int = pydantic.Field(
+    user_bound_scale: int = pydantic.Field(
         default=0,
         ge=-2147483647,
         le=2147483647,
@@ -165,7 +165,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Exponent of power-of-two cost scaling for model"""
-    USER_COST_SCALE: int = pydantic.Field(
+    user_cost_scale: int = pydantic.Field(
         default=0,
         ge=-2147483647,
         le=2147483647,
@@ -173,7 +173,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Strategy for simplex solver [0: Choose; 1: Dual (serial); 2: Dual (PAMI); 3: Dual (SIP); 4: Primal]"""
-    SIMPLEX_STRATEGY: int = pydantic.Field(
+    simplex_strategy: int = pydantic.Field(
         default=1,
         ge=0,
         le=4,
@@ -181,7 +181,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Simplex scaling strategy: [0: off; 1: choose; 2: equilibration; 3: forced equilibration; 4: max value 0; 5: max value 1]"""
-    SIMPLEX_SCALE_STRATEGY: int = pydantic.Field(
+    simplex_scale_strategy: int = pydantic.Field(
         default=1,
         ge=0,
         le=5,
@@ -189,7 +189,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Strategy for simplex dual edge weights: [-1: Choose; 0: Dantzig; 1: Devex; 2: Steepest Edge]"""
-    SIMPLEX_DUAL_EDGE_WEIGHT_STRATEGY: int = pydantic.Field(
+    simplex_dual_edge_weight_strategy: int = pydantic.Field(
         default=-1,
         ge=-1,
         le=2,
@@ -197,7 +197,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Strategy for simplex primal edge weights: [-1: Choose; 0: Dantzig; 1: Devex; 2: Steepest Edge]"""
-    SIMPLEX_PRIMAL_EDGE_WEIGHT_STRATEGY: int = pydantic.Field(
+    simplex_primal_edge_weight_strategy: int = pydantic.Field(
         default=-1,
         ge=-1,
         le=2,
@@ -205,7 +205,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Iteration limit for simplex solver when solving LPs, but not subproblems in the MIP solver"""
-    SIMPLEX_ITERATION_LIMIT: int = pydantic.Field(
+    simplex_iteration_limit: int = pydantic.Field(
         default=2147483647,
         ge=0,
         le=2147483647,
@@ -213,7 +213,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Limit on the number of simplex UPDATE operations"""
-    SIMPLEX_UPDATE_LIMIT: int = pydantic.Field(
+    simplex_update_limit: int = pydantic.Field(
         default=5000,
         ge=0,
         le=2147483647,
@@ -221,7 +221,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Maximum level of concurrency in parallel simplex"""
-    SIMPLEX_MAX_CONCURRENCY: int = pydantic.Field(
+    simplex_max_concurrency: int = pydantic.Field(
         default=8,
         ge=1,
         le=8,
@@ -229,37 +229,37 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Enables or disables solver output"""
-    # OUTPUT_FILE: bool = pydantic.Field(
+    # output_file: bool = pydantic.Field(
     #     default=True,
     #     validate_default=True,
     # )
 
     """Enables or disables console logging"""
-    # LOG_TO_CONSOLE: bool = pydantic.Field(
+    # log_to_console: bool = pydantic.Field(
     #     default=True,
     #     validate_default=True,
     # )
 
     """Solution file"""
-    SOLUTION_FILE: str = pydantic.Field(
+    solution_file: str = pydantic.Field(
         default="",
         validate_default=True,
     )
 
     """Log file"""
-    LOG_FILE: str = pydantic.Field(
+    log_file: str = pydantic.Field(
         default="",
         validate_default=True,
     )
 
     """Write the primal and dual solution to a file"""
-    WRITE_SOLUTION_TO_FILE: bool = pydantic.Field(
+    write_solution_to_file: bool = pydantic.Field(
         default=False,
         validate_default=True,
     )
 
     """Style of solution file: [0: HiGHS raw; 1: HiGHS pretty; 2: Glpsol raw; 3: Glpsol pretty; 4: HiGHS sparse raw] (raw = computer-readable, pretty = human-readable)"""
-    WRITE_SOLUTION_STYLE: int = pydantic.Field(
+    write_solution_style: int = pydantic.Field(
         default=0,
         ge=0,
         le=4,
@@ -267,7 +267,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Location of cost row for Glpsol file: -2 => Last; -1 => None; 0 => None if empty, otherwise data file location; 1 <= n <= num_row => Location n; n > num_row => Last"""
-    GLPSOL_COST_ROW_LOCATION: int = pydantic.Field(
+    glpsol_cost_row_location: int = pydantic.Field(
         default=0,
         ge=-2,
         le=2147483647,
@@ -275,31 +275,31 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Write model file"""
-    WRITE_MODEL_FILE: str = pydantic.Field(
+    write_model_file: str = pydantic.Field(
         default="",
         validate_default=True,
     )
 
     """Write the model to a file"""
-    WRITE_MODEL_TO_FILE: bool = pydantic.Field(
+    write_model_to_file: bool = pydantic.Field(
         default=False,
         validate_default=True,
     )
 
     """Whether MIP symmetry should be detected"""
-    MIP_DETECT_SYMMETRY: bool = pydantic.Field(
+    mip_detect_symmetry: bool = pydantic.Field(
         default=True,
         validate_default=True,
     )
 
     """Whether MIP restart is permitted"""
-    MIP_ALLOW_RESTART: bool = pydantic.Field(
+    mip_allow_restart: bool = pydantic.Field(
         default=True,
         validate_default=True,
     )
 
     """MIP solver max number of nodes"""
-    MIP_MAX_NODES: int = pydantic.Field(
+    mip_max_nodes: int = pydantic.Field(
         default=2147483647,
         ge=0,
         le=2147483647,
@@ -307,7 +307,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """MIP solver max number of nodes where estimate is above cutoff bound"""
-    MIP_MAX_STALL_NODES: int = pydantic.Field(
+    mip_max_stall_nodes: int = pydantic.Field(
         default=2147483647,
         ge=0,
         le=2147483647,
@@ -315,25 +315,25 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Whether improving MIP solutions should be saved"""
-    MIP_IMPROVING_SOLUTION_SAVE: bool = pydantic.Field(
+    mip_improving_solution_save: bool = pydantic.Field(
         default=False,
         validate_default=True,
     )
 
     """Whether improving MIP solutions should be reported in sparse format"""
-    MIP_IMPROVING_SOLUTION_REPORT_SPARSE: bool = pydantic.Field(
+    mip_improving_solution_report_sparse: bool = pydantic.Field(
         default=False,
         validate_default=True,
     )
 
     """File for reporting improving MIP solutions: not reported for an empty string ''"""
-    MIP_IMPROVING_SOLUTION_FILE: str = pydantic.Field(
+    mip_improving_solution_file: str = pydantic.Field(
         default="",
         validate_default=True,
     )
 
     """MIP solver max number of leave nodes"""
-    MIP_MAX_LEAVES: int = pydantic.Field(
+    mip_max_leaves: int = pydantic.Field(
         default=2147483647,
         ge=0,
         le=2147483647,
@@ -341,7 +341,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Limit on the number of improving solutions found to stop the MIP solver prematurely"""
-    MIP_MAX_IMPROVING_SOLS: int = pydantic.Field(
+    mip_max_improving_sols: int = pydantic.Field(
         default=2147483647,
         ge=1,
         le=2147483647,
@@ -349,7 +349,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Maximal age of dynamic LP rows before they are removed from the LP relaxation in the MIP solver"""
-    MIP_LP_AGE_LIMIT: int = pydantic.Field(
+    mip_lp_age_limit: int = pydantic.Field(
         default=10,
         ge=0,
         le=32767,
@@ -357,7 +357,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Maximal age of rows in the MIP solver cutpool before they are deleted"""
-    MIP_POOL_AGE_LIMIT: int = pydantic.Field(
+    mip_pool_age_limit: int = pydantic.Field(
         default=30,
         ge=0,
         le=1000,
@@ -365,7 +365,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Soft limit on the number of rows in the MIP solver cutpool for dynamic age adjustment"""
-    MIP_POOL_SOFT_LIMIT: int = pydantic.Field(
+    mip_pool_soft_limit: int = pydantic.Field(
         default=10000,
         ge=1,
         le=2147483647,
@@ -373,7 +373,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Minimal number of observations before MIP solver pseudo costs are considered reliable"""
-    MIP_PSCOST_MINRELIABLE: int = pydantic.Field(
+    mip_pscost_minreliable: int = pydantic.Field(
         default=8,
         ge=0,
         le=2147483647,
@@ -381,7 +381,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Minimal number of entries in the MIP solver cliquetable before neighbourhood queries of the conflict graph use parallel processing"""
-    MIP_MIN_CLIQUETABLE_ENTRIES_FOR_PARALLELISM: int = pydantic.Field(
+    mip_min_cliquetable_entries_for_parallelism: int = pydantic.Field(
         default=100000,
         ge=0,
         le=2147483647,
@@ -389,7 +389,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """MIP feasibility tolerance"""
-    MIP_FEASIBILITY_TOLERANCE: float = pydantic.Field(
+    mip_feasibility_tolerance: float = pydantic.Field(
         default=1e-06,
         ge=1e-10,
         le=float('inf'),
@@ -397,7 +397,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Effort spent for MIP heuristics"""
-    MIP_HEURISTIC_EFFORT: float = pydantic.Field(
+    mip_heuristic_effort: float = pydantic.Field(
         default=0.05,
         ge=0,
         le=1,
@@ -405,7 +405,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Tolerance on relative gap, |ub-lb|/|ub|, to determine whether optimality has been reached for a MIP instance"""
-    MIP_REL_GAP: float = pydantic.Field(
+    mip_rel_gap: float = pydantic.Field(
         default=0.0001,
         ge=0,
         le=float('inf'),
@@ -413,7 +413,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Tolerance on absolute gap of MIP, |ub-lb|, to determine whether optimality has been reached for a MIP instance"""
-    MIP_ABS_GAP: float = pydantic.Field(
+    mip_abs_gap: float = pydantic.Field(
         default=1e-06,
         ge=0,
         le=float('inf'),
@@ -421,7 +421,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """MIP minimum logging interval"""
-    MIP_MIN_LOGGING_INTERVAL: float = pydantic.Field(
+    mip_min_logging_interval: float = pydantic.Field(
         default=5,
         ge=0,
         le=float('inf'),
@@ -429,7 +429,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Iteration limit for IPM solver"""
-    IPM_ITERATION_LIMIT: int = pydantic.Field(
+    ipm_iteration_limit: int = pydantic.Field(
         default=2147483647,
         ge=0,
         le=2147483647,
@@ -437,19 +437,19 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Use native termination for PDLP solver: Default = false"""
-    PDLP_NATIVE_TERMINATION: bool = pydantic.Field(
+    pdlp_native_termination: bool = pydantic.Field(
         default=False,
         validate_default=True,
     )
 
     """Scaling option for PDLP solver: Default = true"""
-    PDLP_SCALING: bool = pydantic.Field(
+    pdlp_scaling: bool = pydantic.Field(
         default=True,
         validate_default=True,
     )
 
     """Iteration limit for PDLP solver"""
-    PDLP_ITERATION_LIMIT: int = pydantic.Field(
+    pdlp_iteration_limit: int = pydantic.Field(
         default=2147483647,
         ge=0,
         le=2147483647,
@@ -457,7 +457,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Restart mode for PDLP solver: 0 => none; 1 => GPU (default); 2 => CPU"""
-    PDLP_E_RESTART_METHOD: int = pydantic.Field(
+    pdlp_e_restart_method: int = pydantic.Field(
         default=1,
         ge=0,
         le=2,
@@ -465,7 +465,7 @@ class HiGHS_Settings(BaseSettings):
     )
 
     """Duality gap tolerance for PDLP solver: Default = 1e-4"""
-    PDLP_D_GAP_TOL: float = pydantic.Field(
+    pdlp_d_gap_tol: float = pydantic.Field(
         default=0.0001,
         ge=1e-12,
         le=float('inf'),
@@ -476,15 +476,19 @@ class HiGHS_Settings(BaseSettings):
     """Make seed random if None"""
     @pydantic.model_validator(mode="after")
     def _random_seed(self):
-        if self.RANDOM_SEED is None:
+        self.model_config["frozen"] = False
+
+        if self.random_seed is None:
             try:
-                min_int = self.model_fields["RANDOM_SEED"].metadata[0].ge
-                max_int = self.model_fields["RANDOM_SEED"].metadata[1].le
+                min_int = self.model_fields["random_seed"].metadata[0].ge
+                max_int = self.model_fields["random_seed"].metadata[1].le
             except:
                 min_int = 0
                 max_int = 2147483647
 
-            self.RANDOM_SEED = np.random.randint(min_int, max_int)
+            self.random_seed = np.random.randint(min_int, max_int)
+
+        self.model_config["frozen"] = True
 
         return self
 

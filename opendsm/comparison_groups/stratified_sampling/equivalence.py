@@ -140,7 +140,7 @@ def chisquare_dist(X,Y):
 
 def get_distance_func(how="euclidean"):
     if how == "euclidean":
-        return lambda x, y: pdist([x,y]) 
+        return lambda x, y: pdist([x,y])[0]
     elif how == "chisquare":
         return chisquare_dist 
     else:

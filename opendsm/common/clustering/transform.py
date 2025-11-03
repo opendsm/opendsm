@@ -1,9 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-from __future__ import annotations
-
-
 #  Copyright 2014-2025 OpenDSM contributors
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -15,76 +12,89 @@ from __future__ import annotations
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-"""
-module which contains (for now) both utilities
-for clustering transforms and the transform logic itself
-"""
+from __future__ import annotations
+
+import warnings
+from typing import Optional
 
 import numpy as np
 import pandas as pd
 
 from skfda.representation.grid import FDataGrid as _FDataGrid
 from skfda.representation.basis import Fourier as _Fourier
-from skfda.preprocessing.dim_reduction.feature_extraction import FPCA as _FPCA
+from skfda.preprocessing.dim_reduction import FPCA as _FPCA
+
+import pywt
+
+from sklearn.decomposition import PCA, KernelPCA
+
+from opendsm.common.stats import basic as _basic
+from opendsm.common.clustering import settings as _settings
 
 
-_NORMALIZATION_QUANTILE = 0.1
 
+def _replace_values(x, a, b):
+    if x.ndim == 0:
+        if x == a:
+            x = b
+    else:
+        x[x == a] = b
+    
+    return x
 
-def _normalize_single_loadshape(ls_arr: np.ndarray):
-    """
-    applies the min and max normalization logic to a dataframe which contains the transformed
-    loadshape
-    """
-    ls_arr = np.array(ls_arr)
-    ls_arr_transposed = ls_arr.T
-    a, b = [0, 1]  # range to normalize to
+def normalize(
+    data: np.ndarray,
+    settings: _settings.NormalizeSettings
+) -> np.ndarray:
+    method = settings.method
+    axis = settings.axis
 
-    # current range
-    ls_min, ls_max = np.quantile(
-        ls_arr_transposed,
-        [_NORMALIZATION_QUANTILE, 1 - _NORMALIZATION_QUANTILE],
-        axis=0,
-    )
+    if method == _settings.NormalizeChoice.STANDARDIZE:
+        mean = np.mean(data, axis=axis)
+        std = np.std(data, axis=axis)
+        std = _replace_values(std, 0, 1)
 
-    if ls_min == ls_max:
-        return np.full_like(ls_arr, (a + b) / 2)
+        data = (data - mean) / std
 
-    ret_arr = (b - a) * (ls_arr_transposed - ls_min) / (ls_max - ls_min) + a
+    elif method == _settings.NormalizeChoice.MED_MAD:
+        median = np.median(data, axis=axis)
+        mad = _basic.median_absolute_deviation(data, median=median, axis=axis)
+        mad = _replace_values(mad, 0, 1)
 
-    return ret_arr.T
+        data = (data - median) / mad
 
+    elif method == _settings.NormalizeChoice.MIN_MAX_QUANTILE:
+        q = settings.quantile
+        a, b = [-1, 1]  # range to normalize to
 
-def _normalize_df_loadshapes(
-    df: pd.DataFrame, normalize_method="min_max"
-) -> pd.DataFrame:
-    """
-    transforms a loadshape dataframe
+        min_val, max_val = np.quantile(data, [q, 1 - q], axis=axis)
 
-    It can work either on a dataframe containing all treatment loadshapes
-    or a single loadshape.
-    """
-    # df_list: list[pd.DataFrame] = []
-    # # TODO: This is slow. Need to vectorize or use apply?
-    # for _id, data in df.iterrows():
-    #     transformed_data = _normalize_loadshape(
-    #         ls_arr=data.values
-    #     )
-    #     df_list.append(transformed_data)
-    #
-    # df_transformed = pd.concat(df_list).to_frame(name="ls")  # type: ignore
+        idx_same = np.argwhere(min_val == max_val).flatten()
+        idx_diff = [idx for idx in range(data.shape[0]) if idx not in idx_same]
 
-    if normalize_method == "min_max":
-        df = df.apply(_normalize_single_loadshape, result_type="broadcast", axis=1)
+        if axis == 0:
+            min_val = min_val[idx_diff][None, :]
+            max_val = max_val[idx_diff][None, :]
+        elif axis == 1:
+            min_val = min_val[idx_diff][:, None]
+            max_val = max_val[idx_diff][:, None]
 
-    return df
+        if len(idx_same) > 0:
+            data[idx_same, :] = (a + b) / 2
+        
+        data[idx_diff, :] = (b - a) * (data[idx_diff, :] - min_val) / (max_val - min_val) + a
+
+    return data
 
 
 class FpcaError(Exception):
     pass
 
-
-def _fpca_base(x: np.ndarray, y: np.ndarray, min_var_ratio: float) -> np.ndarray:
+def _fpca_base(
+    x: np.ndarray, 
+    y: np.ndarray, 
+    min_var_ratio: float
+) -> np.ndarray:
     """
     applies fpca to concatenated transform loadshape dataframe values
 
@@ -135,28 +145,129 @@ def _fpca_base(x: np.ndarray, y: np.ndarray, min_var_ratio: float) -> np.ndarray
     return mixture_components
 
 
-def _get_fpca_from_loadshape(
-    df: pd.DataFrame,
-    min_var_ratio: float,
-) -> tuple[pd.DataFrame, str | None]:
-    """
-    function which receives concatenated dataframe of normalized loadshape
-    dataframes and a min_var_ratio and then performs fpca.
+def fpca_transform(
+    data: np.ndarray,
+    settings: _settings.ClusteringSettings
+) -> np.ndarray:
+    min_var_ratio = settings.fpca_transform.min_var_ratio
 
-    Also returns a string that if not empty, implies an error message/something went wrong
-    """
-    ids = df.index
-    time = df.columns.to_numpy().astype(float)
-    ls = df.values
-
+    x = np.arange(data.shape[1]) # assumes uniform spacing
     try:
-        fcpa_mixture_components = _fpca_base(x=time, y=ls, min_var_ratio=min_var_ratio)
+        fcpa_mixture_components = _fpca_base(
+            x=x, 
+            y=data, 
+            min_var_ratio=min_var_ratio
+        )
     except FpcaError as e:
-        return pd.DataFrame(), str(e)
+        raise e
 
-    fpca_components = np.arange(fcpa_mixture_components.shape[1])
-    columns = pd.Series(fpca_components, name="fPCA_component")
+    return fcpa_mixture_components
 
-    df_fpca = pd.DataFrame(fcpa_mixture_components, index=ids, columns=columns)
 
-    return df_fpca, None
+def wavelet_transform(
+    data: np.ndarray,
+    settings: _settings.ClusteringSettings
+) -> np.ndarray:
+    """
+    Transforms the data using the wavelet transform settings
+    """
+    wavelet_settings = settings.wavelet_transform
+
+    def _dwt_coeffs(data, wavelet="db1", wavelet_mode="periodization", n_levels=4):
+        all_features = []
+        # iterate through rows of numpy array
+        for row in range(len(data)):
+            # get max level of decomposition
+            dwt_max_level = pywt.dwt_max_level(data[row].shape[0], wavelet)
+            if n_levels > dwt_max_level:
+                n_levels = dwt_max_level
+            
+            decomp_coeffs = pywt.wavedec(
+                data[row], wavelet=wavelet, mode=wavelet_mode, level=n_levels
+            )
+
+            decomp_coeffs = np.hstack(decomp_coeffs)
+
+            all_features.append(decomp_coeffs)
+
+        return np.vstack(all_features)
+
+    def _pca_coeffs(features, method, min_var_ratio_explained=0.95, n_components=None):
+        if min_var_ratio_explained is not None:
+            n_components = min_var_ratio_explained
+
+        # kernel pca is not fully developed
+        if method == "kernel_pca":
+            if n_components ==  "mle":
+                pca = PCA(n_components=n_components)
+                pca_features = pca.fit_transform(features)
+
+            pca = KernelPCA(n_components=None, kernel="rbf")
+            pca_features = pca.fit_transform(features)
+
+            if min_var_ratio_explained is not None:
+                explained_variance_ratio = pca.eigenvalues_ / np.sum(pca.eigenvalues_)
+
+                # get the cumulative explained variance ratio
+                cumulative_explained_variance = np.cumsum(explained_variance_ratio)
+
+                # find number of components that explain pct% of the variance
+                n_components = np.argmax(cumulative_explained_variance > n_components).astype(int)
+
+            if not isinstance(n_components, (int, np.integer)):
+                raise ValueError("n_components must be an integer for kernel PCA")
+
+            # pca = PCA(n_components=n_components)
+            pca = KernelPCA(n_components=n_components, kernel="rbf")
+            pca_features = pca.fit_transform(features)
+
+        else:
+            pca = PCA(n_components=n_components)
+            pca_features = pca.fit_transform(features)
+
+        return pca_features
+
+    # calculate wavelet coefficients
+    with warnings.catch_warnings():
+        features = _dwt_coeffs(
+            data, 
+            wavelet_settings.wavelet_name, 
+            wavelet_settings.wavelet_mode, 
+            wavelet_settings.wavelet_n_levels
+        )
+
+    pca_features = _pca_coeffs(
+        features,
+        wavelet_settings.pca_method,
+        wavelet_settings.pca_min_variance_ratio_explained,
+        wavelet_settings.pca_n_components,
+    )
+
+    # normalize pca features
+    if settings.normalize.post_transform:
+        # ignores all other values from normalize settings
+        pca_features = (pca_features - pca_features.mean()) / pca_features.std()
+
+    if wavelet_settings.pca_include_median:
+        pca_features = np.hstack([pca_features, np.median(data, axis=1)[:, None]])
+
+    return pca_features
+
+
+def transform_features(
+    data: np.ndarray,
+    settings: _settings.ClusteringSettings
+) -> np.ndarray:
+    
+    # normalize the data
+    if settings.normalize.pre_transform:
+        data = normalize(data, settings.normalize)
+
+    # transform the data
+    if settings.transform_selection == _settings.TransformChoice.FPCA:
+        data = fpca_transform(data, settings)
+
+    elif settings.transform_selection == _settings.TransformChoice.WAVELET:
+        data = wavelet_transform(data, settings)
+
+    return data

@@ -12,7 +12,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from opendsm.comparison_groups.clustering import *
+from opendsm.comparison_groups.cg_clustering import *
 from opendsm.comparison_groups.individual_meter_matching import *
 
 from opendsm.comparison_groups.stratified_sampling import (
@@ -26,7 +26,7 @@ from opendsm.comparison_groups.random_sampling import (
     RS_Settings,
 )
 
-from opendsm.comparison_groups._utils import (
+from opendsm.comparison_groups.common import (
     Data,
     Data_Settings,
     load_tutorial_data,

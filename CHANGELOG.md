@@ -5,9 +5,11 @@ Development
 -----------
 
 * Switch build to use pyproject.toml and uv 
+* Change pyproject.toml build system to hatchling 
 * Update to example data to include GHI
 * Update `load_test_data` function to always pull from GitHub.
 * Add comparison groups. This feature is still in development. Final API is unfinished.
+* Consolidate clustering for hourly model and CG clustering
 
 opendsm-1.2.6
 -----------

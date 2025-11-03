@@ -56,7 +56,7 @@ from opendsm.eemeter.common.exceptions import (
 )
 from opendsm.eemeter.common.warnings import EEMeterWarning
 from opendsm.common.clustering.cluster import cluster_features
-from opendsm.common.adaptive_loss import adaptive_weights
+from opendsm.common.stats.adaptive_loss import adaptive_weights
 from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict, ReportingMetrics
 from opendsm import __version__
 

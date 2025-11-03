@@ -18,11 +18,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 
-<<<<<<< HEAD:eemeter/eemeter/models/billing/plot.py
-from eemeter.common.stats.outliers import IQR_outlier
-=======
-from opendsm.common.adaptive_loss import IQR_outlier
->>>>>>> move-to-pyproject:opendsm/eemeter/models/billing/plot.py
+from opendsm.common.stats.outliers import IQR_outlier
 
 fontsize = 14
 mpl.rc("font", family="sans-serif")

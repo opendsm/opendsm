@@ -18,7 +18,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from opendsm.comparison_groups._utils.base_comparison_group import Comparison_Group_Algorithm
+from opendsm.comparison_groups.common.base_comparison_group import Comparison_Group_Algorithm
 
 from opendsm.comparison_groups.random_sampling.settings import Settings
 
@@ -54,16 +54,16 @@ class Random_Sampling(Comparison_Group_Algorithm):
     def get_comparison_group(self, treatment_data, comparison_pool_data, weights=None):
         settings = self.settings
 
-        if settings.N_METERS_TOTAL is not None:
-            n_meters = self.settings.N_METERS_TOTAL
+        if settings.n_meters_total is not None:
+            n_meters = self.settings.n_meters_total
 
-        elif settings.N_METERS_PER_TREATMENT is not None:
+        elif settings.n_meters_per_treatment is not None:
             n_treatment_meters = len(treatment_data.ids)
-            n_meters = n_treatment_meters * settings.N_METERS_PER_TREATMENT
+            n_meters = n_treatment_meters * settings.n_meters_per_treatment
 
         else:
-            raise ValueError("N_METERS_TOTAL or N_METERS_PER_TREATMENT must be defined")
-        
+            raise ValueError("`n_meters_total` or `n_meters_per_treatment` must be defined")
+
         self.treatment_data = treatment_data
         self.comparison_pool_data = comparison_pool_data
 
@@ -72,7 +72,7 @@ class Random_Sampling(Comparison_Group_Algorithm):
         self.comparison_pool_loadshape = comparison_pool_data.loadshape
 
         # randomly sample n_meters from comparison pool
-        df_cg = comparison_pool_data.loadshape.sample(n_meters, random_state=settings.SEED)
+        df_cg = comparison_pool_data.loadshape.sample(n_meters, random_state=settings.seed)
 
         clusters = self._create_clusters_df(df_cg)
 

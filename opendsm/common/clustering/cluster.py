@@ -21,23 +21,16 @@ import pandas as pd
 
 from pydantic import BaseModel, ConfigDict
 
-import pywt
-
 from scipy.signal import find_peaks
 
-
-from sklearn.preprocessing import StandardScaler, RobustScaler
-from sklearn.decomposition import PCA, KernelPCA
 from sklearn.cluster import DBSCAN, HDBSCAN, Birch, SpectralClustering
-
-
 
 from opendsm.common.clustering import (
     bisect_k_means as _bisect_k_means,
     scoring as _scoring,
     settings as _settings,
+    transform as _transform,
 )
-
 
 
 class _LabelResult(BaseModel):
@@ -71,7 +64,7 @@ def _bisecting_kmeans_clustering(
     score_choice = settings.bisecting_kmeans.scoring.score_metric
     dist_metric = settings.bisecting_kmeans.scoring.distance_metric
     min_cluster_size = settings.bisecting_kmeans.scoring.min_cluster_size
-    max_non_outlier_cluster_count = 200
+    max_non_outlier_cluster_count = settings.bisecting_kmeans.scoring.max_non_outlier_cluster_count
 
     seed = settings._seed
 
@@ -139,7 +132,7 @@ def _birch_clustering(
     score_choice = settings.birch.scoring.score_metric
     dist_metric = settings.birch.scoring.distance_metric
     min_cluster_size = settings.birch.scoring.min_cluster_size
-    max_non_outlier_cluster_count = 200
+    max_non_outlier_cluster_count = settings.birch.scoring.max_non_outlier_cluster_count
 
     results = []
     for n_clusters in range(n_cluster_lower, n_cluster_upper + 1):
@@ -256,8 +249,8 @@ def _spectral_clustering(
     score_choice = settings.spectral.scoring.score_metric
     dist_metric = settings.spectral.scoring.distance_metric
     min_cluster_size = settings.spectral.scoring.min_cluster_size
-    max_non_outlier_cluster_count = 200
-
+    max_non_outlier_cluster_count = settings.spectral.scoring.max_non_outlier_cluster_count
+    
     algo = SpectralClustering(
         n_clusters=1,
         eigen_solver=settings.spectral.eigen_solver,
@@ -322,95 +315,6 @@ def _spectral_clustering(
             HoF = result
 
     return HoF.labels
-
-
-def _transform_data(
-    data: np.ndarray,
-    settings: _settings.ClusteringSettings
-):
-    """
-    Transforms the data using the wavelet transform settings
-    """
-    settings = settings.transform_settings
-
-    def _dwt_coeffs(data, wavelet="db1", wavelet_mode="periodization", n_levels=4):
-        all_features = []
-        # iterate through rows of numpy array
-        for row in range(len(data)):
-            # get max level of decomposition
-            dwt_max_level = pywt.dwt_max_level(data[row].shape[0], wavelet)
-            if n_levels > dwt_max_level:
-                n_levels = dwt_max_level
-            
-            decomp_coeffs = pywt.wavedec(
-                data[row], wavelet=wavelet, mode=wavelet_mode, level=n_levels
-            )
-
-            decomp_coeffs = np.hstack(decomp_coeffs)
-
-            all_features.append(decomp_coeffs)
-
-        return np.vstack(all_features)
-
-    def _pca_coeffs(features, method, min_var_ratio_explained=0.95, n_components=None):
-        if min_var_ratio_explained is not None:
-            n_components = min_var_ratio_explained
-
-        # kernel pca is not fully developed
-        if method == "kernel_pca":
-            if n_components ==  "mle":
-                pca = PCA(n_components=n_components)
-                pca_features = pca.fit_transform(features)
-
-            pca = KernelPCA(n_components=None, kernel="rbf")
-            pca_features = pca.fit_transform(features)
-
-            if min_var_ratio_explained is not None:
-                explained_variance_ratio = pca.eigenvalues_ / np.sum(pca.eigenvalues_)
-
-                # get the cumulative explained variance ratio
-                cumulative_explained_variance = np.cumsum(explained_variance_ratio)
-
-                # find number of components that explain pct% of the variance
-                n_components = np.argmax(cumulative_explained_variance > n_components).astype(int)
-
-            if not isinstance(n_components, (int, np.integer)):
-                raise ValueError("n_components must be an integer for kernel PCA")
-
-            # pca = PCA(n_components=n_components)
-            pca = KernelPCA(n_components=n_components, kernel="rbf")
-            pca_features = pca.fit_transform(features)
-
-        else:
-            pca = PCA(n_components=n_components)
-            pca_features = pca.fit_transform(features)
-
-        return pca_features
-
-    # calculate wavelet coefficients
-    with warnings.catch_warnings():
-        features = _dwt_coeffs(
-            data, 
-            settings.wavelet_name, 
-            settings.wavelet_mode, 
-            settings.wavelet_n_levels
-        )
-
-    pca_features = _pca_coeffs(
-        features,
-        settings.pca_method,
-        settings.pca_min_variance_ratio_explained,
-        settings.pca_n_components,
-    )
-
-    # normalize pca features
-    if settings._standardize:
-        pca_features = (pca_features - pca_features.mean()) / pca_features.std()
-
-    if settings.pca_include_median:
-        pca_features = np.hstack([pca_features, np.median(data, axis=1)[:, None]])
-
-    return pca_features
 
 
 def cluster_reorder(
@@ -485,28 +389,26 @@ def cluster_reorder(
     return cluster_map
 
 
-
-def cluster_features(
-    df: pd.DataFrame,
+def _cluster_features(
+    data: np.ndarray,
     settings: _settings.ClusteringSettings,
-):
-    # convert data to numpy array
-    data = df.to_numpy()
-    
-    # bypass clustering if cluster count is >= data
+) -> np.ndarray:
+
+    # adjust upper cluster count if necessary
     if settings.algorithm_selection not in ["dbscan", "hdbscan"]:
-        algo = getattr(settings, f"{settings.algorithm_selection.value}")
-        if algo.n_cluster.lower >= len(data):
-            return np.arange(len(data))
+        algo = f"{settings.algorithm_selection.value}"
+        algo_settings = getattr(settings, algo)
 
-    # standardize the data
-    if settings.standardize:
-        data = (data - data.mean()) / data.std()
+        data_count = len(data)
+        cluster_count = algo_settings.n_cluster.upper
+        min_cluster_size = algo_settings.scoring.min_cluster_size
+        min_required_data = min_cluster_size * cluster_count
 
-    # transform the data
-    if settings.transform_settings is not None:
-        data = _transform_data(data, settings)
-
+        if data_count < min_required_data:
+            settings_dict = settings.model_dump()
+            settings_dict[algo]["n_cluster"]["upper"] = data_count // min_cluster_size
+            settings = _settings.ClusteringSettings(**settings_dict)
+    
     # cluster the pca features
     if settings.algorithm_selection == "bisecting_kmeans":
         cluster_fcn = _bisecting_kmeans_clustering
@@ -522,6 +424,27 @@ def cluster_features(
         raise ValueError(f"Unknown clustering algorithm: {settings.algorithm_selection}")
     
     cluster_labels = cluster_fcn(data, settings)
+
+    return cluster_labels
+
+
+def cluster_features(
+    df: pd.DataFrame,
+    settings: _settings.ClusteringSettings,
+):
+    # convert data to numpy array
+    data = df.to_numpy()
+    
+    # bypass clustering if cluster count is >= data
+    if settings.algorithm_selection not in ["dbscan", "hdbscan"]:
+        algo = f"{settings.algorithm_selection.value}"
+        algo_settings = getattr(settings, algo)
+        if algo_settings.n_cluster.lower >= len(data):
+            return np.arange(len(data))
+
+    data = _transform.transform_features(data, settings)
+
+    cluster_labels = _cluster_features(data, settings)
 
     if settings.sort_clusters:
         cluster_remap_dict = cluster_reorder(df, cluster_labels, settings)

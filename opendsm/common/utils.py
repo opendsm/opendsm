@@ -13,19 +13,10 @@
 #  limitations under the License.
 
 
-import gc
-import sys
-import psutil
-import multiprocessing as mp
-
 import numba
 import numpy as np
 import pandas as pd
 from numba.extending import overload
-from scipy.stats import norm as norm_dist
-from scipy.stats import t as t_dist
-
-from pandas.api.types import is_datetime64_any_dtype as is_pd_datetime
 
 
 
@@ -280,69 +271,3 @@ def sigmoid(x, x0=0, k=1):
     res[negative] = _negative_sigmoid(x[negative])
 
     return res
-
-
-def get_obj_size(obj):
-    marked = {id(obj)}
-    obj_q = [obj]
-    sz = 0
-
-    while obj_q:
-        sz += sum(map(sys.getsizeof, obj_q))
-
-        # Lookup all the object referred to by the object in obj_q.
-        # See: https://docs.python.org/3.7/library/gc.html#gc.get_referents
-        all_refr = ((id(o), o) for o in gc.get_referents(*obj_q))
-
-        # Filter object that are already marked.
-        # Using dict notation will prevent repeated objects.
-        new_refr = {o_id: o for o_id, o in all_refr if o_id not in marked and not isinstance(o, type)}
-
-        # The new obj_q will be the ones that were not marked,
-        # and we will update marked with their ids so we will
-        # not traverse them again.
-        obj_q = new_refr.values()
-        marked.update(new_refr.keys())
-
-    return sz
-
-
-def _execute_with_mp(fcn, args_list, use_mp=True):
-    """Runs a function with multiprocessing if use_mp is True, otherwise runs
-    the function without multiprocessing.
-
-    Args:
-        fcn (function): The function to run.
-        args_list (iterable): The list of arguments to pass to the function.
-        use_mp (bool): Whether to use multiprocessing.
-
-    Returns:
-        The result of the function.
-    """
-
-    if len(args_list) == 1:
-        use_mp = False
-
-    if use_mp:
-        # get memory size of args_list in gb
-        args_list_size = get_obj_size(args_list) / (1024.0 ** 3)
-
-        # get amount of memory available in gb
-        memory_available = psutil.virtual_memory().available / (1024.0 ** 3)
-
-        print("args_list_size: ", args_list_size)
-        print("memory_available: ", memory_available)
-        
-        # if args_list is too large, use imap
-        with mp.Pool(processes=mp.cpu_count()) as mp_pool:
-            if args_list_size * 2 > memory_available:
-                result = list(mp_pool.imap(fcn, args_list))
-            else:
-                result = mp_pool.map(fcn, args_list)
-
-    else:
-        result = []
-        for args in args_list:
-            result.append(fcn(args))
-
-    return result

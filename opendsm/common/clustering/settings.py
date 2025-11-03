@@ -12,6 +12,80 @@ import pywt
 from opendsm.common.base_settings import BaseSettings
 
 
+class NormalizeChoice(str, Enum):
+    MIN_MAX_QUANTILE = "min_max_quantile"
+    STANDARDIZE = "standardize"
+    MED_MAD = "med_mad"
+
+
+class NormalizeSettings(BaseSettings):
+    """normalization method for data"""
+    method: Optional[NormalizeChoice] = pydantic.Field(
+        default=NormalizeChoice.STANDARDIZE,
+    )
+
+    pre_transform: bool = pydantic.Field(
+        default=True,
+    )
+
+    post_transform: bool = pydantic.Field(
+        default=True,
+    )
+
+    quantile: Optional[float] = pydantic.Field(
+        default=None,
+        gt=0.0,
+        lt=0.5,
+    )
+
+    axis: Optional[int] = pydantic.Field(
+        default=None,
+    )
+
+    @pydantic.model_validator(mode="after")
+    def _check_quantile(self):
+        if self.method == NormalizeChoice.MIN_MAX_QUANTILE:
+            if self.quantile is None:
+                raise ValueError(
+                    "'quantile' must be specified when 'method' is 'min_max_quantile'"
+                )
+        else:
+            if self.quantile is not None:
+                raise ValueError(
+                    "'quantile' should only be specified when 'method' is 'min_max_quantile'"
+                )
+
+        return self
+
+    @pydantic.model_validator(mode="after")
+    def _check_enable(self):
+        if self.method is None:
+            if self.pre_transform or self.post_transform:
+                raise ValueError(
+                    "'method' cannot be None if 'pre_transform' or 'post_transform' is True"
+                )
+        else:
+            if not (self.pre_transform or self.post_transform):
+                raise ValueError(
+                    "'pre_transform' or 'post_transform' must be True if 'method' is specified"
+                )
+
+        return self
+
+
+class TransformChoice(str, Enum):
+    FPCA = "fpca"
+    WAVELET = "wavelet"
+    
+
+class fPCATransformSettings(BaseSettings):
+    """explained variance ratio for fPCA clustering"""
+    min_var_ratio: float = pydantic.Field(
+        default=0.97,
+        ge=0.5,
+        le=1.0,
+    )
+
 
 class PCASelection(str, Enum):
     PCA = "pca"
@@ -29,7 +103,6 @@ class WaveletSelection(str, Enum):
     HAAR = "haar"
     RBIO1_1 = "rbio1.1"
     SYM11 = "sym11"
-    
 
 
 class WaveletTransformSettings(BaseSettings):
@@ -138,6 +211,12 @@ class ScoreSettings(BaseSettings):
     """minimum cluster size"""
     min_cluster_size: int = pydantic.Field(
         default=1,
+        ge=1,
+    )
+
+    """maximum number of non-outlier clusters"""
+    max_non_outlier_cluster_count: int = pydantic.Field(
+        default=200,
         ge=1,
     )
 
@@ -456,13 +535,23 @@ class ClusterAlgorithms(str, Enum):
 
 
 class ClusteringSettings(BaseSettings):
-    """standardize data boolean"""
-    standardize: bool = pydantic.Field(
-        default=True,
+    """pretransform data normalization settings"""
+    normalize: NormalizeSettings = pydantic.Field(
+        default_factory=NormalizeSettings
     )
 
-    """transform settings"""
-    transform_settings: Optional[WaveletTransformSettings] = pydantic.Field(
+    """transform method"""
+    transform_selection: Optional[TransformChoice] = pydantic.Field(
+        default=TransformChoice.WAVELET,
+    )
+
+    """fPCA transform settings"""
+    fpca_transform: Optional[fPCATransformSettings] = pydantic.Field(
+        default_factory=fPCATransformSettings
+    )
+
+    """wavelet transform settings"""
+    wavelet_transform: Optional[WaveletTransformSettings] = pydantic.Field(
         default_factory=WaveletTransformSettings
     )
 
@@ -526,13 +615,6 @@ class ClusteringSettings(BaseSettings):
         return self
 
     @pydantic.model_validator(mode="after")
-    def _add_standardize_to_transform(self):
-        if self.transform_settings is not None:
-            self.transform_settings._standardize = self.standardize
-
-        return self
-
-    @pydantic.model_validator(mode="after")
     def _remove_unselected_algorithms(self):
         self.model_config["frozen"] = False
 
@@ -547,6 +629,23 @@ class ClusteringSettings(BaseSettings):
         for k in algo_dict.keys():
             if k != self.algorithm_selection:
                 setattr(self, k, None)
+
+        self.model_config["frozen"] = True
+
+        return self
+
+    @pydantic.model_validator(mode="after")
+    def _remove_unselected_transform(self):
+        self.model_config["frozen"] = False
+
+        transform_dict = {
+            TransformChoice.WAVELET: self.wavelet_transform,
+            TransformChoice.FPCA: self.fpca_transform,
+        }
+
+        for k in transform_dict.keys():
+            if k != self.transform_selection:
+                setattr(self, f"{k.value}_transform", None)
 
         self.model_config["frozen"] = True
 

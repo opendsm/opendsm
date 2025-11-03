@@ -46,6 +46,13 @@ default_weekday_weekend_def = {
 }
 
 
+class CAlgoChoice(str, Enum):
+    IQR_LEGACY = "iqr_legacy"
+    IQR = "iqr"
+    MAD = "mad"
+    STDEV = "stdev"
+
+
 class TutorialDataChoice(str, Enum):
     """
     Options for the tutorial data to load.

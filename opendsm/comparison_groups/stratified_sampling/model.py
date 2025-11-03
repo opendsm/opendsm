@@ -95,6 +95,7 @@ class StratifiedSampling(object):
         df_pert = df_orig.copy()
         col_names = col_names if col_names else list(self.columns.keys())
         for col_name in col_names:
+            df_pert[col_name] = df_pert[col_name].astype(float)
             range = df_pert[col_name].max() - df_pert[col_name].min()
             perturbation = (np.random.random(len(df_pert)) - 0.5) * range * 1e-6
             df_pert.loc[:, col_name] = df_pert[col_name] + perturbation

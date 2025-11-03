@@ -14,9 +14,21 @@
 
 import logging as _logging
 
-from .__version__ import __title__, __description__, __url__, __version__
-from .__version__ import __author__, __author_email__, __license__
-from .__version__ import __copyright__
+from importlib.metadata import metadata, PackageNotFoundError
+
+try:
+    _meta = metadata("opendsm")
+except PackageNotFoundError:
+    _meta = {}
+
+__title__ = _meta.get("Name", "opendsm")
+__version__ = _meta.get("Version", "unknown")
+__description__ = _meta.get("Summary", "")
+__author__ = _meta.get("Author", "")
+__author_email__ = _meta.get("Author-email", "")
+__license__ = _meta.get("License", "")
+__url__ = "http://github.com/opendsm/opendsm"
+__copyright__ = "Copyright 2014-2025 OpenDSM contributors"
 
 import platform
 import warnings
@@ -36,15 +48,7 @@ if platform.system() == "Windows":
 
     config.DISABLE_JIT = True
 
-from .common import (
-    abstract_data_processor,
-    abstract_data_settings,
-    adaptive_loss_Z,
-    adaptive_loss,
-    const,
-    test_data,
-    utils,
-)
+from .common import test_data
 from . import (
     eemeter,
     drmeter,
@@ -55,7 +59,7 @@ from . import (
 _logging.getLogger(__name__).addHandler(_logging.NullHandler())
 
 # exclude built-in imports from namespace
-__all__ = (
+__all__ = [
     "__title__",
     "__description__",
     "__url__",
@@ -64,14 +68,11 @@ __all__ = (
     "__author_email__",
     "__license__",
     "__copyright__",
-    "abstract_data_processor",
-    "abstract_data_settings",
-    "adaptive_loss_Z",
-    "adaptive_loss",
-    "const",
-    "test_data",
-    "utils",
     "eemeter",
     "drmeter",
     "comparison_groups",
-)
+    "test_data",
+]
+
+def __dir__():
+    return __all__

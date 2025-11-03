@@ -17,6 +17,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pyarrow.parquet as pq
+
 import requests
 
 from opendsm.common.const import TutorialDataChoice
@@ -153,15 +155,25 @@ def _load_other_data(data_type):
 def _load_file(file: Path | str):
     if isinstance(file, str):
         file = Path(file)
-
+    
     url = f"https://raw.githubusercontent.com/{repo_full_name}/{branch}/{path}/{file.name}"
 
     try:
         if file.suffix == ".csv":
-            df = pd.read_csv(url)
+            df = pd.read_csv(file)
 
         elif file.suffix == ".parquet":
-            df = pd.read_parquet(url)
+            if not file.exists():
+                response = requests.get(url)
+                response.raise_for_status()
+                with open(file, "wb") as f:
+                    f.write(response.content)
+
+            df = pd.read_parquet(file, engine="pyarrow")
+
+            # Read the Parquet file into a PyArrow Table
+            # table = pq.read_table(file)
+            # df = table.to_pandas()
 
     except Exception as e:
         print(f"Error loading file {file}: {e}")

@@ -23,13 +23,11 @@ import warnings
 
 # Flag to check if plotnine is available
 plotnine_available = True
-
 try:
     import plotnine
     from plotnine import *
 except ModuleNotFoundError:
     plotnine_available = False
-    warnings.warn("Plotnine is not installed. Diagnostic functionality will not be available. Use 'pip install plotnine' to address this.")
 
 
 def t_and_ks_test(x, y, thresh=0.05):
@@ -120,6 +118,7 @@ class DiagnosticPlotter:
 
             return p
         else:
+            warnings.warn("Plotnine is not installed. Diagnostic functionality will not be available. Use 'pip install plotnine' to address this.")
             return None
 
     def scatter(self, df, cols=None):
@@ -168,6 +167,7 @@ class DiagnosticPlotter:
 
             return p
         else:
+            warnings.warn("Plotnine is not installed. Diagnostic functionality will not be available. Use 'pip install plotnine' to address this.")
             return None
 
     def histogram(self, df, cols=None):
@@ -203,6 +203,7 @@ class DiagnosticPlotter:
 
             return p
         else:
+            warnings.warn("Plotnine is not installed. Diagnostic functionality will not be available. Use 'pip install plotnine' to address this.")
             return None
 
 
@@ -355,7 +356,8 @@ class StratifiedSamplingDiagnostics(DiagnosticPlotter):
                 lambda x: t_and_ks_test(
                     x[x["population"] == equiv_label_x].value.dropna(),
                     x[x["population"] == equiv_label_y].value.dropna(),
-                )
+                ), 
+                include_groups=False,
             )
             .reset_index()
         )

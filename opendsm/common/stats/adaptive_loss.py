@@ -16,7 +16,7 @@ import numba
 import numpy as np
 from scipy.optimize import minimize_scalar
 
-from opendsm.common.adaptive_loss_Z import ln_Z
+from opendsm.common.stats.adaptive_loss_Z import ln_Z
 from opendsm.common.utils import OoM_numba
 
 LOSS_ALPHA_MIN = -100.0

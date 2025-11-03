@@ -18,16 +18,7 @@ from typing import Optional
 import numba
 import numpy as np
 
-<<<<<<< HEAD:eemeter/eemeter/models/daily/base_models/c_hdd_tidd.py
-from eemeter.common.stats.adaptive_loss import adaptive_weights
-from eemeter.eemeter.models.daily.base_models.full_model import full_model
-from eemeter.eemeter.models.daily.base_models.hdd_tidd_cdd import full_model_weight
-from eemeter.eemeter.models.daily.objective_function import obj_fcn_decorator
-from eemeter.eemeter.models.daily.optimize import Optimizer, nlopt_algorithms
-from eemeter.eemeter.models.daily.parameters import ModelCoefficients, ModelType
-from eemeter.eemeter.models.daily.utilities.base_model import (
-=======
-from opendsm.common.adaptive_loss import adaptive_weights
+from opendsm.common.stats.adaptive_loss import adaptive_weights
 from opendsm.eemeter.models.daily.base_models.full_model import full_model
 from opendsm.eemeter.models.daily.base_models.hdd_tidd_cdd import full_model_weight
 from opendsm.eemeter.models.daily.objective_function import obj_fcn_decorator
@@ -35,7 +26,6 @@ from opendsm.eemeter.models.daily.utilities.opt_settings import OptimizationSett
 from opendsm.eemeter.models.daily.optimize import InitialGuessOptimizer, Optimizer
 from opendsm.eemeter.models.daily.parameters import ModelCoefficients, ModelType
 from opendsm.eemeter.models.daily.utilities.base_model import (
->>>>>>> move-to-pyproject:opendsm/eemeter/models/daily/base_models/c_hdd_tidd.py
     fix_identical_bnds,
     get_intercept,
     get_slope,

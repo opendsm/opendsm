@@ -17,7 +17,7 @@ from typing import Optional
 import numba
 import numpy as np
 
-from opendsm.common.adaptive_loss import adaptive_weights
+from opendsm.common.stats.adaptive_loss import adaptive_weights
 from opendsm.eemeter.models.daily.base_models.full_model import (
     full_model,
     full_model_weight,

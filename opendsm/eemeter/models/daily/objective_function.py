@@ -15,7 +15,7 @@
 import numpy as np
 
 from opendsm.common.utils import OoM
-from opendsm.common.utils import fast_std as stdev
+from opendsm.common.stats.basic import fast_std as stdev
 
 
 def get_idx(A, B):

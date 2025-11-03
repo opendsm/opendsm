@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from copy import deepcopy as copy
-import warnings
 
 import numpy as np
 import scipy.sparse as sp
@@ -25,17 +24,20 @@ from sklearn.cluster import _bisect_k_means
 from sklearn.cluster._kmeans import (
     _kmeans_single_elkan,
     _kmeans_single_lloyd,
-)  # type: ignore
+) # type: ignore
 from sklearn.cluster._k_means_common import (
     _inertia_dense,
     _inertia_sparse,
-)  # type: ignore
+) # type: ignore
 from sklearn.utils.extmath import row_norms
 from sklearn.utils.validation import (
     _check_sample_weight,
     check_random_state,
-)  # type: ignore
-
+) # type: ignore
+try:
+    from sklearn.utils.validation import validate_data # type: ignore
+except ImportError:
+    validate_data = None  # type: ignore
 # from sklearn.utils._openmp_helpers import _openmp_effective_n_threads
 
 import logging
@@ -89,10 +91,17 @@ class BisectingKMeans(_sklearn_BisectingKMeans):
 
         self._validate_params()  # type: ignore
 
-        with warnings.catch_warnings():
-            # TODO deprecated in sklearn 1.6, removed in 1.7 (April 2025)
-            warnings.filterwarnings("ignore", "`BaseEstimator._validate_data`")
-
+        if validate_data is not None:
+            X = validate_data(  # type: ignore
+                self,
+                X,
+                accept_sparse="csr",
+                dtype=[np.float64, np.float32],
+                order="C",
+                copy=self.copy_x,  # type: ignore
+                accept_large_sparse=False,
+            )
+        else:
             X = self._validate_data(  # type: ignore
                 X,
                 accept_sparse="csr",
@@ -134,7 +143,7 @@ class BisectingKMeans(_sklearn_BisectingKMeans):
             try:
                 cluster_to_bisect = self._bisecting_tree.get_cluster_to_bisect()
             except RecursionError:
-                logger.warning(
+                logger.warn(
                     f"encountered Recursion error during bisection for cluster size {i + 2}. Returning early"
                 )
                 return self
@@ -143,7 +152,7 @@ class BisectingKMeans(_sklearn_BisectingKMeans):
             try:
                 self._bisect(X, x_squared_norms, sample_weight, cluster_to_bisect)  # type: ignore
             except IndexError:
-                logger.warning(
+                logger.warn(
                     f"encountered IndexError during bisection for cluster size {i + 2}"
                 )
                 return self  # return early so that calculated labels can be returned until an error arose

@@ -60,13 +60,13 @@ def highs_fit_comparison_group_loadshape(t_ls, cp_ls, coef_sum=1, solver="highs"
     if settings is None:
         if coef_sum == 1:
             settings = _highs_settings.HiGHS_Settings(
-                PRIMAL_FEASIBILITY_TOLERANCE=1E-4, 
-                DUAL_FEASIBILITY_TOLERANCE=1E-4, 
+                primal_feasibility_tolerance=1E-4, 
+                dual_feasibility_tolerance=1E-4, 
             )
         else:
             settings = _highs_settings.HiGHS_Settings(
-                PRIMAL_FEASIBILITY_TOLERANCE=1, 
-                DUAL_FEASIBILITY_TOLERANCE=1, 
+                primal_feasibility_tolerance=1, 
+                dual_feasibility_tolerance=1, 
             )
         settings = {k.lower(): v for k, v in dict(settings).items()}
 
@@ -128,13 +128,13 @@ class DistanceMatching:
                 "invalid settings provided to 'individual_metering_matching'"
             )
 
-        self.dist_metric = settings.DISTANCE_METRIC
+        self.dist_metric = settings.distance_metric
         if self.dist_metric == "manhattan":
             self.dist_metric = "cityblock"
 
     def _closest_idx_duplicates_allowed(self, distances, n_match=None):
         if n_match is None:
-            n_match = self.settings.N_MATCHES_PER_TREATMENT
+            n_match = self.settings.n_matches_per_treatment
 
         if n_match > distances.shape[1]:
             n_match = distances.shape[1]
@@ -146,8 +146,8 @@ class DistanceMatching:
         return cg_idx
 
     def _closest_idx_duplicates_not_allowed(self, ls_t, ls_cp, distances):
-        n_match = self.settings.N_MATCHES_PER_TREATMENT
-        selection_method = self.settings.SELECTION_METHOD
+        n_match = self.settings.n_matches_per_treatment
+        selection_method = self.settings.selection_method
 
         n_treatment = ls_t.shape[0]
         n_pool = ls_cp.shape[0]
@@ -202,14 +202,14 @@ class DistanceMatching:
         ls_t = treatment_group
         ls_cp = comparison_pool
 
-        n_match = self.settings.N_MATCHES_PER_TREATMENT
-        max_distance_threshold = self.settings.MAX_DISTANCE_THRESHOLD
-        n_meters_per_chunk = self.settings.N_TREATMENTS_PER_CHUNK
+        n_match = self.settings.n_matches_per_treatment
+        max_distance_threshold = self.settings.max_distance_threshold
+        n_meters_per_chunk = self.settings.n_treatments_per_chunk
 
         # TODO: if matching loadshapes, this isn't necessary
         distances = _distances(ls_t, ls_cp, weights, self.dist_metric, n_meters_per_chunk)
 
-        if self.settings.ALLOW_DUPLICATE_MATCHES:
+        if self.settings.allow_duplicate_matches:
             cg_idx = self._closest_idx_duplicates_allowed(distances, n_match=n_match)
         else:
             cg_idx = self._closest_idx_duplicates_not_allowed(ls_t, ls_cp, distances)
@@ -232,216 +232,6 @@ class DistanceMatching:
         df["duplicated"] = df.duplicated(subset="id", keep=False)
         
         return df
-
-
-class DistanceMatchingLegacy:
-    """
-    Parameters
-    ----------
-    treatment_group: pd.DataFrame
-        A dataframe representing treatment group meters, indexed by id, with each column being a data point in a usage pattern.
-    comparison_pool: pd.DataFrame
-        A dataframe representing comparison pool meters, indexed by id, with each column being a data point in a usage pattern.
-    weights: list
-        A list of floats (must be of length of the treatment group columns) to scale the usage patterns in order to ensure that certain components of usage have higher weights towards matching than others.
-    n_treatments_per_chunk: int
-        Due to local memory limitations, treatment meters can be chunked so that the cdist calculation can happen in memory. 10,000 meters appear to be sufficient for most memory constraints.
-    """
-
-    def __init__(
-        self,
-        settings=None,
-    ):
-        if settings is None:
-            self.settings = Settings()
-        elif isinstance(settings, Settings):
-            self.settings = settings
-        else:
-            raise Exception(
-                "invalid settings provided to 'individual_metering_matching'"
-            )
-
-        self.dist_metric = settings.DISTANCE_METRIC
-        if self.dist_metric == "manhattan":
-            self.dist_metric = "cityblock"
-
-    def _get_min_distance_from_matrix_df(self, dist_df):
-        match_cols = dist_df.columns[(np.argmin(dist_df.values, axis=1))]
-        dist = np.diag(dist_df[match_cols])
-        return pd.DataFrame({"closest": match_cols, "dist": dist})
-
-    def _get_next_best_matches(self, treatment_distances_df, best_match):
-        # The purpose of this for loop is to attempt to find the 'next best match'
-        # for treatment meters matched to a comparison pool meter that has already
-        # had a previous match
-        # get the matched unduplicated meters
-        treatment_match_key = best_match.i_key
-        comparison_match_key = best_match.closest
-
-        # Get a matrix that only contains the treatments
-        # that were matched to an already matched comparison pool meter
-        # and therefore need a 'next-best' match
-        # keep only the ones that don't have a best match yet
-        treatment_distances_unmatched_df = treatment_distances_df.loc[
-            ~np.isin(treatment_distances_df.index, treatment_match_key)
-        ].copy()
-        # drop the columns of matched comparison meters so that you can't get duplicates
-        treatment_distances_unmatched_df = treatment_distances_unmatched_df.drop(
-            comparison_match_key, axis=1
-        )
-
-        if treatment_distances_unmatched_df.columns.empty:
-            # There are no unmatched comparison pool meters remaining
-            return best_match, False
-
-        # Next-best match is found for the unmatched treatment meters
-        treatment_matches_next_best = self._get_min_distance_from_matrix_df(
-            treatment_distances_unmatched_df
-        )
-        # must set the index back to the right values
-        treatment_matches_next_best.index = treatment_distances_unmatched_df.index
-
-        # Get the new best matches
-        tm = treatment_matches_next_best.reset_index().rename(
-            {"index": "i_key"}, axis=1
-        )
-        # grab the indexes of the best matches
-        next_best_match = tm.groupby("closest").apply(lambda x: x.loc[x.dist.idxmin()])
-        # append the next best matches
-        best_match = pd.concat([best_match, next_best_match])
-
-        # Check if there are any unmatched treatment meters and stop if there are none
-        if len(treatment_distances_df) == len(best_match):
-            return best_match, False
-
-        return best_match, True
-
-    def _get_best_match(self, treatment_distances_df, n_max_duplicate_check_rounds):
-        """
-        Parameters
-        ----------
-        treatment_distances_df: pd.DataFrame
-            A matrix where the row indices (i) are treatment meters, the columns (j) are
-            comparison pool meters, and the values are the calculated distance between
-            treatment[i] and comparison_pool[j]
-        n_max_duplicate_check_rounds: int
-            The number of rounds of checking for 'next best matches' if multiple treatment meters matched to the same comparison group meters. This number dictates how many iterations of 'next best matching' will take place.
-        """
-
-        treatment_matches = self._get_min_distance_from_matrix_df(
-            treatment_distances_df
-        )
-        # reset the index to match on distance for duplicated vals
-        tm = treatment_matches.reset_index().rename({"index": "i_key"}, axis=1)
-        # grab the indexes of the best matches
-        best_match = tm.groupby("closest").apply(lambda x: x.loc[x.dist.idxmin()])
-
-        for run_i in range(0, n_max_duplicate_check_rounds):
-            (best_match, check_again) = self._get_next_best_matches(
-                treatment_distances_df, best_match
-            )
-            if not check_again:
-                break
-        # put back in any unmatched with labels
-        tm = treatment_matches.loc[~np.isin(treatment_matches.index, best_match.i_key)]
-        bm = best_match.rename(
-            {"closest": "match", "dist": "distance", "i_key": "index"}, axis=1
-        ).set_index("index")
-        bm["duplicated"] = False
-        tm = tm.rename({"closest": "match", "dist": "distance"}, axis=1)
-        tm["duplicated"] = True
-        treatment_matches_df = pd.concat([bm, tm]).sort_index()
-
-        return treatment_matches_df
-
-    def get_comparison_group(
-        self,
-        treatment_group,
-        comparison_pool,
-        weights=None,
-    ):
-        """
-        Parameters
-        ----------
-        n_matches_per_treatment: int
-            number of comparison matches desired per treatment
-        metric: str or callable
-            A string or callable that goes into numpy's cdist function
-        max_distance_threshold: int
-            The maximum distance that a comparison group match can have with a given
-            treatment meter. These meters are filtered out after all matching has completed.
-        n_max_duplicate_check_rounds: int
-            The number of rounds of checking for 'next best matches' if multiple treatment meters matched to the same comparison group meters. This number dictates how many iterations of 'next best matching' will take place.
-        """
-        settings = self.settings
-
-        # chunk the treatment group due to memory constraints
-        n_treatments_per_chunk = settings.N_TREATMENTS_PER_CHUNK
-
-        # set n_duplicate_check to be size of comparison pool
-        if not settings.ALLOW_DUPLICATE_MATCHES:
-            n_duplicate_check = len(comparison_pool)
-        else:
-            n_duplicate_check = 0
-
-        # if you're using weights make sure to normalize the data first
-        if weights:
-            treatment_group = treatment_group * weights
-            comparison_pool = comparison_pool * weights
-
-        # get chunks
-        treatment_group_chunks = [
-            treatment_group[
-                chunk * n_treatments_per_chunk : (chunk + 1) * n_treatments_per_chunk
-            ]
-            for chunk in range(int(len(treatment_group) / n_treatments_per_chunk) + 1)
-        ]
-
-        # for each chunk, for each of n_matches, compose a comparison group
-        comparison_group = pd.DataFrame(columns=["match", "distance", "duplicated"])
-        for treatment_group_chunk in treatment_group_chunks:
-            mat = cdist(
-                treatment_group_chunk.values,
-                comparison_pool.values,
-                metric=self.dist_metric,
-            )
-            dist_df = pd.DataFrame(mat)
-            # get the best n matches
-            for _ in range(settings.N_MATCHES_PER_TREATMENT):
-                dist_df = dist_df[
-                    dist_df.columns[~dist_df.columns.isin(comparison_group["match"])]
-                ]
-                if dist_df.empty:
-                    continue
-                new_df = self._get_best_match(dist_df, n_duplicate_check)
-
-                if comparison_group.empty:
-                    comparison_group = new_df
-                else:
-                    comparison_group = pd.concat([comparison_group, new_df])
-
-        # rename columns and reindex to get original ids back
-        comparison_group = comparison_group.reset_index().rename(
-            {"index": "treatment"}, axis=1
-        )
-        comparison_group.index = comparison_pool.iloc[comparison_group["match"]].index
-        comparison_group["treatment"] = treatment_group.iloc[
-            comparison_group["treatment"]
-        ].index
-        comparison_group.drop("match", axis=1, inplace=True)
-        comparison_group.index.name = "id"
-
-        if isinstance(settings.MAX_DISTANCE_THRESHOLD, (int, float)):
-            comparison_group = comparison_group[
-                comparison_group["distance"] < settings.MAX_DISTANCE_THRESHOLD
-            ]
-
-        # if any duplicated, remove the duplicate with the smallest distance
-        if not settings.ALLOW_DUPLICATE_MATCHES and comparison_group["duplicated"].any():
-            comparison_group = comparison_group.sort_values("distance")
-            comparison_group = comparison_group[~comparison_group.duplicated(subset="treatment", keep="first")]
-
-        return comparison_group
 
 
 if __name__ == "__main__":

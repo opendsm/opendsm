@@ -1,18 +1,18 @@
 [build-system]
-requires = ["setuptools>=69"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
 
 [project]
 name = "opendsm"
-description = "Measure demand-side program impacts"   # set directly
-dynamic = ["version"]                                  # only version is dynamic
+version = "1.2.6"
+description = "Standard methods for predicting building energy usage"   # set directly
+# dynamic = ["version"]                                  # only version is dynamic
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "opendsm", email = "opendsm@lists.lfenergy.org" }]
 classifiers = [
   "License :: OSI Approved :: Apache Software License",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -27,17 +27,18 @@ dependencies = [
   "nlopt",
   "numba",
   "numpy>=1.24.4",
-  "pandas>=1.1.0",
-  "pyarrow",    # why?
+  "pandas>=1.1.0,<=2.2.3", # cap at 2.2.3 to avoid test issues with reading in parquet files
+  "pyarrow", # why?
   "pydantic>=2.0",
   "pywavelets",
   "requests",
   "scikit-learn>=1.3.0",
   "qpsolvers[highs]",
-  "scikit-fda",
+  "scikit-fda>0.7.1",
   "scikit-learn>=1.3.0",
   "scipy>=1.10.1",
   "statsmodels",
+  "pytest-cov>=7.0.0",
 ]
 
 [project.optional-dependencies]
@@ -62,17 +63,13 @@ dev = [
   "mkdocstrings[python]>=0.30.0",
 ]
 
-[tool.setuptools]
-include-package-data = true
-
-[tool.setuptools.packages.find]
-exclude = ["tests", "tests.*"]
-
-[tool.setuptools.dynamic]
-version = { attr = "opendsm.__version__.__version__" }  # keep this
+[tool.hatch.build.targets.wheel]
+# non-src layout: the importable package directory is opendsm/opendsm
+packages = ["opendsm"]
 
 [project.urls]
-Homepage = "http://github.com/opendsm/opendsm"
+Homepage = "https://lfenergy.org/projects/opendsm"
+Documentation = "https://opendsm.energy"
 Repository = "http://github.com/opendsm/opendsm"
 Issues = "http://github.com/opendsm/opendsm/issues"
 

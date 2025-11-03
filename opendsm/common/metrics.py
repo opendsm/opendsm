@@ -23,7 +23,11 @@ from scipy.stats import pearsonr
 
 from functools import cached_property  # TODO: This requires Python 3.8
 
-from opendsm.common.utils import median_absolute_deviation, t_stat, safe_divide
+from opendsm.common.utils import safe_divide
+from opendsm.common.stats.basic import (
+    median_absolute_deviation, 
+    t_stat, 
+)
 from opendsm.common.pydantic_utils import (
     ArbitraryPydanticModel,
     PydanticDf,

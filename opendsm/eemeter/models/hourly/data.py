@@ -176,7 +176,7 @@ class _HourlyData:
 
         self.settings.is_electricity_data = is_electricity_data
 
-        # TODO not sure why we're keeping this copy, just set the attrs
+        # TODO not sure why we're keeping this copy
         self._kwargs = copy.deepcopy(kwargs)
         if "outputs" in self._kwargs:
             self._outputs = copy.deepcopy(self._kwargs["outputs"])

@@ -15,7 +15,7 @@
 import numpy as np
 import pandas as pd
 
-from opendsm.comparison_groups._utils.data_settings import Data_Settings
+from opendsm.comparison_groups.common.data_settings import Data_Settings
 from opendsm.common.adaptive_loss import (
     weighted_quantile,
     IQR_outlier,

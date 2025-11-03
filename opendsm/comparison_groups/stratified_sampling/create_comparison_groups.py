@@ -18,7 +18,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from opendsm.comparison_groups._utils.base_comparison_group import Comparison_Group_Algorithm
+from opendsm.comparison_groups.common.base_comparison_group import Comparison_Group_Algorithm
 
 from opendsm.comparison_groups.stratified_sampling.model import StratifiedSampling
 from opendsm.comparison_groups.stratified_sampling.bins import ModelSamplingException
@@ -39,14 +39,14 @@ class Stratified_Sampling(Comparison_Group_Algorithm):
         self.model = StratifiedSampling()
         self.model_bin_selector = None
 
-        for settings in self.settings.STRATIFICATION_COLUMN:
+        for settings in self.settings.stratification_column:
             self.model.add_column(
-                settings.COLUMN_NAME,
-                n_bins=settings.N_BINS,
-                min_value_allowed=settings.MIN_VALUE_ALLOWED,
-                max_value_allowed=settings.MAX_VALUE_ALLOWED,
-                fixed_width=settings.IS_FIXED_WIDTH,
-                auto_bin_require_equivalence=settings.AUTO_BIN_EQUIVALENCE,
+                settings.column_name,
+                n_bins=settings.n_bins,
+                min_value_allowed=settings.min_value_allowed,
+                max_value_allowed=settings.max_value_allowed,
+                fixed_width=settings.is_fixed_width,
+                auto_bin_require_equivalence=settings.auto_bin_equivalence,
             )
 
         self._diagnostics = None
@@ -102,15 +102,15 @@ class Stratified_Sampling(Comparison_Group_Algorithm):
         cp_features = comparison_pool_data.features
         cp_features = cp_features.reset_index().rename(columns={"id": "meter_id"})
 
-        if settings.EQUIVALENCE_METHOD is None:
+        if settings.equivalence_method is None:
             self.model.fit_and_sample(
                 t_features, 
                 cp_features,
-                n_samples_approx=settings.N_SAMPLES_APPROX,
-                relax_n_samples_approx_constraint=settings.RELAX_N_SAMPLES_APPROX_CONSTRAINT,
-                min_n_treatment_per_bin=settings.MIN_N_TREATMENT_PER_BIN,
-                min_n_sampled_to_n_treatment_ratio=settings.MIN_N_SAMPLED_TO_N_TREATMENT_RATIO,
-                random_seed=settings.SEED,
+                n_samples_approx=settings.n_samples_approx,
+                relax_n_samples_approx_constraint=settings.relax_n_samples_approx_constraint,
+                min_n_treatment_per_bin=settings.min_n_treatment_per_bin,
+                min_n_sampled_to_n_treatment_ratio=settings.min_n_sampled_to_n_treatment_ratio,
+                random_seed=settings.seed,
             )
         else:
             self.treatment_ids = t_ids
@@ -129,17 +129,17 @@ class Stratified_Sampling(Comparison_Group_Algorithm):
                 equivalence_feature_ids=df_equiv.index,
                 equivalence_feature_matrix=df_equiv,
                 df_id_col="meter_id",
-                equivalence_method=settings.EQUIVALENCE_METHOD,
-                equivalence_quantile_size=settings.EQUIVALENCE_QUANTILE,
+                equivalence_method=settings.equivalence_method,
+                equivalence_quantile_size=settings.equivalence_quantile,
                 
-                n_samples_approx=settings.N_SAMPLES_APPROX,
-                relax_n_samples_approx_constraint=settings.RELAX_N_SAMPLES_APPROX_CONSTRAINT,
+                n_samples_approx=settings.n_samples_approx,
+                relax_n_samples_approx_constraint=settings.relax_n_samples_approx_constraint,
 
-                min_n_bins=settings.MIN_N_BINS,
-                max_n_bins=settings.MAX_N_BINS,
-                min_n_treatment_per_bin=settings.MIN_N_TREATMENT_PER_BIN,
-                min_n_sampled_to_n_treatment_ratio=settings.MIN_N_SAMPLED_TO_N_TREATMENT_RATIO,
-                random_seed=settings.SEED,
+                min_n_bins=settings.min_n_bins,
+                max_n_bins=settings.max_n_bins,
+                min_n_treatment_per_bin=settings.min_n_treatment_per_bin,
+                min_n_sampled_to_n_treatment_ratio=settings.min_n_sampled_to_n_treatment_ratio,
+                random_seed=settings.seed,
             )
 
         clusters, treatment_weights = self._create_output_dfs(t_ids)

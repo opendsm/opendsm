@@ -18,13 +18,11 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from opendsm.comparison_groups._utils.base_comparison_group import Comparison_Group_Algorithm
+from opendsm.comparison_groups.common.base_comparison_group import Comparison_Group_Algorithm
 
 from opendsm.comparison_groups.individual_meter_matching.settings import Settings
-from opendsm.comparison_groups.individual_meter_matching.distance_calc_selection import (
-    DistanceMatching,
-    DistanceMatchingLegacy,
-)
+from opendsm.comparison_groups.individual_meter_matching.distance_calc_selection import DistanceMatching
+
 
 
 class Individual_Meter_Matching(Comparison_Group_Algorithm):
@@ -71,11 +69,6 @@ class Individual_Meter_Matching(Comparison_Group_Algorithm):
     
 
     def get_comparison_group(self, treatment_data, comparison_pool_data, weights=None):
-        if self.settings.SELECTION_METHOD == "legacy":
-            distance_matching = DistanceMatchingLegacy(self.settings)
-        else:
-            distance_matching = DistanceMatching(self.settings)
-
         self.treatment_data = treatment_data
         self.comparison_pool_data = comparison_pool_data
 
@@ -85,6 +78,7 @@ class Individual_Meter_Matching(Comparison_Group_Algorithm):
         self.ls_weights = self._validate_ls_weights(weights)
 
         # Get clusters
+        distance_matching = DistanceMatching(self.settings)
         df_raw = distance_matching.get_comparison_group(
             self.treatment_loadshape, 
             self.comparison_pool_loadshape, 
