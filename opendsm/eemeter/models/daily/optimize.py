@@ -173,7 +173,7 @@ class SciPyOptimizer(BaseOptimizer):
 
             if algorithm.lower() in ["brent", "golden"]:
                 res = scipy_minimize_scalar(
-                    scipy_obj_fcn, bracket=bnds, method=algorithm.lower()
+                    scipy_obj_fcn, bracket=bnds[0], method=algorithm.lower()
                 )
 
             elif algorithm.lower() == "bounded":
