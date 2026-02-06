@@ -20,8 +20,6 @@
 
 from __future__ import annotations
 
-import warnings
-
 import numpy as np
 import pandas as pd
 
@@ -60,13 +58,19 @@ def _shulze_pairwise_preference(df, voter_weights=None):
     Perform pairwise comparison to select the best candidate (row) from a DataFrame.
     Each column is a 'voter' (score algorithm), and each row index is a candidate (n_clusters).
     Each column contains a ranking of candidates (row indices), with lower values being better.
-    
+
     """
 
     if voter_weights is None:
         voter_weights = {voter: 1.0 for voter in df.columns}
 
     candidates = np.unique(df.iloc[:, 0])
+
+    # Pre-build rank lookup per voter to avoid repeated pd.Index construction
+    voter_ranks = {}
+    for voter in df.columns:
+        idx = pd.Index(df[voter])
+        voter_ranks[voter] = {candidate: idx.get_loc(candidate) for candidate in candidates}
 
     Pd = np.zeros((len(candidates), len(candidates), 2))
     pred = np.zeros((len(candidates), len(candidates)))
@@ -75,33 +79,32 @@ def _shulze_pairwise_preference(df, voter_weights=None):
             if a == b:
                 continue
 
-            votes = {
-                "a": 0,
-                "b": 0,
-            }
+            votes_a = 0.0
+            votes_b = 0.0
             for voter in df.columns:
-                rank = {
-                    "a": pd.Index(df[voter]).get_loc(a),
-                    "b": pd.Index(df[voter]).get_loc(b),
-                }
+                w = voter_weights[voter]
+                rank_a = voter_ranks[voter][a]
+                rank_b = voter_ranks[voter][b]
 
-                if rank["a"] < rank["b"]:
-                    votes["a"] += 1.0*voter_weights[voter]
-                elif rank["a"] > rank["b"]:
-                    votes["b"] += 1.0*voter_weights[voter]
+                if rank_a < rank_b:
+                    votes_a += w
+                elif rank_a > rank_b:
+                    votes_b += w
                 else:
-                    votes["a"] += 0.5*voter_weights[voter]
-                    votes["b"] += 0.5*voter_weights[voter]
-            
-            Pd[i, j] = [votes["a"], votes["b"]]
+                    votes_a += 0.5 * w
+                    votes_b += 0.5 * w
+
+            Pd[i, j] = [votes_a, votes_b]
             pred[i, j] = i
-    
+
     return Pd, pred
 
 
 def _shulze_path_strength(Pd, pred):
     """
-    Compute the path strength for each candidate.
+    Compute strongest path strengths using Floyd-Warshall.
+    Updates Pd so that Pd[j, k][0] holds the strength of the
+    strongest path from candidate j to candidate k.
     """
     n_candidates = Pd.shape[0]
 
@@ -114,20 +117,20 @@ def _shulze_path_strength(Pd, pred):
                 if k == i or k == j:
                     continue
 
-                current_strength = Pd[j, k][0]
-                idx_alt = np.argmin([Pd[j, i][0], Pd[i, k][0]]).flatten()[0]
-                if idx_alt == 0:
-                    idx_alt = [j, i]
-                    potential_strength = Pd[j, i][0]
+                # Strength of path j→i→k is the bottleneck (min) of two edges
+                strength_ji = Pd[j, i][0]
+                strength_ik = Pd[i, k][0]
+
+                if strength_ji <= strength_ik:
+                    bottleneck = (j, i)
+                    potential_strength = strength_ji
                 else:
-                    idx_alt = [i, k]
-                    potential_strength = Pd[i, k][0]
+                    bottleneck = (i, k)
+                    potential_strength = strength_ik
 
-                if current_strength < potential_strength:
-                    Pd[j, k] = Pd[*idx_alt, :]
-
-                    if pred[j, k] != pred[i, k]:
-                        pred[j, k] = pred[i, k]
+                if Pd[j, k][0] < potential_strength:
+                    Pd[j, k] = Pd[bottleneck[0], bottleneck[1], :]
+                    pred[j, k] = pred[i, k]
 
     return Pd, pred
 
@@ -209,75 +212,3 @@ def shulze_voting(df, voter_weights=None, window_size=0, return_preference_df=Fa
     df_pref = df_pref.set_index("candidate")
 
     return winner_idx, df_pref
-
-
-def stv_voting(df, voter_weights=None, window_size=0):
-    """
-    Perform cluster voting to select the best candidate (row) from a DataFrame.
-    Each column is a 'voter' (score algorithm), and each row index is a candidate (n_clusters).
-    Each column contains a ranking of candidates (row indices), with lower values being better.
-
-    Problems: 
-      If a candidate is second best for every voter, it will be eliminated.
-      Indeterminate if all voters select different candidates.
-      Voter weight not implemented.
-    
-    """
-
-    total_voters = len(df.columns)
-    vote_threshold = total_voters / 2
-    candidates = set(range(np.min(df), np.max(df) + 1))
-    eliminated = set()
-
-    voter_power = 1.0
-
-    has_winner = False
-    for _ in range(len(candidates)):
-        vote_counts = {candidate: 0 for candidate in candidates}
-        for voter in df.columns:
-            for preference in df[voter]:
-                if preference not in eliminated:
-                    vote_counts[preference] += 1.0
-
-                    if window_size > 0:
-                        for window in range(1, window_size + 1):
-                            vote_power = window_size / 2
-                            if preference - window in candidates:
-                                vote_counts[preference - window] += 0.5
-
-                            if preference + window in candidates:
-                                vote_counts[preference + window] += 0.5
-
-                    break
-
-        vote_counts = {candidate: count * voter_power for candidate, count in vote_counts.items()}
-
-        # if any candidate in vote_counts has greater or equal to vote_threshold, break
-        for candidate, count in vote_counts.items():
-            if count >= vote_threshold:
-                has_winner = True
-                break
-
-        # print(vote_counts)
-        if has_winner:
-            break
-
-        # if all vote counts are the same, break
-        if len(set(vote_counts.values())) == 1:
-            break
-            # what happens if voters all select different candidates?
-
-        min_votes = min(vote_counts.values())
-        to_eliminate = {cand for cand, count in vote_counts.items() if count == min_votes}
-
-        candidates -= to_eliminate
-        eliminated.update(to_eliminate)
-
-    if not has_winner:
-        # select candidate with most votes from vote_counts
-        max_votes = max(vote_counts.values())
-
-        top_candidates = [cand for cand, count in vote_counts.items() if count == max_votes]
-        candidate = min(top_candidates)
-
-    return candidate
