@@ -378,7 +378,7 @@ class ClusterMetrics(ArbitraryPydanticModel):
 
             data[label_i] = dist_to_nearest
 
-        return data 
+        return data
     
     @computed_field_cached_property()
     def _labeled_mean_distance_to_nearest_cluster(self) -> dict[int, np.array]:
@@ -502,6 +502,37 @@ class ClusterMetrics(ArbitraryPydanticModel):
             )
 
         return data
+
+    @computed_field_cached_property()
+    def _WCSS(self) -> float:
+        """
+        Within-Cluster Sum of Squares
+        """
+
+        wcss = 0.0
+        for label in self.unique_labels:
+            wcss += self.cluster[label].distance_to_mean[label].sum_of_squares
+
+        return wcss
+
+    @computed_field_cached_property()
+    def _BCSS(self) -> float:
+        """
+        Between-Cluster Sum of Squares
+        """
+
+        overall_mean = self._mean[0]
+
+        bcss = 0.0
+        for i, label in enumerate(self.unique_labels):
+            n = self._n[i + 1]
+            cluster_mean = self._mean[i + 1]
+
+            dist = np.linalg.norm(cluster_mean - overall_mean)
+
+            bcss += n * (dist**2)
+
+        return bcss
     
     @computed_field_cached_property()
     def duda_hart_index(self) -> float:
@@ -558,12 +589,16 @@ class ClusterMetrics(ArbitraryPydanticModel):
     def ball_hall_index(self) -> float:
         # Ball and Hall Index
         # Range is 0 to inf, 0 is the best
-        cm = ClusteringMetric(
-            X=self.data,
-            y_pred=self.labels,
-        )
+        # Formula: (1/K) * Σ(sum of squared distances from points to cluster centroids)
 
-        res = cm.ball_hall_index()
+        k = self.label_count  # number of clusters
+
+        # Sum of squared distances to cluster means across all clusters
+        inner_cluster_ss = 0
+        for label in self.unique_labels:
+            inner_cluster_ss += self.cluster[label].distance_to_mean[label].sum_of_squares
+
+        res = inner_cluster_ss / k
 
         if self.index_direction == "maximize":
             res *= -1
@@ -571,7 +606,7 @@ class ClusterMetrics(ArbitraryPydanticModel):
         return res
 
     @computed_field_cached_property()
-    def hartigan_index(self) -> float:
+    def pm_hartigan_index(self) -> float:
         # Hartigan Index
         # Range is 0 to inf, inf is the best
         cm = ClusteringMetric(
@@ -580,6 +615,35 @@ class ClusterMetrics(ArbitraryPydanticModel):
         )
 
         res = cm.hartigan_index()
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def hartigan_index(self) -> float:
+        # Hartigan Index
+        # Range is 0 to inf, inf is the best
+        # Formula: log(BCSS / WCSS) 
+        # where BCSS = between-cluster sum of squares,
+        #       WCSS = within-cluster sum of squares
+
+        k = self.label_count  # number of clusters
+        n = self.n_total  # number of data points
+        mean_all = self._mean[0]
+
+        BCSS = self._BCSS # Between Cluster Sum of Squares (BCSS)
+        WCSS = self._WCSS # Within Cluster Sum of Squares (WCSS)
+
+        # Avoid division by zero
+        # TODO: change to near zero
+        if WCSS == 0:
+            res = np.inf
+        elif BCSS == 0:
+            res = 0
+        else:
+            res = np.log(BCSS / WCSS)
 
         if self.index_direction == "minimize":
             res *= -1
@@ -612,6 +676,26 @@ class ClusterMetrics(ArbitraryPydanticModel):
         silhouette_coefficients = np.hstack(silhouette_coefficients)
 
         res = np.median(silhouette_coefficients)
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def calinski_harabasz_index(self) -> float:
+        # range is 0 to inf, inf is the best
+        k = self.label_count # number of clusters
+        n = self.n_total # number of data points
+        mean_all = self._mean[0]
+
+        BCSS = self._BCSS  # Between Cluster Sum of Squares (BCSS)
+        WCSS = self._WCSS  # Within Cluster Sum of Squares (WCSS)
+
+        if WCSS == 0:
+            return 1.0
+
+        res = (BCSS / WCSS) * ((n - k) / (k - 1.0))
 
         if self.index_direction == "minimize":
             res *= -1
@@ -691,7 +775,7 @@ class ClusterMetrics(ArbitraryPydanticModel):
 
 
     @computed_field_cached_property()
-    def xie_beni_index(self) -> float:
+    def pm_xie_beni_index(self) -> float:
         # Range is 0 to inf, 0 is the best
         cm = ClusteringMetric(
             X=self.data,
@@ -704,16 +788,40 @@ class ClusterMetrics(ArbitraryPydanticModel):
             res *= -1
 
         return res
-    
-    @computed_field_cached_property()
-    def banfeld_raftery_index(self) -> float:
-        # Range is -inf to inf, -inf is the best
-        cm = ClusteringMetric(
-            X=self.data,
-            y_pred=self.labels,
-        )
 
-        res = cm.banfeld_raftery_index()
+    @computed_field_cached_property()
+    def xie_beni_index(self) -> float:
+        # Xie-Beni Index
+        # Range is 0 to inf, 0 is the best
+        # Formula: WCSS / (n × d_min²)
+        # where WCSS = within-cluster sum of squares,
+        #       n = number of data points,
+        #       d_min = minimum distance between cluster centroids
+
+        n = self.n_total  # number of data points
+
+        WCSS = self._WCSS
+
+        # Find minimum distance between cluster centroids
+        # Get all cluster means
+        cluster_means = []
+        for label in self.unique_labels:
+            cluster_means.append(self.cluster[label].mean)
+        cluster_means = np.array(cluster_means)
+
+        # Calculate pairwise distances between centroids
+        if len(cluster_means) > 1:
+            centroid_distances = pdist(cluster_means)
+            d_min_squared = np.min(centroid_distances) ** 2
+        else:
+            # If only one cluster, return infinity (worst score)
+            return np.inf if self.index_direction == "minimize" else -np.inf
+
+        # Avoid division by zero
+        if d_min_squared == 0:
+            res = np.inf
+        else:
+            res = WCSS / (n * d_min_squared)
 
         if self.index_direction == "maximize":
             res *= -1
@@ -721,7 +829,33 @@ class ClusterMetrics(ArbitraryPydanticModel):
         return res
 
     @computed_field_cached_property()
-    def ksq_detw_index(self) -> float:
+    def banfeld_raftery_index(self) -> float:
+        # Banfeld-Raftery Index
+        # Range is -inf to inf, -inf is the best
+        # Formula: Σ [n_k × log(trace(W_k) / n_k)]
+        # where n_k = number of points in cluster k,
+        #       trace(W_k) = sum of squared distances to centroid for cluster k
+
+        res = 0.0
+        for label in self.unique_labels:
+            n_k = self.cluster[label].n
+            # trace of within-cluster scatter matrix = sum of squared distances
+            trace_W_k = self.cluster[label].distance_to_mean[label].sum_of_squares
+
+            # Avoid log(0) or division by zero
+            if n_k > 0 and trace_W_k > 0:
+                res += n_k * np.log(trace_W_k / n_k)
+            elif trace_W_k == 0:
+                # Perfect clustering (no variance) -> very negative value
+                res += n_k * np.log(1e-10)
+
+        if self.index_direction == "maximize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def pm_ksq_detw_index(self) -> float:
         # Range is -inf to inf, inf is the best
         cm = ClusteringMetric(
             X=self.data,
@@ -736,14 +870,85 @@ class ClusterMetrics(ArbitraryPydanticModel):
         return res
 
     @computed_field_cached_property()
-    def det_ratio_index(self) -> float:
-        # Range is 0 to inf, inf is the best
-        cm = ClusteringMetric(
-            X=self.data,
-            y_pred=self.labels,
-        )
+    def ksq_detw_index(self) -> float:
+        # KSq-DetW Index (K² × det(W))
+        # Range is -inf to inf, inf is the best
+        # Formula: K² × det(W)
+        # where K = number of clusters,
+        #       W = pooled within-cluster scatter matrix,
+        #       det(W) = determinant of W
 
-        res = cm.det_ratio_index()
+        k = self.label_count  # number of clusters
+        n_features = self.data.shape[1]
+
+        # Initialize pooled within-cluster scatter matrix
+        W = np.zeros((n_features, n_features))
+
+        # Compute scatter matrix for each cluster and sum them
+        for label in self.unique_labels:
+            cluster_mask = self.labels == label
+            cluster_data = self.data[cluster_mask]
+            cluster_mean = self.cluster[label].mean
+
+            # Compute scatter matrix for this cluster: Σ(x - mean)(x - mean)^T
+            centered_data = cluster_data - cluster_mean
+            W_k = centered_data.T @ centered_data
+            W += W_k
+
+        # Compute determinant
+        try:
+            det_W = np.linalg.det(W)
+        except np.linalg.LinAlgError:
+            # Handle singular matrix
+            det_W = 0
+
+        # KSq-DetW = K² × det(W)
+        res = (k ** 2) * det_W
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def det_ratio_index(self) -> float:
+        # Det Ratio Index
+        # Range is 0 to inf, inf is the best
+        # Formula: det(T) / det(W)
+        # where T = total scatter matrix (covariance of all data),
+        #       W = pooled within-cluster scatter matrix
+
+        n_features = self.data.shape[1]
+        mean_all = self._mean[0]
+
+        # Compute total scatter matrix T
+        centered_data = self.data - mean_all
+        T = centered_data.T @ centered_data
+
+        # Compute pooled within-cluster scatter matrix W
+        W = np.zeros((n_features, n_features))
+        for label in self.unique_labels:
+            cluster_mask = self.labels == label
+            cluster_data = self.data[cluster_mask]
+            cluster_mean = self.cluster[label].mean
+
+            centered_cluster = cluster_data - cluster_mean
+            W_k = centered_cluster.T @ centered_cluster
+            W += W_k
+
+        # Compute determinants
+        try:
+            det_T = np.linalg.det(T)
+            det_W = np.linalg.det(W)
+
+            # Avoid division by zero
+            if det_W == 0 or np.abs(det_W) < 1e-10:
+                res = np.inf
+            else:
+                res = det_T / det_W
+        except np.linalg.LinAlgError:
+            # Handle singular matrices
+            res = np.inf
 
         if self.index_direction == "minimize":
             res *= -1
@@ -751,7 +956,7 @@ class ClusterMetrics(ArbitraryPydanticModel):
         return res
     
     @computed_field_cached_property()
-    def dunn_index(self) -> float:
+    def pm_dunn_index(self) -> float:
         # Dunn Index
         # Range is 0 to inf, inf is the best
         cm = ClusteringMetric(
@@ -767,7 +972,45 @@ class ClusterMetrics(ArbitraryPydanticModel):
         return res
     
     @computed_field_cached_property()
-    def log_det_ratio_index(self) -> float:
+    def dunn_index(self) -> float:
+        # Dunn Index
+        # Range is 0 to inf, inf is the best
+        # Formula: min(inter-cluster distance) / max(intra-cluster diameter)
+        # where inter-cluster distance = min distance between points in different clusters
+        #       intra-cluster diameter = max distance between points in same cluster
+
+        # Find minimum inter-cluster distance
+        min_inter_distance = np.inf
+        for i, label_i in enumerate(self.unique_labels):
+            for label_j in self.unique_labels[i+1:]:
+                # Get distances between all points in cluster i and j
+                distances = self._labeled_distance[label_i, label_j]
+                min_dist = np.min(distances)
+                if min_dist < min_inter_distance:
+                    min_inter_distance = min_dist
+
+        # Find maximum intra-cluster diameter
+        max_intra_diameter = 0
+        for label in self.unique_labels:
+            # Get distances within cluster (diameter is max distance)
+            intra_distances = self._labeled_distance[label, label]
+            max_dist = np.max(intra_distances)
+            if max_dist > max_intra_diameter:
+                max_intra_diameter = max_dist
+
+        # Avoid division by zero
+        if max_intra_diameter == 0:
+            res = np.inf
+        else:
+            res = min_inter_distance / max_intra_diameter
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def pm_log_det_ratio_index(self) -> float:
         # Range is -inf to inf, inf is the best
         cm = ClusteringMetric(
             X=self.data,
@@ -780,48 +1023,112 @@ class ClusterMetrics(ArbitraryPydanticModel):
             res *= -1
 
         return res
-    
-    @computed_field_cached_property()
-    def log_ss_ratio_index(self) -> float:
-        # Range is -inf to inf, inf is the best
-        cm = ClusteringMetric(
-            X=self.data,
-            y_pred=self.labels,
-        )
 
-        res = cm.log_ss_ratio_index()
+    @computed_field_cached_property()
+    def log_det_ratio_index(self) -> float:
+        # Log Det Ratio Index
+        # Range is -inf to inf, inf is the best
+        # Formula: log(det(T) / det(W)) = log(det(T)) - log(det(W))
+        # where T = total scatter matrix,
+        #       W = pooled within-cluster scatter matrix
+
+        n_features = self.data.shape[1]
+        mean_all = self._mean[0]
+
+        # Compute total scatter matrix T
+        centered_data = self.data - mean_all
+        T = centered_data.T @ centered_data
+
+        # Compute pooled within-cluster scatter matrix W
+        W = np.zeros((n_features, n_features))
+        for label in self.unique_labels:
+            cluster_mask = self.labels == label
+            cluster_data = self.data[cluster_mask]
+            cluster_mean = self.cluster[label].mean
+
+            centered_cluster = cluster_data - cluster_mean
+            W_k = centered_cluster.T @ centered_cluster
+            W += W_k
+
+        # Compute log determinants (more numerically stable)
+        try:
+            det_T = np.linalg.det(T)
+            det_W = np.linalg.det(W)
+
+            # Avoid log of zero or negative values
+            if det_W <= 0 or np.abs(det_W) < 1e-10:
+                res = np.inf
+            elif det_T <= 0:
+                res = -np.inf
+            else:
+                # log(det(T) / det(W)) = log(det(T)) - log(det(W))
+                res = np.log(det_T) - np.log(det_W)
+        except np.linalg.LinAlgError:
+            # Handle singular matrices
+            res = np.inf
 
         if self.index_direction == "minimize":
             res *= -1
 
         return res
-    
+
+    @computed_field_cached_property()
+    def log_ss_ratio_index(self) -> float:
+        # Log SS Ratio Index (Log Sum of Squares Ratio)
+        # Range is -inf to inf, inf is the best
+        # Formula: log(BCSS / WCSS) = log(BCSS) - log(WCSS)
+        # where BCSS = between-cluster sum of squares,
+        #       WCSS = within-cluster sum of squares
+
+        k = self.label_count  # number of clusters
+        n = self.n_total  # number of data points
+        mean_all = self._mean[0]
+
+        BCSS = self._BCSS  # Between Cluster Sum of Squares (BCSS)
+        WCSS = self._WCSS  # Within Cluster Sum of Squares (WCSS)
+
+        # Avoid log of zero or division by zero
+        if WCSS == 0 or WCSS < 1e-10:
+            res = np.inf
+        elif BCSS == 0:
+            res = -np.inf
+        else:
+            # log(BCSS / WCSS) = log(BCSS) - log(WCSS)
+            res = np.log(BCSS) - np.log(WCSS)
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+
     @computed_field_cached_property()
     def sum_of_squared_errors_index(self) -> float:
-        # Sum of Squared Errors Index
+        # Sum of Squared Errors (SSE) Index
         # Range is 0 to inf, 0 is the best
-        cm = ClusteringMetric(
-            X=self.data,
-            y_pred=self.labels,
-        )
+        # Formula: SSE = Σ_k Σ_{x_i ∈ C_k} ||x_i - c_k||²
+        # This is equivalent to the Within-Cluster Sum of Squares (WCSS)
 
-        res = cm.sum_squared_error_index()
+        # Within Cluster Sum of Squares (WCSS) = SSE
+        res = self._WCSS
 
         if self.index_direction == "maximize":
             res *= -1
 
         return res
-    
+
     @computed_field_cached_property()
     def mean_squared_error_index(self) -> float:
-        # Mean Squared Error Index
+        # Mean Squared Error (MSE) Index
         # Range is 0 to inf, 0 is the best
-        cm = ClusteringMetric(
-            X=self.data,
-            y_pred=self.labels,
-        )
+        # Formula: MSE = SSE / n = WCSS / n
+        # where SSE = sum of squared errors,
+        #       n = total number of data points
 
-        res = cm.mean_squared_error_index()
+        n = self.n_total  # number of data points
+        WCSS = self._WCSS
+
+        # MSE = SSE / n
+        res = WCSS / n
 
         if self.index_direction == "maximize":
             res *= -1
@@ -829,7 +1136,7 @@ class ClusterMetrics(ArbitraryPydanticModel):
         return res
     
     @computed_field_cached_property()
-    def r_squared_index(self) -> float:
+    def pm_r_squared_index(self) -> float:
         # R-Squared Index
         # Range is -inf to 1, 1 is the best
         cm = ClusteringMetric(
@@ -838,6 +1145,33 @@ class ClusterMetrics(ArbitraryPydanticModel):
         )
 
         res = cm.r_squared_index()
+
+        if self.index_direction == "minimize":
+            res = 1 - res
+
+        return res
+
+    @computed_field_cached_property()
+    def r_squared_index(self) -> float:
+        # R-Squared Index (Coefficient of Determination)
+        # Range is -inf to 1, 1 is the best
+        # Formula: R² = 1 - (WCSS / TSS)
+        # where WCSS = within-cluster sum of squares,
+        #       TSS = total sum of squares (variance around global mean)
+
+        mean_all = self._mean[0]
+
+        WCSS = self._WCSS
+
+        # Total Sum of Squares (TSS)
+        # TSS = sum of squared distances from all points to global mean
+        TSS = np.sum((self.data - mean_all) ** 2)
+
+        # Avoid division by zero
+        if TSS == 0:
+            res = 1.0  # Perfect clustering if no variance
+        else:
+            res = 1 - (WCSS / TSS)
 
         if self.index_direction == "minimize":
             res = 1 - res
