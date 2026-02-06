@@ -20,7 +20,7 @@ jobs:
       matrix:
         python: ["3.10", "3.11", "3.12"]
         # macos-13 is x86_64, macos-14/macos-latest is ARM
-        os: [ubuntu-latest, windows-latest, macos-13, macos-14]
+        os: [ubuntu-latest, windows-latest, macos-14, macos-15, macos-latest]
     runs-on: ${{ matrix.os }}
 
     steps:
