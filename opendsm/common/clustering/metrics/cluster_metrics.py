@@ -19,40 +19,21 @@
 """
 from __future__ import annotations
 
-import sys
 import pydantic
-from typing import Union, Optional, Literal
+from typing import Optional, Literal
 from enum import Enum
 
 import numpy as np
-import pandas as pd
 
 from scipy.spatial.distance import cdist, pdist, squareform
-
-from functools import cached_property
 
 from opendsm.common.stats.basic import median_absolute_deviation
 from opendsm.common.pydantic_utils import (
     ArbitraryPydanticModel,
-    PydanticDf,
-    PydanticFromDict,
     computed_field_cached_property,
 )
 from opendsm.common.clustering.metrics.density_based_clustering_validation import dbcv
 
-# TODO Delete this import
-from permetrics import ClusteringMetric
-
-
-
-def get_max_score_from_system_size() -> float:
-    """
-    Get the max score from the system size.
-    Running as function so unforeseen issues are less likely when running on 
-    distributed env.
-    """
-
-    return sys.float_info.max**0.5
 
 
 class DistanceMetric(str, Enum):
@@ -140,6 +121,10 @@ class SingleClusterMetrics(ArbitraryPydanticModel):
 
     median: np.array = pydantic.Field()
 
+    var: Optional[np.array] = pydantic.Field(
+        default=None,
+    )
+
     distance: dict[int, ClusterPairDistanceMetrics] | ClusterPairDistanceMetrics = pydantic.Field()
 
     distance_to_mean: dict[int | str, ClusterPairDistanceMetrics] | ClusterPairDistanceMetrics = pydantic.Field()
@@ -171,32 +156,54 @@ class SingleClusterMetrics(ArbitraryPydanticModel):
     )
 
     @computed_field_cached_property()
-    def mean_silhouette_coefficient(self) -> np.array:
-        if self.mean_distance_intra_cluster is None: 
+    def var_norm(self) -> float | None:
+        """Norm of the per-dimension variance vector: ||σ||"""
+        if self.var is None:
+            return None
+        
+        return np.linalg.norm(self.var)
+
+    @computed_field_cached_property()
+    def within_pairwise_distances(self) -> np.ndarray | None:
+        """Upper triangle of intra-cluster pairwise distances (no diagonal, no duplicates)"""
+        if self.cluster_id is None or not isinstance(self.distance, dict):
             return None
 
-        silhouette = np.empty(self.n)
-        for idx in range(self.n):
-            a = self.mean_distance_intra_cluster[idx]
-            b = self.mean_distance_to_nearest_cluster[idx]
+        d = self.distance[self.cluster_id].distance
+        return d[np.triu_indices_from(d, k=1)]
 
-            silhouette[idx] = (b - a) / np.max([b, a])
+    @computed_field_cached_property()
+    def between_pairwise_distances(self) -> np.ndarray | None:
+        """All pairwise distances from this cluster to other clusters"""
+        if self.cluster_id is None or not isinstance(self.distance, dict):
+            return None
 
-        return silhouette
+        parts = []
+        for label_j, pair_metrics in self.distance.items():
+            if label_j != self.cluster_id:
+                parts.append(pair_metrics.distance.ravel())
+
+        return np.concatenate(parts) if parts else np.array([])
+
+    @computed_field_cached_property()
+    def mean_silhouette_coefficient(self) -> np.array:
+        if self.mean_distance_intra_cluster is None:
+            return None
+
+        a = self.mean_distance_intra_cluster
+        b = self.mean_distance_to_nearest_cluster
+        
+        return (b - a) / np.maximum(a, b)
 
     @computed_field_cached_property()
     def median_silhouette_coefficient(self) -> np.array:
         if self.median_distance_intra_cluster is None:
             return None
 
-        silhouette = np.empty(self.n)
-        for idx in range(self.n):
-            a = self.median_distance_intra_cluster[idx]
-            b = self.median_distance_to_nearest_cluster[idx]
-            
-            silhouette[idx] = (b - a) / np.max([b, a])
+        a = self.median_distance_intra_cluster
+        b = self.median_distance_to_nearest_cluster
 
-        return silhouette
+        return (b - a) / np.maximum(a, b)
 
 
 class ClusterMetrics(ArbitraryPydanticModel):
@@ -221,29 +228,23 @@ class ClusterMetrics(ArbitraryPydanticModel):
         description="Force the indice direction to `minimize` or `maximize` as best",
     )
 
-    _min_denominator: float = 1e-3
-
+    _eps: float = 1e-10
     _all: int = -999
 
-    @cached_property
-    def _df(self) -> pd.DataFrame:
+    @pydantic.model_validator(mode='after')
+    def _validate_data(self) -> 'ClusterMetrics':
         if self.data.shape[0] == 0:
             raise ValueError("Data must have at least one row")
-        
+
         if self.labels.shape[0] == 0:
             raise ValueError("Labels must have at least one row")
-        
+
         if self.labels.shape[0] != self.data.shape[0]:
             raise ValueError("Labels and data must have the same length")
-        
-        _df = pd.DataFrame(self.data)
-        _df["labels"] = self.labels
-
-        _df = _df.reset_index().set_index(["index", "labels"])
 
         label_min = self.labels.min()
 
-        # this should never trigger, but just in case
+        # Ensure _all sentinel doesn't collide with actual labels
         if label_min < self._all:
             len_label_min = len(str(abs(int(label_min))))
             self._all = -int('9' * len_label_min)
@@ -252,11 +253,11 @@ class ClusterMetrics(ArbitraryPydanticModel):
             if self._all == label_min:
                 self._all = -int('9' * (len_label_min + 1))
 
-        return _df
+        return self
 
     @computed_field_cached_property()
-    def n_total(self) -> float:
-        return len(self._df)
+    def n_total(self) -> int:
+        return self.data.shape[0]
 
     @computed_field_cached_property()
     def unique_labels(self) -> np.array:
@@ -267,114 +268,99 @@ class ClusterMetrics(ArbitraryPydanticModel):
         return len(self.unique_labels)
 
     @computed_field_cached_property()
-    def _n(self) -> np.array:
-        n = [self.n_total]
-        for label in self.unique_labels:
-            n.append(len(self._df.xs(label, level="labels")))
+    def _label_indices(self) -> dict[int, np.ndarray]:
+        return {label: np.where(self.labels == label)[0]
+                for label in self.unique_labels}
 
-        return np.array(n)
+    @computed_field_cached_property()
+    def _n(self) -> np.array:
+        cluster_sizes = [len(self._label_indices[label]) for label in self.unique_labels]
+        return np.array([self.n_total, *cluster_sizes])
 
     @computed_field_cached_property()
     def _mean(self) -> np.array:
-        means = [np.mean(self._df.values, axis=0)]
+        means = [np.mean(self.data, axis=0)]
         for label in self.unique_labels:
-            cluster_data = self._df.xs(label, level="labels").values
-            means.append(np.mean(cluster_data, axis=0))
+            means.append(np.mean(self.data[self._label_indices[label]], axis=0))
 
         return np.array(means)
 
     @computed_field_cached_property()
     def _median(self) -> np.array:
-        medians = [np.median(self._df.values, axis=0)]
+        medians = [np.median(self.data, axis=0)]
         for label in self.unique_labels:
-            cluster_data = self._df.xs(label, level="labels").values
-            medians.append(np.median(cluster_data, axis=0))
+            medians.append(np.median(self.data[self._label_indices[label]], axis=0))
 
         return np.array(medians)
-    
+
+    @computed_field_cached_property()
+    def _var(self) -> np.array:
+        variances = [np.var(self.data, axis=0)]
+        for label in self.unique_labels:
+            variances.append(np.var(self.data[self._label_indices[label]], axis=0))
+
+        return np.array(variances)
+
     @computed_field_cached_property()
     def _distance(self) -> np.array:
-        # return cdist(self._df.values, self._df.values)
-        return squareform(pdist(self._df.values))
-    
+        return squareform(pdist(self.data))
+
     @computed_field_cached_property()
     def _distance_to_mean(self) -> np.array:
-        return cdist(self._df.values, self._mean)
-    
+        return cdist(self.data, self._mean)
+
     @computed_field_cached_property()
     def _distance_to_median(self) -> np.array:
-        return cdist(self._df.values, self._median)
+        return cdist(self.data, self._median)
     
     @computed_field_cached_property()
     def _labeled_distance(self) -> dict[tuple[int, int], np.array]:
         data = {}
         for label_i in self.unique_labels:
-            idx_i = np.argwhere(self.labels == label_i).flatten()
+            idx_i = self._label_indices[label_i]
 
             for label_j in self.unique_labels:
-                idx_j = np.argwhere(self.labels == label_j).flatten()
+                idx_j = self._label_indices[label_j]
                 data[label_i, label_j] = self._distance[np.ix_(idx_i, idx_j)]
 
         return data
-    
+
+    def _labeled_distance_to_centroid(self, distance_matrix: np.array) -> dict[tuple[int, int], np.array]:
+        unique_labels = [self._all, *self.unique_labels]
+        all_idx = np.arange(self.n_total)
+
+        data = {}
+        for label_i in unique_labels:
+            idx_i = all_idx if label_i == self._all else self._label_indices[label_i]
+
+            for col_idx, label_j in enumerate(unique_labels):
+                data[label_i, label_j] = distance_matrix[idx_i, col_idx]
+
+        return data
+
     @computed_field_cached_property()
     def _labeled_distance_to_mean(self) -> dict[tuple[int, int], np.array]:
-        unique_labels = [self._all, *self.unique_labels]
+        return self._labeled_distance_to_centroid(self._distance_to_mean)
 
-        data = {}
-        for label_i in unique_labels:
-            if label_i == self._all:
-                idx_i = np.arange(self.n_total)
-            else:
-                idx_i = np.argwhere(self.labels == label_i).flatten()
-
-            for idx_j, label_j in enumerate(unique_labels):
-                # if (label_i == self._all) and (label_j != self._all):
-                #     continue
-
-                idx_j = np.array([idx_j])
-                data[label_i, label_j] = self._distance_to_mean[np.ix_(idx_i, idx_j)].flatten()
-
-        return data
-    
     @computed_field_cached_property()
     def _labeled_distance_to_median(self) -> dict[tuple[int, int], np.array]:
-        unique_labels = [self._all, *self.unique_labels]
-
-        data = {}
-        for label_i in unique_labels:
-            if label_i == self._all:
-                idx_i = np.arange(self.n_total)
-            else:
-                idx_i = np.argwhere(self.labels == label_i).flatten()
-
-            for idx_j, label_j in enumerate(unique_labels):
-                # if (label_i == self._all) and (label_j != self._all):
-                #     continue
-
-                idx_j = np.array([idx_j])
-                data[label_i, label_j] = self._distance_to_median[np.ix_(idx_i, idx_j)].flatten()
-
-        return data
+        return self._labeled_distance_to_centroid(self._distance_to_median)
 
     def _labeled_distance_to_nearest_cluster(self, agg: str = "mean") -> dict[int, np.array]:
+        agg_fcn = np.mean if agg == "mean" else np.median
+
         data = {}
         for label_i in self.unique_labels:
             n = self._labeled_distance[label_i, label_i].shape[0]
-            dist_to_nearest = np.ones(n) * np.inf
-            for idx_i in range(n):
-                for label_j in self.unique_labels:
-                    if label_i == label_j:
-                        continue
+            dist_to_nearest = np.full(n, np.inf)
 
-                    dist_matrix = self._labeled_distance[label_i, label_j]
-                    if agg == "mean":
-                        avg_dist = np.mean(dist_matrix[idx_i, :])
-                    else:
-                        avg_dist = np.median(dist_matrix[idx_i, :])
+            for label_j in self.unique_labels:
+                if label_i == label_j:
+                    continue
 
-                    if avg_dist < dist_to_nearest[idx_i]:
-                        dist_to_nearest[idx_i] = avg_dist
+                dist_matrix = self._labeled_distance[label_i, label_j]
+                avg_dists = agg_fcn(dist_matrix, axis=1)
+                dist_to_nearest = np.minimum(dist_to_nearest, avg_dists)
 
             data[label_i] = dist_to_nearest
 
@@ -391,21 +377,17 @@ class ClusterMetrics(ArbitraryPydanticModel):
     def _labeled_distance_intra_cluster(self, agg: str = "mean") -> dict[int, np.array]:
         data = {}
         for label_i in self.unique_labels:
-            n = self._labeled_distance[label_i, label_i].shape[0]
-
             distance_array = self._labeled_distance[label_i, label_i]
-            dist_to_nearest = np.empty(n)
-            for idx in range(n):
-                mask = np.ones(n, dtype=bool)
-                mask[idx] = False
-                distance_masked = distance_array[idx][mask]
+            n = distance_array.shape[0]
 
-                if agg == "mean":
-                    dist_to_nearest[idx] = np.mean(distance_masked)
-                else:
-                    dist_to_nearest[idx] = np.median(distance_masked)
-
-            data[label_i] = dist_to_nearest
+            if agg == "mean":
+                # Mean excluding self: row_sum / (n-1), diagonal is 0
+                data[label_i] = np.sum(distance_array, axis=1) / (n - 1)
+            else:
+                # Median excluding self: mask diagonal with nan, use nanmedian
+                masked = distance_array.copy()
+                np.fill_diagonal(masked, np.nan)
+                data[label_i] = np.nanmedian(masked, axis=1)
 
         return data
     
@@ -438,6 +420,7 @@ class ClusterMetrics(ArbitraryPydanticModel):
             n=self._n[0],
             mean=self._mean[0],
             median=self._median[0],
+            var=self._var[0],
             distance=distance,
             distance_to_mean=distance_to_mean,
             distance_to_median=distance_to_median,
@@ -451,33 +434,33 @@ class ClusterMetrics(ArbitraryPydanticModel):
             n = self._n[i + 1]
             mean = self._mean[i + 1]
             median = self._median[i + 1]
+            var = self._var[i + 1]
 
             # pair distance metrics
             distance = {}
-            distance_to_mean = {}
-            distance_to_median = {}
-            for key in self._labeled_distance_to_mean.keys():
-                if key[0] != label:
-                    continue
-                
-                if key[1] == self._all:
-                    key_alias = "all"
+            distance_to_mean = {"all": ClusterPairDistanceMetrics(
+                cluster_ids=(label, self._all),
+                distance=self._labeled_distance_to_mean[(label, self._all)],
+            )}
+            distance_to_median = {"all": ClusterPairDistanceMetrics(
+                cluster_ids=(label, self._all),
+                distance=self._labeled_distance_to_median[(label, self._all)],
+            )}
 
-                else:
-                    key_alias = key[1]
+            for label_j in self.unique_labels:
+                key = (label, label_j)
 
-                    distance[key[1]] = ClusterPairDistanceMetrics(
-                        cluster_ids=key,
-                        distance=self._labeled_distance[key],
-                    )
+                distance[label_j] = ClusterPairDistanceMetrics(
+                    cluster_ids=key,
+                    distance=self._labeled_distance[key],
+                )
 
-
-                distance_to_mean[key_alias] = ClusterPairDistanceMetrics(
+                distance_to_mean[label_j] = ClusterPairDistanceMetrics(
                     cluster_ids=key,
                     distance=self._labeled_distance_to_mean[key],
                 )
-                
-                distance_to_median[key_alias] = ClusterPairDistanceMetrics(
+
+                distance_to_median[label_j] = ClusterPairDistanceMetrics(
                     cluster_ids=key,
                     distance=self._labeled_distance_to_median[key],
                 )
@@ -492,6 +475,7 @@ class ClusterMetrics(ArbitraryPydanticModel):
                 n=n,
                 mean=mean,
                 median=median,
+                var=var,
                 distance=distance,
                 distance_to_mean=distance_to_mean,
                 distance_to_median=distance_to_median,
@@ -503,37 +487,400 @@ class ClusterMetrics(ArbitraryPydanticModel):
 
         return data
 
+    # -------------------------------------------------------------------------
+    # Private infrastructure: scatter matrices, sum-of-squares, pairwise vectors
+    # -------------------------------------------------------------------------
+
+    @computed_field_cached_property()
+    def _WCSM(self) -> dict[int, np.ndarray]:
+        """
+        Within-Cluster Scatter Matrices
+        Returns a dictionary mapping cluster labels to their scatter matrices
+        """
+        # Compute scatter matrix for each cluster
+        scatter_matrices = {}
+        for i, label in enumerate(self.unique_labels):
+            cluster_data = self.data[self._label_indices[label]]
+            cluster_mean = self._mean[i + 1]
+
+            # Compute scatter matrix for this cluster: Σ(x - mean)(x - mean)^T
+            centered_data = cluster_data - cluster_mean
+            scatter_matrices[label] = centered_data.T @ centered_data
+
+        return scatter_matrices
+
+    @computed_field_cached_property()
+    def _sum_WCSM(self) -> np.ndarray:
+        """
+        Pooled Within-Cluster Scatter Matrix
+        Returns the sum of all within-cluster scatter matrices
+        """
+        return sum(self._WCSM.values())
+
+    @computed_field_cached_property()
+    def _TSM(self) -> np.ndarray:
+        """
+        Total Scatter Matrix
+        """
+        centered_data = self.data - self._mean[0]
+        return centered_data.T @ centered_data
+
     @computed_field_cached_property()
     def _WCSS(self) -> float:
         """
         Within-Cluster Sum of Squares
+        Computed as the trace of the summed within-cluster scatter matrix
         """
-
-        wcss = 0.0
-        for label in self.unique_labels:
-            wcss += self.cluster[label].distance_to_mean[label].sum_of_squares
-
-        return wcss
+        return np.trace(self._sum_WCSM)
 
     @computed_field_cached_property()
     def _BCSS(self) -> float:
         """
         Between-Cluster Sum of Squares
         """
+        diffs = self._mean[1:] - self._mean[0]
+        sq_dists = np.sum(diffs ** 2, axis=1)
+        BCSS = np.dot(self._n[1:], sq_dists)
 
-        overall_mean = self._mean[0]
+        return BCSS
 
-        bcss = 0.0
+    @computed_field_cached_property()
+    def _WC_pairwise_distances(self) -> np.ndarray:
+        """Aggregated within-cluster pairwise distances across all clusters"""
+        parts = [
+            c.within_pairwise_distances
+            for c in self.cluster.values()
+            if c.within_pairwise_distances is not None and len(c.within_pairwise_distances) > 0
+        ]
+        return np.concatenate(parts) if parts else np.array([])
+
+    @computed_field_cached_property()
+    def _BC_pairwise_distances(self) -> np.ndarray:
+        """Aggregated between-cluster pairwise distances (deduplicated across cluster pairs)"""
+        parts = []
+        labels = list(self.unique_labels)
+        for i, label_i in enumerate(labels):
+            for label_j in labels[i+1:]:
+                parts.append(self.cluster[label_i].distance[label_j].distance.ravel())
+        return np.concatenate(parts) if parts else np.array([])
+
+    @computed_field_cached_property()
+    def _mean_scatter(self) -> float:
+        """Average scattering: (1/K) × Σ_k ||σ(C_k)|| / ||σ(D)||"""
+        total_var_norm = self.all.var_norm
+        if total_var_norm is None or total_var_norm < self._eps:
+            return 0.0
+
+        cluster_var_norms = np.array([
+            self.cluster[label].var_norm
+            for label in self.unique_labels
+        ])
+        return np.mean(cluster_var_norms) / total_var_norm
+
+    # -------------------------------------------------------------------------
+    # Compactness indices (within-cluster quality only)
+    # -------------------------------------------------------------------------
+
+    @computed_field_cached_property()
+    def sum_of_squared_errors_index(self) -> float:
+        # Sum of Squared Errors (SSE) Index
+        # Range is 0 to inf, 0 is the best
+        # Formula: SSE = Σ_k Σ_{x_i ∈ C_k} ||x_i - c_k||²
+        # This is equivalent to the Within-Cluster Sum of Squares (WCSS)
+
+        # Within Cluster Sum of Squares (WCSS) = SSE
+        res = self._WCSS
+
+        if self.index_direction == "maximize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def mean_squared_error_index(self) -> float:
+        # Mean Squared Error (MSE) Index
+        # Range is 0 to inf, 0 is the best
+        # Formula: MSE = SSE / n = WCSS / n
+        # where SSE = sum of squared errors,
+        #       n = total number of data points
+
+        n = self.n_total  # number of data points
+        WCSS = self._WCSS
+
+        res = WCSS / n
+
+        if self.index_direction == "maximize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def ball_hall_index(self) -> float:
+        # Ball and Hall Index
+        # Range is 0 to inf, 0 is the best
+        # Formula: (1/K) * Σ(sum of squared distances from points to cluster centroids)
+
+        k = self.label_count  # number of clusters
+        WCSS = self._WCSS  # Within Cluster Sum of Squares (WCSS)
+        res = WCSS / k
+
+        if self.index_direction == "maximize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def banfeld_raftery_index(self) -> float:
+        # Banfeld-Raftery Index
+        # Range is -inf to inf, -inf is the best
+        # Formula: Σ [n_k × log(trace(W_k) / n_k)]
+        # where n_k = number of points in cluster k,
+        #       trace(W_k) = sum of squared distances to centroid for cluster k
+
+        n_k = self._n[1:]  # cluster sizes
+        traces = np.array([np.trace(self._WCSM[label]) for label in self.unique_labels])
+
+        # Replace zero traces with _eps to avoid log(0)
+        traces_safe = np.where(traces > 0, traces, self._eps)
+        res = np.sum(n_k * np.log(traces_safe / n_k))
+
+        if self.index_direction == "maximize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def scott_symons_index(self) -> float:
+        # Scott-Symons Index
+        # Range is -inf to inf, -inf is the best (minimize)
+        # Formula: Σ n_k × log(det(W_k / n_k))
+        # where W_k = scatter matrix for cluster k,
+        #       n_k = number of points in cluster k
+
+        res = 0.0
         for i, label in enumerate(self.unique_labels):
-            n = self._n[i + 1]
-            cluster_mean = self._mean[i + 1]
+            n_k = self._n[i + 1]
+            W_k = self._WCSM[label]
 
-            dist = np.linalg.norm(cluster_mean - overall_mean)
+            try:
+                sign, logdet = np.linalg.slogdet(W_k / n_k)
+                if sign <= 0:
+                    logdet = np.log(self._eps)
+                res += n_k * logdet
+            except np.linalg.LinAlgError:
+                res += n_k * np.log(self._eps)
 
-            bcss += n * (dist**2)
+        if self.index_direction == "maximize":
+            res *= -1
 
-        return bcss
-    
+        return res
+
+    @computed_field_cached_property()
+    def trace_w_index(self) -> float:
+        # Trace W Index
+        # Range is 0 to inf, 0 is the best (minimize)
+        # Formula: trace(W)
+        # where W = pooled within-cluster scatter matrix
+        # Equivalent to WCSS but formalized as a matrix trace measure
+
+        res = np.trace(self._sum_WCSM)
+
+        if self.index_direction == "maximize":
+            res *= -1
+
+        return res
+
+    # -------------------------------------------------------------------------
+    # Compactness + Separation indices (combined)
+    # -------------------------------------------------------------------------
+
+    def _silhouette_coefficients(self, variant: str = "mean") -> np.ndarray:
+        if variant == "mean":
+            intra = self._labeled_mean_distance_intra_cluster
+            nearest = self._labeled_mean_distance_to_nearest_cluster
+        else:
+            intra = self._labeled_median_distance_intra_cluster
+            nearest = self._labeled_median_distance_to_nearest_cluster
+
+        idx = 0
+        coefficients = np.empty(self.n_total)
+        for label in self.unique_labels:
+            a = intra[label]
+            b = nearest[label]
+            coefs = (b - a) / np.maximum(a, b)
+            n_points = len(coefs)
+            coefficients[idx:idx+n_points] = coefs
+            idx += n_points
+
+        return coefficients
+
+    @computed_field_cached_property()
+    def silhouette_index(self) -> float:
+        # range is -1 to 1, 1 is the best
+        res = np.mean(self._silhouette_coefficients("mean"))
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def silhouette_median_index(self) -> float:
+        # range is -1 to 1, 1 is the best
+        res = np.median(self._silhouette_coefficients("median"))
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def davies_bouldin_index(self) -> float:
+        # range is 0 to inf, 0 is the best
+        k = self.label_count
+        # Could abstract with scipy.stats.moment
+
+        intracluster_distance = np.empty(k)
+        for i, label in enumerate(self.unique_labels):
+            intracluster_distance[i] = np.mean(self._labeled_distance_to_mean[(label, label)])
+
+        intercluster_distance = squareform(pdist(self._mean[1:]))
+
+        # Compute similarity matrix using broadcasting
+        # similarity[i,j] = (dist_i + dist_j) / dist_ij for i != j
+        with np.errstate(divide='ignore', invalid='ignore'):
+            similarity = (intracluster_distance[:, None] + intracluster_distance[None, :]) / intercluster_distance
+
+        # Set diagonal to 0 (i == j case)
+        np.fill_diagonal(similarity, 0)
+
+        res = np.sum(np.max(similarity, axis=1)) / k
+
+        if self.index_direction == "maximize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def calinski_harabasz_index(self) -> float:
+        # range is 0 to inf, inf is the best
+        k = self.label_count # number of clusters
+        n = self.n_total # number of data points
+
+        BCSS = self._BCSS  # Between Cluster Sum of Squares (BCSS)
+        WCSS = self._WCSS  # Within Cluster Sum of Squares (WCSS)
+
+        if WCSS < self._eps:
+            return 1.0
+
+        res = (BCSS / WCSS) * ((n - k) / (k - 1.0))
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def variance_ratio_criterion(self) -> float:
+        return self.calinski_harabasz_index
+
+    @computed_field_cached_property()
+    def dunn_index(self) -> float:
+        # Dunn Index
+        # Range is 0 to inf, inf is the best
+        # Formula: min(inter-cluster distance) / max(intra-cluster diameter)
+        # where inter-cluster distance = min distance between points in different clusters
+        #       intra-cluster diameter = max distance between points in same cluster
+
+        n_clusters = len(self.unique_labels)
+
+        use_modified = True
+
+        # Find minimum inter-cluster distance
+        min_inter_distance = np.inf
+        if use_modified:
+            # Modified: min distance from any point in cluster k1 to centroid of cluster k0
+            # Reuse precomputed distances to means: column i+1 is distance to cluster i's mean
+            for k0 in range(n_clusters - 1):
+                for k1 in range(k0 + 1, n_clusters):
+                    label_k1 = self.unique_labels[k1]
+                    # _distance_to_mean column k0+1 has distances to cluster k0's centroid
+                    dists = self._distance_to_mean[self._label_indices[label_k1], k0 + 1]
+                    min_inter_distance = min(min_inter_distance, np.min(dists))
+        else:
+            # Standard: distance between all point pairs in different clusters
+            for i, label_i in enumerate(self.unique_labels):
+                for label_j in self.unique_labels[i+1:]:
+                    min_dist = np.min(self._labeled_distance[label_i, label_j])
+                    min_inter_distance = min(min_inter_distance, min_dist)
+
+        # Find maximum intra-cluster diameter
+        max_intra_diameter = max(
+            np.max(self._labeled_distance[label, label])
+            for label in self.unique_labels
+        )
+
+        # Avoid division by zero
+        if max_intra_diameter < self._eps:
+            res = np.inf
+        else:
+            res = min_inter_distance / max_intra_diameter
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def xie_beni_index(self) -> float:
+        # Xie-Beni Index
+        # Range is 0 to inf, 0 is the best
+        # Formula: WCSS / (n × d_min²)
+        # where WCSS = within-cluster sum of squares,
+        #       n = number of data points,
+        #       d_min = minimum distance between cluster centroids
+
+        n = self.n_total  # number of data points
+        cluster_means = self._mean[1:] # Skip the overall mean at index 0
+
+        # define numerator
+        use_assigned_cluster_centroids = True
+
+        if use_assigned_cluster_centroids:
+            num = self._WCSS
+        else: # uses nearest centroid instead
+            # Compute WGSS: sum of squared distances from each point to its nearest centroid
+            # This matches the standard Xie-Beni definition
+            d_sq_to_centroids = cdist(
+                self.data,
+                cluster_means,
+                metric='sqeuclidean'
+            )
+            min_d_sq_to_centroids = np.min(d_sq_to_centroids, axis=1)
+            num = np.sum(min_d_sq_to_centroids)
+
+        # Calculate squared pairwise distances between centroids
+        if len(cluster_means) > 1:
+            d_sq = pdist(
+                cluster_means,
+                metric='sqeuclidean'
+            )
+            d_min_squared = np.min(d_sq)
+        else:
+            # If only one cluster, return infinity (worst score)
+            return np.inf if self.index_direction == "minimize" else -np.inf
+
+        # Avoid division by zero
+        if d_min_squared < self._eps:
+            res = np.inf
+        else:
+            res = num / (n * d_min_squared)
+
+        if self.index_direction == "maximize":
+            res *= -1
+
+        return res
+
     @computed_field_cached_property()
     def duda_hart_index(self) -> float:
         # Duda and Hart Index
@@ -541,13 +888,13 @@ class ClusterMetrics(ArbitraryPydanticModel):
 
         intracluster_distance = 0
         intercluster_distance = 0
-        for label in self.unique_labels:
-            intracluster_distance +=self.cluster[label].distance_to_mean[label].mean
+        for label_i in self.unique_labels:
+            intracluster_distance += np.mean(self._labeled_distance_to_mean[(label_i, label_i)])
 
-            intra_idx = np.argwhere(self.labels == label).flatten()
-            inter_idx = np.argwhere(self.labels != label).flatten()
-
-            intercluster_distance += np.mean(self._distance[np.ix_(intra_idx, inter_idx)])
+            # Mean distance from points in label_i to all points NOT in label_i
+            inter_dists = [self._labeled_distance[label_i, label_j]
+                           for label_j in self.unique_labels if label_j != label_i]
+            intercluster_distance += np.mean(np.hstack(inter_dists))
 
         res = intracluster_distance / intercluster_distance
 
@@ -556,6 +903,438 @@ class ClusterMetrics(ArbitraryPydanticModel):
 
         return res
 
+    @computed_field_cached_property()
+    def c_index(self) -> float:
+        # C-Index
+        # Range is 0 to 1, 0 is the best
+        # Formula: (S_w - S_min) / (S_max - S_min)
+        # where S_w = sum of within-cluster pairwise distances,
+        #       S_min = sum of the N_w smallest pairwise distances overall,
+        #       S_max = sum of the N_w largest pairwise distances overall,
+        #       N_w = number of within-cluster pairs
+
+        within_dists = self._WC_pairwise_distances
+        n_w = len(within_dists)
+
+        if n_w == 0:
+            return 0.0
+
+        S_w = np.sum(within_dists)
+
+        all_dists = self._distance[np.triu_indices(self.n_total, k=1)]
+        all_dists_sorted = np.sort(all_dists)
+
+        S_min = np.sum(all_dists_sorted[:n_w])
+        S_max = np.sum(all_dists_sorted[-n_w:])
+
+        denom = S_max - S_min
+        if denom < self._eps:
+            res = 0.0
+        else:
+            res = (S_w - S_min) / denom
+
+        if self.index_direction == "maximize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def mcclain_rao_index(self) -> float:
+        # McClain-Rao Index
+        # Range is 0 to inf, 0 is the best
+        # Formula: mean(within-cluster distances) / mean(between-cluster distances)
+
+        within_dists = self._WC_pairwise_distances
+        between_dists = self._BC_pairwise_distances
+
+        if len(within_dists) == 0 or len(between_dists) == 0:
+            return np.inf
+
+        mean_within = np.mean(within_dists)
+        mean_between = np.mean(between_dists)
+
+        if mean_between < self._eps:
+            res = np.inf
+        else:
+            res = mean_within / mean_between
+
+        if self.index_direction == "maximize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def i_index(self) -> float:
+        # I-Index (Maulik-Bandyopadhyay)
+        # Range is 0 to inf, inf is the best
+        # Formula: I(K) = (1/K × E_1/E_K × D_K)^p
+        # where E_1 = Σ ||x_i - grand_centroid|| (total distance to grand mean),
+        #       E_K = Σ_k Σ_{x ∈ C_k} ||x - c_k|| (total distance to cluster centroids),
+        #       D_K = max inter-centroid distance,
+        #       p = 2
+
+        k = self.label_count
+        p = 2
+
+        # E_1: sum of distances from all points to grand centroid
+        E_1 = np.sum(self._labeled_distance_to_mean[(self._all, self._all)])
+
+        # E_K: sum of distances from each point to its assigned cluster centroid
+        E_K = 0.0
+        for label in self.unique_labels:
+            E_K += np.sum(self._labeled_distance_to_mean[(label, label)])
+
+        # D_K: max distance between any pair of cluster centroids
+        cluster_means = self._mean[1:]
+        if len(cluster_means) > 1:
+            D_K = np.max(pdist(cluster_means))
+        else:
+            return 0.0
+
+        if E_K < self._eps:
+            res = np.inf
+        else:
+            res = ((1.0 / k) * (E_1 / E_K) * D_K) ** p
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def log_ss_ratio_index(self) -> float:
+        # Log SS Ratio Index (Log Sum of Squares Ratio)
+        # Range is -inf to inf, inf is the best
+        # Formula: log(BCSS / WCSS) = log(BCSS) - log(WCSS)
+        # where BCSS = between-cluster sum of squares,
+        #       WCSS = within-cluster sum of squares
+
+        BCSS = self._BCSS  # Between Cluster Sum of Squares (BCSS)
+        WCSS = self._WCSS  # Within Cluster Sum of Squares (WCSS)
+
+        # Avoid log of zero or division by zero
+        if WCSS < self._eps:
+            res = np.inf
+        elif BCSS < self._eps:
+            res = -np.inf
+        else:
+            # log(BCSS / WCSS) = log(BCSS) - log(WCSS)
+            res = np.log(BCSS) - np.log(WCSS)
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+
+    # -------------------------------------------------------------------------
+    # Statistical / Correlation indices
+    # -------------------------------------------------------------------------
+
+    @computed_field_cached_property()
+    def gamma_index(self) -> float:
+        # Hubert's Gamma Index
+        # Range is -1 to 1, 1 is the best
+        # Concordance measure: Γ = (s+ - s-) / (s+ + s-)
+        # where s+ = concordant pairs (within < between),
+        #       s- = discordant pairs (within > between)
+
+        within_dists = self._WC_pairwise_distances
+        between_dists = self._BC_pairwise_distances
+
+        n_b = len(between_dists)
+        if n_b == 0 or len(within_dists) == 0:
+            return 0.0
+
+        between_sorted = np.sort(between_dists)
+
+        # For each within_dist, count concordant (between > within) and discordant (between < within)
+        left_indices = np.searchsorted(between_sorted, within_dists, side='left')
+        right_indices = np.searchsorted(between_sorted, within_dists, side='right')
+
+        s_plus = np.sum(n_b - right_indices)   # between > within (concordant)
+        s_minus = np.sum(left_indices)          # between < within (discordant)
+
+        denom = s_plus + s_minus
+        if denom == 0:
+            res = 0.0
+        else:
+            res = float(s_plus - s_minus) / float(denom)
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def point_biserial_index(self) -> float:
+        # Point-Biserial Correlation
+        # Range is -1 to 1, 1 is the best
+        # Formula: r_pb = (M_b - M_w) / s_d × sqrt(n_w × n_b / n_t²)
+        # where M_b = mean between-cluster distance,
+        #       M_w = mean within-cluster distance,
+        #       s_d = std of all pairwise distances,
+        #       n_w, n_b = number of within/between pairs
+
+        within_dists = self._WC_pairwise_distances
+        between_dists = self._BC_pairwise_distances
+
+        n_w = len(within_dists)
+        n_b = len(between_dists)
+        n_t = n_w + n_b
+
+        if n_w == 0 or n_b == 0:
+            return 0.0
+
+        mean_within = np.mean(within_dists)
+        mean_between = np.mean(between_dists)
+
+        all_dists = np.concatenate([within_dists, between_dists])
+        std_all = np.std(all_dists)
+
+        if std_all < self._eps:
+            return 0.0
+
+        res = ((mean_between - mean_within) / std_all) * np.sqrt(n_w * n_b / (n_t ** 2))
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+
+    # -------------------------------------------------------------------------
+    # Matrix / Determinant indices
+    # -------------------------------------------------------------------------
+
+    @computed_field_cached_property()
+    def _det_ratio(self) -> float:
+        """
+        Raw det(T) / det(W)
+        """
+        try:
+            det_T = np.linalg.det(self._TSM)
+            det_W = np.linalg.det(self._sum_WCSM)
+
+            if np.abs(det_W) < self._eps:
+                return np.inf
+            else:
+                return det_T / det_W
+
+        except np.linalg.LinAlgError:
+            return np.inf
+
+    @computed_field_cached_property()
+    def ksq_detw_index(self) -> float:
+        # KSq-DetW Index (K² × det(W))
+        # Range is -inf to inf, inf is the best
+        # Formula: K² × det(W)
+        # where K = number of clusters,
+        #       W = summed within-cluster scatter matrix (normalized by default),
+        #       det(W) = determinant of W
+
+        k = self.label_count  # number of clusters
+        normalize_scatter_matrix = True
+
+        # Get summed within-cluster scatter matrix
+        W = self._sum_WCSM
+
+        # Apply normalization if enabled
+        if normalize_scatter_matrix:
+            W_min = np.min(W)
+            W_max = np.max(W)
+            W = (W - W_min) / (W_max - W_min)
+
+        # Compute determinant
+        try:
+            det_W = np.linalg.det(W)
+        except np.linalg.LinAlgError:
+            # Handle singular matrix
+            det_W = 0
+
+        # KSq-DetW = K² × det(W)
+        res = (k ** 2) * det_W
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def det_ratio_index(self) -> float:
+        # Det Ratio Index
+        # Range is 0 to inf, inf is the best
+        # Formula: det(T) / det(W)
+        # where T = total scatter matrix (covariance of all data),
+        #       W = summed within-cluster scatter matrix
+
+        res = self._det_ratio
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def log_det_ratio_index(self) -> float:
+        # Log Det Ratio Index
+        # Range is -inf to inf, inf is the best
+        # Formula: n * log(det(T) / det(W)) = n * (log(det(T)) - log(det(W)))
+        # where T = total scatter matrix,
+        #       W = summed within-cluster scatter matrix,
+        #       n = number of data points
+
+        n = self.n_total
+        res = n * np.log(np.abs(self._det_ratio))
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def trace_wb_index(self) -> float:
+        # Trace WB Index (Trace of W^-1 × B)
+        # Range is 0 to inf, inf is the best (maximize)
+        # Formula: trace(W^-1 × B) where B = T - W
+        # Multivariate generalization of Calinski-Harabasz
+
+        W = self._sum_WCSM
+        B = self._TSM - W
+
+        try:
+            W_inv = np.linalg.inv(W)
+        except np.linalg.LinAlgError:
+            W_inv = np.linalg.pinv(W)
+
+        res = np.trace(W_inv @ B)
+
+        if self.index_direction == "minimize":
+            res *= -1
+
+        return res
+
+    # -------------------------------------------------------------------------
+    # Density-based indices
+    # -------------------------------------------------------------------------
+
+    @computed_field_cached_property()
+    def s_dbw_index(self) -> float:
+        # S_Dbw Index (Halkidi and Vazirgiannis, 2001)
+        # Range is 0 to inf, 0 is the best (minimize)
+        # Formula: S_Dbw = Scat + Dens_bw
+        # Scat = average scattering (cluster variance / total variance)
+        # Dens_bw = average inter-cluster density at midpoints between centroids
+
+        k = self.label_count
+        if k < 2:
+            return self._mean_scatter
+
+        scat = self._mean_scatter
+
+        # stdev: average norm of cluster variance vectors (neighborhood radius)
+        cluster_var_norms = np.array([
+            self.cluster[label].var_norm
+            for label in self.unique_labels
+        ])
+        stdev = np.mean(cluster_var_norms)
+
+        if stdev < self._eps:
+            # All clusters are single points; no inter-cluster density
+            res = scat
+            if self.index_direction == "maximize":
+                res *= -1
+            return res
+
+        cluster_means = self._mean[1:]
+
+        # Compute Dens_bw: for each pair (i, j), evaluate density at midpoint
+        # relative to density at the denser centroid
+        dens_bw_sum = 0.0
+        for i in range(k):
+            label_i = self.unique_labels[i]
+            idx_i = self._label_indices[label_i]
+
+            for j in range(k):
+                if i == j:
+                    continue
+
+                label_j = self.unique_labels[j]
+                idx_j = self._label_indices[label_j]
+
+                # Union of points in clusters i and j
+                union_idx = np.concatenate([idx_i, idx_j])
+                union_data = self.data[union_idx]
+
+                # Midpoint between centroids
+                u_ij = (cluster_means[i] + cluster_means[j]) / 2.0
+
+                # Count points within stdev of each reference point
+                density_midpoint = np.sum(
+                    np.linalg.norm(union_data - u_ij, axis=1) <= stdev
+                )
+                density_ci = np.sum(
+                    np.linalg.norm(union_data - cluster_means[i], axis=1) <= stdev
+                )
+                density_cj = np.sum(
+                    np.linalg.norm(union_data - cluster_means[j], axis=1) <= stdev
+                )
+
+                max_density = max(density_ci, density_cj)
+                if max_density > 0:
+                    dens_bw_sum += density_midpoint / max_density
+
+        dens_bw = dens_bw_sum / (k * (k - 1))
+
+        res = scat + dens_bw
+
+        if self.index_direction == "maximize":
+            res *= -1
+
+        return res
+
+    @computed_field_cached_property()
+    def sd_validity_index(self) -> float:
+        # SD Validity Index (Halkidi, Vazirgiannis, Batistakis, 2000)
+        # Range is 0 to inf, 0 is the best (minimize)
+        # Formula: SD = α × Scat(K) + Dis(K)
+        # Scat = (1/K) × Σ_k ||σ(C_k)|| / ||σ(D)||
+        # Dis = (D_max/D_min) × Σ_k (Σ_j ||c_k - c_j||)^{-1}
+        # α = 1.0 (default; in multi-K sweeps this is set to Dis(K_max))
+
+        k = self.label_count
+        scat = self._mean_scatter
+
+        if k < 2:
+            res = scat
+            if self.index_direction == "maximize":
+                res *= -1
+            return res
+
+        # Dis component: separation based on centroid distances
+        cluster_means = self._mean[1:]
+        centroid_dists = squareform(pdist(cluster_means))
+
+        D_max = np.max(centroid_dists)
+
+        # D_min: minimum non-zero inter-centroid distance
+        centroid_dists_no_diag = centroid_dists.copy()
+        np.fill_diagonal(centroid_dists_no_diag, np.inf)
+        D_min = np.min(centroid_dists_no_diag)
+
+        if D_min < self._eps:
+            dis = np.inf
+        else:
+            # Σ_k (Σ_j ||c_k - c_j||)^{-1}
+            row_sums = np.sum(centroid_dists, axis=1)
+            row_sums_safe = np.where(row_sums > self._eps, row_sums, self._eps)
+            dis = (D_max / D_min) * np.sum(1.0 / row_sums_safe)
+
+        alpha = 1.0
+        res = alpha * scat + dis
+
+        if self.index_direction == "maximize":
+            res *= -1
+
+        return res
 
     @computed_field_cached_property()
     def density_based_clustering_validation_index(self) -> float:
@@ -584,596 +1363,3 @@ class ClusterMetrics(ArbitraryPydanticModel):
             dbcvi *= -1
 
         return dbcvi
-
-    @computed_field_cached_property()
-    def ball_hall_index(self) -> float:
-        # Ball and Hall Index
-        # Range is 0 to inf, 0 is the best
-        # Formula: (1/K) * Σ(sum of squared distances from points to cluster centroids)
-
-        k = self.label_count  # number of clusters
-
-        # Sum of squared distances to cluster means across all clusters
-        inner_cluster_ss = 0
-        for label in self.unique_labels:
-            inner_cluster_ss += self.cluster[label].distance_to_mean[label].sum_of_squares
-
-        res = inner_cluster_ss / k
-
-        if self.index_direction == "maximize":
-            res *= -1
-
-        return res
-
-    @computed_field_cached_property()
-    def pm_hartigan_index(self) -> float:
-        # Hartigan Index
-        # Range is 0 to inf, inf is the best
-        cm = ClusteringMetric(
-            X=self.data,
-            y_pred=self.labels,
-        )
-
-        res = cm.hartigan_index()
-
-        if self.index_direction == "minimize":
-            res *= -1
-
-        return res
-
-    @computed_field_cached_property()
-    def hartigan_index(self) -> float:
-        # Hartigan Index
-        # Range is 0 to inf, inf is the best
-        # Formula: log(BCSS / WCSS) 
-        # where BCSS = between-cluster sum of squares,
-        #       WCSS = within-cluster sum of squares
-
-        k = self.label_count  # number of clusters
-        n = self.n_total  # number of data points
-        mean_all = self._mean[0]
-
-        BCSS = self._BCSS # Between Cluster Sum of Squares (BCSS)
-        WCSS = self._WCSS # Within Cluster Sum of Squares (WCSS)
-
-        # Avoid division by zero
-        # TODO: change to near zero
-        if WCSS == 0:
-            res = np.inf
-        elif BCSS == 0:
-            res = 0
-        else:
-            res = np.log(BCSS / WCSS)
-
-        if self.index_direction == "minimize":
-            res *= -1
-
-        return res
-
-    @computed_field_cached_property()
-    def silhouette_index(self) -> float:
-        # range is -1 to 1, 1 is the best
-        silhouette_coefficients = []
-        for cluster_id in self.unique_labels:
-            silhouette_coefficients.append(self.cluster[cluster_id].mean_silhouette_coefficient)
-
-        silhouette_coefficients = np.hstack(silhouette_coefficients)
-
-        res = np.mean(silhouette_coefficients)
-
-        if self.index_direction == "minimize":
-            res *= -1
-
-        return res
-    
-    @computed_field_cached_property()
-    def silhouette_median_index(self) -> float:
-        # range is -1 to 1, 1 is the best
-        silhouette_coefficients = []
-        for cluster_id in self.unique_labels:
-            silhouette_coefficients.append(self.cluster[cluster_id].median_silhouette_coefficient)
-
-        silhouette_coefficients = np.hstack(silhouette_coefficients)
-
-        res = np.median(silhouette_coefficients)
-
-        if self.index_direction == "minimize":
-            res *= -1
-
-        return res
-
-    @computed_field_cached_property()
-    def calinski_harabasz_index(self) -> float:
-        # range is 0 to inf, inf is the best
-        k = self.label_count # number of clusters
-        n = self.n_total # number of data points
-        mean_all = self._mean[0]
-
-        BCSS = self._BCSS  # Between Cluster Sum of Squares (BCSS)
-        WCSS = self._WCSS  # Within Cluster Sum of Squares (WCSS)
-
-        if WCSS == 0:
-            return 1.0
-
-        res = (BCSS / WCSS) * ((n - k) / (k - 1.0))
-
-        if self.index_direction == "minimize":
-            res *= -1
-
-        return res
-
-    @computed_field_cached_property()
-    def calinski_harabasz_index(self) -> float:
-        # range is 0 to inf, inf is the best
-        k = self.label_count # number of clusters
-        n = self.n_total # number of data points
-        mean_all = self._mean[0]
-
-        # Between Cluster Sum of Squares
-        BCSS = 0
-        for label in self.unique_labels:
-            cluster_mean = self.cluster[label].mean
-            dist = cdist(cluster_mean[None, :], mean_all[None, :]).flatten()[0]
-            dist = dist**2
-            BCSS += self.cluster[label].n * dist
-
-        # Within Cluster Sum of Squares
-        WCSS = 0
-        for label in self.unique_labels:
-            WCSS += np.sum(self.cluster[label].distance_to_mean[label].sum_of_squares)
-
-        if WCSS == 0:
-            return 1.0
-
-        res = (BCSS / WCSS) * ((n - k) / (k - 1.0))
-
-        if self.index_direction == "minimize":
-            res *= -1
-
-        return res
-
-    @computed_field_cached_property()
-    def variance_ratio_criterion(self) -> float:
-        return self.calinski_harabasz_index
-
-    @computed_field_cached_property()
-    def davies_bouldin_index(self) -> float:
-        # range is 0 to inf, 0 is the best
-        k = self.label_count
-        # Could abstract with scipy.stats.moment
-
-        intracluster_distance = []
-        for label in self.unique_labels:
-            intracluster_distance.append(self.cluster[label].distance_to_mean[label].mean)
-
-        intracluster_distance = np.array(intracluster_distance)
-
-        intercluster_distance = squareform(pdist(self._mean[1:]))
-
-        similarity = np.zeros((self.label_count, self.label_count))
-        for i in range(k):
-            for j in range(k):
-                if i == j:
-                    continue
-                
-                elif j < i:
-                    similarity[i, j] = similarity[j, i]
-                    continue
-
-                dist_i = intracluster_distance[i]
-                dist_j = intracluster_distance[j]
-                dist_ij = intercluster_distance[i, j]
-
-                similarity[i, j] = (dist_i + dist_j) / dist_ij
-
-        res = np.sum(np.max(similarity, axis=1)) / k
-
-        if self.index_direction == "maximize":
-            res *= -1
-
-        return res
-
-
-    @computed_field_cached_property()
-    def pm_xie_beni_index(self) -> float:
-        # Range is 0 to inf, 0 is the best
-        cm = ClusteringMetric(
-            X=self.data,
-            y_pred=self.labels,
-        )
-
-        res = cm.xie_beni_index()
-
-        if self.index_direction == "maximize":
-            res *= -1
-
-        return res
-
-    @computed_field_cached_property()
-    def xie_beni_index(self) -> float:
-        # Xie-Beni Index
-        # Range is 0 to inf, 0 is the best
-        # Formula: WCSS / (n × d_min²)
-        # where WCSS = within-cluster sum of squares,
-        #       n = number of data points,
-        #       d_min = minimum distance between cluster centroids
-
-        n = self.n_total  # number of data points
-
-        WCSS = self._WCSS
-
-        # Find minimum distance between cluster centroids
-        # Get all cluster means
-        cluster_means = []
-        for label in self.unique_labels:
-            cluster_means.append(self.cluster[label].mean)
-        cluster_means = np.array(cluster_means)
-
-        # Calculate pairwise distances between centroids
-        if len(cluster_means) > 1:
-            centroid_distances = pdist(cluster_means)
-            d_min_squared = np.min(centroid_distances) ** 2
-        else:
-            # If only one cluster, return infinity (worst score)
-            return np.inf if self.index_direction == "minimize" else -np.inf
-
-        # Avoid division by zero
-        if d_min_squared == 0:
-            res = np.inf
-        else:
-            res = WCSS / (n * d_min_squared)
-
-        if self.index_direction == "maximize":
-            res *= -1
-
-        return res
-
-    @computed_field_cached_property()
-    def banfeld_raftery_index(self) -> float:
-        # Banfeld-Raftery Index
-        # Range is -inf to inf, -inf is the best
-        # Formula: Σ [n_k × log(trace(W_k) / n_k)]
-        # where n_k = number of points in cluster k,
-        #       trace(W_k) = sum of squared distances to centroid for cluster k
-
-        res = 0.0
-        for label in self.unique_labels:
-            n_k = self.cluster[label].n
-            # trace of within-cluster scatter matrix = sum of squared distances
-            trace_W_k = self.cluster[label].distance_to_mean[label].sum_of_squares
-
-            # Avoid log(0) or division by zero
-            if n_k > 0 and trace_W_k > 0:
-                res += n_k * np.log(trace_W_k / n_k)
-            elif trace_W_k == 0:
-                # Perfect clustering (no variance) -> very negative value
-                res += n_k * np.log(1e-10)
-
-        if self.index_direction == "maximize":
-            res *= -1
-
-        return res
-
-    @computed_field_cached_property()
-    def pm_ksq_detw_index(self) -> float:
-        # Range is -inf to inf, inf is the best
-        cm = ClusteringMetric(
-            X=self.data,
-            y_pred=self.labels,
-        )
-
-        res = cm.ksq_detw_index()
-
-        if self.index_direction == "minimize":
-            res *= -1
-
-        return res
-
-    @computed_field_cached_property()
-    def ksq_detw_index(self) -> float:
-        # KSq-DetW Index (K² × det(W))
-        # Range is -inf to inf, inf is the best
-        # Formula: K² × det(W)
-        # where K = number of clusters,
-        #       W = pooled within-cluster scatter matrix,
-        #       det(W) = determinant of W
-
-        k = self.label_count  # number of clusters
-        n_features = self.data.shape[1]
-
-        # Initialize pooled within-cluster scatter matrix
-        W = np.zeros((n_features, n_features))
-
-        # Compute scatter matrix for each cluster and sum them
-        for label in self.unique_labels:
-            cluster_mask = self.labels == label
-            cluster_data = self.data[cluster_mask]
-            cluster_mean = self.cluster[label].mean
-
-            # Compute scatter matrix for this cluster: Σ(x - mean)(x - mean)^T
-            centered_data = cluster_data - cluster_mean
-            W_k = centered_data.T @ centered_data
-            W += W_k
-
-        # Compute determinant
-        try:
-            det_W = np.linalg.det(W)
-        except np.linalg.LinAlgError:
-            # Handle singular matrix
-            det_W = 0
-
-        # KSq-DetW = K² × det(W)
-        res = (k ** 2) * det_W
-
-        if self.index_direction == "minimize":
-            res *= -1
-
-        return res
-
-    @computed_field_cached_property()
-    def det_ratio_index(self) -> float:
-        # Det Ratio Index
-        # Range is 0 to inf, inf is the best
-        # Formula: det(T) / det(W)
-        # where T = total scatter matrix (covariance of all data),
-        #       W = pooled within-cluster scatter matrix
-
-        n_features = self.data.shape[1]
-        mean_all = self._mean[0]
-
-        # Compute total scatter matrix T
-        centered_data = self.data - mean_all
-        T = centered_data.T @ centered_data
-
-        # Compute pooled within-cluster scatter matrix W
-        W = np.zeros((n_features, n_features))
-        for label in self.unique_labels:
-            cluster_mask = self.labels == label
-            cluster_data = self.data[cluster_mask]
-            cluster_mean = self.cluster[label].mean
-
-            centered_cluster = cluster_data - cluster_mean
-            W_k = centered_cluster.T @ centered_cluster
-            W += W_k
-
-        # Compute determinants
-        try:
-            det_T = np.linalg.det(T)
-            det_W = np.linalg.det(W)
-
-            # Avoid division by zero
-            if det_W == 0 or np.abs(det_W) < 1e-10:
-                res = np.inf
-            else:
-                res = det_T / det_W
-        except np.linalg.LinAlgError:
-            # Handle singular matrices
-            res = np.inf
-
-        if self.index_direction == "minimize":
-            res *= -1
-
-        return res
-    
-    @computed_field_cached_property()
-    def pm_dunn_index(self) -> float:
-        # Dunn Index
-        # Range is 0 to inf, inf is the best
-        cm = ClusteringMetric(
-            X=self.data,
-            y_pred=self.labels,
-        )
-
-        res = cm.dunn_index()
-
-        if self.index_direction == "minimize":
-            res *= -1
-
-        return res
-    
-    @computed_field_cached_property()
-    def dunn_index(self) -> float:
-        # Dunn Index
-        # Range is 0 to inf, inf is the best
-        # Formula: min(inter-cluster distance) / max(intra-cluster diameter)
-        # where inter-cluster distance = min distance between points in different clusters
-        #       intra-cluster diameter = max distance between points in same cluster
-
-        # Find minimum inter-cluster distance
-        min_inter_distance = np.inf
-        for i, label_i in enumerate(self.unique_labels):
-            for label_j in self.unique_labels[i+1:]:
-                # Get distances between all points in cluster i and j
-                distances = self._labeled_distance[label_i, label_j]
-                min_dist = np.min(distances)
-                if min_dist < min_inter_distance:
-                    min_inter_distance = min_dist
-
-        # Find maximum intra-cluster diameter
-        max_intra_diameter = 0
-        for label in self.unique_labels:
-            # Get distances within cluster (diameter is max distance)
-            intra_distances = self._labeled_distance[label, label]
-            max_dist = np.max(intra_distances)
-            if max_dist > max_intra_diameter:
-                max_intra_diameter = max_dist
-
-        # Avoid division by zero
-        if max_intra_diameter == 0:
-            res = np.inf
-        else:
-            res = min_inter_distance / max_intra_diameter
-
-        if self.index_direction == "minimize":
-            res *= -1
-
-        return res
-
-    @computed_field_cached_property()
-    def pm_log_det_ratio_index(self) -> float:
-        # Range is -inf to inf, inf is the best
-        cm = ClusteringMetric(
-            X=self.data,
-            y_pred=self.labels,
-        )
-
-        res = cm.log_det_ratio_index()
-
-        if self.index_direction == "minimize":
-            res *= -1
-
-        return res
-
-    @computed_field_cached_property()
-    def log_det_ratio_index(self) -> float:
-        # Log Det Ratio Index
-        # Range is -inf to inf, inf is the best
-        # Formula: log(det(T) / det(W)) = log(det(T)) - log(det(W))
-        # where T = total scatter matrix,
-        #       W = pooled within-cluster scatter matrix
-
-        n_features = self.data.shape[1]
-        mean_all = self._mean[0]
-
-        # Compute total scatter matrix T
-        centered_data = self.data - mean_all
-        T = centered_data.T @ centered_data
-
-        # Compute pooled within-cluster scatter matrix W
-        W = np.zeros((n_features, n_features))
-        for label in self.unique_labels:
-            cluster_mask = self.labels == label
-            cluster_data = self.data[cluster_mask]
-            cluster_mean = self.cluster[label].mean
-
-            centered_cluster = cluster_data - cluster_mean
-            W_k = centered_cluster.T @ centered_cluster
-            W += W_k
-
-        # Compute log determinants (more numerically stable)
-        try:
-            det_T = np.linalg.det(T)
-            det_W = np.linalg.det(W)
-
-            # Avoid log of zero or negative values
-            if det_W <= 0 or np.abs(det_W) < 1e-10:
-                res = np.inf
-            elif det_T <= 0:
-                res = -np.inf
-            else:
-                # log(det(T) / det(W)) = log(det(T)) - log(det(W))
-                res = np.log(det_T) - np.log(det_W)
-        except np.linalg.LinAlgError:
-            # Handle singular matrices
-            res = np.inf
-
-        if self.index_direction == "minimize":
-            res *= -1
-
-        return res
-
-    @computed_field_cached_property()
-    def log_ss_ratio_index(self) -> float:
-        # Log SS Ratio Index (Log Sum of Squares Ratio)
-        # Range is -inf to inf, inf is the best
-        # Formula: log(BCSS / WCSS) = log(BCSS) - log(WCSS)
-        # where BCSS = between-cluster sum of squares,
-        #       WCSS = within-cluster sum of squares
-
-        k = self.label_count  # number of clusters
-        n = self.n_total  # number of data points
-        mean_all = self._mean[0]
-
-        BCSS = self._BCSS  # Between Cluster Sum of Squares (BCSS)
-        WCSS = self._WCSS  # Within Cluster Sum of Squares (WCSS)
-
-        # Avoid log of zero or division by zero
-        if WCSS == 0 or WCSS < 1e-10:
-            res = np.inf
-        elif BCSS == 0:
-            res = -np.inf
-        else:
-            # log(BCSS / WCSS) = log(BCSS) - log(WCSS)
-            res = np.log(BCSS) - np.log(WCSS)
-
-        if self.index_direction == "minimize":
-            res *= -1
-
-        return res
-
-    @computed_field_cached_property()
-    def sum_of_squared_errors_index(self) -> float:
-        # Sum of Squared Errors (SSE) Index
-        # Range is 0 to inf, 0 is the best
-        # Formula: SSE = Σ_k Σ_{x_i ∈ C_k} ||x_i - c_k||²
-        # This is equivalent to the Within-Cluster Sum of Squares (WCSS)
-
-        # Within Cluster Sum of Squares (WCSS) = SSE
-        res = self._WCSS
-
-        if self.index_direction == "maximize":
-            res *= -1
-
-        return res
-
-    @computed_field_cached_property()
-    def mean_squared_error_index(self) -> float:
-        # Mean Squared Error (MSE) Index
-        # Range is 0 to inf, 0 is the best
-        # Formula: MSE = SSE / n = WCSS / n
-        # where SSE = sum of squared errors,
-        #       n = total number of data points
-
-        n = self.n_total  # number of data points
-        WCSS = self._WCSS
-
-        # MSE = SSE / n
-        res = WCSS / n
-
-        if self.index_direction == "maximize":
-            res *= -1
-
-        return res
-    
-    @computed_field_cached_property()
-    def pm_r_squared_index(self) -> float:
-        # R-Squared Index
-        # Range is -inf to 1, 1 is the best
-        cm = ClusteringMetric(
-            X=self.data,
-            y_pred=self.labels,
-        )
-
-        res = cm.r_squared_index()
-
-        if self.index_direction == "minimize":
-            res = 1 - res
-
-        return res
-
-    @computed_field_cached_property()
-    def r_squared_index(self) -> float:
-        # R-Squared Index (Coefficient of Determination)
-        # Range is -inf to 1, 1 is the best
-        # Formula: R² = 1 - (WCSS / TSS)
-        # where WCSS = within-cluster sum of squares,
-        #       TSS = total sum of squares (variance around global mean)
-
-        mean_all = self._mean[0]
-
-        WCSS = self._WCSS
-
-        # Total Sum of Squares (TSS)
-        # TSS = sum of squared distances from all points to global mean
-        TSS = np.sum((self.data - mean_all) ** 2)
-
-        # Avoid division by zero
-        if TSS == 0:
-            res = 1.0  # Perfect clustering if no variance
-        else:
-            res = 1 - (WCSS / TSS)
-
-        if self.index_direction == "minimize":
-            res = 1 - res
-
-        return res
