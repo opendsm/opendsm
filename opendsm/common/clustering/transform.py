@@ -42,6 +42,7 @@ def _replace_values(x, a, b):
     
     return x
 
+
 def normalize(
     data: np.ndarray,
     settings: _settings.NormalizeSettings
@@ -173,13 +174,17 @@ def wavelet_transform(
     """
     wavelet_settings = settings.wavelet_transform
 
-    def _dwt_coeffs(data, wavelet="db1", wavelet_mode="periodization", n_levels=4):
+    def _dwt_coeffs(data, wavelet="db1", wavelet_mode="periodization", n_levels=None):
         all_features = []
         # iterate through rows of numpy array
         for row in range(len(data)):
             # get max level of decomposition
             dwt_max_level = pywt.dwt_max_level(data[row].shape[0], wavelet)
-            if n_levels > dwt_max_level:
+
+            if n_levels is None: # None could be input into wavedec directly to same effect
+                n_levels = dwt_max_level
+
+            elif n_levels > dwt_max_level:
                 n_levels = dwt_max_level
             
             decomp_coeffs = pywt.wavedec(
@@ -199,7 +204,10 @@ def wavelet_transform(
         # kernel pca is not fully developed
         if method == "kernel_pca":
             if n_components ==  "mle":
-                pca = PCA(n_components=n_components)
+                pca = PCA(
+                    n_components=n_components,
+                    random_state=settings._seed,
+                )
                 pca_features = pca.fit_transform(features)
 
             pca = KernelPCA(n_components=None, kernel="rbf")
@@ -222,7 +230,10 @@ def wavelet_transform(
             pca_features = pca.fit_transform(features)
 
         else:
-            pca = PCA(n_components=n_components)
+            pca = PCA(
+                n_components=n_components,
+                random_state=settings._seed,
+            )
             pca_features = pca.fit_transform(features)
 
         return pca_features
@@ -248,7 +259,7 @@ def wavelet_transform(
         # ignores all other values from normalize settings
         pca_features = (pca_features - pca_features.mean()) / pca_features.std()
 
-    if wavelet_settings.pca_include_median:
+    if wavelet_settings.include_scale_feature:
         pca_features = np.hstack([pca_features, np.median(data, axis=1)[:, None]])
 
     return pca_features

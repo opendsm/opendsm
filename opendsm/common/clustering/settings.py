@@ -107,10 +107,9 @@ class WaveletSelection(str, Enum):
 
 class WaveletTransformSettings(BaseSettings):
     """wavelet decomposition level"""
-    wavelet_n_levels: int = pydantic.Field(
-        default=4,
-        ge=0,
-        # le=5,  #TODO investigate upper limit
+    wavelet_n_levels: Optional[int] = pydantic.Field(
+        default=None,
+        ge=1,
     )
 
     """wavelet choice for wavelet decomposition"""
@@ -222,7 +221,13 @@ class DistanceMetric(str, Enum):
 class ScoreSettings(BaseSettings):
     """minimum cluster size"""
     min_cluster_size: int = pydantic.Field(
-        default=1,
+        default=2,
+        ge=2, # 
+    )
+
+    """maximum number of non-outlier clusters"""
+    max_non_outlier_cluster_count: int = pydantic.Field(
+        default=200,
         ge=1,
     )
 
@@ -233,32 +238,32 @@ class ScoreSettings(BaseSettings):
     )
 
     davies_bouldin_weight: float = pydantic.Field(
-        default=1.0,
+        default=0.0,
         ge=0,
     )
 
     density_based_clustering_validation_weight: float = pydantic.Field(
-        default=1.0,
+        default=0.0,
         ge=0,
     )
 
     dunn_weight: float = pydantic.Field(
-        default=1.0,
+        default=0.0,
         ge=0,
     )
 
     silhouette_weight: float = pydantic.Field(
-        default=1.0,
+        default=0.0,
         ge=0,
     )
 
     silhouette_median_weight: float = pydantic.Field(
-        default=1.0,
+        default=0.0,
         ge=0,
     )
 
     xie_beni_weight: float = pydantic.Field(
-        default=1.0,
+        default=0.0,
         ge=0,
     )
 
@@ -271,6 +276,23 @@ class ScoreSettings(BaseSettings):
     distance_metric: DistanceMetric = pydantic.Field(
         default=DistanceMetric.EUCLIDEAN,
     )
+
+    @pydantic.model_validator(mode="after")
+    def _check_weights(self):
+        weights = [
+            self.calinski_harabasz_weight,
+            self.davies_bouldin_weight,
+            self.density_based_clustering_validation_weight,
+            self.dunn_weight,
+            self.silhouette_weight,
+            self.silhouette_median_weight,
+            self.xie_beni_weight,
+        ]
+
+        if not any(w > 0 for w in weights):
+            raise ValueError("At least one scoring weight must be greater than 0")
+        
+        return self
 
 
 class ClusterRangeSettings(BaseSettings):
@@ -514,7 +536,7 @@ class SpectralSettings(BaseSettings):
     """gamma for RBF, polynomial, sigmoid, laplacian, and chi2 kernels"""
     gamma: float = pydantic.Field(
         default=1.05,
-        ge=0, # could be wrong? maybe gt?
+        gt=0,
     )
 
     """stopping criterion for eigen decomposition"""
@@ -558,10 +580,11 @@ class AggregateMethod(str, Enum):
 
 
 class ClusterSortSettings(BaseSettings):
+    """enable cluster sorting"""
     enable: bool = pydantic.Field(
         default=True,
     )
-    
+
     """sort method"""
     method: SortMethod = pydantic.Field(
         default=SortMethod.PEAK,
@@ -587,9 +610,14 @@ class ClusterAlgorithms(str, Enum):
 
 
 class ClusteringSettings(BaseSettings):
-    """rescale data boolean"""
-    rescale: bool = pydantic.Field(
-        default=True,
+    """pretransform data rescale settings"""
+    normalize: NormalizeSettings = pydantic.Field(
+        default_factory=NormalizeSettings
+    )
+
+    """transform method"""
+    transform_selection: Optional[TransformChoice] = pydantic.Field(
+        default=TransformChoice.WAVELET,
     )
 
     """fPCA transform settings"""
@@ -654,14 +682,10 @@ class ClusteringSettings(BaseSettings):
         else:
             self._seed = self.seed
 
-        self.transform_settings._seed = self._seed
+        for transform in [self.wavelet_transform, self.fpca_transform]:
+            if transform is not None:
+                transform._seed = self._seed
 
-        return self
-
-    @pydantic.model_validator(mode="after")
-    def _add_standardize_to_transform(self):
-        if self.transform_settings is not None:
-            self.transform_settings._rescale = self.rescale
 
         return self
 

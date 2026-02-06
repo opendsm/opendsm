@@ -150,7 +150,7 @@ def _shulze_rank_strength(Pd, pred):
     return candidate_wins
 
 
-def shulze_voting(df, voter_weights=None, window_size=0):
+def shulze_voting(df, voter_weights=None, window_size=0, return_preference_df=False):
     """
     Perform Shulze voting to select the best candidate (row) from a DataFrame.
     Each column is a 'voter' (score algorithm), and each row index is a candidate (n_clusters).
@@ -192,6 +192,9 @@ def shulze_voting(df, voter_weights=None, window_size=0):
     # this should select the smallest candidate if there is a tie
     # there is a procedure for this in the paper if we want to improve this later
     winner_idx = int(np.argmax(df_wins["wins"]))
+
+    if not return_preference_df:
+        return winner_idx
 
     # Change each voter column in df to preference starting at zero
     df_pref = df.stack().reset_index()

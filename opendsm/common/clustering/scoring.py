@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import sys
 
-import sklearn.metrics as _metrics
 import numpy as np
 
 from pydantic import BaseModel, ConfigDict
 
-from opendsm.common.clustering.metrics import ClusterMetrics
+import sklearn.metrics as _metrics
+
+from opendsm.common.clustering.metrics.cluster_metrics import ClusterMetrics
+from opendsm.common.clustering import settings as _settings
 
 
 def get_max_score_from_system_size() -> float:
@@ -94,7 +96,7 @@ def merge_small_clusters(clusters: np.ndarray, min_cluster_size: int):
     return renumber_clusters(clusters, reorder=True)
 
 
-class _LabelResult(BaseModel):
+class LabelResult(BaseModel):
     """
     contains metrics about a cluster label
     """
@@ -106,6 +108,7 @@ class _LabelResult(BaseModel):
     score_unable_to_be_calculated: dict[str, bool]
     n_clusters: int
 
+
 _score_council_init = {
     'calinski_harabasz_index': 1.0,
     'davies_bouldin_index': 1.0,
@@ -115,15 +118,16 @@ _score_council_init = {
     'silhouette_median_index': 1.0,
     'xie_beni_index': 1.0,
 }
-def score_clusters(
+
+def _score_clusters(
     data: np.ndarray,
     labels: np.ndarray,
     n_cluster_lower: int,
-    score_council: _score_council_init, 
+    score_council: dict[str, float] = _score_council_init, 
     dist_metric="euclidean",
     min_cluster_size=2,
     max_non_outlier_cluster_count=200,
-) -> tuple[float, bool]:
+) -> LabelResult:
     """
     ---
     Original docstring:
@@ -147,8 +151,14 @@ def score_clusters(
     labels = merge_small_clusters(labels, min_cluster_size)
 
     non_outlier_cluster_count = labels.max() + 1
-    if non_outlier_cluster_count < n_cluster_lower or non_outlier_cluster_count > max_non_outlier_cluster_count:
-        return _LabelResult(
+    invalid = False
+    if non_outlier_cluster_count < n_cluster_lower:
+        invalid = True
+    elif non_outlier_cluster_count > max_non_outlier_cluster_count:
+        invalid = True
+        
+    if invalid:
+        return LabelResult(
             labels=labels,
             score={voter: np.inf for voter in score_council.keys()},
             score_unable_to_be_calculated={voter: True for voter in score_council.keys()},
@@ -180,11 +190,61 @@ def score_clusters(
             except:
                 continue
     
-    label_res = _LabelResult(
+    label_res = LabelResult(
         labels=labels,
         score=score,
         score_unable_to_be_calculated=score_unable_to_be_calculated,
         n_clusters=n_clusters,
+    )
+
+    return label_res
+
+
+def score_council(settings: _settings.ClusteringSettings):
+    """
+    Set the score council for the given settings.
+    """
+
+    algo_settings = getattr(settings, settings.algorithm_selection)
+    algo_scoring = algo_settings.scoring
+
+    score_council = {
+        'calinski_harabasz_index': algo_scoring.calinski_harabasz_weight,
+        'davies_bouldin_index': algo_scoring.davies_bouldin_weight,
+        'density_based_clustering_validation_index': algo_scoring.density_based_clustering_validation_weight,
+        'dunn_index': algo_scoring.dunn_weight,
+        'silhouette_index': algo_scoring.silhouette_weight,
+        'silhouette_median_index': algo_scoring.silhouette_median_weight,
+        'xie_beni_index': algo_scoring.xie_beni_weight,
+    }
+
+    return score_council
+
+
+def score_clusters(
+    data: np.ndarray,
+    labels: np.ndarray,
+    settings: _settings.ClusteringSettings
+):
+    """
+    Score clusters of the given data with the selected choices.
+    """
+    algo_settings = getattr(settings, settings.algorithm_selection)
+    algo_scoring = algo_settings.scoring
+
+    n_cluster_lower = algo_settings.n_cluster.lower
+    dist_metric = algo_scoring.distance_metric
+    min_cluster_size = algo_scoring.min_cluster_size
+    max_non_outlier_cluster_count = algo_scoring.max_non_outlier_cluster_count
+    
+    label_res = _score_clusters(
+        data,
+        labels,
+        n_cluster_lower,
+        score_council(settings),
+        dist_metric,
+        min_cluster_size,
+        max_non_outlier_cluster_count,
     )
 
     return label_res

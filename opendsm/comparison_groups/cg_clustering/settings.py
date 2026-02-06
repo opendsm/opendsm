@@ -97,6 +97,7 @@ class _CG_Clustering_Settings(_settings.ClusteringSettings):
 class ClusteringSettings(BaseSettings):
     pass
 
+
 def CG_Clustering_Settings(**kwargs) -> _CG_Clustering_Settings:
     default_dict = {
         "normalize": {
@@ -123,13 +124,19 @@ def CG_Clustering_Settings(**kwargs) -> _CG_Clustering_Settings:
             "scoring": {
                 "min_cluster_size": 15,
                 "max_non_outlier_cluster_count": 200,
-                "score_metric": _settings.ClusterScoringMetric.VARIANCE_RATIO,
+                "calinski_harabasz_weight": 1.0,
+                "davies_bouldin_weight": 0.0,
+                "density_based_clustering_validation_weight": 0.0,
+                "dunn_weight": 0.0,
+                "silhouette_weight": 0.0,
+                "silhouette_median_weight": 0.0,
+                "xie_beni_weight": 0.0,
                 "distance_metric": _settings.DistanceMetric.EUCLIDEAN,
             },
         },
-        "sort_clusters": False,
-        "cluster_sort_options": {
-            "method": _settings.SortMethod.PEAK,
+        "cluster_sort": {
+            "enable": False,
+            "method": _settings.SortMethod.SIZE,
             "aggregation": _settings.AggregateMethod.MEAN,
             "reverse": False,
         },

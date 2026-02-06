@@ -27,19 +27,18 @@ from enum import Enum
 import numpy as np
 import pandas as pd
 
-from scipy.stats import moment
 from scipy.spatial.distance import cdist, pdist, squareform
 
-from functools import cached_property  # TODO: This requires Python 3.8
+from functools import cached_property
 
-from opendsm.common.utils import median_absolute_deviation, t_stat, safe_divide
+from opendsm.common.stats.basic import median_absolute_deviation
 from opendsm.common.pydantic_utils import (
     ArbitraryPydanticModel,
     PydanticDf,
     PydanticFromDict,
     computed_field_cached_property,
 )
-from opendsm.common.clustering.clustering_metrics.density_based_clustering_validation import dbcv
+from opendsm.common.clustering.metrics.density_based_clustering_validation import dbcv
 
 # TODO Delete this import
 from permetrics import ClusteringMetric
