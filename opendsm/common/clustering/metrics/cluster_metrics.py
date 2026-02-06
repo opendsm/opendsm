@@ -57,7 +57,7 @@ class ClusterPairDistanceMetrics(ArbitraryPydanticModel):
         description="The two clusters to compare"
     )
 
-    distance: np.array = pydantic.Field(
+    distance: np.ndarray = pydantic.Field(
         exclude=True,
         repr=False,
     )
@@ -117,11 +117,11 @@ class SingleClusterMetrics(ArbitraryPydanticModel):
 
     n: int = pydantic.Field()
 
-    mean: np.array = pydantic.Field()
+    mean: np.ndarray = pydantic.Field()
 
-    median: np.array = pydantic.Field()
+    median: np.ndarray = pydantic.Field()
 
-    var: Optional[np.array] = pydantic.Field(
+    var: Optional[np.ndarray] = pydantic.Field(
         default=None,
     )
 
@@ -131,25 +131,25 @@ class SingleClusterMetrics(ArbitraryPydanticModel):
 
     distance_to_median: dict[int | str, ClusterPairDistanceMetrics] | ClusterPairDistanceMetrics = pydantic.Field()
 
-    mean_distance_intra_cluster: Optional[np.array] = pydantic.Field(
+    mean_distance_intra_cluster: Optional[np.ndarray] = pydantic.Field(
         default=None,
         exclude=True,
         repr=False,
     )
 
-    median_distance_intra_cluster: Optional[np.array] = pydantic.Field(
+    median_distance_intra_cluster: Optional[np.ndarray] = pydantic.Field(
         default=None,
         exclude=True,
         repr=False,
     )
 
-    mean_distance_to_nearest_cluster: Optional[np.array] = pydantic.Field(
+    mean_distance_to_nearest_cluster: Optional[np.ndarray] = pydantic.Field(
         default=None,
         exclude=True,
         repr=False,
     )
 
-    median_distance_to_nearest_cluster: Optional[np.array] = pydantic.Field(
+    median_distance_to_nearest_cluster: Optional[np.ndarray] = pydantic.Field(
         default=None,
         exclude=True,
         repr=False,
@@ -186,7 +186,7 @@ class SingleClusterMetrics(ArbitraryPydanticModel):
         return np.concatenate(parts) if parts else np.array([])
 
     @computed_field_cached_property()
-    def mean_silhouette_coefficient(self) -> np.array:
+    def mean_silhouette_coefficient(self) -> np.ndarray:
         if self.mean_distance_intra_cluster is None:
             return None
 
@@ -196,7 +196,7 @@ class SingleClusterMetrics(ArbitraryPydanticModel):
         return (b - a) / np.maximum(a, b)
 
     @computed_field_cached_property()
-    def median_silhouette_coefficient(self) -> np.array:
+    def median_silhouette_coefficient(self) -> np.ndarray:
         if self.median_distance_intra_cluster is None:
             return None
 
@@ -260,7 +260,7 @@ class ClusterMetrics(ArbitraryPydanticModel):
         return self.data.shape[0]
 
     @computed_field_cached_property()
-    def unique_labels(self) -> np.array:
+    def unique_labels(self) -> np.ndarray:
         return np.unique(self.labels)
 
     @computed_field_cached_property()
@@ -273,12 +273,12 @@ class ClusterMetrics(ArbitraryPydanticModel):
                 for label in self.unique_labels}
 
     @computed_field_cached_property()
-    def _n(self) -> np.array:
+    def _n(self) -> np.ndarray:
         cluster_sizes = [len(self._label_indices[label]) for label in self.unique_labels]
         return np.array([self.n_total, *cluster_sizes])
 
     @computed_field_cached_property()
-    def _mean(self) -> np.array:
+    def _mean(self) -> np.ndarray:
         means = [np.mean(self.data, axis=0)]
         for label in self.unique_labels:
             means.append(np.mean(self.data[self._label_indices[label]], axis=0))
@@ -286,7 +286,7 @@ class ClusterMetrics(ArbitraryPydanticModel):
         return np.array(means)
 
     @computed_field_cached_property()
-    def _median(self) -> np.array:
+    def _median(self) -> np.ndarray:
         medians = [np.median(self.data, axis=0)]
         for label in self.unique_labels:
             medians.append(np.median(self.data[self._label_indices[label]], axis=0))
@@ -294,7 +294,7 @@ class ClusterMetrics(ArbitraryPydanticModel):
         return np.array(medians)
 
     @computed_field_cached_property()
-    def _var(self) -> np.array:
+    def _var(self) -> np.ndarray:
         variances = [np.var(self.data, axis=0)]
         for label in self.unique_labels:
             variances.append(np.var(self.data[self._label_indices[label]], axis=0))
@@ -302,19 +302,19 @@ class ClusterMetrics(ArbitraryPydanticModel):
         return np.array(variances)
 
     @computed_field_cached_property()
-    def _distance(self) -> np.array:
+    def _distance(self) -> np.ndarray:
         return squareform(pdist(self.data))
 
     @computed_field_cached_property()
-    def _distance_to_mean(self) -> np.array:
+    def _distance_to_mean(self) -> np.ndarray:
         return cdist(self.data, self._mean)
 
     @computed_field_cached_property()
-    def _distance_to_median(self) -> np.array:
+    def _distance_to_median(self) -> np.ndarray:
         return cdist(self.data, self._median)
     
     @computed_field_cached_property()
-    def _labeled_distance(self) -> dict[tuple[int, int], np.array]:
+    def _labeled_distance(self) -> dict[tuple[int, int], np.ndarray]:
         data = {}
         for label_i in self.unique_labels:
             idx_i = self._label_indices[label_i]
@@ -325,7 +325,7 @@ class ClusterMetrics(ArbitraryPydanticModel):
 
         return data
 
-    def _labeled_distance_to_centroid(self, distance_matrix: np.array) -> dict[tuple[int, int], np.array]:
+    def _labeled_distance_to_centroid(self, distance_matrix: np.ndarray) -> dict[tuple[int, int], np.ndarray]:
         unique_labels = [self._all, *self.unique_labels]
         all_idx = np.arange(self.n_total)
 
@@ -339,14 +339,14 @@ class ClusterMetrics(ArbitraryPydanticModel):
         return data
 
     @computed_field_cached_property()
-    def _labeled_distance_to_mean(self) -> dict[tuple[int, int], np.array]:
+    def _labeled_distance_to_mean(self) -> dict[tuple[int, int], np.ndarray]:
         return self._labeled_distance_to_centroid(self._distance_to_mean)
 
     @computed_field_cached_property()
-    def _labeled_distance_to_median(self) -> dict[tuple[int, int], np.array]:
+    def _labeled_distance_to_median(self) -> dict[tuple[int, int], np.ndarray]:
         return self._labeled_distance_to_centroid(self._distance_to_median)
 
-    def _labeled_distance_to_nearest_cluster(self, agg: str = "mean") -> dict[int, np.array]:
+    def _labeled_distance_to_nearest_cluster(self, agg: str = "mean") -> dict[int, np.ndarray]:
         agg_fcn = np.mean if agg == "mean" else np.median
 
         data = {}
@@ -367,14 +367,14 @@ class ClusterMetrics(ArbitraryPydanticModel):
         return data
     
     @computed_field_cached_property()
-    def _labeled_mean_distance_to_nearest_cluster(self) -> dict[int, np.array]:
+    def _labeled_mean_distance_to_nearest_cluster(self) -> dict[int, np.ndarray]:
         return self._labeled_distance_to_nearest_cluster(agg="mean")
     
     @computed_field_cached_property()
-    def _labeled_median_distance_to_nearest_cluster(self) -> dict[int, np.array]:
+    def _labeled_median_distance_to_nearest_cluster(self) -> dict[int, np.ndarray]:
         return self._labeled_distance_to_nearest_cluster(agg="median")
 
-    def _labeled_distance_intra_cluster(self, agg: str = "mean") -> dict[int, np.array]:
+    def _labeled_distance_intra_cluster(self, agg: str = "mean") -> dict[int, np.ndarray]:
         data = {}
         for label_i in self.unique_labels:
             distance_array = self._labeled_distance[label_i, label_i]
@@ -392,11 +392,11 @@ class ClusterMetrics(ArbitraryPydanticModel):
         return data
     
     @computed_field_cached_property()
-    def _labeled_mean_distance_intra_cluster(self) -> dict[int, np.array]:
+    def _labeled_mean_distance_intra_cluster(self) -> dict[int, np.ndarray]:
         return self._labeled_distance_intra_cluster(agg="mean")
     
     @computed_field_cached_property()
-    def _labeled_median_distance_intra_cluster(self) -> dict[int, np.array]:
+    def _labeled_median_distance_intra_cluster(self) -> dict[int, np.ndarray]:
         return self._labeled_distance_intra_cluster(agg="median")
         
     @computed_field_cached_property()

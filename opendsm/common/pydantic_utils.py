@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import pydantic
 
-from typing import Any, Optional
+from typing import Any, Optional, Annotated
 
 from functools import cached_property  # TODO: This requires Python 3.8
 
@@ -88,3 +88,11 @@ def computed_field_cached_property():
         return f
 
     return deco
+
+ExcludedField = pydantic.json_schema.SkipJsonSchema[
+    Annotated[
+        Any,
+        pydantic.Field(default=None, exclude=True, repr=False),
+        pydantic.AfterValidator(lambda s: None)
+    ]
+]
