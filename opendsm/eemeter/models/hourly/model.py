@@ -258,7 +258,9 @@ class HourlyModel:
     
     # thresholds for switching model types
     _alpha_model_threshold = 1E-5
-    _l1_ratio_model_threshold = 1E-3
+    _l1_ratio_model_threshold = 1E-4
+    _model_warning = EEMeterWarning
+    _base_settings = _settings
 
     # set priority columns for sorting
     # this is critical for ensuring predict column order matches fit column order
@@ -301,7 +303,7 @@ class HourlyModel:
 
         # Initialize model
         self._set_scalers()
-        self._set_model()
+        self._model = self._set_model()
 
         self._T_bin_edges = None
         self._T_edge_bin_coeffs = None
@@ -314,15 +316,14 @@ class HourlyModel:
         if self.settings.train_features:
             self._ts_features = self.settings.train_features.copy()
 
-        self.is_fitted = False
+        self._is_fit = False
         self.baseline_metrics = None
         self.baseline_hour_metrics = None
 
-        self.warnings: list[EEMeterWarning] = []
-        self.disqualification: list[EEMeterWarning] = []
+        self.warnings = []
+        self.disqualification = []
 
         self.baseline_timezone = None
-        self.error = dict()
         self.version = __version__
 
     
@@ -341,41 +342,45 @@ class HourlyModel:
         if self.settings.base_model == _settings.BaseModel.ELASTICNET:
             settings = self.settings.elasticnet
             if settings.alpha <= self._alpha_model_threshold:
-                self._model = LinearRegression(
+                model = LinearRegression(
                     fit_intercept=settings.fit_intercept
                 )
             else:
-                if settings.l1_ratio <= self._l1_ratio_model_threshold:
-                    model = Ridge
-                elif settings.l1_ratio >= (1 - self._l1_ratio_model_threshold):
-                    model = Lasso
+                if settings.l1_ratio < self._l1_ratio_model_threshold:
+                    base_model = Ridge
+                elif settings.l1_ratio > (1 - self._l1_ratio_model_threshold):
+                    base_model = Lasso
                 else:
-                    model = ElasticNet
+                    base_model = ElasticNet
 
-                self._model = model(
+                model = base_model(
                     alpha=settings.alpha,
                     fit_intercept=settings.fit_intercept,
-                    precompute=settings.precompute,
                     max_iter=settings.max_iter,
                     tol=settings.tol,
-                    selection=settings.selection,
-                    warm_start=settings.warm_start,
                     random_state=settings._seed,
                 )
+                
+                if not isinstance(model, Ridge):
+                    model.precompute = settings.precompute
+                    model.selection = settings.selection
+                    model.warm_start = settings.warm_start
 
-                if model == ElasticNet:
-                    self._model.l1_ratio = settings.l1_ratio
+                if isinstance(model, ElasticNet):
+                    model.l1_ratio = settings.l1_ratio
 
             if self.settings.adaptive_weights.enabled:
-                self._model = AdaptiveElasticNetRegressor(self._model, self.settings)
+                model = AdaptiveElasticNetRegressor(model, self.settings)
                 
         elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
             settings = self.settings.kernel_ridge
-            self._model = KernelRidge(
+            model = KernelRidge(
                 alpha=settings.alpha,
                 kernel=settings.kernel,
                 gamma=settings.gamma,
             )
+
+        return model
 
 
     def fit(
@@ -412,7 +417,7 @@ class HourlyModel:
             self._ts_features = self.settings.train_features.copy()
 
         if "ghi" in baseline_data.df.columns and not "ghi" in self._ts_features:
-            model_mismatch_warning = EEMeterWarning(
+            model_mismatch_warning = self._model_warning(
                 qualified_name="eemeter.potential_model_mismatch",
                 description=(
                     "Model was explicitly set to ignore GHI, but baseline period contained a GHI column."
@@ -428,10 +433,11 @@ class HourlyModel:
         return self
 
     def _fit(self, meter_data):
-        self.is_fitted = False
+        self._is_fit = False
 
         # Initialize dataframe
         df_meter = meter_data.df  # used to have a copy here
+        self.baseline_timezone = meter_data.tz
 
         # Prepare feature arrays/matrices
         X, y, fit_mask = self._prepare_features(df_meter)
@@ -440,52 +446,12 @@ class HourlyModel:
 
         # fit the model
         self._model.fit(X_fit, y_fit)
-        self.is_fitted = True
+        self._is_fit = True
 
         # get model prediction of baseline
         df_meter = self._predict(meter_data, X=X)
 
-        # get number of model parameters
-        if self.settings.base_model == _settings.BaseModel.ELASTICNET:
-            if self.settings.adaptive_weights.enabled:
-                self._model = self._model.base_model
-
-            num_parameters = np.count_nonzero(self._model.coef_) + np.count_nonzero(
-                self._model.intercept_
-            )
-        elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
-            num_parameters = np.count_nonzero(self._model.dual_coef_)
-
-        # calculate baseline metrics on non-interpolated data
-        # TODO: change interpolated to imputed
-        cols = [col for col in df_meter.columns if col.startswith("interpolated_")]
-        interpolated = df_meter[cols].any(axis=1)
-
-        self.baseline_metrics = BaselineMetrics(
-            df=df_meter.loc[~interpolated], 
-            num_model_params=num_parameters
-        )
-
-        # calculate baseline metrics per hour-of-day on non-interpolated data
-        self.baseline_hour_metrics = {}
-        for hour in range(24):
-            # get number of model parameters
-            if self.settings.base_model == _settings.BaseModel.ELASTICNET:
-                num_parameters = np.count_nonzero(self._model.coef_[hour]) 
-                num_parameters += np.count_nonzero(self._model.intercept_[hour])
-
-            elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
-                num_parameters = np.count_nonzero(self._model.dual_coef_[hour])   
-
-            hour_mask = df_meter.index.hour == hour
-            hour_data = df_meter.loc[hour_mask & ~interpolated]
-
-            self.baseline_hour_metrics[hour] = BaselineMetrics(
-                df=hour_data, 
-                num_model_params=num_parameters
-            )
-
-        self.baseline_timezone = meter_data.tz
+        self._set_baseline_metrics(df_meter)
 
         return self
 
@@ -508,7 +474,7 @@ class HourlyModel:
             DisqualifiedModelError: If the model is disqualified and ignore_disqualification is False.
             TypeError: If the reporting data is not of type HourlyBaselineData or HourlyReportingData.
         """
-        if not self.is_fitted:
+        if not self._is_fit:
             raise RuntimeError("Model must be fit before predictions can be made.")
 
         if missing_features := (
@@ -519,7 +485,7 @@ class HourlyModel:
             )
 
         if "ghi" in reporting_data.df.columns and not "ghi" in self._ts_features:
-            model_mismatch_warning = EEMeterWarning(
+            model_mismatch_warning = self._model_warning(
                 qualified_name="eemeter.potential_model_mismatch",
                 description=(
                     "Reporting data contains GHI, but model was fit without GHI."
@@ -635,7 +601,7 @@ class HourlyModel:
         settings = self.settings.temperature_bin
 
         # add temperature bins based on temperature
-        if not self.is_fitted:
+        if not self._is_fit:
             if settings.method == "equal_sample_count":
                 T_bin_edges = pd.qcut(
                     df["temperature"], q=settings.n_bins, labels=False
@@ -697,28 +663,43 @@ class HourlyModel:
 
                 T_bin_edges = np.array(settings.fixed_bins)
                 T_bin_edges = np.array([-np.inf, *T_bin_edges, np.inf])
+                
+                def _merge_bins(bin_edges, temp, min_bin_count):
+                    # if less than 20 values from df["temperature"] are in a bin, 
+                    # remove bin edge starting from edges and moving inwards
+                    def _eliminate_empty_bins(bin_edges, temp):
+                        valid_bin_edges = [-np.inf, ]
+                        for i in range(len(bin_edges) - 1):
+                            bin_count = ((temp >= bin_edges[i]) & (temp < bin_edges[i + 1])).sum()
+                            if bin_count > 0:
+                                valid_bin_edges.append(bin_edges[i + 1])
+                        valid_bin_edges[-1] = np.inf
 
-                # if less than 20 values from df["temperature"] are in a bin, remove bin edge starting from edges and moving inwards
-                idx_remove = []
+                        return np.array(valid_bin_edges)   
+                    
+                    bin_edges = _eliminate_empty_bins(bin_edges, temp)
+                    for i in range(int(np.ceil(len(bin_edges)/2)) - 1):
+                        if bin_edges[i+1] == bin_edges[-(i + 2)]:
+                            continue # only 1 bin edge left
 
-                # count from left
-                for i in range(len(T_bin_edges) - 1):
-                    bin_count = ((temp >= T_bin_edges[i]) & (temp < T_bin_edges[i + 1])).sum()
-                    if bin_count < settings.min_bin_count:
-                        idx_remove.append(i+1)
-                    else:
-                        break
+                        # left side
+                        bin_count = ((temp >= bin_edges[i]) & (temp < bin_edges[i+1])).sum()
+                        if bin_count < min_bin_count:
+                            bin_edges[i+1] = bin_edges[i]
 
-                # count from right
-                for i in range(len(T_bin_edges) - 1, 0, -1):
-                    bin_count = ((temp >= T_bin_edges[i - 1]) & (temp < T_bin_edges[i])).sum()
-                    if bin_count < settings.min_bin_count:
-                        idx_remove.append(i - 1)
-                    else:
-                        break
+                        # right side
+                        bin_count = ((temp >= bin_edges[-(i + 2)]) & (temp < bin_edges[-(i + 1)])).sum()
+                        if bin_count < min_bin_count:
+                            bin_edges[-(i + 2)] = bin_edges[-(i + 1)]
 
-                # remove idx_remove from T_bin_edges
-                T_bin_edges = np.delete(T_bin_edges, idx_remove)
+                    return np.unique(bin_edges)
+
+                if temp.size < settings.min_bin_count:
+                    raise ValueError("Not enough data to form temperature bins")
+                elif temp.size < settings.min_bin_count*2:
+                    T_bin_edges = np.array([-np.inf, np.inf])
+                else:
+                    T_bin_edges = _merge_bins(T_bin_edges, temp, settings.min_bin_count)
 
             else:
                 raise ValueError("Invalid temperature binning method")
@@ -782,6 +763,7 @@ class HourlyModel:
             df_temporal = df[self._temporal_cluster_cols].drop_duplicates()
             df_temporal = df_temporal.sort_values(self._temporal_cluster_cols)
             df_temporal_index = df_temporal.set_index(self._temporal_cluster_cols).index
+            available_combinations = df_temporal_index
 
             # reindex self.df_temporal_clusters to df_temporal_index
             df_temporal_clusters = self._df_temporal_clusters.reindex(df_temporal_index)
@@ -791,7 +773,11 @@ class HourlyModel:
                 df_temporal_clusters["temporal_cluster"].isna()
             ].index
             if not missing_combinations.empty:
-                if "observed" in df.columns and not df["observed"].isnull().all():
+                if missing_combinations == available_combinations:
+                    raise ValueError(
+                        f"Data does not have known temporal clusters of {self._temporal_cluster_cols}. Can't assign missing temporal clusters"
+                    )
+                elif "observed" in df.columns and not df["observed"].isnull().all():
                     # filter df to only include missing combinations
                     df_missing = df[
                         df.set_index(self._temporal_cluster_cols).index.isin(
@@ -886,7 +872,7 @@ class HourlyModel:
         df["hour_of_day"] = df.index.hour
 
         # assign temporal clusters
-        if not self.is_fitted:
+        if not self._is_fit:
             self._df_temporal_clusters = set_initial_temporal_clusters(df)
             n_clusters = self._df_temporal_clusters["temporal_cluster"].nunique()
 
@@ -1000,7 +986,7 @@ class HourlyModel:
         self._ts_feature_norm = [i + "_norm" for i in train_features]
 
         # need to set scaler if not fit
-        if not self.is_fitted:
+        if not self._is_fit:
             self._feature_scaler.fit(df[train_features].values)
             self._y_scaler.fit(df["observed"].values.reshape(-1, 1))
 
@@ -1015,6 +1001,9 @@ class HourlyModel:
             df["observed_norm"] = self._y_scaler.transform(
                 df["observed"].values.reshape(-1, 1)
             )
+
+        if "ghi" in df.columns:
+            df["ghi_norm"] *= self.settings.ghi_scalar
 
         return df
     
@@ -1073,7 +1062,7 @@ class HourlyModel:
             T_col = f"{base_col}_T"
 
             # get k for exponential growth/decay
-            if not self.is_fitted:
+            if not self._is_fit:
                 # determine temperature conversion for bin
                 range_offset = settings.edge_bin_temperature_range_offset
                 T_range = [
@@ -1225,7 +1214,7 @@ class HourlyModel:
 
         X = np.concatenate((ts_feature, unique_dummies), axis=1)
 
-        if not self.is_fitted:
+        if not self._is_fit:
             agg_y = (
                 df_grouped
                 .agg({"observed_norm": lambda x: list(x)})
@@ -1241,6 +1230,45 @@ class HourlyModel:
             fit_mask = None
 
         return X, y, fit_mask
+
+    def _set_baseline_metrics(self, df_meter):
+        # get number of model parameters
+        if self.settings.base_model == _settings.BaseModel.ELASTICNET:
+            if self.settings.adaptive_weights.enabled:
+                self._model = self._model.base_model
+
+            num_parameters = np.count_nonzero(self._model.coef_)
+
+        elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
+            num_parameters = np.count_nonzero(self._model.dual_coef_)
+
+        # calculate baseline metrics on non-interpolated data
+        # TODO: change interpolated to imputed
+        cols = [col for col in df_meter.columns if col.startswith("interpolated_")]
+        interpolated = df_meter[cols].any(axis=1)
+
+        self.baseline_metrics = BaselineMetrics(
+            df=df_meter.loc[~interpolated], 
+            num_model_params=num_parameters
+        )
+
+        # calculate baseline metrics per hour-of-day on non-interpolated data
+        self.baseline_hour_metrics = {}
+        for hour in range(24):
+            # get number of model parameters
+            if self.settings.base_model == _settings.BaseModel.ELASTICNET:
+                num_parameters = np.count_nonzero(self._model.coef_[hour]) 
+
+            elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
+                num_parameters = np.count_nonzero(self._model.dual_coef_[:,hour])   
+
+            hour_mask = df_meter.index.hour == hour
+            hour_data = df_meter.loc[hour_mask & ~interpolated]
+
+            self.baseline_hour_metrics[hour] = BaselineMetrics(
+                df=hour_data, 
+                num_model_params=num_parameters
+            )
 
     def _check_model_fit(self):
         cvrmse = self.baseline_metrics.cvrmse_adj
@@ -1263,7 +1291,7 @@ class HourlyModel:
             return False
 
         if not _model_fit_is_acceptable(cvrmse, pnrmse):
-            model_fit_warning = EEMeterWarning(
+            model_fit_warning = self._model_warning(
                 qualified_name="eemeter.model_fit_metrics",
                 description="Model disqualified due to poor fit.",
                 data={
@@ -1350,7 +1378,7 @@ class HourlyModel:
         # convert self._df_temporal_clusters to list of lists
         df_temporal_clusters = self._df_temporal_clusters.reset_index().values.tolist()
 
-        params = _settings.SerializeModel(
+        params = self._base_settings.SerializeModel(
             settings=self.settings,
             temporal_clusters=df_temporal_clusters,
             temperature_bin_edges=self._T_bin_edges,
@@ -1363,10 +1391,10 @@ class HourlyModel:
             catagorical_scaler=None,
             y_scaler=y_scaler,
             baseline_metrics=self.baseline_metrics,
-            info=_settings.ModelInfo(
+            info=self._base_settings.ModelInfo(
                 disqualification=self.disqualification,
                 warnings=self.warnings,
-                error=self.error,
+
                 baseline_timezone=str(self.baseline_timezone),
                 version=self.version,
             ),
@@ -1443,17 +1471,16 @@ class HourlyModel:
         model_cls._model.coef_ = np.array(data.get("coefficients"))
         model_cls._model.intercept_ = np.array(data.get("intercept"))
 
-        model_cls.is_fitted = True
+        model_cls._is_fit = True
 
         # set baseline metrics
         model_cls.baseline_metrics = BaselineMetricsFromDict(
             data.get("baseline_metrics")
         )
 
-        info = _settings.ModelInfo(**data.get("info"))
+        info = model_cls._base_settings.ModelInfo(**data.get("info"))
         model_cls.warnings = info.warnings
         model_cls.disqualification = info.disqualification
-        model_cls.error = info.error
         model_cls.baseline_timezone = info.baseline_timezone
         model_cls.version = info.version
 

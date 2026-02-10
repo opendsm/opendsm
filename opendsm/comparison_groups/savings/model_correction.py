@@ -12,486 +12,429 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+from typing import Optional
+
 import numpy as np
 import pandas as pd
 
 from opendsm.comparison_groups.common.data_settings import Data_Settings
-from opendsm.common.adaptive_loss import (
-    weighted_quantile,
-    IQR_outlier,
-)
+from opendsm.common.stats.outliers_transformed import remove_outliers
+from opendsm.common.stats.basic import fast_std, unc_factor
+
+import opendsm.comparison_groups.savings.settings as _settings
 
 
 
-
-
-def unit_correction(oT, mT, oCG, mCG, settings):
-
-    if settings.method is None:
-        scale = 0
+def _unit_correction_unc(
+    oTr, 
+    mTr,
+    oCGr, 
+    mCGr,
+    scale,
+    CG_diff,
+    correction,
+    oTr_unc,
+    mTr_unc,
+    oCGr_unc,
+    mCGr_unc,
+    CGr_corr, # only needed if oCGr_unc != 0
+    method=None
+):
+    """Calculates correction uncertainty for each comparison group meter of a single treatment meter for a single hour
     
-    elif settings.method == "ordinary_difference_in_differences":
+    Args:
+        oTr_unc: treatment meter observed uncertainty from reporting period
+        mTr_unc: treatment meter model uncertainty from reporting period
+        oCGr_unc: comparison group observed uncertainty from reporting period
+        mCGr_unc: comparison group model uncertainty from reporting period
+        CGr_corr: correlation between oCGr and mCGr over entire reporting period for each meter
+        scale: scale factor used in correction calculation
+        scale_var: variance of scale factor used in correction calculation
+    """
+    # The generalized function: m_cT = m_T - s_CG∙(m_CG - o_CG)
+    # Correction = s_CG∙(m_CG - o_CG)
+
+    mTr_var = mTr_unc**2
+    mCGr_var = mCGr_unc**2
+
+    if method == "ordinary_difference_in_differences":
+        # scale = 1
+        scale_var = 0
+
+    elif method == "percent_difference_in_differences":
+        # scale = mTr/mCGr
+        # neglecting covariance between MTr and MCGr
+        cov_term = 0
+        # cov = mTr_unc*mCGr_unc*corr_mT_mCG
+        # cov_term = 2*cov/(mTr*mCGr)
+        
+        scale_var = scale**2*(mTr_var/mTr**2 + mCGr_var/mCGr**2 - cov_term)
+
+    elif method == "absolute_percent_difference_in_differences":
+        # scale = np.abs(mTr/mCGr)
+        # can take uncertainty of interior, then (partial of abs(x))^2 = 1
+        # neglecting covariance between MTr and MCGr
+        cov_term = 0
+        # cov = mTr_unc*mCGr_unc*corr_mT_mCG
+        # cov_term = 2*cov/(mTr*mCGr)
+
+        scale_var = scale**2*(mTr_var/mTr**2 + mCGr_var/mCGr**2 - cov_term)
+
+    if np.all(oCGr_unc == 0):
+        CG_diff_var = mCGr_unc**2
+    else: # if observed has uncertainty, it and it's covariance with model should be considered
+        cov = mCGr_unc*oCGr_unc*CGr_corr
+        CG_diff_var = mCGr_var + oCGr_unc**2 - 2*cov
+
+    # neglect covariance between scale and CG_diff
+    correction_var = correction**2*(CG_diff_var/CG_diff**2 + scale_var/scale**2)
+    correction_unc = np.sqrt(correction_var)
+
+    return correction_unc  
+
+
+def _unit_correction(
+    oTr, 
+    mTr,
+    oCGr, 
+    mCGr,
+    oTr_unc,
+    mTr_unc,
+    oCGr_unc,
+    mCGr_unc,
+    CGr_corr, # only needed if oCGr_unc != 0
+    calculate_unc,
+    method=None
+):
+    """Calculates corrections for each comparison group meter of a single treatment meter for a single hour
+       for a single cluster
+    
+    Args:
+        oTr: treatment meter observed from reporting period
+        mTr: treatment meter model from reporting period
+        oCGr: comparison group observed from reporting period
+        mCGr: comparison group model from reporting period
+        oTr_unc: treatment meter observed uncertainty from reporting period
+        mTr_unc: treatment meter model uncertainty from reporting period
+        oCGr_unc: comparison group observed uncertainty from reporting period
+        mCGr_unc: comparison group model uncertainty from reporting period
+        CGr_corr: correlation between oCGr and mCGr over entire reporting period for each meter
+    """
+    # The generalized function: m_cT = m_T - s_CG∙(m_CG - o_CG)
+    # Correction = s_CG∙(m_CG - o_CG)
+
+    if method is None:
+        # scale = 0
+        # scale_unc = 0
+        correction = np.zeros_like(mTr)
+        correction_unc = np.zeros_like(mTr)
+        return correction, correction_unc
+    
+    if method == "ordinary_difference_in_differences":
         scale = 1
 
-    elif settings.method == "percent_difference_in_differences":
-        # simplified
-        # savings = mT*oCG/mCG - oT 
+    elif method == "percent_difference_in_differences":
+        # equivalent to simplified savings = mT*oCG/mCG - oT 
+        scale = mTr/mCGr
 
-        scale = mT/mCG
+    elif method == "absolute_percent_difference_in_differences":
+        # simplified savings = mT(1 - np.sign(mT)*np.sign(mCG) + oCG/mCG) - oT
+        scale = np.abs(mTr/mCGr)
 
-    elif settings.method == "absolute_percent_difference_in_differences":
-        # simplified
-        # savings = mT(1 - np.sign(mT)*np.sign(mCG) + oCG/mCG) - oT
+    CG_diff = mCGr - oCGr
 
-        scale = np.abs(mT/mCG)
+    # correction
+    correction = scale*CG_diff
 
-    correction = scale*(mCG - oCG)
-
-    if settings.agg == "mean":
-        correction_agg = np.mean(correction)
-
-    elif settings.agg == "median":
-        correction_agg = np.median(correction)
-
-    # uncertainty
-
-    return correction
-
-
-def bisymlog(x, C=None):
-    if C is None:
-        C = 1/np.log(10)
-
-    return np.sign(x)*(np.log10(1 + np.abs(x/C)))
-
-
-def unit_cluster(oCG, mCG, settings):
-    # how do we want to remove outliers?
-    
-    if settings.weight_by is None:
-        weights = None
+    if calculate_unc:
+        correction_unc = _unit_correction_unc(
+            oTr, 
+            mTr,
+            oCGr, 
+            mCGr,
+            scale,
+            CG_diff,
+            correction,
+            oTr_unc,
+            mTr_unc,
+            oCGr_unc,
+            mCGr_unc,
+            CGr_corr, # only needed if oCGr_unc != 0
+            method=method
+        )
     else:
-        weights = np.abs(mCG) / np.sum(np.abs(mCG))
+        correction_unc = np.full_like(correction, np.nan)
 
-    if settings.remove_outliers:
-        # model_error = 1 - oCG/mCG # relative error
-        # model_error = (oCG - mCG)/(np.abs(oCG) + np.abs(mCG)) # relative percent difference between -1 and 1
-        model_error = (bisymlog(mCG) - bisymlog(oCG))*np.log(10) # log difference
-        outlier_idx = remove_outliers(model_error, weights, settings)
-        oCG = np.delete(oCG, outlier_idx)
-        mCG = np.delete(mCG, outlier_idx)
-        if weights is not None:
-            weights = np.delete(weights, outlier_idx)
-
-            # renormalize weights
-            weights = weights / np.sum(weights)
-
-    # TODO: the rest should be the model correction fcn
-
-    if weights is None:
-        if settings.agg == "mean":
-            return np.mean(oCG), np.mean(mCG)
-        else:
-            return np.median(oCG), np.median(mCG)
-        
-    else:
-        if settings.agg == "mean":
-            return np.average(oCG, weights=weights), np.average(mCG, weights=weights)
-        else:
-            return weighted_quantile(oCG, 0.5, weights=weights), weighted_quantile(mCG, 0.5, weights=weights)
+    return correction, correction_unc
 
 
-
-
-# The function: m_cT = m_T - s_CG∙(m_CG - o_CG)
-# Correction = s_CG∙(m_CG - o_CG)
-
-# use bool column for baseline/reporting
-def _ordinary_difference_in_differences(oT, mT, oCG, mCG, settings):
-    diff = mCG - oCG
-    scale = 1
-
-    return scale*diff
-
-def _percent_difference_in_differences(oT, mT, oCG, mCG, settings):
-    diff = mCG - oCG
-    scale = mT/mCG
-
-    return scale*diff
-
-def _absolute_percent_difference_in_differences(oT, mT, oCG, mCG, settings):
-    diff = mCG - oCG
-    scale = np.abs(mT/mCG)
-
-    return scale*diff
-
-
-# TODO: need to cap IMM size if doing this for memory reasons
-# TODO: In GRIDmeter potentially could reduce df_t_coeffs to remove unused clusters
-# Data classes previously made should be used here
-# should be accessible both low level and gridmeter+model correction together
-# should we move the loadshape methodology to the data class?
-"""
-EEmeter
-id: [datetime, temp, ghi, observed] -> EEmeter data -> EEmeter model -> model prediction
-
-Gridmeter
-[id, datetime, observed] -> gridmeter data -> loadshape -> gridmeter cg assignment -> [df_cluster_id, df_t_coeffs]
-
-Gridmeter (Model Correction)
-[[ids, EEmeter data] + df_cluster_id, df_t_coeffs] -> model correction -> corrected model
-
-Gridmeter (Savings)
-[ids, datetime, temp, ghi, observed, corrected_model] -> per unit time savings (or aggregation)
-
-"""
-
-class Model_Correction:
-    def __init__(self, df_t_reporting, df_cg_reporting, df_cluster_id, df_t_coeffs, df_t_baseline=None, df_cg_baseline=None, settings=None):
-        # should we also use a data class for df_t and df_cp? probably?
-        self.df_t_reporting = df_t_reporting
-        self.df_cg_reporting = df_cg_reporting
-        self.df_cluster_id = df_cluster_id
-        self.df_t_coeffs = df_t_coeffs
-
-        # TODO: need to pull from settings and make settings class
-        self.agg_type = "mean"
-        self.reject_outliers = False
-        self.scale_diff = True
-        self.correction_method = "ordinary_difference_in_differences"
-
-        self.data_settings = Data_Settings(AGG_TYPE=self.agg_type, LOADSHAPE_TYPE="modeled")
-
-        # calculate diffs for df_t and df_cp
-        self.df_t = self._initialize_df(self.df_t, is_treatment=True)
-        self.df_cg = self._initialize_df(self.df_cg, is_treatment=False)
-
-        self.df_cluster = self._agg_cluster_data()
-        self._df_t_cg = self._get_treatment_cg_data()
-
+def _update_mask(global_mask, mask=None, idx_valid=None, idx_invalid=None):
+    if sum(arg is not None for arg in [mask, idx_valid, idx_invalid]) > 1:
+        raise ValueError("Only one of `mask`, `idx_valid`, or `idx_invalid` can be provided.")
     
-    def _
-
+    if mask is not None:
+        pass
     
-    def _initialize_df(self, df, is_treatment=False):
-        data_settings = self.data_settings
-        
-        df["ratio"] = df["observed"]/df["modeled"]
-        df["diff"] = df["modeled"] - df["observed"]
+    elif idx_valid is not None:
+        mask = np.full_like(global_mask, False, dtype=bool)
+        mask[idx_valid] = True
 
-        df = add_datetime_loadshape_mapping_col(df, data_settings)
+    elif idx_invalid is not None:
+        mask = np.full_like(global_mask, True, dtype=bool)
+        mask[idx_invalid] = False
 
-        if not is_treatment and self.scale_diff:
-            period = "baseline"
-            groupby_keys = ["id", "ls_key"]
-            # groupby_keys = ["id"]
-
-            df_p = df[df["period"] == period]
-            
-            df_p_grouped = df_p.groupby(groupby_keys)
-            for col in ["diff"]:
-                # calculate IQR
-                scale = df_p_grouped[col].quantile(0.75) - df_p_grouped[col].quantile(0.25)
-                scale = scale.rename(f"{col}_scale")
-
-                # add to df
-                df = df.merge(scale, left_on=groupby_keys, right_index=True)
-
-                df[col] /= df[f"{col}_scale"]
-
-        # get columns to aggregate on etc
-        # TODO: remove unnecessary columns such as temperature, observed, modeled?
-        cols_drop = ["id", "datetime", "period"]
-        # cols_drop.extend([col for col in df.columns if col.endswith("_scale")])
-        self.df_cols = [col for col in df.columns if col not in cols_drop]
-
-        return df
+    return global_mask & mask
 
 
-    def _agg_cluster_data(self):
-        df_cp = self.df_cg
-        df_cluster_id = self.df_cluster_id
-        agg_type = self.agg_type
+def _apply_mask(mask, *arrays):
+    res = []
+    for arr in arrays:
+        arr_updated = None
+        if arr is not None:
+            arr_updated = arr[mask]
 
-        # get cluster data
-        # merge df_cp_period with df_cg to get cluster number
-        df_cp = df_cp.merge(df_cluster_id[["cluster"]], left_on="id", right_index=True)
+            if len(arr_updated) < 3:
+                raise ValueError("After applying mask, array has insufficient length.")
 
-        df_cols = [col for col in self.df_cols if col not in ["temperature", "ls_key"]]
-        df_cp_groupby = df_cp[["cluster", "datetime", *df_cols]].groupby(["cluster", "datetime"])
+        res.append(arr_updated)
 
-        if self.reject_outliers:
-            label_dict = {0.25: "Q1", 0.75: "Q3"}
-            df_cp_iqr = df_cp_groupby.quantile([0.25, 0.75]).unstack()
-            df_cp_iqr.columns = [f"{col}_{label_dict[q]}" for col, q in df_cp_iqr.columns]
-
-            # join iqr data with original data
-            df_cp = df_cp.merge(df_cp_iqr, on=["cluster", "datetime"])
-
-            # get cluster data
-            df_cluster = pd.concat(
-                [df_cp[["cluster", "datetime", "ls_key"]].groupby(["cluster", "datetime"]).first(),
-                 df_cp[["cluster", "datetime", "temperature"]].groupby(["cluster", "datetime"]).median()], 
-                axis=1)
-
-            for col in df_cols:
-                Q1 = df_cp[f"{col}_Q1"]
-                Q3 = df_cp[f"{col}_Q3"]
-                IQR = Q3 - Q1
-
-                temp = df_cp[["cluster", "datetime", col]]
-                temp = temp[(temp[col] >= Q1 - 1.5*IQR) & (temp[col] <= Q3 + 1.5*IQR)]
-                temp = temp[["cluster", "datetime", col]].groupby(["cluster", "datetime"]).median()
-
-                df_cluster = pd.concat([df_cluster, temp], axis=1)
-
-            df_cluster = df_cluster.reset_index()
-            
-        else:
-            agg_dict = {col: agg_type for col in self.df_cols}
-
-            df_cluster = df_cp.groupby(["cluster", "datetime"]).agg(agg_dict).reset_index()
-
-        # get columns that end in _scale
-        cols_scaled = [col.replace("_scale", "") for col in df_cluster.columns if col.endswith("_scale")]
-        for col in cols_scaled:
-            df_cluster[col] *= df_cluster[f"{col}_scale"]
-        
-        return df_cluster
+    if len(res) == 1:
+        return res[0]
+    
+    return tuple(res)
 
 
-    def _get_treatment_cg_data(self):
-        df_t = self.df_t
-        df_cluster = self.df_cluster
-        df_t_coeffs = self.df_t_coeffs
+def _effective_sample_size(weight):
+    # Kish's effective sample size, weights normalized https://doi.org/10.1002/bimj.19680100122
+    n = 1 / np.sum(np.power(weight, 2))
 
-        # rescale 
-        # get comparison group data for each id
-        df_cluster = df_cluster[df_cluster["cluster"] != -1]
-        g = df_cluster.groupby('cluster', sort=False).cumcount()
-        
-        cluster_data = np.array(df_cluster.set_index(['cluster', g])[self.df_cols]
-            .unstack(fill_value=1E30)    # replace any empty values with one
-            .stack().groupby(level=0)
-            .apply(lambda x: x.values.tolist())
-            .tolist())
-
-        t_coeffs = df_t_coeffs.values
-
-        # multiplies each cluster by the percentage for each treatment meter and sums them per hour
-        cg = {}
-        for n, col in enumerate(self.df_cols):
-            cg[col] = np.einsum("ij,ik->jk", cluster_data[:,:,n], t_coeffs.T).T
-
-        t_datetime_contiguous = np.sort(df_t["datetime"].unique())
-        cg_datetime_contiguous = np.sort(df_cluster["datetime"].unique())
-
-        if np.all(t_datetime_contiguous != cg_datetime_contiguous):
-            raise ValueError("Treatment and Comparison Group datetime arrays do not match")
-
-        # repeat datetime array for each treatment meter
-        cg_datetime = np.tile(cg_datetime_contiguous, cg["temperature"].shape[0])
-        cg_ids = np.repeat(df_t_coeffs.index, cg["temperature"].shape[1])
-
-        df_cg_dict = {"id": cg_ids, "datetime": cg_datetime}
-        df_cg_dict.update({col: cg[col].flatten() for col in self.df_cols})
-        
-        df_cg = pd.DataFrame(df_cg_dict)
-
-        df_cg["datetime"] = pd.to_datetime(df_cg["datetime"])
-
-        # join df_t_period and df_cg_period on id and datetime
-        df_t_cg = pd.merge(df_t, df_cg, on=["id", "datetime"], suffixes=["_t", "_cg"])
-
-        return df_t_cg
+    return n
 
 
-    def add_pct_did(self, simplified_eqn=False):
-        df = self._df_t_cg
+def _cluster_correction(
+    oTr: float, 
+    mTr: float,
+    oCGr: np.ndarray, 
+    mCGr: np.ndarray,
+    oTr_unc: Optional[float],
+    mTr_unc: Optional[float],
+    oCGr_unc: Optional[np.ndarray],
+    mCGr_unc: Optional[np.ndarray],
+    CGr_corr: Optional[np.ndarray], # only needed if oCGr_unc != 0
+    calculate_unc: bool,
+    settings: _settings.CGCorrectionSettings,
+):
+    # Operates on a single cluster's data for a single hour
+    
+    mask = np.full_like(mCGr, True, dtype=bool)
 
-        if simplified_eqn:
-            cg_factor = df["ratio_cg"]
-            res = cg_factor*df["modeled_t"] - df["observed_t"]
+    # get correction and correction uncertainty
+    correct, correct_unc = _unit_correction(
+        oTr, 
+        mTr,
+        oCGr, 
+        mCGr,
+        oTr_unc,
+        mTr_unc,
+        oCGr_unc,
+        mCGr_unc,
+        CGr_corr, # only needed if oCGr_unc != 0
+        calculate_unc,
+        method=settings.algorithm
+    )
 
-        else:
-            res = df["diff_t"] - df["diff_cg"]*df["modeled_t"]/df["modeled_cg"]
+    # set initial weights
+    if settings.weight_cluster_aggregation is None:
+        cluster_weight = None
+    elif settings.weight_cluster_aggregation == _settings.WeightClusterAggChoice.MODEL:
+        cluster_weight = np.abs(mCGr) / np.sum(np.abs(mCGr))
 
-        self._df_t_cg["%did"] = res
-
-
-    def add_abs_pct_did(self, simplified_eqn=False):
-        df = self._df_t_cg
-
-        if simplified_eqn:
-            res = np.empty(len(df))
-
-            # get sign matching indices
-            match = np.sign(df["modeled_t"]) == np.sign(df["modeled_cg"])          
-            res[match] = df["ratio_cg"][match]*df["modeled_t"][match] - df["observed_t"][match]
-            res[~match] = (2 - df["ratio_cg"][~match])*df["modeled_t"][~match] - df["observed_t"][~match]
-
-        else:
-            res = df["diff_t"] - df["diff_cg"]*(df["modeled_t"]/df["modeled_cg"]).abs()
-
-        self._df_t_cg["abs_%did"] = res
-
-
-    def add_sig_pct_did(self, k=0.01, m_0=0.1):
-        df = self._df_t_cg
-
-        if "abs_%did" not in df.columns:
-            self.add_abs_pct_did(simplified_eqn=True)
-
-        # df["scale"] = (df["abs_%did"] + df["observed_t"])/df["modeled_t"]
-
-        scale = (
-            ((df["modeled_t"] - df["observed_t"])*sigmoid(np.abs(df["modeled_t"]), m_0, k) + df["observed_t"]) / 
-            ((df["modeled_cg"] - df["observed_cg"])*sigmoid(np.abs(df["modeled_cg"]), m_0, k) + df["observed_cg"])
+    # remove outliers
+    if settings.outlier_rejection.enabled:
+        # remove outliers
+        _, idx_no_outliers = remove_outliers(
+            correct, # if normalized (correct / mTr), small denominator issue introduced
+            weights=cluster_weight, 
+            sigma_threshold=settings.outlier_rejection.std_threshold, 
+            quantile=settings.outlier_rejection.quantile, 
+            transform=settings.outlier_rejection.transform
         )
 
-        # scale = (
-        #     (df["diff_t"]*sigmoid(np.abs(df["modeled_t"]), m_0, k) + df["observed_t"]) / 
-        #     (df["diff_cg"]*sigmoid(np.abs(df["modeled_cg"]), m_0, k) + df["observed_cg"])
-        # )
+        # update global mask and cluster mask
+        mask = _update_mask(mask, idx_valid=idx_no_outliers)
 
-        res = df["diff_t"] - df["diff_cg"]*np.abs(scale)
+        # remove outliers from data
+        correct, correct_unc = _apply_mask(mask, correct, correct_unc)
+        mCGr = _apply_mask(mask, mCGr)
 
-        self._df_t_cg["sig_%did"] = res
-    
+        # renormalize weights
+        if cluster_weight is not None:
+            cluster_weight = np.abs(mCGr) / np.sum(np.abs(mCGr))
 
-    def add_scaled_ordinary_did(self):
-        # calculate scaled ordinary difference in differences
+    # apply caps
+    # decision: should capped values have their uncertainty considered or excluded?
+    if settings.correction_cap.enabled:
+        cap = np.abs(mTr)*settings.correction_cap.value
+        if settings.correction_cap.type == _settings.CorrectionCapChoice.GLOBAL:
+            correct = np.clip(correct, -cap, cap)
+            
+        elif settings.correction_cap.type == _settings.CorrectionCapChoice.SOLAR:
+            solar_threshold = settings.correction_cap.solar_threshold
+            solar_mask = np.abs(mCGr) < solar_threshold
+            
+            correct[solar_mask] = np.clip(correct[solar_mask], -cap, cap)
 
-        df = self._df_t_cg
-        cols = df.columns
-        data_settings = self.data_settings
+    # compute mean and unc
+    cluster_mean = np.average(correct, weights=cluster_weight)
 
-        comparison_col = "diff" # modeled or diff?
+    # check n to see if unc can be calculated
+    if calculate_unc:
+        if cluster_weight is None:
+            n = len(correct)
+        else:
+            n = _effective_sample_size(cluster_weight)
 
-        comp_t = f"{comparison_col}_t"
-        df_t_baseline = df[df["period"] == "baseline"][["id", "datetime", comp_t]]
-        df_t_baseline = df_t_baseline.rename(columns={comp_t: "modeled"})
-        data_t = gm.Data(time_series_df=df_t_baseline, settings=data_settings)
+        if n < 2:
+            calculate_unc = False
 
-        comp_cg = f"{comparison_col}_cg"
-        df_cg_baseline = df[df["period"] == "baseline"][["id", "datetime", comp_cg]]
-        df_cg_baseline = df_cg_baseline.rename(columns={comp_cg: "modeled"})
-        data_cg = gm.Data(time_series_df=df_cg_baseline, settings=data_settings)
-
-        # scale based on loadshape in baseline period
-        df_cg_scale = data_t.loadshape/data_cg.loadshape
-
-        df_cg_scale = df_cg_scale.unstack().reset_index().rename(columns={"level_0": "ls_key", 0: "scale"})
-
-        # merge df_cg_scale with df_t_cg on ls_key and id
-        df = add_datetime_loadshape_mapping_col(df, data_settings)
-        df = df.merge(df_cg_scale, on=["id", "ls_key"])
-
-        df["sodid"] = df["diff_t"] - df["diff_cg"]*df["scale"]
-        df = df.rename(columns={"scale": "sodid_scale"})
-
-        # remove all columns except input and sodid columns
-        self._df_t_cg = df[[*cols, "sodid", "sodid_scale"]]
-
-
-    def add_modeled_scaled_ordinary_did(self):
-        df_t_cg = self._df_t_cg
-
-        df_t_cg["diff_ratio"] = df_t_cg["diff_t"]/df_t_cg["diff_cg"]
-
-        df_ratio = df_t_cg[["id", "datetime", "period", "temperature_cg", "diff_ratio"]]
-        df_ratio = df_ratio.rename(columns={"temperature_cg": "temperature", "diff_ratio": "observed"})
-
-        ratio_modeled = []
-        for id in df_ratio["id"].unique():
-            df_ratio_id = df_ratio[df_ratio["id"] == id]
-            df_ratio_id_baseline =  df_ratio_id[df_ratio_id["period"] == "baseline"][["datetime", "temperature", "observed"]]
-
-            settings = em.HourlySettings()
-            model = em.HourlyModel(settings)
-            model.fit(df_ratio_id_baseline)
-
-            df_predict = model.predict(df_ratio_id[["datetime", "temperature", "observed"]])
-            df_predict = df_predict.reset_index()
-            df_predict.insert(0, "id", id)
-
-            ratio_modeled.append(df_predict)
-
-        df_scale = pd.concat(ratio_modeled, ignore_index=True)
-
-        # merge df_t_cg and df_scale on id and datetime
-        df_t_cg["scale_predicted"] = df_scale["predicted"]
-
-        # calculate model scale did
-        res = df_t_cg["diff_t"] - df_t_cg["diff_cg"]*df_t_cg["scale_predicted"]
-
-        self._df_t_cg["modeled_sodid"] = res
-
-
-    def _get_did_cols(self):
-        all_did_cols = ["%did", "abs_%did", "sig_%did", "sodid", "modeled_sodid"]
-        did_cols = [col for col in all_did_cols if col in self._df_t_cg.columns]
-
-        return did_cols
-
-    @cached_property
-    def df(self):
-        # get which columns exist in %did, abs_%did sodid, modeled_sodid
-        did_cols = self._get_did_cols()
-
-        # if observed_t, observed_cg, modeled_t, or modeled_cg are nan, then did cols are nan
-        df_t_cg = self._df_t_cg
-        measured_cols = ["observed_t", "observed_cg", "modeled_t", "modeled_cg"]
-        df_t_cg[did_cols] = df_t_cg[did_cols].where(
-            ~df_t_cg[measured_cols].isna().any(axis=1),
-            np.nan
+    # uncertainty calculation
+    cluster_unc = np.nan
+    if calculate_unc:
+        # aggregation uncertainty
+        correct_std = fast_std(
+            correct,
+            mean = cluster_mean,
+            weights = cluster_weight
         )
+        # uncertain if this should be a confidence interval or prediction interval, CI for now
+        _unc_factor = unc_factor(n, interval="CI", alpha=settings.alpha)
+        correct_agg_unc = correct_std * _unc_factor
 
-        # remove diff_t and diff_cg columns
-        df_t_cg = df_t_cg.drop(columns=["diff_t", "diff_cg"])
+        # model uncertainty
+        model_var = np.average(correct_unc**2, weights=cluster_weight)
 
-        return df_t_cg
+        cluster_unc = np.sqrt(correct_agg_unc**2 + model_var)
+
+    return cluster_mean, cluster_unc, mask
+
+
+def model_correction(
+    oTr: float,         # observed treatment meter value during reporting period
+    mTr: float,         # model treatment meter value during reporting period
+    oCGr: np.ndarray, 
+    mCGr: np.ndarray,
+    oTr_unc: Optional[float],
+    mTr_unc: Optional[float],
+    oCGr_unc: Optional[np.ndarray],
+    mCGr_unc: Optional[np.ndarray],
+    CGr_corr: Optional[np.ndarray], # only needed if oCGr_unc != 0
+    CG_label: np.ndarray,
+    T_weight: np.ndarray,
+    settings: _settings.CGCorrectionSettings,
+):
+    # if no did, return
+    if settings.algorithm is None:
+        # scale = 0
+        # scale_unc = 0
+        mTrc = float(mTr)
+        mTrc_unc = float(mTr_unc) if mTr_unc is not None else np.nan
+        mask = np.full_like(mTr, False, dtype=bool)
+
+        return mTrc, mTrc_unc, mask
     
+    # input validation
+    if mTr is None or not np.isfinite(mTr):
+        raise ValueError("`mTr` must be a finite number")
 
-    def df_agg(self, period="reporting"):
-        # TODO: This is only for testing new did methods
-        self.add_pct_did(simplified_eqn=True)
-        self.add_abs_pct_did(simplified_eqn=True)
-        # self.add_sig_pct_did()
-        self.add_scaled_ordinary_did()
-
-        did_cols = self._get_did_cols()
-
-        df_t_cg = self.df[self.df["period"] == period]
-
-        # groupby id and aggregate observed, modeled and did_cols
-        agg_dict = {
-            "observed_t": "sum",
-            "modeled_t": "sum",
-            "observed_cg": "sum",
-            "modeled_cg": "sum",
-        }
-        agg_dict.update({col: "sum" for col in did_cols})
-
-        return df_t_cg.groupby("id").agg(agg_dict)
-
-
-    def df_stats(self, period="reporting"):
-        df_res = self.df_agg(period)
-
-        # count number of unique ids
-        id_count = len(df_res)
-
-        # calculate mean and uncertainty of each did_column
-        stats = {}
-        for col in self._get_did_cols():
-            mean = df_res[col].mean()
-            unc = df_res[col].std()*unc_factor(id_count, alpha=0.05, interval="CI")
-
-            stats.update({f"{col}": [mean], f"{col}_unc": [unc]})
-
-        return pd.DataFrame(stats)
-
+    if len(oCGr) < 5:
+        raise ValueError("`oCGr` cannot have a length less than 5")
     
-
+    if not (len(oCGr) == len(mCGr) == len(CG_label)):
+        raise ValueError("`oCGr`, `mCGr`, and `CG_label` must have the same length")
     
+    if len(T_weight) != np.sum(np.unique(CG_label) >= 0):
+        raise ValueError("`T_weight` must have the same number of elements as the unique number of labels in `CG_label`")
+
+    if oCGr_unc is None:
+        oCGr_unc = np.zeros_like(oCGr)
+
+    if not (len(oCGr) == len(oCGr_unc)):
+        raise ValueError("`oCGr` and `oCGr_unc` must have the same length")
+
+    if mCGr_unc is not None:
+        if not (len(mCGr) == len(mCGr_unc)):
+            raise ValueError("`mCGr` and `mCGr_unc` must have the same length")
+
+    if CGr_corr is None:
+        CGr_corr = np.zeros_like(oCGr)
+
+    if not (len(oCGr_unc) == len(CGr_corr)):
+        raise ValueError("`oCGr_unc` and `CGr_corr` must have the same length")
+    
+    # check length of CG inputs and set global_mask to exclude non-finite values
+    global_mask = np.isfinite(oCGr) & np.isfinite(mCGr) & np.isfinite(CG_label)
+    global_mask = global_mask & (oCGr is not None) & (mCGr is not None)
+    global_mask = global_mask & (CG_label is not None)
+
+    calculate_unc = False
+    if mTr_unc is not None and mCGr_unc is not None:
+        calculate_unc = True
+        global_mask = global_mask & np.isfinite(mCGr_unc) & (mCGr_unc is not None)
+
+    if calculate_unc and oCGr_unc is not None and CGr_corr is not None:
+        global_mask = global_mask & np.isfinite(oCGr_unc) & (oCGr_unc is not None)
+        global_mask = global_mask & np.isfinite(CGr_corr) & (CGr_corr is not None)
+
+    unique_labels = np.unique(CG_label)
+    unique_labels = unique_labels[np.isfinite(unique_labels)]
+    unique_labels = unique_labels[unique_labels >= 0] # exclude outlier label(s)
+
+    cluster_correct = np.empty(unique_labels.shape)
+    cluster_correct_unc = np.empty(unique_labels.shape)
+    for label in unique_labels:
+        # get label mask
+        label_mask = CG_label == label
+        mask = global_mask & label_mask
+
+        if T_weight[label] == 0:
+            _correct = np.nan
+            _correct_unc = np.nan
+
+            # update global mask
+            global_mask[label_mask] = False
+        
+        else:
+            _correct, _correct_unc, _mask = _cluster_correction(
+                oTr, 
+                mTr,
+                _apply_mask(mask, oCGr), 
+                _apply_mask(mask, mCGr),
+                oTr_unc,
+                mTr_unc,
+                _apply_mask(mask, oCGr_unc),
+                _apply_mask(mask, mCGr_unc),
+                _apply_mask(mask, CGr_corr), # only needed if oCGr_unc != 0
+                calculate_unc,
+                settings,
+            )
+
+            if not np.isfinite(_correct_unc):
+                calculate_unc = False
+
+            # update global mask
+            global_mask[mask] = _update_mask(global_mask[mask], mask=_mask)
+
+        cluster_correct[label] = _correct
+        cluster_correct_unc[label] = _correct_unc
+
+    # combine clusters with weights to get corrected model
+    idx_valid = (T_weight > 0).flatten()
+    correction = np.average(cluster_correct[idx_valid], weights=T_weight[idx_valid])
+    mTrc = float(mTr - correction)
+
+    mTrc_unc = np.nan
+    if calculate_unc:
+        correction_var = np.sum((T_weight[idx_valid]**2)*(cluster_correct_unc[idx_valid]**2))
+        mTrc_unc = float(np.sqrt(mTr_unc**2 + correction_var))
+
+    return mTrc, mTrc_unc, global_mask

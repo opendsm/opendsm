@@ -257,6 +257,14 @@ def sigmoid(x, x0=0, k=1):
 
         return exp / (exp + 1)
 
+    x = np.asarray(x, dtype=float)
+
+    if callable(k):
+        k = k(x, x0)
+
+        if np.any(k <= 0):
+            raise ValueError("k parameter must be non-negative and non-zero")
+
     x = (x - x0) / k
 
     positive = x >= 0
@@ -269,5 +277,70 @@ def sigmoid(x, x0=0, k=1):
     res = np.empty_like(x, dtype=float)
     res[positive] = _positive_sigmoid(x[positive])
     res[negative] = _negative_sigmoid(x[negative])
+
+    return res
+
+def log_cosh(x):
+    # log(cosh(x)) = log(e^x + e^-x) - log(2).
+    # For x > 0, we can rewrite this as x + log(1 + e^(-2 * x)) - log(2).
+    # The second term will be small when x is large, so we don't get any large
+    # cancellations.
+    # Similarly for x < 0, we can rewrite the expression as -x + log(1 + e^(2 *
+    # x)) - log(2)
+    # This gives us abs(x) + softplus(-2 * abs(x)) - log(2)
+
+    # For x close to zero, we can write the taylor series of softplus(
+    # -2 * abs(x)) to see that we get;
+    # log(2) - abs(x) + x**2 / 2. - x**4 / 12 + x**6 / 45. + O(x**8)
+    # We can cancel out terms to get:
+    # x ** 2 / 2.  * (1. - x ** 2 / 6) + x ** 6 / 45. + O(x**8)
+    # For x < 45 * sixthroot(smallest normal), all higher level terms
+    # disappear and we can use the above expression.
+    #
+    # to calculate taylor series coefficients, we can use the formula:
+    # from scipy.special import zeta
+    # n = 1
+    # 1/((-1)**(n-1) * (2**(2*n) - 1)*np.abs(zeta(2*n)) / (n * np.pi**(2*n)))
+    
+    # Handle scalar inputs
+    isscalar = False
+    if np.isscalar(x):
+        isscalar = True
+        x = np.array([x])
+
+    # Convert integer types to float types
+    if np.issubdtype(x.dtype, np.integer):
+        precision = np.iinfo(x.dtype).bits
+        x = x.astype(np.dtype(f'float{precision}'))
+    
+    # Set bounds for taylor series approximation based on data type
+    if x.dtype == np.float16:
+        bound = 5.5E-2
+    elif x.dtype == np.float32:
+        bound = 1E-1
+    elif x.dtype == np.float64:
+        bound = 8E-9
+    elif x.dtype == np.float128:
+        bound = 1E-8
+    else:
+        bound = 45 * np.power(np.finfo(x.dtype).tiny, 1 / 6.)
+
+    abs_x = np.abs(x)
+
+    idx_taylor = abs_x <= bound
+    idx_logcosh = ~idx_taylor
+
+    res = np.empty_like(x)
+
+    # For small x, log(cosh(x)) = x**2 / 2 - x**4 / 12 + x**6 / 45 - ...
+    x_t = x[idx_taylor]
+    res[idx_taylor] = x_t**2 / 2. - x_t**4 / 12. + x_t**6 / 45. - x_t**8 / 148.23529411764702 + x_t**10 / 457.2580645161289
+
+    # for large x, use logcosh
+    _abs_x = abs_x[idx_logcosh]
+    res[idx_logcosh] = _abs_x + np.log1p(np.exp(-2 * _abs_x)) - np.log(2)
+
+    if isscalar:
+        return res[0]
 
     return res

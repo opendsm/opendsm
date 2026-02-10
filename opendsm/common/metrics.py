@@ -21,7 +21,7 @@ import pandas as pd
 
 from scipy.stats import pearsonr
 
-from functools import cached_property  # TODO: This requires Python 3.8
+from functools import cached_property
 
 from opendsm.common.utils import safe_divide
 from opendsm.common.stats.basic import (
@@ -245,9 +245,9 @@ class BaselineMetrics(ArbitraryPydanticModel):
     def ddof(self) -> float:
         _ddof = self.n - self.num_model_params
 
-        if _ddof < 1:
+        if _ddof < 2:
             # TODO: Create warning
-            _ddof = 1
+            _ddof = 2
 
         return _ddof
 
@@ -256,10 +256,10 @@ class BaselineMetrics(ArbitraryPydanticModel):
         # TODO: should this be rounded?
         _ddof_autocorr = self.n_prime - self.num_model_params
 
-        # TODO: what to do if less than 1?
-        if _ddof_autocorr < 1:
+        # TODO: what to do if less than 2?
+        if _ddof_autocorr < 2:
             # TODO: Create warning
-            _ddof_autocorr = 1
+            _ddof_autocorr = 2
 
         return _ddof_autocorr
 
