@@ -245,9 +245,9 @@ class BaselineMetrics(ArbitraryPydanticModel):
     def ddof(self) -> float:
         _ddof = self.n - self.num_model_params
 
-        if _ddof < 2:
+        if _ddof < 1:
             # TODO: Create warning
-            _ddof = 2
+            _ddof = 1
 
         return _ddof
 
@@ -257,9 +257,9 @@ class BaselineMetrics(ArbitraryPydanticModel):
         _ddof_autocorr = self.n_prime - self.num_model_params
 
         # TODO: what to do if less than 2?
-        if _ddof_autocorr < 2:
+        if _ddof_autocorr < 1:
             # TODO: Create warning
-            _ddof_autocorr = 2
+            _ddof_autocorr = 1
 
         return _ddof_autocorr
 

@@ -1002,7 +1002,7 @@ class HourlyModel:
                 df["observed"].values.reshape(-1, 1)
             )
 
-        if "ghi" in df.columns:
+        if "ghi" in self._ts_features and "ghi" in df.columns:
             df["ghi_norm"] *= self.settings.ghi_scalar
 
         return df
