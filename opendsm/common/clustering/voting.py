@@ -38,17 +38,21 @@ def construct_voting_df(results):
 
     res_df = pd.DataFrame.from_dict(score_dict, orient='index')
 
-    # Drop columns where all values are np.inf
-    res_df = res_df.loc[:, ~(res_df == np.inf).all()]
-
     # replace non-finite values with inf
     res_df = res_df.replace([np.nan, -np.inf], np.inf)
+
+    # Drop columns where all values are np.inf
+    res_df = res_df.loc[:, ~(res_df == np.inf).all()]
 
     # convert from index value to order of cluster number
     res_df = res_df.apply(lambda col: col.sort_values().index.to_numpy(), axis=0)
 
     # reset index and delete old index
     res_df = res_df.reset_index(drop=True)
+
+    # If res_df is a Series, convert it to a DataFrame
+    if isinstance(res_df, pd.Series):
+        res_df = res_df.to_frame()
     
     return res_df
 
@@ -166,6 +170,11 @@ def shulze_voting(df, voter_weights=None, window_size=0, return_preference_df=Fa
 
     if voter_weights is None:
         voter_weights = {voter: 1.0 for voter in df.columns}
+    else:
+        # If voter_weights exists but doesn't include all voters, add missing voters with weight 1.0
+        for voter in df.columns:
+            if voter not in voter_weights:
+                voter_weights[voter] = 1.0
 
     # Normalize voter_weights to sum to the total number of voters
     n_voters = len(df.columns)
@@ -210,5 +219,7 @@ def shulze_voting(df, voter_weights=None, window_size=0, return_preference_df=Fa
     # Join df_pref and df_wins on the index (n_clusters/candidate)
     df_pref = df_pref.merge(df_wins, how="left", left_index=True, right_on="candidate")
     df_pref = df_pref.set_index("candidate")
+
+    df_pref["wins"] = df_pref["wins"].astype(int)
 
     return winner_idx, df_pref

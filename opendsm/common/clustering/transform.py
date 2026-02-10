@@ -33,14 +33,60 @@ from opendsm.common.clustering import settings as _settings
 
 
 
-def _replace_values(x, a, b):
-    if x.ndim == 0:
-        if x == a:
-            x = b
-    else:
-        x[x == a] = b
-    
-    return x
+def _safe_standardize(
+    data: np.ndarray,
+    center: np.ndarray,
+    scale: np.ndarray,
+    threshold: float = 1e-10
+) -> np.ndarray:
+    """Safely standardize data by centering and scaling.
+
+    If the scale (e.g., standard deviation or MAD) is near zero, only centers
+    the data without scaling to avoid division by near-zero values.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Input data to standardize.
+    center : np.ndarray
+        Centering values (e.g., mean or median) to subtract from data.
+    scale : np.ndarray
+        Scaling values (e.g., std or MAD) to divide by. Can be scalar or array.
+    threshold : float, optional
+        Minimum threshold for scale values. If scale is below this, only
+        centering is performed. Default is 1e-10.
+
+    Returns
+    -------
+    np.ndarray
+        Standardized data. If scale is near zero for any element, those
+        elements are only centered without scaling.
+    """
+    centered = data - center
+
+    # Handle scalar scale
+    if np.isscalar(scale) or scale.ndim == 0:
+        if scale > threshold:
+            return centered / scale
+        else:
+            return centered
+
+    # Handle array scale with broadcasting
+    # Replace near-zero scales with 1 for safe division, but track which were replaced
+    scale_safe = np.where(scale > threshold, scale, 1.0)
+    result = centered / scale_safe
+
+    # For positions where scale was near zero, use only centered value
+    near_zero_mask = scale <= threshold
+    if np.any(near_zero_mask):
+        # Use broadcasting to apply mask
+        if centered.ndim == 2 and scale.ndim == 1:
+            # Expand mask to match data dimensions
+            result = np.where(near_zero_mask, centered, result)
+        else:
+            result[near_zero_mask] = centered[near_zero_mask]
+
+    return result
 
 
 def normalize(
@@ -53,16 +99,12 @@ def normalize(
     if method == _settings.NormalizeChoice.STANDARDIZE:
         mean = np.mean(data, axis=axis)
         std = np.std(data, axis=axis)
-        std = _replace_values(std, 0, 1)
-
-        data = (data - mean) / std
+        data = _safe_standardize(data, mean, std)
 
     elif method == _settings.NormalizeChoice.MED_MAD:
         median = np.median(data, axis=axis)
         mad = _basic.median_absolute_deviation(data, median=median, axis=axis)
-        mad = _replace_values(mad, 0, 1)
-
-        data = (data - median) / mad
+        data = _safe_standardize(data, median, mad)
 
     elif method == _settings.NormalizeChoice.MIN_MAX_QUANTILE:
         q = settings.quantile
@@ -257,7 +299,9 @@ def wavelet_transform(
     # normalize pca features
     if settings.normalize.post_transform:
         # ignores all other values from normalize settings
-        pca_features = (pca_features - pca_features.mean()) / pca_features.std()
+        mean = pca_features.mean()
+        std = pca_features.std()
+        pca_features = _safe_standardize(pca_features, mean, std)
 
     if wavelet_settings.include_scale_feature:
         pca_features = np.hstack([pca_features, np.median(data, axis=1)[:, None]])
