@@ -107,8 +107,9 @@ def cluster_reorder(
     df["label"] = cluster_labels
      # exclude label -1 (outliers) from reordering
     df = df[df['label'] >= 0]
-    
-    uniq_labels, label_cnt = np.unique(cluster_labels, return_counts=True)
+
+    # calculate n_clusters after filtering out outliers
+    uniq_labels = df['label'].unique()
     n_clusters = len(uniq_labels)
 
     if sort_method == "size":
