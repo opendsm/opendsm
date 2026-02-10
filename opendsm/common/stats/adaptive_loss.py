@@ -532,8 +532,8 @@ def adaptive_weights(
 
     # TODO: Should x be abs or not?
     # likely should be abs
-    mu = np.median(np.abs(x_no_outlier))
-    # mu = np.median(x_no_outlier)
+    # mu = np.median(np.abs(x_no_outlier))
+    mu = np.median(x_no_outlier)
 
     C = get_C(x, mu, sigma, quantile, C_algo)
     x_normalized = (x - mu) / C
