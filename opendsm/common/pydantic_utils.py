@@ -15,6 +15,7 @@
 import numpy as np
 import pandas as pd
 import pydantic
+import math
 
 from typing import Any, Optional
 
@@ -57,6 +58,58 @@ class PydanticDf(pydantic.BaseModel):
 
 class ArbitraryPydanticModel(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(arbitrary_types_allowed=True, extra="allow")
+
+    @pydantic.model_serializer(mode="wrap")
+    def _serialize_special_floats(self, serializer, info):
+        """Custom serializer to handle nan, inf, -inf values."""
+        data = serializer(self)
+        # Only convert to strings when serializing to JSON (mode='json')
+        # For Python dicts (mode='python'), keep native float('nan') values
+        if info.mode == 'json':
+            return self._convert_special_floats_to_str(data)
+        return data
+
+    @staticmethod
+    def _convert_special_floats_to_str(obj):
+        """Recursively convert nan, inf, -inf to string representations."""
+        if isinstance(obj, float):
+            if math.isnan(obj):
+                return "nan"
+            elif math.isinf(obj):
+                return "inf" if obj > 0 else "-inf"
+        elif isinstance(obj, dict):
+            return {k: ArbitraryPydanticModel._convert_special_floats_to_str(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return type(obj)(ArbitraryPydanticModel._convert_special_floats_to_str(item) for item in obj)
+        return obj
+
+    @pydantic.model_validator(mode="before")
+    @classmethod
+    def _parse_special_floats(cls, data):
+        """Custom validator to parse string representations back to nan, inf, -inf."""
+        if isinstance(data, dict):
+            return cls._convert_str_to_special_floats(data)
+        elif isinstance(data, (list, tuple)):
+            return cls._convert_str_to_special_floats(data)
+        return data
+
+    @staticmethod
+    def _convert_str_to_special_floats(obj):
+        """Recursively convert string representations to nan, inf, -inf."""
+        if isinstance(obj, str):
+            if obj == "nan":
+                return float("nan")
+            elif obj == "inf":
+                return float("inf")
+            elif obj == "-inf":
+                return float("-inf")
+        elif isinstance(obj, dict):
+            return {k: ArbitraryPydanticModel._convert_str_to_special_floats(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [ArbitraryPydanticModel._convert_str_to_special_floats(item) for item in obj]
+        elif isinstance(obj, tuple):
+            return tuple(ArbitraryPydanticModel._convert_str_to_special_floats(item) for item in obj)
+        return obj
 
 
 def PydanticFromDict(input_dict, name="PydanticModel"):

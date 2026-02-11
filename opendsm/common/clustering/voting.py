@@ -168,6 +168,9 @@ def shulze_voting(df, voter_weights=None, window_size=0, return_preference_df=Fa
               http://www.9mail.de/m-schulze/schulze1.pdf
     """
 
+    if df.shape[0] == 0:
+        raise ValueError("Input DataFrame has no rows.")
+
     if voter_weights is None:
         voter_weights = {voter: 1.0 for voter in df.columns}
     else:
@@ -193,6 +196,18 @@ def shulze_voting(df, voter_weights=None, window_size=0, return_preference_df=Fa
         "candidate": candidates,
         "wins": candidate_wins
     })
+
+    # If df_wins is empty, return 0
+    if df_wins.empty:
+        if not return_preference_df:
+            return 0
+        else:
+            df_pref = df.stack().reset_index()
+            df_pref.columns = ["preference", "score_algo", "n_clusters"]
+            df_pref = df_pref.pivot(index="n_clusters", columns="score_algo", values="preference")
+            
+            return 0, df_pref
+
     if window_size > 0:
         df_wins["wins"] = gaussian_filter1d(
             df_wins["wins"], 

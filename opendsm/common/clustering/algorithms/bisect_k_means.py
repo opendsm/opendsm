@@ -32,18 +32,29 @@ def bisect_k_means(
     """
     clusters features using Bisecting K-Means algorithm
     """
-    
-    algo_settings = settings.bisecting_kmeans
-    recluster_count = settings.bisecting_kmeans.recluster_count
-    n_cluster_lower = settings.bisecting_kmeans.n_cluster.lower
-    n_cluster_upper = settings.bisecting_kmeans.n_cluster.upper
-    n_init = settings.bisecting_kmeans.internal_recluster_count
-    inner_algorithm = settings.bisecting_kmeans.inner_algorithm
-    bisecting_strategy = settings.bisecting_kmeans.bisecting_strategy
 
-    window_size = settings.bisecting_kmeans.scoring.window_size
+    algo_settings = settings.bisecting_kmeans
+    recluster_count = algo_settings.recluster_count
+    n_cluster_lower = algo_settings.n_cluster.lower
+    n_cluster_upper = algo_settings.n_cluster.upper
+    n_init = algo_settings.internal_recluster_count
+    inner_algorithm = algo_settings.inner_algorithm
+    bisecting_strategy = algo_settings.bisecting_strategy
+
+    window_size = algo_settings.scoring.window_size
+    min_cluster_size = algo_settings.scoring.min_cluster_size
 
     seed = settings._seed
+
+    # Validate that we have enough samples to create the minimum number of clusters
+    n_samples = data.shape[0]
+    min_required_samples = n_cluster_lower * min_cluster_size
+    if n_samples <= min_required_samples:
+        raise ValueError(
+            f"Insufficient samples for clustering: need more than {min_required_samples} samples "
+            f"(n_cluster_lower={n_cluster_lower} * min_cluster_size={min_cluster_size}), "
+            f"but only have {n_samples} samples"
+        )
 
     results = []
     for i in range(recluster_count + 1):
@@ -66,6 +77,11 @@ def bisect_k_means(
             label_res = _scoring.score_clusters(data, labels, settings)
             results.append(label_res)
 
+    # Check if all results have score_unable_to_be_calculated == True
+    if all(all(result.score_unable_to_be_calculated.values()) for result in results):
+        return results[0].labels
+
+    # Construct voting df and perform voting to select best cluster count
     df_votes = _voting.construct_voting_df(results)
     winner_idx = _voting.shulze_voting(
         df_votes, 

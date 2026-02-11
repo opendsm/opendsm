@@ -489,16 +489,17 @@ class SpectralEigenSolver(str, Enum):
     # AMG = "amg" # disabled due to additional installation requirements
 
 class AffinityMatrixOptions(str, Enum):
+    # Some of these are currently disabled. Can be added later after debugging
     NEAREST_NEIGHBORS = "nearest_neighbors"
     RBF = "rbf"
-    ADDITIVE_CHI2 = "additive_chi2"
+    # ADDITIVE_CHI2 = "additive_chi2"
     CHI2 = "chi2"
-    LINEAR = "linear"
-    POLY = "poly"
-    POLYNOMIAL = "polynomial"
+    # LINEAR = "linear"
+    # POLY = "poly"
+    # POLYNOMIAL = "polynomial"
     LAPLACIAN = "laplacian"
-    SIGMOID = "sigmoid"
-    COSINE = "cosine"
+    # SIGMOID = "sigmoid"
+    # COSINE = "cosine"
 
 class SpectralAssignLabels(str, Enum):
     KMEANS = "kmeans"

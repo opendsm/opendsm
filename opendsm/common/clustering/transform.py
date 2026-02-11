@@ -112,20 +112,46 @@ def normalize(
 
         min_val, max_val = np.quantile(data, [q, 1 - q], axis=axis)
 
-        idx_same = np.argwhere(min_val == max_val).flatten()
-        idx_diff = [idx for idx in range(data.shape[0]) if idx not in idx_same]
+        # Handle different axis cases
+        if axis is None:
+            # Global normalization
+            if min_val == max_val:
+                data = np.full_like(data, (a + b) / 2)
+            else:
+                data = (b - a) * (data - min_val) / (max_val - min_val) + a
+        else:
+            # Axis-specific normalization
+            idx_same = np.argwhere(min_val == max_val).flatten()
 
-        if axis == 0:
-            min_val = min_val[idx_diff][None, :]
-            max_val = max_val[idx_diff][None, :]
-        elif axis == 1:
-            min_val = min_val[idx_diff][:, None]
-            max_val = max_val[idx_diff][:, None]
+            # Determine which axis we're normalizing over
+            # If axis=0, we normalize columns (iterate over axis 1)
+            # If axis=1, we normalize rows (iterate over axis 0)
+            other_axis = 1 - axis if axis in [0, 1] else None
 
-        if len(idx_same) > 0:
-            data[idx_same, :] = (a + b) / 2
-        
-        data[idx_diff, :] = (b - a) * (data[idx_diff, :] - min_val) / (max_val - min_val) + a
+            if other_axis is not None:
+                n_elements = data.shape[other_axis]
+                idx_diff = np.array([idx for idx in range(n_elements) if idx not in idx_same])
+
+                if len(idx_diff) > 0:
+                    # Reshape min_val and max_val for proper broadcasting
+                    shape = [1, 1]
+                    shape[other_axis] = len(idx_diff)
+                    min_val_reshaped = min_val[idx_diff].reshape(shape)
+                    max_val_reshaped = max_val[idx_diff].reshape(shape)
+
+                    # Create slice objects for indexing
+                    slices = [slice(None), slice(None)]
+                    slices[other_axis] = idx_diff
+                    slices = tuple(slices)
+
+                    # Normalize
+                    data[slices] = (b - a) * (data[slices] - min_val_reshaped) / (max_val_reshaped - min_val_reshaped) + a
+
+                if len(idx_same) > 0:
+                    slices = [slice(None), slice(None)]
+                    slices[other_axis] = idx_same
+                    slices = tuple(slices)
+                    data[slices] = (a + b) / 2
 
     return data
 

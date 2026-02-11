@@ -167,7 +167,8 @@ def cluster_reorder(
     if not reverse:
         cluster_map.update({features.index[i]: i for i in range(n_clusters)})
     else:
-        cluster_map.update({features.index[i]: i for i in range(n_clusters)[::-1]})
+        # Reverse the mapping: smallest feature gets highest index, largest gets lowest
+        cluster_map.update({features.index[i]: n_clusters - 1 - i for i in range(n_clusters)})
 
     return cluster_map
 

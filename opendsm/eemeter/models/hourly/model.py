@@ -426,7 +426,7 @@ class HourlyModel:
             )
             model_mismatch_warning.warn()
             self.warnings.append(model_mismatch_warning)
-
+        
         self._fit(baseline_data)
         self._check_model_fit()
 

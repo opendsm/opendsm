@@ -137,10 +137,15 @@ def _single_spectral_clustering(
 
     # transform data as spectral clustering doesn't like negative values
     # data = np.exp(-data / np.std(data))
-    
-    # X = _local_affinity_matrix(data)
-    X = _affinity_matrix(data, algo)
-    algo.affinity = "precomputed"
+
+    # For nearest_neighbors affinity, let sklearn handle it internally
+    # For other affinities, precompute the affinity matrix
+    if settings.spectral.affinity == "nearest_neighbors":
+        X = data
+    else:
+        # X = _local_affinity_matrix(data)
+        X = _affinity_matrix(data, algo)
+        algo.affinity = "precomputed"
 
     results = []
     n_clusters_range = np.arange(n_cluster_lower, n_cluster_upper + 1)
@@ -150,7 +155,7 @@ def _single_spectral_clustering(
 
         np_state = np.random.get_state()
         np.random.seed(settings._seed)
-            
+
         # hide UserWarning from sklearn
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=UserWarning)
