@@ -4,12 +4,20 @@ Changelog
 Development
 -----------
 
+
+opendsm-1.2.7
+-----------
+
 * Switch build to use pyproject.toml and uv 
 * Change pyproject.toml build system to hatchling 
 * Update to example data to include GHI
 * Update `load_test_data` function to always pull from GitHub.
 * Add comparison groups. This feature is still in development. Final API is unfinished.
 * Consolidate clustering for hourly model and CG clustering
+* Add cluster voting
+* Include new indices and update `ClusteringMetrics` class
+* Implemented Numba and revised functions in adaptive_loss and stats.basic
+* Update dependencies
 
 opendsm-1.2.6
 -----------

@@ -18,7 +18,7 @@ from scipy.optimize import minimize_scalar
 from scipy.special import lambertw
 from scipy.stats import linregress, theilslopes
 
-from opendsm.common.utils import OoM_numba
+from opendsm.common.utils import OoM_numba, log_cosh
 
 
 def get_intercept(y, alpha=2):
@@ -56,7 +56,7 @@ def get_slope(x, y, x_bp, intercept, alpha=2):
                 obj = np.sqrt(np.sum(resid**2))
             else:
                 # obj = np.sum(np.abs(resid)) # MAE
-                obj = np.sum(np.logaddexp(resid, -resid) - np.log(2))  # log cosh
+                obj = np.sum(log_cosh(resid))                   
 
             return obj
 
