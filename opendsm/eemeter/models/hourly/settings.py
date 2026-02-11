@@ -360,6 +360,12 @@ class BaseHourlySettings(BaseSettings):
         gt=0,
     )
 
+    """scalar for ghi feature"""
+    ghi_scalar: float = pydantic.Field(
+        default=1.0,
+        gt=0,
+    )
+
     """supplemental time series column names"""
     supplemental_time_series_columns: Optional[list] = pydantic.Field(
         default=None,
@@ -480,10 +486,9 @@ class HourlyNonSolarSettings(BaseHourlySettings):
 class ModelInfo(pydantic.BaseModel):
     """additional information about the model"""
 
-    warnings: list[EEMeterWarning]
-    disqualification: list[EEMeterWarning]
-    error: dict
     baseline_timezone: str
+    disqualification: list[EEMeterWarning]
+    warnings: list[EEMeterWarning]
     version: str
 
 

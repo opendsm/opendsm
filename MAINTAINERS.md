@@ -8,14 +8,14 @@ Commission.
 ## Committers - Technical Steering Committee (TSC).
 
 - Travis Sikes (TSC chair)
-- Phil Ngo
+- Brian Gerke
 - Adam Scheer
 - Steve Suffian
 - McGee Young
 
 ## Contributors (alphabetical)
 
-We express great thanks to all contributors to the OpenEEmeter. This is an
+We express great thanks to all contributors to OpenDSM. This is an
 incomplete list of those who have contributed code, documentation, or technical
 artifacts to the project.
 

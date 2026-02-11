@@ -14,307 +14,83 @@
 
 from __future__ import annotations
 
-import warnings
-
 import numpy as np
 import pandas as pd
 
-from pydantic import BaseModel, ConfigDict
-
 from scipy.signal import find_peaks
-
-from sklearn.cluster import DBSCAN, HDBSCAN, Birch, SpectralClustering
+from scipy.spatial.distance import cdist
 
 from opendsm.common.clustering import (
-    bisect_k_means as _bisect_k_means,
-    scoring as _scoring,
     settings as _settings,
     transform as _transform,
 )
 
-
-class _LabelResult(BaseModel):
-    """
-    contains metrics about a cluster label returned from sklearn
-    """
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    labels: np.ndarray
-    score: float
-    score_unable_to_be_calculated: bool
-    n_clusters: int
+from opendsm.common.clustering.algorithms import (
+    _bisecting_kmeans_clustering,
+    _birch_clustering,
+    _dbscan_clustering,
+    _hdbscan_clustering,
+    _spectral_clustering,
+)
 
 
-def _bisecting_kmeans_clustering(
+
+def _cluster_merge(
+    cluster_labels: np.ndarray,
     data: np.ndarray,
-    settings: _settings.ClusteringSettings
+    settings: _settings.ClusteringSettings,
+    W: float = 0.5,
 ):
-    """
-    clusters features using Bisecting K-Means algorithm
-    """
     
-    recluster_count = settings.bisecting_kmeans.recluster_count
-    n_cluster_lower = settings.bisecting_kmeans.n_cluster.lower
-    n_cluster_upper = settings.bisecting_kmeans.n_cluster.upper
-    n_init = settings.bisecting_kmeans.internal_recluster_count
-    inner_algorithm = settings.bisecting_kmeans.inner_algorithm
-    bisecting_strategy = settings.bisecting_kmeans.bisecting_strategy
+    # get unique labels
+    unique_labels = np.unique(cluster_labels)
 
-    score_choice = settings.bisecting_kmeans.scoring.score_metric
-    dist_metric = settings.bisecting_kmeans.scoring.distance_metric
-    min_cluster_size = settings.bisecting_kmeans.scoring.min_cluster_size
-    max_non_outlier_cluster_count = settings.bisecting_kmeans.scoring.max_non_outlier_cluster_count
+    # get the distance between all rows in data
+    distances = cdist(data, data)
 
-    seed = settings._seed
+    intra_cluster_similarity = np.zeros(len(unique_labels))
+    inter_cluster_similarity = np.zeros((len(unique_labels), len(unique_labels)))
+    for i in range(len(unique_labels)):
+        idx_i = np.where(cluster_labels == unique_labels[i])[0]
+        for j in range(len(unique_labels)):
+            idx_j = np.where(cluster_labels == unique_labels[j])[0]
 
-    results = []
-    for i in range(recluster_count):
-        algo = _bisect_k_means.BisectingKMeans(
-            n_clusters=n_cluster_upper,
-            init="k-means++",  # does not benefit from k-means++ like other k-means
-            n_init=n_init,
-            random_state=seed + i,
-            algorithm=inner_algorithm,
-            bisecting_strategy=bisecting_strategy,
-        )
-        algo.fit(data)
-        labels_dict = algo.labels_full
+            if i == j:
+                intra_cluster_similarity[i] = np.mean(distances[idx_i, :][:, idx_i])
+                inter_cluster_similarity[i, j] = 0
+                continue
+            elif i < j:
+                continue
 
-        # if specifying clusters, only score the specified clusters
-        if n_cluster_lower == n_cluster_upper:
-            labels_dict = {n_cluster_lower: labels_dict[n_cluster_lower]}
+            inter_cluster_similarity[i, j] = np.sum(distances[idx_i, :][:, idx_j])
+            inter_cluster_similarity[j, i] = np.nan
 
-        for n_cluster, labels in labels_dict.items():
-            score, score_unable_to_be_calculated = _scoring.score_clusters(
-                data,
-                labels,
-                n_cluster_lower,
-                score_choice,
-                dist_metric,
-                min_cluster_size,
-                max_non_outlier_cluster_count,
-            )
+    # if there are only two clusters, merge them if the similarity is less than W
+    if unique_labels.shape[0] == 2:
+        cluster_similarity = inter_cluster_similarity[0, 1]
+        mean_similarity = np.mean(distances[distances != 0])
 
-            label_res = _LabelResult(
-                labels=labels,
-                score=score,
-                score_unable_to_be_calculated=score_unable_to_be_calculated,
-                n_clusters=n_cluster,
-            )
-            results.append(label_res)
+        ratio = cluster_similarity / mean_similarity
 
-    # get the results index with the smallest score
-    HoF = None
-    for result in results:
-        if result.score_unable_to_be_calculated:
-            continue
-
-        if HoF is None or result.score < HoF.score:
-            HoF = result
-
-    return HoF.labels
-
-
-def _birch_clustering(
-    data: np.ndarray,
-    settings: _settings.ClusteringSettings
-):
-    """
-    Clusters features using Birch algorithm
-    """
-
-    n_cluster_lower = settings.birch.n_cluster.lower
-    n_cluster_upper = settings.birch.n_cluster.upper
-    threshold = settings.birch.threshold
-    branching_factor = settings.birch.branching_factor
-
-    score_choice = settings.birch.scoring.score_metric
-    dist_metric = settings.birch.scoring.distance_metric
-    min_cluster_size = settings.birch.scoring.min_cluster_size
-    max_non_outlier_cluster_count = settings.birch.scoring.max_non_outlier_cluster_count
-
-    results = []
-    for n_clusters in range(n_cluster_lower, n_cluster_upper + 1):
-        algo = Birch(
-            n_clusters=n_clusters,
-            threshold=threshold,
-            branching_factor=branching_factor,
-        )
-        labels = algo.fit_predict(data)
+        if ratio < W:
+            return np.zeros(len(cluster_labels))
         
-        # Calculate score for the clusters
-        score, score_unable_to_be_calculated = _scoring.score_clusters(
-                data,
-                labels,
-                n_cluster_lower,
-                score_choice,
-                dist_metric,
-                min_cluster_size,
-                max_non_outlier_cluster_count,
-            )
-        
-        label_res = _LabelResult(
-                labels=labels,
-                score=score,
-                score_unable_to_be_calculated=score_unable_to_be_calculated,
-                n_clusters=n_clusters,
-            )
-        
-        results.append(label_res)
+        return cluster_labels
 
-    # get the results index with the smallest score
-    HoF = None
-    for result in results:
-        if result.score_unable_to_be_calculated:
-            continue
+    # if there are more than two clusters, merge them if the similarity is less than W
+    mean_similarity = np.mean(inter_cluster_similarity)
 
-        if HoF is None or result.score < HoF.score:
-            HoF = result
+    for i in reversed(range(len(unique_labels))):
+        for j in reversed(range(len(unique_labels))):
+            if i == j:
+                continue
 
-    return HoF.labels
+            ratio = inter_cluster_similarity[i, j] / mean_similarity
 
+            if ratio < W:
+                cluster_labels[cluster_labels == unique_labels[j]] = unique_labels[i]
 
-def _dbscan_clustering(
-    data: np.ndarray,
-    settings: _settings.ClusteringSettings
-):
-    """
-    clusters features using DBSCAN algorithm
-    """
-    algo = DBSCAN(
-        eps=settings.dbscan.epsilon, 
-        min_samples=settings.dbscan.min_samples, 
-        metric=settings.dbscan.distance_metric.value,
-        algorithm=settings.dbscan.nearest_neighbors_algorithm,
-        leaf_size=settings.dbscan.leaf_size,
-        p=settings.dbscan.minkowski_p,
-    )
-    labels = algo.fit_predict(data)
-
-    return labels
-
-
-def _hdbscan_clustering(
-    data: np.ndarray,
-    settings: _settings.ClusteringSettings
-):
-    """
-    clusters features using HDBSCAN algorithm
-    """
-    min_samples = settings.hdbscan.min_samples
-    if settings.hdbscan.min_samples == 1:
-        min_samples = 2
-
-    algo = HDBSCAN(
-        min_samples=settings.hdbscan.scoring_sample_count, 
-        min_cluster_size=min_samples,
-        allow_single_cluster=settings.hdbscan.allow_single_cluster,
-        max_cluster_size=settings.hdbscan.max_cluster_size,
-        metric=settings.hdbscan.distance_metric,
-        cluster_selection_epsilon=settings.hdbscan.cluster_selection_epsilon,
-        alpha=settings.hdbscan.robust_single_linkage_scaling,
-        algorithm=settings.hdbscan.nearest_neighbors_algorithm,
-        leaf_size=settings.hdbscan.leaf_size,
-        cluster_selection_method=settings.hdbscan.cluster_selection_method,
-    )
-    labels = algo.fit_predict(data)
-
-    if settings.hdbscan.min_samples == 1:
-        # get count of -1 labels
-        outlier_count = np.sum(labels == -1)
-
-        if outlier_count == 0:
-            return labels
-
-        # add to all labels to make room for outliers
-        labels[labels != -1] += outlier_count
-
-        # make labels with -1 defined as arange(max_label+1, n_samples)
-        labels[labels == -1] = np.arange(0, outlier_count)
-
-    return labels
-
-
-def _spectral_clustering(
-    data: np.ndarray,
-    settings: _settings.ClusteringSettings
-):
-    """
-    clusters features using Spectral Clustering algorithm
-    """
-    n_cluster_lower = settings.spectral.n_cluster.lower
-    n_cluster_upper = settings.spectral.n_cluster.upper
-    
-    score_choice = settings.spectral.scoring.score_metric
-    dist_metric = settings.spectral.scoring.distance_metric
-    min_cluster_size = settings.spectral.scoring.min_cluster_size
-    max_non_outlier_cluster_count = settings.spectral.scoring.max_non_outlier_cluster_count
-    
-    algo = SpectralClustering(
-        n_clusters=1,
-        eigen_solver=settings.spectral.eigen_solver,
-        n_components=settings.spectral.n_components,
-        affinity=settings.spectral.affinity,
-        n_neighbors=settings.spectral.nearest_neighbors,
-        gamma=settings.spectral.gamma,
-        eigen_tol=settings.spectral.eigen_tol,
-        assign_labels=settings.spectral.assign_labels,
-        random_state=settings._seed
-    )
-
-    # transform data as spectral clustering doesn't like negative values
-    # data = np.exp(-data / np.std(data))
-
-    X = data
-    results = []
-    for n_clusters in range(n_cluster_lower, n_cluster_upper + 1):
-        if n_clusters > n_cluster_lower:
-            algo.n_clusters = n_clusters
-            algo.affinity = "precomputed"
-
-            X = algo.affinity_matrix_
-
-        np_state = np.random.get_state()
-        np.random.seed(settings._seed)
-            
-        # hide UserWarning from sklearn
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=UserWarning)
-            labels = algo.fit_predict(X)
-
-        # Calculate a score for the clustering
-        score, score_unable_to_be_calculated = _scoring.score_clusters(
-                data,
-                labels,
-                n_cluster_lower,
-                score_choice,
-                dist_metric,
-                min_cluster_size,
-                max_non_outlier_cluster_count,
-            )
-        
-        label_res = _LabelResult(
-                labels=labels,
-                score=score,
-                score_unable_to_be_calculated=score_unable_to_be_calculated,
-                n_clusters=n_clusters,
-            )
-
-        np.random.set_state(np_state)
-        
-        results.append(label_res)
-
-    # get the results index with the smallest score
-    HoF = None
-    for result in results:
-        if result.score_unable_to_be_calculated:
-            continue
-
-        if HoF is None or result.score < HoF.score:
-            HoF = result
-
-    return HoF.labels
+    return cluster_labels
 
 
 def cluster_reorder(
@@ -322,17 +98,19 @@ def cluster_reorder(
     cluster_labels: np.ndarray,
     settings: _settings.ClusteringSettings,
 ):
-    sort_method = settings.cluster_sort_options.method
-    agg_type = settings.cluster_sort_options.aggregation
-    reverse = settings.cluster_sort_options.reverse
+    sort_method = settings.cluster_sort.method
+    agg_type = settings.cluster_sort.aggregation
+    reverse = settings.cluster_sort.reverse
 
     # assign labels to data
     df = data.copy()
     df["label"] = cluster_labels
-    
-    # group by cluster and aggregate
-    df_cluster = df.groupby('label').agg(agg_type)
-    n_clusters = len(df_cluster)
+     # exclude label -1 (outliers) from reordering
+    df = df[df['label'] >= 0]
+
+    # calculate n_clusters after filtering out outliers
+    uniq_labels = df['label'].unique()
+    n_clusters = len(uniq_labels)
 
     if sort_method == "size":
         # sort clusters by count
@@ -343,6 +121,9 @@ def cluster_reorder(
 
     elif sort_method == "peak":
         # TODO: This is a work in progress
+
+        # group by cluster and aggregate
+        df_cluster = df.groupby('label').agg(agg_type)
 
         # subtract each cluster's median from the cluster's median
         df_cluster_norm = df_cluster.sub(df_cluster.agg(agg_type, axis=1), axis=0)
@@ -381,10 +162,13 @@ def cluster_reorder(
         features = features.sort_values(by=["peak", "valley", "norm"], na_position='first')
 
     # create dictionary to remap cluster numbers to features order
+    cluster_map = {i: i for i in cluster_labels}
+
     if not reverse:
-        cluster_map = {features.index[i]: i for i in range(n_clusters)}
+        cluster_map.update({features.index[i]: i for i in range(n_clusters)})
     else:
-        cluster_map = {features.index[i]: i for i in range(n_clusters)[::-1]}
+        # Reverse the mapping: smallest feature gets highest index, largest gets lowest
+        cluster_map.update({features.index[i]: n_clusters - 1 - i for i in range(n_clusters)})
 
     return cluster_map
 
@@ -446,7 +230,11 @@ def cluster_features(
 
     cluster_labels = _cluster_features(data, settings)
 
-    if settings.sort_clusters:
+    skip_merge = True
+    if not skip_merge and np.unique(cluster_labels).shape[0] == 2:
+        cluster_labels = _cluster_merge(cluster_labels, data, settings)
+
+    if settings.cluster_sort.enable:
         cluster_remap_dict = cluster_reorder(df, cluster_labels, settings)
 
         # remap cluster labels using cluster_remap_dict

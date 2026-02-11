@@ -33,14 +33,61 @@ from opendsm.common.clustering import settings as _settings
 
 
 
-def _replace_values(x, a, b):
-    if x.ndim == 0:
-        if x == a:
-            x = b
-    else:
-        x[x == a] = b
-    
-    return x
+def _safe_standardize(
+    data: np.ndarray,
+    center: np.ndarray,
+    scale: np.ndarray,
+    threshold: float = 1e-10
+) -> np.ndarray:
+    """Safely standardize data by centering and scaling.
+
+    If the scale (e.g., standard deviation or MAD) is near zero, only centers
+    the data without scaling to avoid division by near-zero values.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Input data to standardize.
+    center : np.ndarray
+        Centering values (e.g., mean or median) to subtract from data.
+    scale : np.ndarray
+        Scaling values (e.g., std or MAD) to divide by. Can be scalar or array.
+    threshold : float, optional
+        Minimum threshold for scale values. If scale is below this, only
+        centering is performed. Default is 1e-10.
+
+    Returns
+    -------
+    np.ndarray
+        Standardized data. If scale is near zero for any element, those
+        elements are only centered without scaling.
+    """
+    centered = data - center
+
+    # Handle scalar scale
+    if np.isscalar(scale) or scale.ndim == 0:
+        if scale > threshold:
+            return centered / scale
+        else:
+            return centered
+
+    # Handle array scale with broadcasting
+    # Replace near-zero scales with 1 for safe division, but track which were replaced
+    scale_safe = np.where(scale > threshold, scale, 1.0)
+    result = centered / scale_safe
+
+    # For positions where scale was near zero, use only centered value
+    near_zero_mask = scale <= threshold
+    if np.any(near_zero_mask):
+        # Use broadcasting to apply mask
+        if centered.ndim == 2 and scale.ndim == 1:
+            # Expand mask to match data dimensions
+            result = np.where(near_zero_mask, centered, result)
+        else:
+            result[near_zero_mask] = centered[near_zero_mask]
+
+    return result
+
 
 def normalize(
     data: np.ndarray,
@@ -52,16 +99,12 @@ def normalize(
     if method == _settings.NormalizeChoice.STANDARDIZE:
         mean = np.mean(data, axis=axis)
         std = np.std(data, axis=axis)
-        std = _replace_values(std, 0, 1)
-
-        data = (data - mean) / std
+        data = _safe_standardize(data, mean, std)
 
     elif method == _settings.NormalizeChoice.MED_MAD:
         median = np.median(data, axis=axis)
         mad = _basic.median_absolute_deviation(data, median=median, axis=axis)
-        mad = _replace_values(mad, 0, 1)
-
-        data = (data - median) / mad
+        data = _safe_standardize(data, median, mad)
 
     elif method == _settings.NormalizeChoice.MIN_MAX_QUANTILE:
         q = settings.quantile
@@ -69,20 +112,46 @@ def normalize(
 
         min_val, max_val = np.quantile(data, [q, 1 - q], axis=axis)
 
-        idx_same = np.argwhere(min_val == max_val).flatten()
-        idx_diff = [idx for idx in range(data.shape[0]) if idx not in idx_same]
+        # Handle different axis cases
+        if axis is None:
+            # Global normalization
+            if min_val == max_val:
+                data = np.full_like(data, (a + b) / 2)
+            else:
+                data = (b - a) * (data - min_val) / (max_val - min_val) + a
+        else:
+            # Axis-specific normalization
+            idx_same = np.argwhere(min_val == max_val).flatten()
 
-        if axis == 0:
-            min_val = min_val[idx_diff][None, :]
-            max_val = max_val[idx_diff][None, :]
-        elif axis == 1:
-            min_val = min_val[idx_diff][:, None]
-            max_val = max_val[idx_diff][:, None]
+            # Determine which axis we're normalizing over
+            # If axis=0, we normalize columns (iterate over axis 1)
+            # If axis=1, we normalize rows (iterate over axis 0)
+            other_axis = 1 - axis if axis in [0, 1] else None
 
-        if len(idx_same) > 0:
-            data[idx_same, :] = (a + b) / 2
-        
-        data[idx_diff, :] = (b - a) * (data[idx_diff, :] - min_val) / (max_val - min_val) + a
+            if other_axis is not None:
+                n_elements = data.shape[other_axis]
+                idx_diff = np.array([idx for idx in range(n_elements) if idx not in idx_same])
+
+                if len(idx_diff) > 0:
+                    # Reshape min_val and max_val for proper broadcasting
+                    shape = [1, 1]
+                    shape[other_axis] = len(idx_diff)
+                    min_val_reshaped = min_val[idx_diff].reshape(shape)
+                    max_val_reshaped = max_val[idx_diff].reshape(shape)
+
+                    # Create slice objects for indexing
+                    slices = [slice(None), slice(None)]
+                    slices[other_axis] = idx_diff
+                    slices = tuple(slices)
+
+                    # Normalize
+                    data[slices] = (b - a) * (data[slices] - min_val_reshaped) / (max_val_reshaped - min_val_reshaped) + a
+
+                if len(idx_same) > 0:
+                    slices = [slice(None), slice(None)]
+                    slices[other_axis] = idx_same
+                    slices = tuple(slices)
+                    data[slices] = (a + b) / 2
 
     return data
 
@@ -173,13 +242,17 @@ def wavelet_transform(
     """
     wavelet_settings = settings.wavelet_transform
 
-    def _dwt_coeffs(data, wavelet="db1", wavelet_mode="periodization", n_levels=4):
+    def _dwt_coeffs(data, wavelet="db1", wavelet_mode="periodization", n_levels=None):
         all_features = []
         # iterate through rows of numpy array
         for row in range(len(data)):
             # get max level of decomposition
             dwt_max_level = pywt.dwt_max_level(data[row].shape[0], wavelet)
-            if n_levels > dwt_max_level:
+
+            if n_levels is None: # None could be input into wavedec directly to same effect
+                n_levels = dwt_max_level
+
+            elif n_levels > dwt_max_level:
                 n_levels = dwt_max_level
             
             decomp_coeffs = pywt.wavedec(
@@ -199,7 +272,10 @@ def wavelet_transform(
         # kernel pca is not fully developed
         if method == "kernel_pca":
             if n_components ==  "mle":
-                pca = PCA(n_components=n_components)
+                pca = PCA(
+                    n_components=n_components,
+                    random_state=settings._seed,
+                )
                 pca_features = pca.fit_transform(features)
 
             pca = KernelPCA(n_components=None, kernel="rbf")
@@ -222,7 +298,10 @@ def wavelet_transform(
             pca_features = pca.fit_transform(features)
 
         else:
-            pca = PCA(n_components=n_components)
+            pca = PCA(
+                n_components=n_components,
+                random_state=settings._seed,
+            )
             pca_features = pca.fit_transform(features)
 
         return pca_features
@@ -246,9 +325,11 @@ def wavelet_transform(
     # normalize pca features
     if settings.normalize.post_transform:
         # ignores all other values from normalize settings
-        pca_features = (pca_features - pca_features.mean()) / pca_features.std()
+        mean = pca_features.mean()
+        std = pca_features.std()
+        pca_features = _safe_standardize(pca_features, mean, std)
 
-    if wavelet_settings.pca_include_median:
+    if wavelet_settings.include_scale_feature:
         pca_features = np.hstack([pca_features, np.median(data, axis=1)[:, None]])
 
     return pca_features

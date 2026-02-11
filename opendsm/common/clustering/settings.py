@@ -107,10 +107,9 @@ class WaveletSelection(str, Enum):
 
 class WaveletTransformSettings(BaseSettings):
     """wavelet decomposition level"""
-    wavelet_n_levels: int = pydantic.Field(
-        default=4,
+    wavelet_n_levels: Optional[int] = pydantic.Field(
+        default=None,
         ge=1,
-        # le=5,  #TODO investigate upper limit
     )
 
     """wavelet choice for wavelet decomposition"""
@@ -138,10 +137,29 @@ class WaveletTransformSettings(BaseSettings):
         default="mle",
     )
 
-    """add mean to pca components"""
-    pca_include_median: bool = pydantic.Field(
+    """add scale to features"""
+    include_scale_feature: bool = pydantic.Field(
         default=True,
     )
+
+    """seed for random state assignment"""
+    seed: Optional[int] = pydantic.Field(
+        default=None,
+        ge=0,
+    )
+
+    _seed: Optional[int] = pydantic.PrivateAttr(
+        default=None
+    )
+
+    @pydantic.model_validator(mode="after")
+    def _check_seed(self):
+        if self.seed is None and self._seed is None:
+            self._seed = np.random.randint(0, 2**32 - 1, dtype=np.int64)
+        else:
+            self._seed = self.seed
+
+        return self
 
     @pydantic.model_validator(mode="after")
     def _check_wavelet(self):
@@ -191,13 +209,6 @@ class WaveletTransformSettings(BaseSettings):
             
         return self
 
-
-class ClusterScoringMetric(str, Enum):
-    SILHOUETTE = "silhouette"
-    SILHOUETTE_MEDIAN = "silhouette_median"
-    VARIANCE_RATIO = "variance_ratio"
-    DAVIES_BOULDIN = "davies-bouldin"
-
 class DistanceMetric(str, Enum):
     """
     what distance method to use
@@ -210,8 +221,8 @@ class DistanceMetric(str, Enum):
 class ScoreSettings(BaseSettings):
     """minimum cluster size"""
     min_cluster_size: int = pydantic.Field(
-        default=1,
-        ge=1,
+        default=2,
+        ge=2, # 
     )
 
     """maximum number of non-outlier clusters"""
@@ -220,15 +231,68 @@ class ScoreSettings(BaseSettings):
         ge=1,
     )
 
-    """scoring method for clustering"""
-    score_metric: ClusterScoringMetric = pydantic.Field(
-        default=ClusterScoringMetric.VARIANCE_RATIO,
+    """scoring methods"""
+    calinski_harabasz_weight: float = pydantic.Field(
+        default=1.0,
+        ge=0,
+    )
+
+    davies_bouldin_weight: float = pydantic.Field(
+        default=0.0,
+        ge=0,
+    )
+
+    density_based_clustering_validation_weight: float = pydantic.Field(
+        default=0.0,
+        ge=0,
+    )
+
+    dunn_weight: float = pydantic.Field(
+        default=0.0,
+        ge=0,
+    )
+
+    silhouette_weight: float = pydantic.Field(
+        default=0.0,
+        ge=0,
+    )
+
+    silhouette_median_weight: float = pydantic.Field(
+        default=0.0,
+        ge=0,
+    )
+
+    xie_beni_weight: float = pydantic.Field(
+        default=0.0,
+        ge=0,
+    )
+
+    window_size: float = pydantic.Field(
+        default=0,
+        ge=0,
     )
 
     """distance metric for clustering"""
     distance_metric: DistanceMetric = pydantic.Field(
         default=DistanceMetric.EUCLIDEAN,
     )
+
+    @pydantic.model_validator(mode="after")
+    def _check_weights(self):
+        weights = [
+            self.calinski_harabasz_weight,
+            self.davies_bouldin_weight,
+            self.density_based_clustering_validation_weight,
+            self.dunn_weight,
+            self.silhouette_weight,
+            self.silhouette_median_weight,
+            self.xie_beni_weight,
+        ]
+
+        if not any(w > 0 for w in weights):
+            raise ValueError("At least one scoring weight must be greater than 0")
+        
+        return self
 
 
 class ClusterRangeSettings(BaseSettings):
@@ -425,16 +489,17 @@ class SpectralEigenSolver(str, Enum):
     # AMG = "amg" # disabled due to additional installation requirements
 
 class AffinityMatrixOptions(str, Enum):
+    # Some of these are currently disabled. Can be added later after debugging
     NEAREST_NEIGHBORS = "nearest_neighbors"
     RBF = "rbf"
-    ADDITIVE_CHI2 = "additive_chi2"
+    # ADDITIVE_CHI2 = "additive_chi2"
     CHI2 = "chi2"
-    LINEAR = "linear"
-    POLY = "poly"
-    POLYNOMIAL = "polynomial"
+    # LINEAR = "linear"
+    # POLY = "poly"
+    # POLYNOMIAL = "polynomial"
     LAPLACIAN = "laplacian"
-    SIGMOID = "sigmoid"
-    COSINE = "cosine"
+    # SIGMOID = "sigmoid"
+    # COSINE = "cosine"
 
 class SpectralAssignLabels(str, Enum):
     KMEANS = "kmeans"
@@ -442,6 +507,12 @@ class SpectralAssignLabels(str, Enum):
     CLUSTER_QR = "cluster_qr"
     
 class SpectralSettings(BaseSettings):
+    """number of times to recluster"""
+    recluster_count: int = pydantic.Field(
+        default=0,
+        ge=0,
+    )
+
     """eigen solver to use"""
     eigen_solver: Optional[SpectralEigenSolver] = pydantic.Field(
         default=SpectralEigenSolver.ARPACK,
@@ -466,7 +537,7 @@ class SpectralSettings(BaseSettings):
     """gamma for RBF, polynomial, sigmoid, laplacian, and chi2 kernels"""
     gamma: float = pydantic.Field(
         default=1.05,
-        ge=0, # could be wrong? maybe gt?
+        gt=0,
     )
 
     """stopping criterion for eigen decomposition"""
@@ -510,6 +581,11 @@ class AggregateMethod(str, Enum):
 
 
 class ClusterSortSettings(BaseSettings):
+    """enable cluster sorting"""
+    enable: bool = pydantic.Field(
+        default=True,
+    )
+
     """sort method"""
     method: SortMethod = pydantic.Field(
         default=SortMethod.PEAK,
@@ -535,7 +611,7 @@ class ClusterAlgorithms(str, Enum):
 
 
 class ClusteringSettings(BaseSettings):
-    """pretransform data normalization settings"""
+    """pretransform data rescale settings"""
     normalize: NormalizeSettings = pydantic.Field(
         default_factory=NormalizeSettings
     )
@@ -585,13 +661,8 @@ class ClusteringSettings(BaseSettings):
         default_factory=SpectralSettings,
     )
 
-    """sort clusters boolean"""
-    sort_clusters: bool = pydantic.Field(
-        default=False,
-    )
-
     """sort clusters """
-    cluster_sort_options: ClusterSortSettings = pydantic.Field(
+    cluster_sort: ClusterSortSettings = pydantic.Field(
         default_factory=ClusterSortSettings,
     )
 
@@ -611,6 +682,11 @@ class ClusteringSettings(BaseSettings):
             self._seed = np.random.randint(0, 2**32 - 1, dtype=np.int64)
         else:
             self._seed = self.seed
+
+        for transform in [self.wavelet_transform, self.fpca_transform]:
+            if transform is not None:
+                transform._seed = self._seed
+
 
         return self
 

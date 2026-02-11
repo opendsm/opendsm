@@ -468,14 +468,14 @@ class DailySettings(BaseSettings):
 
                 for n, (k, v) in enumerate(val.items()):
                     if n == 0:
-                        text_all.append(f"{key:>{key_max}s}: {{{str(k):>{k_max}s}: {v}")
+                        text_all.append(f"{key:>{key_max}s}: {str(k):>{k_max}s}: {v}")
 
                     elif n < len(val) - 1:
                         text_all.append(f"{'':>{key_max}s}   {str(k):>{k_max}s}: {v}")
 
                     else:
                         text_all.append(
-                            f"{'':>{key_max}s}   {str(k):>{k_max}s}: {str(v):{v_max}s} }}"
+                            f"{'':>{key_max}s}   {str(k):>{k_max}s}: {str(v):{v_max}s}"
                         )
 
             else:
