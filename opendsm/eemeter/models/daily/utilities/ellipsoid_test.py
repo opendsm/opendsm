@@ -13,11 +13,30 @@
 #  limitations under the License.
 import numpy as np
 from scipy.linalg import eigh
-from scipy.ndimage import median_filter
 from scipy.optimize import minimize_scalar
 
 
-def ellipsoid_intersection_test(mu_A, mu_B, cov_A, cov_B):
+def _rolling_median5(y):
+    """Fast sliding-window median with window=5 for small numpy arrays.
+
+    Replaces scipy.ndimage.median_filter for 1-D arrays, avoiding the overhead
+    of the ndimage dispatch path.  Edge elements are left unchanged (same
+    behaviour as median_filter with default reflect padding gives for size=5
+    when the signal is long enough).
+    """
+    n = len(y)
+    if n < 5:
+        return y.copy()
+    out = y.copy()
+    # Use np.partition for O(n) per window rather than full sort
+    for i in range(2, n - 2):
+        window = y[i - 2 : i + 3]
+        # partition so that index 2 holds the median
+        out[i] = np.partition(window, 2)[2]
+    return out
+
+
+def ellipsoid_intersection_test(mu_A, mu_B, cov_A, cov_B, a_A=None, b_A=None, a_B=None, b_B=None):
     """
     Tests whether two ellipsoids intersect or not. The ellipsoids are defined by their mean vectors and covariance matrices.
     The function uses the K-function to calculate the intersection of the ellipsoids. If the K-function is greater than or equal to 0,
@@ -28,10 +47,23 @@ def ellipsoid_intersection_test(mu_A, mu_B, cov_A, cov_B):
     mu_B (numpy.ndarray): Mean vector of the second ellipsoid.
     cov_A (numpy.ndarray): Covariance matrix of the first ellipsoid.
     cov_B (numpy.ndarray): Covariance matrix of the second ellipsoid.
+    a_A, b_A (float, optional): Semi-axes of ellipsoid A for fast bbox pre-filter.
+    a_B, b_B (float, optional): Semi-axes of ellipsoid B for fast bbox pre-filter.
 
     Returns:
     bool: True if the ellipsoids intersect, False otherwise.
     """
+
+    # --- Cheap bounding-box pre-filter (avoids eigh + minimize_scalar) ---
+    # If the Euclidean distance between centres exceeds the sum of the
+    # major semi-axes in each dimension the ellipsoids cannot overlap.
+    if (a_A is not None) and (a_B is not None) and (b_A is not None) and (b_B is not None):
+        d2 = np.sum((mu_A - mu_B) ** 2)
+        # Conservative bound: if d > sum of the *largest* semi-axis of each ellipse
+        max_r_A = max(abs(a_A), abs(b_A))
+        max_r_B = max(abs(a_B), abs(b_B))
+        if d2 > (max_r_A + max_r_B) ** 2:
+            return False
 
     # Fix if all values are the same in 1 direction, "brent" doesn't work well with this
     if cov_A[1, 1] == 0:
@@ -95,14 +127,30 @@ def confidence_ellipse(x, y, var=np.ones([2, 2]) * 1.96):
     idx_sorted = np.argsort(x).flatten()
     idx_original = np.argsort(idx_sorted).flatten()
 
-    # size could be changed with justification
-    y = median_filter(y[idx_sorted], size=5)[idx_original]
+    # size could be changed with justification — use inline numpy rolling median
+    # instead of scipy.ndimage.median_filter to avoid dispatch overhead
+    y = _rolling_median5(y[idx_sorted])[idx_original]
 
     # Computing the covariance and ellipse parameter values
     cov = np.cov(x, y) * var  # scale covariances by std choice
-    ab_sqr, v = np.linalg.eig(cov)
-    [a, b] = np.sqrt(ab_sqr)
-    phi = np.arctan2(*v[:, 0][::-1])
+
+    # Analytical 2×2 symmetric eigendecomposition — avoids np.linalg.eig
+    # (general solver) for the common real symmetric 2×2 case.
+    # Eigenvalue ordering matches the original np.linalg.eig convention used
+    # by this function: a = smaller semi-axis, b = larger semi-axis.
+    ca, cb, cd = cov[0, 0], cov[0, 1], cov[1, 1]
+    tr_half = (ca + cd) * 0.5
+    disc = np.sqrt(max(((ca - cd) * 0.5) ** 2 + cb ** 2, 0.0))
+    lam1 = tr_half + disc   # larger eigenvalue
+    lam2 = tr_half - disc   # smaller eigenvalue
+    # Clamp negative eigenvalues to zero before sqrt (rounding artefacts)
+    a = np.sqrt(max(lam2, 0.0))   # smaller semi-axis
+    b = np.sqrt(max(lam1, 0.0))   # larger semi-axis
+    # Eigenvector angle for the eigenvalue corresponding to 'a' (lam2)
+    if cb != 0.0:
+        phi = np.arctan2(lam2 - ca, cb)
+    else:
+        phi = 0.0 if ca <= cd else np.pi / 2.0
 
     mu = np.array([np.mean(x), np.mean(y)])
 
@@ -187,30 +235,36 @@ def ellipsoid_split_filter(meter, n_std=[1.4, 1.4]):
         std = np.array(n_std)[:, None]
         var = std.T * std
 
+    # Pre-extract numpy arrays once — avoids 6× repeated pandas boolean
+    # indexing and sort_values on the full DataFrame inside the inner loop.
+    arr_season = meter["season"].to_numpy()
+    arr_day = meter["weekday_weekend"].to_numpy()
+    arr_obs = meter["observed"].to_numpy()
+    arr_temp = meter["temperature"].to_numpy()
+    arr_valid = ~np.isnan(arr_obs)
+
+    # Precompute day-type masks (constant across the season loop)
+    wd_mask = arr_day == "weekday"
+    we_mask = arr_day == "weekend"
+
     cluster_ellipse = {}
     for season in ["summer", "shoulder", "winter"]:
-        for day_type, day_num in enumerate([[1, 2, 3, 4, 5], [6, 7]]):
-            if day_type == 0:
-                key = f"wd-{season[:2]}"
-            else:
-                key = f"we-{season[:2]}"
+        mask_season = arr_season == season
+        for day_mask, key in [(wd_mask, f"wd-{season[:2]}"), (we_mask, f"we-{season[:2]}")]:
+            mask = mask_season & day_mask & arr_valid
+            T = arr_temp[mask]
+            obs = arr_obs[mask]
 
-            meter_season = meter[
-                (meter["season"] == season) & (meter["observed"].notna())
-            ]
-            meter_season = meter_season[meter_season["day_of_week"].isin(day_num)]
-            meter_season = meter_season.sort_values(by=["temperature"])
-
-            T = meter_season["temperature"].values
-            obs = meter_season["observed"].values
-
-            if (len(T) < 3) or (len(obs) < 3):
+            if len(T) < 3 or len(obs) < 3:
                 mu = cov = a = b = phi = None
             else:
+                # Sort by temperature (replaces sort_values)
+                idx_sorted = np.argsort(T)
+                T = T[idx_sorted]
+                obs = obs[idx_sorted]
                 mu, cov, a, b, phi = robust_confidence_ellipse(
                     T, obs, var, outlier_std=3.6, N=3
                 )
-                # mu, cov, a, b, phi = confidence_ellipse(T, obs, std_sqr)
 
             cluster_ellipse[key] = {"mu": mu, "cov": cov, "a": a, "b": b, "phi": phi}
 
@@ -245,14 +299,16 @@ def ellipsoid_split_filter(meter, n_std=[1.4, 1.4]):
                 combo_str = "__".join(combo)
 
                 if combo_str not in ellipse_overlap:
-                    mu_A = cluster_ellipse[combo[0]]["mu"]
-                    cov_A = cluster_ellipse[combo[0]]["cov"]
-                    mu_B = cluster_ellipse[combo[1]]["mu"]
-                    cov_B = cluster_ellipse[combo[1]]["cov"]
+                    ea = cluster_ellipse[combo[0]]
+                    eb = cluster_ellipse[combo[1]]
+                    mu_A, cov_A = ea["mu"], ea["cov"]
+                    mu_B, cov_B = eb["mu"], eb["cov"]
 
                     if all([coef is not None for coef in [mu_A, mu_B, cov_A, cov_B]]):
                         ellipse_overlap[combo_str] = ellipsoid_intersection_test(
-                            mu_A, mu_B, cov_A, cov_B
+                            mu_A, mu_B, cov_A, cov_B,
+                            a_A=ea["a"], b_A=ea["b"],
+                            a_B=eb["a"], b_B=eb["b"],
                         )
                     else:
                         ellipse_overlap[combo_str] = False

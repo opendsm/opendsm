@@ -100,6 +100,7 @@ class OptimizationSettings(BaseSettings):
     
     initial_step: Optional[float] = CustomField(
         default=0.1,
+        gt=0,
         description="Initial step size for the optimization algorithm",
     )
 
