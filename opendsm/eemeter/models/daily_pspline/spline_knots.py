@@ -5,6 +5,7 @@ import numpy as np
 from scipy.interpolate import UnivariateSpline
 from scipy.integrate import cumulative_trapezoid
 
+from opendsm.common.stats.adaptive_loss import adaptive_weights
 
 
 def check_n_knots(n_knots):
@@ -12,6 +13,12 @@ def check_n_knots(n_knots):
         raise ValueError("n_knots must be an integer.")
     if n_knots < 0:
         raise ValueError("n_knots must be non-negative.")
+
+
+# Number of iterative-reweighting passes for the robust smoothing spline.
+# 3 passes are sufficient to suppress outlier-driven curvature artifacts
+# without adding meaningful latency (~1-2 ms total for typical data).
+_ROBUST_SPLINE_ITERATIONS = 3
 
 
 class Knots:
@@ -29,6 +36,7 @@ class Knots:
             lambda_smoothing=None,
             kappa_penalty=None,
             maxiter=None,
+            lightweight=False,
         ):
 
         self.spline_interp_count = spline_interp_count
@@ -41,10 +49,29 @@ class Knots:
         self._y_data = y
         self.weights = w
 
-        # Use UnivariateSpline instead of make_smoothing_spline (5-7x faster)
-        # Note: s parameter = len(x) * lam to match make_smoothing_spline behavior
-        self.spl = UnivariateSpline(x, y, w=w, s=len(x) * self.spline_lambda, k=3)
-        self.spl_x = np.linspace(x[0], x[-1], self.spline_interp_count)
+        if lightweight:
+            # Lightweight mode: skip smoothing spline entirely.
+            # Used when the Knots object is only needed for get_internal_knots
+            # with zone_knot_count=0 (TIDD uniform knots only — no Yeh placement).
+            self.spl_x = np.linspace(x[0], x[-1], spline_interp_count)
+        else:
+            # Fit a robust smoothing spline via iterative reweighting.
+            # The unconstrained UnivariateSpline can oscillate through noisy data,
+            # creating spurious curvature peaks that attract knots to noise rather
+            # than to the true elbows of the heating/cooling curve.  Reweighting
+            # with adaptive_weights (MAD-based) downweights outliers before
+            # curvature is extracted, producing a cleaner signal for Yeh placement.
+            s_param = len(x) * self.spline_lambda
+            robust_w = w.copy() if w is not None else np.ones(len(x), dtype=float)
+            spl = UnivariateSpline(x, y, w=robust_w, s=s_param, k=3)
+            for _ in range(_ROBUST_SPLINE_ITERATIONS):
+                resid = y - spl(x)
+                a_w, _, _ = adaptive_weights(resid, alpha="adaptive", C_algo="mad")
+                robust_w = robust_w * a_w
+                robust_w = np.clip(robust_w, 0.01, None)
+                spl = UnivariateSpline(x, y, w=robust_w, s=s_param, k=3)
+            self.spl = spl
+            self.spl_x = np.linspace(x[0], x[-1], spline_interp_count)
 
         # Store fit parameters for optimize_knots
         self.bspline_degree = bspline_degree
@@ -55,7 +82,7 @@ class Knots:
         # Cache derivative spline for _yeh_knot_placement (avoids reconstruction per call)
         p = int(min(3, bspline_degree)) if bspline_degree is not None else 3
         self._yeh_p = p
-        self._deriv_spl = self.spl.derivative(p) if p > 0 else None
+        self._deriv_spl = self.spl.derivative(p) if (self.spl is not None and p > 0) else None
 
         # Cache for get_internal_knots keyed on (bp, n_knots, n_min, n_knots_hdd, n_knots_cdd)
         self._knot_cache: dict = {}
@@ -204,6 +231,9 @@ class Knots:
         Ensures that HDD and CDD zones each have at least n_min data points,
         otherwise expands TIDD zone to include them.
 
+        If ``_refined_knots`` has been set (by constrained-curvature refinement),
+        returns that vector when the requested bp matches the refinement bp.
+
         Parameters
         ----------
         bp : array-like or None
@@ -224,6 +254,14 @@ class Knots:
         knots : ndarray
             Internal knot vector (without padding).
         """
+        # If constrained-curvature refinement has provided a knot vector and
+        # the requested bp matches, use it directly.
+        refined = getattr(self, '_refined_knots', None)
+        if refined is not None:
+            refined_bp = getattr(self, '_refined_bp', None)
+            if refined_bp is not None and np.allclose(bp, refined_bp, atol=1e-8):
+                return refined
+
         if n_knots_hdd is None:
             n_knots_hdd = n_knots
         if n_knots_cdd is None:
@@ -262,6 +300,23 @@ class Knots:
             cdd_knots = cdd_knots[cdd_knots > bp[1]]
 
         internal_knots = np.hstack([hdd_knots, tidd_knots, cdd_knots])
+
+        # Ensure the knot vector spans the data range and has at least 2
+        # distinct values.  BSpline requires unique(t[k:n+1]) >= 2.
+        # This can happen when bp is collapsed (no TIDD zone) and no
+        # HDD/CDD knots are requested — physically valid (direct heating-
+        # to-cooling transition) but needs data-bound anchors.
+        x_lo, x_hi = self._x_data[0], self._x_data[-1]
+        if len(internal_knots) == 0 or np.ptp(internal_knots) < 1e-8:
+            # Build from data bounds + bp, deduplicate with tolerance
+            candidates = np.sort(np.concatenate([[x_lo], internal_knots, [x_hi]]))
+            # Remove near-duplicates (within 1e-8)
+            mask = np.concatenate([[True], np.diff(candidates) > 1e-8])
+            internal_knots = candidates[mask]
+            # If still only 1 unique value, nudge to create a span
+            if len(internal_knots) < 2:
+                eps = max(abs(internal_knots[0]) * 1e-6, 1e-10)
+                internal_knots = np.array([internal_knots[0] - eps, internal_knots[0] + eps])
 
         self._knot_cache[cache_key] = internal_knots
         return internal_knots

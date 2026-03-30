@@ -94,6 +94,8 @@ class _BasePSpline:
 
         Adds ``bspline_degree`` repeated knots at each end (multiplicity k+1),
         so that exactly one basis function is non-zero at each boundary.
+        Ensures the padded vector has at least ``2*k + 2`` elements (the
+        minimum for ``BSpline.design_matrix``).
 
         See De Leeuw (2017) *Computing and Fitting Monotone Splines*.
 
@@ -305,7 +307,7 @@ class _BasePSpline:
         D1_zone: dict,
         kappa: float,
         maxiter: int,
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Run iterative monotonicity-constrained least-squares solve.
 
         Solves ``(A + κD1'VD1)α = BTy + κD1'Vδ`` iteratively until the
@@ -328,6 +330,10 @@ class _BasePSpline:
         -------
         coefs : ndarray
             Fitted spline coefficients.
+        V : ndarray
+            Converged active-set diagonal (1 where monotonicity constraint is
+            active, 0 elsewhere).  Used by callers for effective-degrees-of-freedom
+            computation and constrained-derivative breakpoint extraction.
         """
         D1 = self.D1
         D1T = self.D1T
@@ -382,7 +388,7 @@ class _BasePSpline:
                 "Max iteration reached. The results are not reliable.", MaxIterationWarning
             )
 
-        return coefs
+        return coefs, V
 
     def _fit(
         self,
@@ -390,7 +396,7 @@ class _BasePSpline:
         base_weights: Optional[np.ndarray],
         kappa: float,
         maxiter: int,
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Fit spline coefficients for the given breakpoints.
 
         Applies TIDD upweighting for observations inside ``bp``, then
@@ -411,6 +417,8 @@ class _BasePSpline:
         -------
         coefs : ndarray
             Fitted spline coefficients.
+        V : ndarray
+            Converged active-set diagonal from the monotonicity solve.
         """
         if bp[1] - bp[0] > 0:
             eff_w = self._tidd_weights(base_weights, bp, weight_factor=50)
@@ -549,8 +557,8 @@ class _BasePSpline:
             x, y, padded_knots, bspline_degree, weights,
             lambda_smoothing, bc_type, kappa_penalty,
         )
-        coefs = instance._fit(bp, weights, kappa_penalty, maxiter)
-        
+        coefs, _V = instance._fit(bp, weights, kappa_penalty, maxiter)
+
         return padded_knots, coefs
 
 
@@ -594,6 +602,122 @@ def _rescale_to_range(
     rescaled = new_min + scale * (values - old_min)
 
     return rescaled
+
+
+def _estimate_bp_from_segmented_regression(x, y, n_min=5, grid_size=50):
+    """Estimate breakpoints by scanning a 3-piece constrained linear model.
+
+    Fits the model: decreasing line (HDD) + constant (TIDD) + increasing
+    line (CDD) for each candidate (bp0, bp1) on a coarse grid, using
+    precomputed cumulative statistics for O(1) per evaluation.
+
+    This directly optimizes the functional form used by degree-1 P-splines
+    with ``knot_count_max=0``, giving a better initial estimate than the
+    smoothing-spline derivative walk.
+
+    Parameters
+    ----------
+    x : ndarray
+        Sorted independent variable (standardized temperatures).
+    y : ndarray
+        Dependent variable (standardized energy).
+    n_min : int
+        Minimum data points per zone.
+    grid_size : int
+        Number of candidate values per breakpoint dimension.
+
+    Returns
+    -------
+    bp : ndarray
+        Estimated breakpoints [lower, upper].
+    """
+    n = len(x)
+    if n < 3 * n_min:
+        return np.array([x[n // 3], x[2 * n // 3]])
+
+    # Precompute cumulative statistics for O(1) per-segment regression
+    cum_n = np.arange(1, n + 1, dtype=float)
+    cum_x = np.cumsum(x)
+    cum_y = np.cumsum(y)
+    cum_xx = np.cumsum(x * x)
+    cum_xy = np.cumsum(x * y)
+    cum_yy = np.cumsum(y * y)
+    total_x = cum_x[-1]
+    total_y = cum_y[-1]
+    total_xx = cum_xx[-1]
+    total_xy = cum_xy[-1]
+    total_yy = cum_yy[-1]
+
+    def _seg_sse(i_start, i_end, constrained_sign=None):
+        """SSE of a linear fit on x[i_start:i_end+1].
+
+        constrained_sign: None=unconstrained, -1=slope<=0, +1=slope>=0.
+        If constraint is violated, fits a constant (slope=0) instead.
+        """
+        if i_end < i_start:
+            return 0.0
+        nn = i_end - i_start + 1
+        if nn < 2:
+            return 0.0
+
+        # Cumulative sums for the segment [i_start, i_end]
+        if i_start == 0:
+            sx = cum_x[i_end]
+            sy = cum_y[i_end]
+            sxx = cum_xx[i_end]
+            sxy = cum_xy[i_end]
+            syy = cum_yy[i_end]
+        else:
+            sx = cum_x[i_end] - cum_x[i_start - 1]
+            sy = cum_y[i_end] - cum_y[i_start - 1]
+            sxx = cum_xx[i_end] - cum_xx[i_start - 1]
+            sxy = cum_xy[i_end] - cum_xy[i_start - 1]
+            syy = cum_yy[i_end] - cum_yy[i_start - 1]
+
+        Sxx = sxx - sx * sx / nn
+        Sxy = sxy - sx * sy / nn
+        Syy = syy - sy * sy / nn
+
+        if Sxx < 1e-12:
+            return max(0.0, Syy)
+
+        slope = Sxy / Sxx
+
+        # Check monotonicity constraint
+        if constrained_sign is not None:
+            if constrained_sign < 0 and slope > 0:
+                return max(0.0, Syy)  # constant fit
+            if constrained_sign > 0 and slope < 0:
+                return max(0.0, Syy)  # constant fit
+
+        return max(0.0, Syy - Sxy * Sxy / Sxx)
+
+    # Grid of candidate breakpoint indices
+    # Use data indices spaced across the range, ensuring n_min at boundaries
+    idx_candidates = np.linspace(n_min, n - n_min - 1, grid_size, dtype=int)
+    idx_candidates = np.unique(idx_candidates)
+
+    best_sse = np.inf
+    best_i = best_j = n // 3
+
+    for i in idx_candidates:
+        sse_hdd = _seg_sse(0, i - 1, constrained_sign=-1)
+        for j in idx_candidates:
+            if j <= i:
+                continue
+            if j - i < n_min:
+                continue
+
+            sse_tidd = _seg_sse(i, j - 1, constrained_sign=None)
+            sse_cdd = _seg_sse(j, n - 1, constrained_sign=+1)
+            total_sse = sse_hdd + sse_tidd + sse_cdd
+
+            if total_sse < best_sse:
+                best_sse = total_sse
+                best_i = i
+                best_j = j
+
+    return np.array([x[best_i], x[best_j]])
 
 
 def _estimate_bp_from_derivative(knots_obj, threshold_pct=0.10):
@@ -783,7 +907,13 @@ class DailyPSpline(BSpline):
         x_range = x_max - x_min
 
         N = len(x)
-        inner_maxiter = min(5, self.maxiter) if self.maxiter else 5
+        # Small segments (e.g. wd/we splits with ~130 points) have noisier
+        # objective surfaces — give the active-set solve more iterations so
+        # bp evaluations are more stable.
+        if N <= 150:
+            inner_maxiter = min(15, self.maxiter) if self.maxiter else 15
+        else:
+            inner_maxiter = min(5, self.maxiter) if self.maxiter else 5
         lasso_a = self.regularization_percent_lasso * self.regularization_alpha
         ridge_a = (1 - self.regularization_percent_lasso) * self.regularization_alpha
         x_bnds = np.array([x_min, x_max])
@@ -855,7 +985,7 @@ class DailyPSpline(BSpline):
         def objective(X_free, grad=[]):
             trial_bp = _X_to_bp(to_full(X_free))
 
-            coefs = cache._fit(trial_bp, weights, kappa, inner_maxiter)
+            coefs, _V = cache._fit(trial_bp, weights, kappa, inner_maxiter)
 
             resid = cache.B @ coefs - y
             sse = np.sum(resid ** 2)
@@ -867,14 +997,10 @@ class DailyPSpline(BSpline):
 
             return loss
 
-        # Scale NLopt budget with segment size: larger segments warrant more iterations,
-        # but the relationship is sub-linear (diminishing returns).  Floor at 30 so
-        # small segments still converge; cap at 100 to match the previous fixed budget.
-        
-        # TODO: improve bp optimization, could iterate back and forth
-        adaptive_budget = int(np.clip(N // 10, 30, 100))
-        # adaptive_budget = 1000
-        algorithm = "nlopt_sbplx"
+        if algorithm == "nlopt_direct":
+            adaptive_budget = int(np.clip(N // 10, 100, 400))
+        else:
+            adaptive_budget = int(np.clip(N // 10, 30, 100))
 
         opt_settings = OptimizationSettings(
             algorithm=algorithm,
@@ -927,11 +1053,15 @@ class DailyPSpline(BSpline):
     # ------------------------------------------------------------------
 
     def _zone_knot_scan(self, bp_std, hdd_max, cdd_max, candidate_fn):
-        """Two-pass greedy knot-count scan using BIC-like selection criteria.
+        """Exhaustive grid search over (n_hdd, n_cdd) knot counts.
 
-        Pass 1 scans HDD knot count (CDD fixed at max).
-        Pass 2 scans CDD knot count (HDD fixed at best from pass 1).
-        Each pass stops after two consecutive non-improving steps.
+        Evaluates all combinations of HDD and CDD knot counts and returns
+        the one with the best BIC-like selection criterion.  For typical
+        settings (max 8 per zone), this is at most 81 evaluations — each a
+        single linear solve on an m×m matrix where m ≈ 15-25.
+
+        This replaces the previous two-pass greedy scan which could miss
+        joint optima where both HDD and CDD counts need to change together.
 
         Parameters
         ----------
@@ -949,39 +1079,132 @@ class DailyPSpline(BSpline):
         psp : _BasePSpline
         coefs : ndarray
         """
-        psp = coefs = None
+        # Cap to keep grid manageable (9×9 = 81 evals max)
+        hdd_max = min(hdd_max, 8)
+        cdd_max = min(cdd_max, 8)
 
-        # Pass 1: scan HDD knot count, CDD fixed at max
-        best_hdd = hdd_max
         best_score = np.inf
-        n_worse = 0
-        for count in range(hdd_max, -1, -1):
-            score, cand_psp, cand_coefs = candidate_fn(bp_std, count, cdd_max)
-            if score < best_score:
-                best_score = score
-                best_hdd = count
-                psp, coefs = cand_psp, cand_coefs
-                n_worse = 0
-            else:
-                n_worse += 1
-                if n_worse >= 2:
-                    break
+        best_psp = best_coefs = None
 
-        # Pass 2: scan CDD knot count, HDD fixed at best from pass 1
-        best_score = np.inf
-        n_worse = 0
-        for count in range(cdd_max, -1, -1):
-            score, cand_psp, cand_coefs = candidate_fn(bp_std, best_hdd, count)
-            if score < best_score:
-                best_score = score
-                psp, coefs = cand_psp, cand_coefs
-                n_worse = 0
-            else:
-                n_worse += 1
-                if n_worse >= 2:
-                    break
+        for n_hdd in range(hdd_max + 1):
+            for n_cdd in range(cdd_max + 1):
+                score, cand_psp, cand_coefs = candidate_fn(bp_std, n_hdd, n_cdd)
+                if score < best_score:
+                    best_score = score
+                    best_psp, best_coefs = cand_psp, cand_coefs
 
-        return psp, coefs
+        return best_psp, best_coefs
+
+    @staticmethod
+    def _bp_from_constrained_derivative(psp, coefs, x_std):
+        """Extract breakpoints from the monotone-constrained fit's derivative.
+
+        The active-set solver forces ``D1 @ coefs ≈ 0`` in the TIDD zone.
+        Identifies the leftmost and rightmost zero-derivative knot spans to
+        recover the breakpoint region, then maps to continuous x-positions
+        via knot-span midpoints.
+
+        This provides a *coarse basin localization* — not a precise bp — to
+        warm-start the next iteration's local optimizer (Sbplx).  Resolution
+        is limited by knot spacing, but the signal is physically grounded:
+        it reflects the constrained fit's actual flat zone rather than an
+        unconstrained smoothing spline's derivative.
+
+        Parameters
+        ----------
+        psp : _BasePSpline
+            Fitted spline matrices.
+        coefs : ndarray
+            Converged spline coefficients.
+        x_std : ndarray
+            Standardized x data (sorted).
+
+        Returns
+        -------
+        bp_refined : ndarray or None
+            Refined breakpoints ``[lower, upper]`` in standardized space.
+            Returns ``None`` if the derivative structure is degenerate
+            (entirely flat or no flat region at all).
+        """
+        d1 = psp.D1 @ coefs
+        n_deriv = len(d1)
+        knots = psp.padded_knots
+        k = psp.k
+
+        # Scale threshold to derivative magnitude
+        d1_scale = np.max(np.abs(d1))
+        if d1_scale < 1e-12:
+            return None  # entirely flat — no bp to extract
+
+        tol = 1e-4 * d1_scale
+        is_flat = np.abs(d1) < tol
+
+        if not np.any(is_flat):
+            # No flat region — model is monotone throughout.
+            # Return collapsed bp at the minimum of the fitted curve.
+            y_eval = psp.B @ coefs
+            min_idx = np.argmin(y_eval)
+            mid = x_std[min_idx]
+            return np.array([mid, mid])
+
+        # Map derivative indices to knot-span midpoints (continuous positions)
+        span_left = knots[1:1 + n_deriv]
+        span_right = knots[k + 1:k + 1 + n_deriv]
+        span_mids = 0.5 * (span_left + span_right)
+
+        flat_indices = np.flatnonzero(is_flat)
+        bp_lower = span_mids[flat_indices[0]]
+        bp_upper = span_mids[flat_indices[-1]]
+
+        # Clamp to data range
+        bp_lower = np.clip(bp_lower, x_std[0], x_std[-1])
+        bp_upper = np.clip(bp_upper, bp_lower, x_std[-1])
+
+        return np.array([bp_lower, bp_upper])
+
+    @staticmethod
+    def _effective_df(psp, V, kappa, w_sq):
+        """Compute effective degrees of freedom: ``tr(H)``.
+
+        Uses the identity ``edf = tr((LHS)⁻¹ A)`` where both matrices are
+        m×m (number of basis functions), making this O(m³) — negligible for
+        typical m ≈ 15-25.
+
+        The LHS includes the converged monotonicity penalty ``κD1'VD1`` so
+        that constrained coefficients are correctly counted as having reduced
+        freedom.
+
+        Parameters
+        ----------
+        psp : _BasePSpline
+            Fitted spline matrices.
+        V : ndarray
+            Converged active-set diagonal from ``_fit_iterative``.
+        kappa : float
+            Monotonicity penalty weight.
+        w_sq : ndarray
+            Squared observation weights, shape ``(n,)``.
+
+        Returns
+        -------
+        edf : float
+            Effective degrees of freedom (trace of the hat matrix).
+        """
+        # Data Gram matrix (without penalties)
+        A = psp.B.T @ (psp.B * w_sq[:, np.newaxis])
+
+        # Full LHS including all penalties
+        mono_penalty = kappa * (psp.D1.T @ (psp.D1 * V.astype(float)[:, np.newaxis]))
+        LHS = A + psp._penalty_sum + psp._ridge + mono_penalty
+
+        # edf = tr(LHS⁻¹ @ A), both m×m
+        try:
+            LHS_inv_A = np.linalg.solve(LHS, A)
+        except np.linalg.LinAlgError:
+            # Singular LHS (e.g., very large kappa with many active constraints).
+            # Fall back to lstsq which handles rank-deficient systems.
+            LHS_inv_A, _, _, _ = np.linalg.lstsq(LHS, A, rcond=None)
+        return float(np.trace(LHS_inv_A))
 
     def _weighted_stats(self, y):
         """Compute w², sum(w²), and weighted total sum of squares for self.weights."""
@@ -992,23 +1215,143 @@ class DailyPSpline(BSpline):
 
         return w_sq, sum_w_sq, wtss
 
-    def _score(self, wssr, wtss, N, n_base):
-        """Compute zone selection criterion using configured settings."""
+    def _score(self, wssr, wtss, N, edf):
+        """Compute zone selection criterion using configured settings.
+
+        Parameters
+        ----------
+        wssr : float
+            Weighted sum of squared residuals.
+        wtss : float
+            Weighted total sum of squares.
+        N : int
+            Number of observations.
+        edf : float
+            Effective degrees of freedom (from ``_effective_df``).
+        """
         return selection_criteria(
-            wssr, 
+            wssr,
             wtss,
-            N, 
-            n_base,
-            self.zone_criteria, 
-            self.zone_penalty_multiplier, 
+            N,
+            edf,
+            self.zone_criteria,
+            self.zone_penalty_multiplier,
             self.zone_penalty_power,
         )
+
+    def _knots_from_constrained_curvature(
+        self,
+        psp,
+        coefs,
+        bp_std,
+        x_std,
+        n_knots_hdd,
+        n_knots_cdd,
+        n_knots_tidd=10,
+    ):
+        """Place knots using curvature of a previously fitted constrained P-spline.
+
+        Uses the same equi-curvature integral as Yeh (2020), but evaluated on
+        the monotone-constrained spline rather than an unconstrained smoother.
+        For HDD/CDD zones, knots concentrate where the constrained curve bends
+        most (the elbows).  The TIDD zone gets uniform spacing since the curve
+        is flat there by construction.
+
+        Parameters
+        ----------
+        psp : _BasePSpline
+            Previously fitted spline (provides knot vector and degree).
+        coefs : ndarray
+            Fitted spline coefficients.
+        bp_std : ndarray
+            Current breakpoints in standardized space.
+        x_std : ndarray
+            Standardized x data (sorted).
+        n_knots_hdd, n_knots_cdd : int
+            Target knot counts per zone.
+        n_knots_tidd : int
+            Number of uniform knots in the TIDD zone.
+
+        Returns
+        -------
+        internal_knots : ndarray
+            Full internal knot vector (without boundary padding).
+        """
+        spl = BSpline(psp.padded_knots, coefs, psp.k)
+        x_lo, x_hi = x_std[0], x_std[-1]
+        n_min = self.n_min
+
+        def _curvature_knots(x_range_lo, x_range_hi, n_knots):
+            """Place n_knots via equi-curvature integral on the given range."""
+            if n_knots <= 0:
+                return np.array([])
+
+            n_eval = max(100, 20 * n_knots)
+            xs = np.linspace(x_range_lo, x_range_hi, n_eval)
+
+            # Use second derivative of the constrained spline as curvature proxy.
+            # For degree < 2 the second derivative is zero; fall back to first.
+            deriv_order = min(2, psp.k)
+            if deriv_order == 0:
+                curv = np.abs(spl(xs))
+            else:
+                d = spl.derivative(deriv_order)
+                curv = np.abs(d(xs))
+
+            # Avoid zero-curvature regions collapsing the integral
+            curv_max = np.max(curv)
+            if curv_max > 0:
+                curv = np.maximum(curv, 1e-10 * curv_max)
+            else:
+                curv = np.ones_like(curv)
+
+            # Equi-curvature integral (Yeh 2020)
+            dx = xs[1] - xs[0]
+            cum = np.empty(len(curv))
+            cum[0] = 0.0
+            np.cumsum(0.5 * dx * (curv[:-1] + curv[1:]), out=cum[1:])
+
+            targets = np.linspace(0, cum[-1], n_knots + 2)
+            return np.interp(targets, cum, xs)
+
+        # HDD zone
+        hdd_knots = np.array([])
+        n_hdd_data = int(x_std.searchsorted(bp_std[0], side='left'))
+        if n_hdd_data >= n_min and n_knots_hdd > 0:
+            n_knots_hdd = min(n_knots_hdd, n_hdd_data // n_min)
+            hdd_knots = _curvature_knots(x_lo, bp_std[0], n_knots_hdd)
+            hdd_knots = hdd_knots[hdd_knots < bp_std[0]]
+
+        # TIDD zone — uniform, since curve is flat by construction
+        if np.isclose(bp_std[0], bp_std[1]):
+            tidd_knots = np.array([bp_std[0]])
+        else:
+            tidd_knots = np.linspace(bp_std[0], bp_std[1], n_knots_tidd + 2)
+
+        # CDD zone
+        cdd_knots = np.array([])
+        n_cdd_data = len(x_std) - int(x_std.searchsorted(bp_std[1], side='right'))
+        if n_cdd_data >= n_min and n_knots_cdd > 0:
+            n_knots_cdd = min(n_knots_cdd, n_cdd_data // n_min)
+            cdd_knots = _curvature_knots(bp_std[1], x_hi, n_knots_cdd)
+            cdd_knots = cdd_knots[cdd_knots > bp_std[1]]
+
+        return np.hstack([hdd_knots, tidd_knots, cdd_knots])
 
     def _fit_degree(self, x_std, y_std, bp_std, bp_provided, zone_knot_count, bic_maxiter, N, bp_opt_algo, degree):
         """Adaptive fitting loop for one bspline degree.
 
         Initialises ``self.knots`` for *degree*, then iterates: optimise bp →
         BIC knot scan → adaptive weight update, until convergence.
+
+        After the first iteration, two refinements are applied:
+        1. **bp warm-start**: The constrained fit's derivative reveals the
+           actual flat zone; this warm-starts the next bp optimisation.
+        2. **Curvature-based knot refinement** (degree ≥ 2): Knots are
+           re-placed using the constrained spline's curvature rather than
+           the unconstrained smoothing spline's, giving self-consistent
+           placement.
+
         Mutates ``self.weights`` and ``self.knots``.
 
         Parameters
@@ -1051,9 +1394,10 @@ class DailyPSpline(BSpline):
         _B_cache: dict = {}
         prior_wrmse = np.inf
         prior_bp = None
-        psp = coefs = None
+        psp = coefs = V_final = None
+        _knots_refined = False
 
-        for _ in range(self.adaptive_iterations):
+        for iter_idx in range(self.adaptive_iterations):
             if not bp_provided and (prior_bp is None or not (
                 self.freeze_bp_on_convergence
                 and np.allclose(bp_std, prior_bp, atol=1e-5)
@@ -1068,8 +1412,9 @@ class DailyPSpline(BSpline):
             prior_bp = bp_std
 
             # Hoist weight-dependent constants so _candidate doesn't recompute per call
-            # (~20 candidates × up to 10 outer iterations would be expensive).
+            # (~81 candidates × up to 10 outer iterations would be expensive).
             _w_sq, _sum_w_sq, _wtss = self._weighted_stats(y_std)
+            _kappa = self.kappa_penalty
 
             def _candidate(bp, n_hdd, n_cdd, _w_sq=_w_sq, _wtss=_wtss):
                 knots = self.knots.get_internal_knots(
@@ -1084,14 +1429,15 @@ class DailyPSpline(BSpline):
                     _B_cache[padded_key] = B
                 cand_psp = _BasePSpline(
                     x_std, y_std, padded, degree,
-                    self.weights, self.lambda_smoothing, self.bc_type, self.kappa_penalty,
+                    self.weights, self.lambda_smoothing, self.bc_type, _kappa,
                     B=B,
                 )
-                cand_coefs = cand_psp._fit(bp, self.weights, self.kappa_penalty, bic_maxiter)
+                cand_coefs, cand_V = cand_psp._fit(bp, self.weights, _kappa, bic_maxiter)
                 resid = cand_psp.B @ cand_coefs - y_std
                 wssr = float(np.dot(_w_sq, resid ** 2))
-                score = self._score(wssr, _wtss, N, cand_psp.n_base)
-                return score, cand_psp, cand_coefs
+                edf = DailyPSpline._effective_df(cand_psp, cand_V, _kappa, _w_sq)
+                score = self._score(wssr, _wtss, N, edf)
+                return score, cand_psp, cand_coefs, cand_V
 
             hdd_max = (
                 min(zone_knot_count, int(x_std.searchsorted(bp_std[0], side='left')) // self.n_min)
@@ -1101,10 +1447,23 @@ class DailyPSpline(BSpline):
                 min(zone_knot_count, (N - int(x_std.searchsorted(bp_std[1], side='right'))) // self.n_min)
                 if self.allow_cooling_zone else 0
             )
+
+            # Adapt _zone_knot_scan's candidate_fn to unpack the 4-tuple
+            def _candidate_3tuple(bp, n_hdd, n_cdd, _w_sq=_w_sq, _wtss=_wtss):
+                score, cand_psp, cand_coefs, cand_V = _candidate(bp, n_hdd, n_cdd, _w_sq, _wtss)
+                # Stash V on the psp so we can retrieve it after the scan
+                cand_psp._last_V = cand_V
+                return score, cand_psp, cand_coefs
+
             if self.zone_knot_scan:
-                psp, coefs = self._zone_knot_scan(bp_std, hdd_max, cdd_max, _candidate)
+                psp, coefs = self._zone_knot_scan(bp_std, hdd_max, cdd_max, _candidate_3tuple)
             else:
-                _, psp, coefs = _candidate(bp_std, hdd_max, cdd_max)
+                _, psp, coefs, _ = _candidate(bp_std, hdd_max, cdd_max)
+
+            V_final = getattr(psp, '_last_V', None)
+            if V_final is None:
+                # Fallback: re-derive V from a full solve (only happens if zone_knot_scan=False)
+                coefs, V_final = psp._fit(bp_std, self.weights, _kappa, bic_maxiter)
 
             residuals = (psp.B @ coefs - y_std).reshape(-1)
             wrmse = np.sqrt(np.dot(_w_sq, residuals ** 2) / _sum_w_sq)
@@ -1112,6 +1471,33 @@ class DailyPSpline(BSpline):
             if abs(wrmse - prior_wrmse) <= 1e-3 * prior_wrmse:
                 break
             prior_wrmse = wrmse
+
+            # --- Refinements after first converged iteration ---
+
+            # (a) Warm-start bp from the constrained fit's derivative
+            if not bp_provided:
+                bp_candidate = DailyPSpline._bp_from_constrained_derivative(psp, coefs, x_std)
+                if bp_candidate is not None:
+                    bp_std = bp_candidate
+
+            # (b) Curvature-based knot refinement from constrained fit (degree >= 2 only).
+            #     Runs once: re-places knots using the constrained spline's curvature
+            #     instead of the unconstrained smoothing spline's.
+            if not _knots_refined and degree >= 2 and iter_idx == 0:
+                refined_knot_vector = self._knots_from_constrained_curvature(
+                    psp, coefs, bp_std, x_std,
+                    n_knots_hdd=hdd_max, n_knots_cdd=cdd_max,
+                    n_knots_tidd=zone_knot_count,
+                )
+                # Replace the Knots object's cache so subsequent iterations use
+                # the refined positions.  We create a minimal Knots with the
+                # same robust smoothing spline but override get_internal_knots
+                # to return the refined vector for the current bp.
+                self.knots._knot_cache.clear()
+                self.knots._refined_knots = refined_knot_vector
+                self.knots._refined_bp = bp_std.copy()
+                _B_cache.clear()  # padded knots will change
+                _knots_refined = True
 
             a_weights, _, weight_alpha = adaptive_weights(residuals, alpha="adaptive", C_algo="mad")
             self.weights_alpha.append(weight_alpha)
@@ -1121,7 +1507,7 @@ class DailyPSpline(BSpline):
             self.weights = (self.weights * a_weights) if self.weights is not None else a_weights
             self.weights = _rescale_to_range(self.weights, new_min=1.0, new_max=100.0)
 
-        return psp, coefs, bp_std
+        return psp, coefs, bp_std, V_final
 
     def fit(self, x, y, bp=None, weights=None, bspline_degree=None) -> "DailyPSpline":
         """Fit the P-spline to data with zone-specific monotonicity constraints.
@@ -1175,7 +1561,13 @@ class DailyPSpline(BSpline):
         x_std = (self.x - self.x_mean) / self.x_std
         y_std = (self.y - self.y_mean) / self.y_std
 
-        # Initial Knots used only for the bp derivative estimate; rebuilt per-degree inside _fit_degree
+        # Initial bp estimate.  When zone_knot_count == 0 (no interior knots),
+        # use a fast segmented regression scan that directly fits the 3-piece
+        # model form, skipping the expensive Knots/UnivariateSpline construction.
+        # For zone_knot_count > 0, build the Knots object (needed for curvature-
+        # based knot placement later) and use the derivative-based estimate.
+        # Initial Knots used for bp derivative estimate; rebuilt per-degree
+        # inside _fit_degree (skipped when zone_knot_count == 0).
         self.knots = Knots(
             x_std, y_std, w=self.weights,
             spline_interp_count=1000, spline_lambda=10, n_min=self.n_min,
@@ -1197,6 +1589,7 @@ class DailyPSpline(BSpline):
         # locally with nlopt_sbplx using the prior degree's converged bp as warm-start.
         # The degree with the best BIC score is selected; degree 0 is excluded unless
         # it is the explicit target (fit(bspline_degree=0) or self.bspline_degree == 0).
+        #
         target_degree = bspline_degree if bspline_degree is not None else self.bspline_degree
         degree_sequence = [0, target_degree] if target_degree > 0 else [0]
 
@@ -1211,16 +1604,17 @@ class DailyPSpline(BSpline):
             self.weights = base_weights.copy()
 
             deg_zone_knot_count = 20 if current_degree == 0 else zone_knot_count
-            psp, coefs, bp_std = self._fit_degree(
+            psp, coefs, bp_std, V_final = self._fit_degree(
                 x_std, y_std, bp_std, bp_provided,
                 deg_zone_knot_count, bic_maxiter, N,
                 bp_opt_algo, current_degree,
             )
 
-            # BIC score for this degree on final adaptive weights
+            # BIC score for this degree on final adaptive weights, using edf
             w_sq, _, wtss = self._weighted_stats(y_std)
             wssr = float(np.dot(w_sq, (psp.B @ coefs - y_std).reshape(-1) ** 2))
-            score = self._score(wssr, wtss, N, psp.n_base)
+            edf = DailyPSpline._effective_df(psp, V_final, self.kappa_penalty, w_sq)
+            score = self._score(wssr, wtss, N, edf)
 
             if (current_degree > 0 or target_degree == 0) and score < best_score:
                 best_score = score
@@ -1236,6 +1630,10 @@ class DailyPSpline(BSpline):
         super().__init__(t=best_psp.padded_knots, c=best_coefs, k=best_psp.k, extrapolate=True)
         self.bp = best_bp_std * self.x_std + self.x_mean
         self.fit_bnds = np.array([self.x[0], self.x[-1]])
+
+        # Store effective degrees of freedom for use in split selection (model.py)
+        self.edf = edf
+
         self.training_metrics = BaselineMetrics(
             df=pd.DataFrame({'observed': self.y, 'predicted': self.predict(self.x)}),
             num_model_params=best_psp.n_base - best_psp.k + 1,

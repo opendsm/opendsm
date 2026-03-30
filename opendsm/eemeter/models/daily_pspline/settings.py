@@ -35,6 +35,31 @@ class BcType(str, Enum):
     CLAMPED = "clamped"
 
 
+class PSpline_Split_Selection_Definition(Split_Selection_Definition):
+    """Split-selection settings with defaults tuned for the P-spline model.
+
+    The P-spline uses ``len(parts)`` (number of structural components) as
+    the complexity term in split selection, unlike the DailyModel which
+    penalizes total parameter count.  These defaults were optimized via
+    grid search on 50 meters × 3 folds to maximize out-of-sample RMSE
+    improvement vs the DailyModel baseline.
+    """
+
+    penalty_multiplier: float = CustomField(
+        default=0.40,
+        ge=0,
+        developer=True,
+        description="Penalty multiplier for season/weekday-weekend split selection",
+    )
+
+    penalty_power: float = CustomField(
+        default=1.50,
+        ge=1,
+        developer=True,
+        description="Penalty power for season/weekday-weekend split selection",
+    )
+
+
 class Zone_Settings(BaseSettings):
     """Zone-specific configuration for DailyPSpline fitting."""
 
@@ -71,25 +96,50 @@ class Zone_Settings(BaseSettings):
     )
 
     penalty_multiplier: float = CustomField(
-        default=0.24,
+        default=0.31,
         gt=0,
         developer=True,
-        description="Penalty multiplier for split selection criteria",
+        description="Penalty multiplier for zone knot-count selection criteria",
     )
 
     penalty_power: float = CustomField(
-        default=2.061,
+        default=1.75,
         gt=0,
         developer=True,
-        description="What power should the penalty of the selection criteria be raised to",
+        description="What power should the penalty of the zone knot-count selection criteria be raised to",
     )
+
+
+# Per-degree default overrides.  Applied automatically based on bspline_degree
+# unless the user explicitly sets the field.  Optimized via grid search on
+# 50 meters × 3 folds against DailyModel baseline.
+_DEGREE_DEFAULTS: dict[int, dict] = {
+    0: {
+        "regularization_alpha": 0.01,
+        "split_selection": {"penalty_multiplier": 0.24, "penalty_power": 2.061},
+        "zone": {"penalty_multiplier": 0.24, "penalty_power": 2.061},
+    },
+    1: {
+        "regularization_alpha": 0.01,
+        "split_selection": {"penalty_multiplier": 0.24, "penalty_power": 2.061},
+        "zone": {"penalty_multiplier": 0.24, "penalty_power": 2.061},
+    },
+    # Degree 2 inherits from the class-level defaults (degree 3 values).
+    3: {
+        "regularization_alpha": 0.0,
+        "split_selection": {"penalty_multiplier": 0.40, "penalty_power": 1.50},
+        "zone": {"penalty_multiplier": 0.31, "penalty_power": 1.75},
+    },
+}
 
 
 class DailyPSplineSettings(BaseSettings):
     """Settings for the DailyPSplineModel.
 
-    Includes both P-spline hyperparameters (passed directly to DailyPSpline)
-    and the season/weekday-weekend split-selection settings shared with DailyModel.
+    Per-degree defaults are applied automatically based on ``bspline_degree``.
+    Any field explicitly set by the user takes precedence over the per-degree
+    default.  Degrees not listed in ``_DEGREE_DEFAULTS`` use the class-level
+    defaults (which match degree 3).
 
     Attributes:
         developer_mode: Unlocks developer-only settings.
@@ -179,7 +229,7 @@ class DailyPSplineSettings(BaseSettings):
     )
 
     regularization_alpha: float = CustomField(
-        default=0.01,
+        default=0.0,
         ge=0,
         developer=True,
         description="Strength of breakpoint regularization; 0 disables regularization",
@@ -207,8 +257,8 @@ class DailyPSplineSettings(BaseSettings):
     # Split-selection settings  (shared with DailyModel)
     # ------------------------------------------------------------------
 
-    split_selection: Split_Selection_Definition = CustomField(
-        default_factory=Split_Selection_Definition,
+    split_selection: PSpline_Split_Selection_Definition = CustomField(
+        default_factory=PSpline_Split_Selection_Definition,
         developer=True,
         description="Season / weekday-weekend split-selection sub-settings",
     )
@@ -250,6 +300,35 @@ class DailyPSplineSettings(BaseSettings):
     # ------------------------------------------------------------------
     # Validators
     # ------------------------------------------------------------------
+
+    @pydantic.model_validator(mode="after")
+    def _apply_degree_defaults(self) -> "DailyPSplineSettings":
+        """Apply per-degree default overrides for fields the user didn't set.
+
+        Checks ``_DEGREE_DEFAULTS`` for the current ``bspline_degree``.
+        For each override, applies it only if the user did not explicitly
+        provide that field (determined via ``model_fields_set``).
+        """
+        degree_overrides = _DEGREE_DEFAULTS.get(self.bspline_degree)
+        if degree_overrides is None:
+            return self
+
+        user_set = self.model_fields_set
+
+        for field_name, value in degree_overrides.items():
+            if isinstance(value, dict):
+                # Nested model (zone, split_selection): apply sub-field overrides
+                # only for sub-fields the user didn't explicitly set.
+                nested_obj = getattr(self, field_name)
+                nested_set = nested_obj.model_fields_set if field_name in user_set else set()
+                for sub_field, sub_value in value.items():
+                    if sub_field not in nested_set:
+                        object.__setattr__(nested_obj, sub_field, sub_value)
+            else:
+                if field_name not in user_set:
+                    object.__setattr__(self, field_name, value)
+
+        return self
 
     @pydantic.model_validator(mode="after")
     def _check_developer_mode(self) -> "DailyPSplineSettings":

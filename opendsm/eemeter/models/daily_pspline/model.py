@@ -503,13 +503,20 @@ class DailyPSplineModel:
                 float(np.sum((self.fit_components[c].y - np.mean(self.fit_components[c].y)) ** 2))
                 for c in parts
             )
+            # Split selection penalizes the number of structural components
+            # (segments), not the total model complexity.  This matches the
+            # DailyModel's approach: the question here is "should I fit
+            # separate summer/winter curves?" — a structural choice penalized
+            # by len(parts).  Effective degrees of freedom (edf) is used
+            # separately inside the zone knot-count scan where the question
+            # is "how flexible should each curve be?".
             sc = selection_criteria(
-                wRMSE / wRMSE_base, 
-                TSS, 
-                N, 
+                wRMSE / wRMSE_base,
+                TSS,
+                N,
                 len(parts),
-                ss.criteria, 
-                ss.penalty_multiplier, 
+                ss.criteria,
+                ss.penalty_multiplier,
                 ss.penalty_power,
             )
             if self.verbose:
