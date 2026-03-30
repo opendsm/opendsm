@@ -87,6 +87,14 @@ class Knots:
         # Cache for get_internal_knots keyed on (bp, n_knots, n_min, n_knots_hdd, n_knots_cdd)
         self._knot_cache: dict = {}
 
+        # Zone-level Yeh placement caches.  HDD placement depends only on
+        # (bp[0], n_knots_hdd) and CDD on (bp[1], n_knots_cdd) — they're
+        # independent of each other.  During a BIC scan (bp fixed, varying
+        # n_hdd × n_cdd), this avoids redundant Yeh calls: 9+9=18 placements
+        # instead of 81×2=162 for an 8×8 grid.
+        self._hdd_yeh_cache: dict = {}
+        self._cdd_yeh_cache: dict = {}
+
 
     def _yeh_knot_placement_og(self, n_knots, spl_x=None):
         """Fast Automatic Knot Placement Method for Accurate B-spline Curve Fitting
@@ -272,17 +280,23 @@ class Knots:
         if cached is not None:
             return cached
 
-        n_refinement_pts = max(50, 20 * max(n_knots_hdd, n_knots_cdd, n_knots))
         n_hdd_points = np.sum(self._x_data < bp[0])
         n_cdd_points = np.sum(self._x_data > bp[1])
 
-        # HDD zone knots
+        # HDD zone knots — cached by (bp[0], effective n_knots_hdd)
         hdd_knots = np.array([])
         if n_hdd_points >= n_min:
             n_knots_hdd = min(n_knots_hdd, n_hdd_points // n_min)
-            hdd_spl_x = np.linspace(self._x_data[0], bp[0], n_refinement_pts)
-            hdd_knots = self._yeh_knot_placement(n_knots_hdd, spl_x=hdd_spl_x)
-            hdd_knots = hdd_knots[hdd_knots < bp[0]]
+            hdd_cache_key = (round(bp[0], 10), n_knots_hdd)
+            cached_hdd = self._hdd_yeh_cache.get(hdd_cache_key)
+            if cached_hdd is not None:
+                hdd_knots = cached_hdd
+            else:
+                n_refinement_pts = max(50, 20 * n_knots_hdd)
+                hdd_spl_x = np.linspace(self._x_data[0], bp[0], n_refinement_pts)
+                hdd_knots = self._yeh_knot_placement(n_knots_hdd, spl_x=hdd_spl_x)
+                hdd_knots = hdd_knots[hdd_knots < bp[0]]
+                self._hdd_yeh_cache[hdd_cache_key] = hdd_knots
 
         # TIDD zone knots (uniform spacing; need interior knots so derivative
         # positions fall inside the zone for monotonicity enforcement)
@@ -291,13 +305,20 @@ class Knots:
         else:
             tidd_knots = np.linspace(bp[0], bp[1], n_knots + 2)
 
-        # CDD zone knots
+        # CDD zone knots — cached by (bp[1], effective n_knots_cdd)
         cdd_knots = np.array([])
         if n_cdd_points >= n_min:
             n_knots_cdd = min(n_knots_cdd, n_cdd_points // n_min)
-            cdd_spl_x = np.linspace(bp[1], self._x_data[-1], n_refinement_pts)
-            cdd_knots = self._yeh_knot_placement(n_knots_cdd, spl_x=cdd_spl_x)
-            cdd_knots = cdd_knots[cdd_knots > bp[1]]
+            cdd_cache_key = (round(bp[1], 10), n_knots_cdd)
+            cached_cdd = self._cdd_yeh_cache.get(cdd_cache_key)
+            if cached_cdd is not None:
+                cdd_knots = cached_cdd
+            else:
+                n_refinement_pts = max(50, 20 * n_knots_cdd)
+                cdd_spl_x = np.linspace(bp[1], self._x_data[-1], n_refinement_pts)
+                cdd_knots = self._yeh_knot_placement(n_knots_cdd, spl_x=cdd_spl_x)
+                cdd_knots = cdd_knots[cdd_knots > bp[1]]
+                self._cdd_yeh_cache[cdd_cache_key] = cdd_knots
 
         internal_knots = np.hstack([hdd_knots, tidd_knots, cdd_knots])
 

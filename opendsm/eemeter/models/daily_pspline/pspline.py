@@ -313,6 +313,11 @@ class _BasePSpline:
         Solves ``(A + κD1'VD1)α = BTy + κD1'Vδ`` iteratively until the
         active-set matrix V converges or *maxiter* is reached.
 
+        The first iteration is unrolled as a cheap unconstrained solve (V=0,
+        no penalty matrix construction needed).  If the unconstrained solution
+        already satisfies all monotonicity constraints, returns immediately
+        without entering the iterative loop.
+
         Parameters
         ----------
         A : ndarray
@@ -354,7 +359,26 @@ class _BasePSpline:
         has_tidd = len(tidd_idx) > 0
         has_cdd = len(cdd_idx) > 0
 
-        for i in range(maxiter):
+        # --- Iteration 0: unconstrained (V=0, skip penalty construction) ---
+        try:
+            coefs = np.linalg.solve(A, BTy)
+        except np.linalg.LinAlgError:
+            coefs, _, _, _ = np.linalg.lstsq(A, BTy, rcond=None)
+
+        deriv = D1 @ coefs
+
+        if has_hdd:
+            V[hdd_idx] = deriv[hdd_idx] > delta[hdd_idx]
+        if has_tidd:
+            V[tidd_idx] = deriv[tidd_idx] != delta[tidd_idx]
+        if has_cdd:
+            V[cdd_idx] = deriv[cdd_idx] < delta[cdd_idx]
+
+        if np.sum(V) == 0:
+            return coefs, V  # unconstrained solution satisfies all constraints
+
+        # --- Iterations 1+: penalized solve with preallocated buffers ---
+        for i in range(1, maxiter):
             np.multiply(kappa, V, out=kappa_V_buf)
 
             np.multiply(kappa_V_buf[:, np.newaxis], D1, out=D1_weighted_buf)
@@ -1053,15 +1077,20 @@ class DailyPSpline(BSpline):
     # ------------------------------------------------------------------
 
     def _zone_knot_scan(self, bp_std, hdd_max, cdd_max, candidate_fn):
-        """Exhaustive grid search over (n_hdd, n_cdd) knot counts.
+        """Two-axis grid search over (n_hdd, n_cdd) knot counts.
 
-        Evaluates all combinations of HDD and CDD knot counts and returns
-        the one with the best BIC-like selection criterion.  For typical
-        settings (max 8 per zone), this is at most 81 evaluations — each a
-        single linear solve on an m×m matrix where m ≈ 15-25.
+        Exploits the near-independence of HDD and CDD zones (they fit
+        different data segments) to search each axis separately:
 
-        This replaces the previous two-pass greedy scan which could miss
-        joint optima where both HDD and CDD counts need to change together.
+        1. Scan HDD count 0→hdd_max with CDD fixed at cdd_max → best_hdd
+        2. Scan CDD count 0→cdd_max with HDD fixed at best_hdd → best_cdd
+        3. Verify: re-scan HDD with CDD=best_cdd — if unchanged, done;
+           otherwise repeat once more.
+
+        Typical evaluations: hdd_max + cdd_max + hdd_max ≈ 15-25 vs
+        hdd_max × cdd_max ≈ 20-80 for an exhaustive grid.  Gives the same
+        result when the axes are independent (which they nearly are — the
+        only coupling is the shared BIC penalty denominator).
 
         Parameters
         ----------
@@ -1079,19 +1108,40 @@ class DailyPSpline(BSpline):
         psp : _BasePSpline
         coefs : ndarray
         """
-        # Cap to keep grid manageable (9×9 = 81 evals max)
         hdd_max = min(hdd_max, 8)
         cdd_max = min(cdd_max, 8)
 
         best_score = np.inf
         best_psp = best_coefs = None
 
-        for n_hdd in range(hdd_max + 1):
-            for n_cdd in range(cdd_max + 1):
-                score, cand_psp, cand_coefs = candidate_fn(bp_std, n_hdd, n_cdd)
+        def _scan_axis(fixed_axis, fixed_val, scan_max):
+            """Scan one axis, return best count and its (score, psp, coefs)."""
+            nonlocal best_score, best_psp, best_coefs
+            best_count = 0
+            for count in range(scan_max + 1):
+                if fixed_axis == "cdd":
+                    score, psp, coefs = candidate_fn(bp_std, count, fixed_val)
+                else:
+                    score, psp, coefs = candidate_fn(bp_std, fixed_val, count)
                 if score < best_score:
                     best_score = score
-                    best_psp, best_coefs = cand_psp, cand_coefs
+                    best_psp, best_coefs = psp, coefs
+                    best_count = count
+            return best_count
+
+        # Pass 1: scan HDD with CDD at max
+        best_hdd = _scan_axis("cdd", cdd_max, hdd_max)
+
+        # Pass 2: scan CDD with HDD at best
+        best_cdd = _scan_axis("hdd", best_hdd, cdd_max)
+
+        # Pass 3: verify HDD hasn't changed given best CDD
+        prev_hdd = best_hdd
+        best_hdd = _scan_axis("cdd", best_cdd, hdd_max)
+
+        if best_hdd != prev_hdd:
+            # Coupling mattered — re-scan CDD once more
+            best_cdd = _scan_axis("hdd", best_hdd, cdd_max)
 
         return best_psp, best_coefs
 
