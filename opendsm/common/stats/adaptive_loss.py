@@ -23,7 +23,7 @@ from opendsm.common.stats.outliers import (
     remove_outliers,
     _IQR_outlier,
 )
-from opendsm.common.stats.basic import _median_absolute_deviation
+from opendsm.common.stats.basic import _median_absolute_deviation, _weighted_quantile
 from opendsm.common.utils import OoM_numba
 
 # Loss function constants
@@ -343,18 +343,20 @@ def generalized_loss_weights(
     x_sq = x**2
     w = np.ones(len(x), dtype=dtype)
 
+    abs_x = np.abs(x)
+
     if alpha == 2.0:
         # L2 loss: all weights are 1.0
         pass
     elif alpha == 0.0:
         # Charbonnier loss
-        w = np.where(x > 0, 1.0 / (0.5 * x_sq + 1.0), 1.0)
+        w = np.where(abs_x > 0, 1.0 / (0.5 * x_sq + 1.0), 1.0)
     elif alpha <= LOSS_ALPHA_MIN:
         # Welsch/Leclerc loss
-        w = np.where(x > 0, np.exp(-0.5 * x_sq), 1.0)
+        w = np.where(abs_x > 0, np.exp(-0.5 * x_sq), 1.0)
     else:
         # Generalized loss
-        w = np.where(x > 0, (x_sq / np.abs(alpha - 2) + 1) ** (0.5 * alpha - 1), 1.0)
+        w = np.where(abs_x > 0, (x_sq / np.abs(alpha - 2) + 1) ** (0.5 * alpha - 1), 1.0)
 
     return w * (1.0 - min_weight) + min_weight
 
@@ -455,6 +457,7 @@ def adaptive_loss_fcn(
     scale: float = 1.0,
     alpha: Union[str, float] = "adaptive",
     replace_nonfinite: bool = True,
+    obs_weights: Optional[np.ndarray] = None,
 ) -> Tuple[float, float]:
     """Calculate adaptive loss function and optimal alpha parameter.
 
@@ -467,6 +470,10 @@ def adaptive_loss_fcn(
         scale: Scale parameter for normalization
         alpha: Shape parameter ('adaptive' for optimization, or fixed value)
         replace_nonfinite: Replace non-finite values with max finite value
+        obs_weights: Optional per-observation weights for the loss sum.
+            When provided, the loss becomes sum(obs_weights * penalized_loss)
+            instead of sum(penalized_loss).  Used by kernel_adaptive_weights
+            to localize alpha estimation.
 
     Returns:
         Tuple of (total loss value, alpha parameter used)
@@ -480,7 +487,10 @@ def adaptive_loss_fcn(
 
     def _loss_for_alpha(alpha_val: float) -> float:
         """Compute total penalized loss for given alpha."""
-        return penalized_loss_fcn(x, alpha=alpha_val, use_penalty=True).sum()
+        loss = penalized_loss_fcn(x, alpha=alpha_val, use_penalty=True)
+        if obs_weights is not None:
+            return (obs_weights * loss).sum()
+        return loss.sum()
 
     if alpha == "adaptive":
         # Optimize alpha parameter over scaled space
@@ -491,8 +501,6 @@ def adaptive_loss_fcn(
             options={"xatol": 1e-5},
         )
         loss_alpha = alpha_scaled(res.x)
-        # res = minimize(lambda s: _loss_for_alpha(alpha_scaled(s[0])), x0=[0.7], bounds=[[0, 1]], method="L-BFGS-B")
-        # loss_alpha = alpha_scaled(res.x[0])
         loss_fcn_val = res.fun
     else:
         loss_alpha = alpha
@@ -544,3 +552,186 @@ def adaptive_weights(
         )
 
     return generalized_loss_weights(x_normalized, alpha=alpha, min_weight=min_weight), C, alpha
+
+
+def _fast_weighted_alpha(r_normalized, obs_weights, n_candidates=20):
+    """Fast weighted alpha optimization via inlined grid search.
+
+    Avoids the overhead of repeated numba-jitted ``penalized_loss_fcn`` calls
+    by inlining the generalized loss computation.  ~7x faster than
+    ``adaptive_loss_fcn`` with ``minimize_scalar`` for typical array sizes.
+
+    Args:
+        r_normalized: Scale-normalized residuals.
+        obs_weights: Per-observation kernel weights (sum to 1).
+        n_candidates: Number of alpha candidates to evaluate.
+
+    Returns:
+        Optimal alpha value.
+    """
+    alpha_grid_s = np.linspace(0, 1, n_candidates)
+    alpha_grid = np.array([alpha_scaled(s) for s in alpha_grid_s])
+
+    x_sq = r_normalized ** 2
+    best_loss = np.inf
+    best_alpha = 2.0
+
+    for a in alpha_grid:
+        if a == 2.0:
+            loss_arr = 0.5 * x_sq
+        elif a <= LOSS_ALPHA_MIN:
+            loss_arr = 1.0 - np.exp(-0.5 * x_sq)
+        else:
+            abs_a_m2 = np.abs(a - 2.0)
+            loss_arr = abs_a_m2 / a * ((x_sq / abs_a_m2 + 1.0) ** (a / 2.0) - 1.0)
+        total = (obs_weights * (loss_arr + ln_Z(a, LOSS_ALPHA_MIN))).sum()
+        if total < best_loss:
+            best_loss = total
+            best_alpha = a
+
+    return best_alpha
+
+
+def kernel_adaptive_weights(
+    x: np.ndarray,
+    residuals: np.ndarray,
+    zone_knot_count: int = 10,
+    min_knot_spacing_pct: float = 0.025,
+    n_eff_min: int = 15,
+    min_weight: float = 0.0,
+) -> Tuple[np.ndarray, float]:
+    """Kernel-weighted adaptive weights with bandwidth tied to model resolution.
+
+    Computes per-observation adaptive weights where both the scale (C) and
+    shape (alpha) of the generalized loss function are estimated locally via
+    Gaussian kernel weighting.  Observations closer in temperature contribute
+    more to each evaluation point's (mu, C, alpha) estimates.
+
+    The bandwidth is derived from the model's knot configuration so that
+    weight resolution matches model resolution.  Three constraints ensure
+    the bandwidth is neither too fine nor too coarse:
+
+    - ``h_model``: weight resolution matches model complexity
+    - ``h_spacing``: cannot exceed the minimum knot spacing
+    - ``h_data``: enough effective neighbors for reliable MAD estimation
+
+    Scale (mu, C) is estimated at M evaluation points (fine resolution).
+    Alpha is estimated at M_alpha <= M evaluation points (coarser, since
+    distribution shape changes slowly with temperature).  Both are
+    interpolated to all observations via PCHIP.
+
+    Args:
+        x: Temperature values, sorted ascending (typically standardized).
+        residuals: Model residuals corresponding to x (same length).
+        zone_knot_count: Maximum interior knots per zone.  Drives the
+            bandwidth: more knots → narrower bandwidth → finer local weights.
+        min_knot_spacing_pct: Minimum knot spacing as fraction of data range.
+            Provides a resolution ceiling (from Knots settings, default 0.025).
+        n_eff_min: Minimum effective neighbors per evaluation point.
+            Safety floor for reliable weighted MAD estimation.
+        min_weight: Minimum weight value passed to generalized_loss_weights.
+
+    Returns:
+        Tuple of (weights array with shape (len(x),), median alpha across
+        evaluation points for diagnostics).
+    """
+    from scipy.interpolate import PchipInterpolator
+
+    N = len(x)
+    if N < 3:
+        return np.ones(N, dtype=float), 2.0
+
+    x_range = x[-1] - x[0]
+    if x_range <= 0:
+        return np.ones(N, dtype=float), 2.0
+
+    # --- Bandwidth selection ---
+    base_points = 12  # minimum ~4 per zone for HDD/TIDD/CDD resolution
+    knot_points = zone_knot_count * 3  # HDD + TIDD + CDD
+    h_model = x_range / max(base_points + knot_points, 1)
+    h_spacing = min_knot_spacing_pct * x_range
+    h_data = n_eff_min * x_range / (N * np.sqrt(2 * np.pi))
+    h = max(h_model, h_spacing, h_data)
+
+    # --- Evaluation points ---
+    # Scale (mu, C): fine resolution at M points
+    M = max(4, int(np.ceil(x_range / h)))
+    eval_x = np.linspace(x[0], x[-1], M)
+
+    # Alpha: coarser resolution (shape changes slowly with temperature).
+    # Use ~3x wider spacing, minimum 4 points for zone resolution.
+    M_alpha = max(4, min(M, int(np.ceil(x_range / (h * 3)))))
+    alpha_x = np.linspace(x[0], x[-1], M_alpha)
+
+    _q50 = np.array([0.5])
+
+    # --- Pass 1: Scale (mu, C) at M points ---
+    eval_mu = np.empty(M)
+    eval_C = np.empty(M)
+
+    for i in range(M):
+        w = np.exp(-0.5 * ((x - eval_x[i]) / h) ** 2)
+        w_sum = w.sum()
+        if w_sum < 1e-12:
+            eval_mu[i] = 0.0
+            eval_C[i] = 1.0
+            continue
+        w /= w_sum
+
+        eval_mu[i] = _weighted_quantile(
+            residuals, _q50, weights=w, values_presorted=False
+        )[0]
+        C_i = _median_absolute_deviation(residuals, median=eval_mu[i], weights=w)
+        eval_C[i] = max(C_i, 1e-10)
+
+    # Interpolate mu, C to all observations
+    mu_interp = PchipInterpolator(eval_x, eval_mu, extrapolate=True)(x)
+    C_interp = np.clip(
+        PchipInterpolator(eval_x, eval_C, extrapolate=True)(x), 1e-10, None
+    )
+
+    # --- Pass 2: Alpha at M_alpha points (on scale-normalized residuals) ---
+    r_normalized_all = (residuals - mu_interp) / C_interp
+    r_normalized_all[~np.isfinite(r_normalized_all)] = 0.0
+
+    # Use wider bandwidth for alpha (3x scale bandwidth)
+    h_alpha = h * 3
+    eval_alpha = np.empty(M_alpha)
+
+    for i in range(M_alpha):
+        w = np.exp(-0.5 * ((x - alpha_x[i]) / h_alpha) ** 2)
+        w_sum = w.sum()
+        if w_sum < 1e-12:
+            eval_alpha[i] = 2.0
+            continue
+        w /= w_sum
+
+        eval_alpha[i] = _fast_weighted_alpha(r_normalized_all, w)
+
+    # Interpolate alpha to all observations, clamp to valid range
+    alpha_interp = np.clip(
+        PchipInterpolator(alpha_x, eval_alpha, extrapolate=True)(x),
+        LOSS_ALPHA_MIN, 2.0,
+    )
+
+    # --- Compute per-observation weights (vectorized by alpha bucket) ---
+    weights = np.ones(N, dtype=float)
+    alpha_rounded = np.round(alpha_interp, 2)
+    for alpha_val in np.unique(alpha_rounded):
+        mask = alpha_rounded == alpha_val
+        weights[mask] = generalized_loss_weights(
+            r_normalized_all[mask], alpha=float(alpha_val), min_weight=min_weight,
+        )
+
+    median_alpha = float(np.median(eval_alpha))
+    return weights, median_alpha
+
+
+# Pre-compile all Numba JIT functions at import time to eliminate first-call
+# compilation overhead during model fitting.
+def _warmup_numba():
+    _x = np.ones(20, dtype=np.float64)
+    adaptive_weights(_x, alpha="adaptive", C_algo="mad")
+
+
+_warmup_numba()
