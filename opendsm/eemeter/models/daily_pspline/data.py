@@ -573,16 +573,8 @@ class DailyBaselineData(_DailyData):
     def __init__(self, df: pd.DataFrame, is_electricity_data: bool, settings: dict | None = None):
         super().__init__(df, is_electricity_data, settings=settings)
 
-        # TODO: Introduces logic bug if same temperature in multiple seasons/weekend-weekday categories
         if self._df is not None:
-            df_clean = self._df.dropna(subset=["temperature", "observed"])
-            # Median observed per temperature, mapped back to preserve all columns
-            medians = df_clean.groupby("temperature")["observed"].median()
-            self._df = (
-                df_clean.drop_duplicates(subset=["temperature"], keep="first")
-                .assign(observed=lambda x: x["temperature"].map(medians))
-                .sort_values("temperature")
-            )
+            self._df = self._df.dropna(subset=["temperature", "observed"]).sort_values("temperature")
 
 
 
