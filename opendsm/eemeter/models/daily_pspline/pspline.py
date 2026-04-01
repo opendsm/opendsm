@@ -13,7 +13,7 @@ from scipy.interpolate import BSpline
 
 from opendsm.eemeter.models.daily_pspline.spline_knots import Knots
 
-from opendsm.common.stats.adaptive_loss import adaptive_weights
+from opendsm.common.stats.adaptive_loss import adaptive_weights, kernel_adaptive_weights, KernelWeightCache
 from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict
 from opendsm.eemeter.models.daily.utilities.opt_settings import OptimizationSettings
 from opendsm.eemeter.models.daily.optimize import NLoptOptimizer
@@ -147,18 +147,24 @@ class _BasePSpline:
         self.n_base = len(padded_knots) - k - 1
 
         self.B = BSpline.design_matrix(x=x, t=padded_knots, k=k, extrapolate=True).toarray() if B is None else B
-        D1, D2, D3 = _BasePSpline._difference_matrices(tuple(self.padded_knots), self.k, self.n_base)
+
+        need_D2 = (bc_type == "natural" and k >= 2)
+        need_D3 = (lambda_smoothing > 0)
+        D1, D2, D3 = _BasePSpline._difference_matrices(
+            tuple(self.padded_knots), self.k, self.n_base,
+            need_D2=need_D2, need_D3=need_D3,
+        )
         self.D1 = D1
         self.D1T = D1.T
         self.n_deriv = D1.shape[0]
 
-        D3_smoothing = lambda_smoothing * D3.T @ D3 if lambda_smoothing > 0 else 0.0
+        D3_smoothing = lambda_smoothing * D3.T @ D3 if lambda_smoothing > 0 and D3 is not None else 0.0
 
         boundary_penalty = 0.0
         if bc_type == "clamped" and k >= 2:
             bm = np.vstack([D1[0, :], D1[-1, :]])
             boundary_penalty = kappa * bm.T @ bm
-        elif bc_type == "natural" and k >= 2:
+        elif bc_type == "natural" and k >= 2 and D2 is not None:
             bm = np.vstack([D2[0, :], D2[-1, :]])
             boundary_penalty = kappa * bm.T @ bm
 
@@ -181,32 +187,47 @@ class _BasePSpline:
 
     @staticmethod
     @lru_cache(maxsize=256)
-    def _difference_matrices(padded_knots_tuple: tuple, k: int, n_base: int):
+    def _difference_matrices(padded_knots_tuple: tuple, k: int, n_base: int,
+                             need_D2: bool = True, need_D3: bool = True):
         """Cached difference matrices keyed on knot vector, degree, and basis count.
 
         Results are reused across BIC-scan candidates that share the same knot
         configuration, avoiding redundant O(n²) matrix construction.
+
+        When ``need_D2`` or ``need_D3`` is False, the corresponding matrix is
+        not computed (returned as None), avoiding the chain matrix
+        multiplication for unused higher-order differences.
         """
         knots = np.asarray(padded_knots_tuple)
 
         def lag_diff(arr, lag):
             return arr[lag:] - arr[:-lag]
 
-        D = [None, None, None]
-        for i in range(3):
+        def _compute_D(i, D_prev):
             if k > i:
                 a = 1 / (k - i)
                 diag_vals = a * lag_diff(knots[i + 1:-i - 1], lag=k - i)
                 diag_vals = np.where(diag_vals == 0, 1.0, diag_vals)
                 fd = _BasePSpline._cached_first_diff(n_base - i)
                 _D = fd / diag_vals[:, np.newaxis]
-                D[i] = _D if i == 0 else _D @ D[i - 1]
+                return _D if D_prev is None else _D @ D_prev
             else:
-                D[i] = np.diff(np.eye(n_base), n=i + 1, axis=0)
+                return np.diff(np.eye(n_base), n=i + 1, axis=0)
 
-        for d in D:
-            d.flags.writeable = False
-        return D[0], D[1], D[2]
+        D1 = _compute_D(0, None)
+        D1.flags.writeable = False
+
+        D2 = None
+        if need_D2 or need_D3:  # D3 requires D2 as input
+            D2 = _compute_D(1, D1)
+            D2.flags.writeable = False
+
+        D3 = None
+        if need_D3:
+            D3 = _compute_D(2, D2)
+            D3.flags.writeable = False
+
+        return D1, D2, D3
 
     @staticmethod
     @lru_cache(maxsize=256)
@@ -253,7 +274,7 @@ class _BasePSpline:
         self,
         weights: Optional[np.ndarray],
         bp: np.ndarray,
-        weight_factor: float = 10,
+        weight_factor: float = 50,
     ) -> np.ndarray:
         """Upweight observations in the TIDD zone to enforce flatness.
 
@@ -445,7 +466,7 @@ class _BasePSpline:
             Converged active-set diagonal from the monotonicity solve.
         """
         if bp[1] - bp[0] > 0:
-            eff_w = self._tidd_weights(base_weights, bp, weight_factor=50)
+            eff_w = self._tidd_weights(base_weights, bp)
         else:
             eff_w = base_weights
 
@@ -856,6 +877,7 @@ class DailyPSpline(BSpline):
         regularization_alpha: float = 0.01,
         regularization_percent_lasso: float = 1.0,
         freeze_bp_on_convergence: bool = False,
+        max_weight_iterations: int = 2,
         zone_knot_scan: bool = True,
     ):
         self.bspline_degree = bspline_degree
@@ -878,6 +900,9 @@ class DailyPSpline(BSpline):
 
         # Skip re-optimizing bp in later iterations when it has already converged
         self.freeze_bp_on_convergence = freeze_bp_on_convergence
+
+        # Adaptive weight iteration control
+        self.max_weight_iterations = max_weight_iterations
 
         # When False, skip the BIC knot-count scan and use maximum knot counts directly
         self.zone_knot_scan = zone_knot_scan
@@ -945,17 +970,11 @@ class DailyPSpline(BSpline):
         k = degree if degree is not None else self.bspline_degree
         has_reg = self.regularization_alpha != 0
 
-        # --- Precompute bp-independent matrices (fixed knot vector) ---
         bp_init = np.asarray(bp, dtype=float)
-        fixed_knots = self.knots.get_internal_knots(
-            bp=bp_init, n_knots=zone_knot_count, n_min=self.n_min,
-        )
-        padded_knots = _BasePSpline._pad_knots(fixed_knots, k)
-
-        cache = _BasePSpline(
-            x, y, padded_knots, k, weights,
-            self.lambda_smoothing, self.bc_type, kappa,
-        )
+        _knots_obj = self.knots
+        _lambda = self.lambda_smoothing
+        _bc = self.bc_type
+        _n_min = self.n_min
 
         def bp_penalty(trial_bp, wrmse):
             penalty = trial_bp - x_bnds
@@ -1009,9 +1028,19 @@ class DailyPSpline(BSpline):
         def objective(X_free, grad=[]):
             trial_bp = _X_to_bp(to_full(X_free))
 
-            coefs, _V = cache._fit(trial_bp, weights, kappa, inner_maxiter)
+            # Recompute knots for this bp so the B-spline basis matches
+            # the zone boundaries.
+            trial_knots = _knots_obj.get_internal_knots(
+                bp=trial_bp, n_knots=zone_knot_count, n_min=_n_min,
+            )
+            trial_padded = _BasePSpline._pad_knots(trial_knots, k)
+            psp = _BasePSpline(
+                x, y, trial_padded, k, weights, _lambda, _bc, kappa,
+            )
 
-            resid = cache.B @ coefs - y
+            coefs, _V = psp._fit(trial_bp, weights, kappa, inner_maxiter)
+
+            resid = psp.B @ coefs - y
             sse = np.sum(resid ** 2)
             loss = sse / N
             wrmse = np.sqrt(loss)
@@ -1178,6 +1207,8 @@ class DailyPSpline(BSpline):
         """
         d1 = psp.D1 @ coefs
         n_deriv = len(d1)
+        if n_deriv == 0:
+            return None
         knots = psp.padded_knots
         k = psp.k
 
@@ -1430,6 +1461,9 @@ class DailyPSpline(BSpline):
         bp_std : ndarray
             Converged breakpoints.
         """
+        # Skip the expensive robust smoothing spline when zone_knot_count=0
+        # (no Yeh knot placement needed — get_internal_knots only returns bp
+        # values and data boundaries).
         self.knots = Knots(
             x_std, y_std,
             w=self.weights,
@@ -1440,14 +1474,36 @@ class DailyPSpline(BSpline):
             lambda_smoothing=self.lambda_smoothing,
             kappa_penalty=self.kappa_penalty,
             maxiter=self.maxiter,
+            lightweight=(zone_knot_count == 0),
         )
         _B_cache: dict = {}
         prior_wrmse = np.inf
         prior_bp = None
         psp = coefs = V_final = None
         _knots_refined = False
+        _prior_a_weights = None
+        _weight_iters_remaining = self.max_weight_iterations
+        _kernel_cache = KernelWeightCache(
+            x_std, zone_knot_count,
+            min_knot_spacing_pct=self.knots.min_knot_spacing_pct if hasattr(self.knots, 'min_knot_spacing_pct') else 0.025,
+            n_eff_min=self.n_min,
+        )
+
+        saved_reg_alpha = self.regularization_alpha
 
         for iter_idx in range(self.adaptive_iterations):
+            # Disable regularization after first iteration: adaptive weights
+            # handle outlier robustness, so the regularizer is no longer needed
+            # and would compete with the weights for bp placement authority.
+            if iter_idx > 0:
+                self.regularization_alpha = 0.0
+
+            # First iteration: use the caller's algorithm (DIRECT for global
+            # search with uniform weights).  Subsequent iterations: switch to
+            # Sbplx (local refinement) so adaptive weights can nudge the bp
+            # without sending it to a completely different basin.
+            iter_algo = bp_opt_algo if iter_idx == 0 else "nlopt_sbplx"
+
             if not bp_provided and (prior_bp is None or not (
                 self.freeze_bp_on_convergence
                 and np.allclose(bp_std, prior_bp, atol=1e-5)
@@ -1456,7 +1512,7 @@ class DailyPSpline(BSpline):
                     x_std, y_std, bp_std,
                     weights=self.weights,
                     zone_knot_count=zone_knot_count,
-                    algorithm=bp_opt_algo,
+                    algorithm=iter_algo,
                     degree=degree,
                 )
             prior_bp = bp_std
@@ -1518,14 +1574,17 @@ class DailyPSpline(BSpline):
             residuals = (psp.B @ coefs - y_std).reshape(-1)
             wrmse = np.sqrt(np.dot(_w_sq, residuals ** 2) / _sum_w_sq)
 
-            if abs(wrmse - prior_wrmse) <= 1e-3 * prior_wrmse:
+            if prior_wrmse < np.inf and abs(wrmse - prior_wrmse) <= 1e-3 * prior_wrmse:
                 break
             prior_wrmse = wrmse
 
             # --- Refinements after first converged iteration ---
 
-            # (a) Warm-start bp from the constrained fit's derivative
-            if not bp_provided:
+            # (a) Warm-start bp from the constrained fit's derivative.
+            #     Only apply if bp is already collapsed (single point) — on
+            #     V-shaped meters where bp[0] < bp[1], the derivative walk
+            #     would collapse the TIDD gap, destroying a good two-bp solution.
+            if not bp_provided and np.abs(bp_std[1] - bp_std[0]) < 1e-6:
                 bp_candidate = DailyPSpline._bp_from_constrained_derivative(psp, coefs, x_std)
                 if bp_candidate is not None:
                     bp_std = bp_candidate
@@ -1549,14 +1608,27 @@ class DailyPSpline(BSpline):
                 _B_cache.clear()  # padded knots will change
                 _knots_refined = True
 
-            a_weights, _, weight_alpha = adaptive_weights(residuals, alpha="adaptive", C_algo="mad")
-            self.weights_alpha.append(weight_alpha)
-            if weight_alpha == 2.0:
-                break  # Gaussian residuals: weights unchanged, next iteration identical
+            # Compute kernel adaptive weights.  Skip if we've exceeded the
+            # weight iteration cap.
+            if _weight_iters_remaining > 0:
+                a_weights, median_alpha = kernel_adaptive_weights(
+                    x_std, residuals, _cache=_kernel_cache,
+                )
+                self.weights_alpha.append(median_alpha)
 
-            self.weights = (self.weights * a_weights) if self.weights is not None else a_weights
-            self.weights = _rescale_to_range(self.weights, new_min=1.0, new_max=100.0)
+                self.weights = (self.weights * a_weights) if self.weights is not None else a_weights
+                self.weights = _rescale_to_range(self.weights, new_min=1.0, new_max=100.0)
+                _weight_iters_remaining -= 1
 
+                if median_alpha == 2.0:
+                    break  # weighted residuals are Gaussian, no further reweighting needed
+                if _prior_a_weights is not None and np.max(np.abs(a_weights - _prior_a_weights)) < 0.1:
+                    break  # weights stabilized
+                _prior_a_weights = a_weights
+            else:
+                break
+
+        self.regularization_alpha = saved_reg_alpha
         return psp, coefs, bp_std, V_final
 
     def fit(self, x, y, bp=None, weights=None, bspline_degree=None) -> "DailyPSpline":
@@ -1611,69 +1683,46 @@ class DailyPSpline(BSpline):
         x_std = (self.x - self.x_mean) / self.x_std
         y_std = (self.y - self.y_mean) / self.y_std
 
-        # Initial bp estimate.  When zone_knot_count == 0 (no interior knots),
-        # use a fast segmented regression scan that directly fits the 3-piece
-        # model form, skipping the expensive Knots/UnivariateSpline construction.
-        # For zone_knot_count > 0, build the Knots object (needed for curvature-
-        # based knot placement later) and use the derivative-based estimate.
-        # Initial Knots used for bp derivative estimate; rebuilt per-degree
-        # inside _fit_degree (skipped when zone_knot_count == 0).
-        self.knots = Knots(
-            x_std, y_std, w=self.weights,
-            spline_interp_count=1000, spline_lambda=10, n_min=self.n_min,
-            bspline_degree=self.bspline_degree,
-            lambda_smoothing=self.lambda_smoothing,
-            kappa_penalty=self.kappa_penalty, maxiter=self.maxiter,
-        )
-        bp_std_init = (
-            (np.asarray(bp, dtype=float) - self.x_mean) / self.x_std
-            if bp is not None
-            else _estimate_bp_from_derivative(self.knots)
-        )
+        # Initial bp estimate.  When bp is user-provided, convert to
+        # standardized space.  Otherwise use the midpoint — DIRECT ignores
+        # x0 and searches the full space regardless.
+        if bp is not None:
+            bp_std_init = (np.asarray(bp, dtype=float) - self.x_mean) / self.x_std
+        else:
+            mid = 0.5 * (x_std[0] + x_std[-1])
+            bp_std_init = np.array([mid, mid])
 
         N = len(x_std)
         bic_maxiter = min(10, self.maxiter)
         bp_provided = bp is not None
 
-        # Outer loop: degree 0 seeds bp via global nlopt_direct; higher degrees refine
-        # locally with nlopt_sbplx using the prior degree's converged bp as warm-start.
-        # The degree with the best BIC score is selected; degree 0 is excluded unless
-        # it is the explicit target (fit(bspline_degree=0) or self.bspline_degree == 0).
-        #
+        # Fit at the target degree using DIRECT for global bp search.
+        # Previously a degree-0 surrogate was used to seed bp, but the
+        # step-function loss landscape can have different optima than the
+        # target degree (e.g., V-shaped meters where the linear vertex
+        # differs from the step-function split point), causing Sbplx to
+        # get trapped in the wrong basin.
         target_degree = bspline_degree if bspline_degree is not None else self.bspline_degree
-        degree_sequence = [0, target_degree] if target_degree > 0 else [0]
 
         base_weights = self.weights.copy()
-        best_score = np.inf
-        best_psp = best_coefs = best_bp_std = best_knots = None
-        best_weights = base_weights
-        outer_prior_bp = None
-        for deg_idx, current_degree in enumerate(degree_sequence):
-            bp_opt_algo = "nlopt_direct" if deg_idx == 0 else "nlopt_sbplx"
-            bp_std = outer_prior_bp.copy() if outer_prior_bp is not None else bp_std_init.copy()
-            self.weights = base_weights.copy()
+        bp_std = bp_std_init.copy()
 
-            deg_zone_knot_count = 20 if current_degree == 0 else zone_knot_count
-            psp, coefs, bp_std, V_final = self._fit_degree(
-                x_std, y_std, bp_std, bp_provided,
-                deg_zone_knot_count, bic_maxiter, N,
-                bp_opt_algo, current_degree,
-            )
+        psp, coefs, bp_std, V_final = self._fit_degree(
+            x_std, y_std, bp_std, bp_provided,
+            zone_knot_count, bic_maxiter, N,
+            "nlopt_direct", target_degree,
+        )
 
-            # BIC score for this degree on final adaptive weights, using edf
-            w_sq, _, wtss = self._weighted_stats(y_std)
-            wssr = float(np.dot(w_sq, (psp.B @ coefs - y_std).reshape(-1) ** 2))
-            edf = DailyPSpline._effective_df(psp, V_final, self.kappa_penalty, w_sq)
-            score = self._score(wssr, wtss, N, edf)
+        # BIC score on final adaptive weights, using edf
+        w_sq, _, wtss = self._weighted_stats(y_std)
+        wssr = float(np.dot(w_sq, (psp.B @ coefs - y_std).reshape(-1) ** 2))
+        edf = DailyPSpline._effective_df(psp, V_final, self.kappa_penalty, w_sq)
+        score = self._score(wssr, wtss, N, edf)
 
-            if (current_degree > 0 or target_degree == 0) and score < best_score:
-                best_score = score
-                best_psp, best_coefs = psp, coefs
-                best_bp_std = bp_std.copy()
-                best_knots = self.knots
-                best_weights = self.weights.copy()
-
-            outer_prior_bp = bp_std.copy()
+        best_psp, best_coefs = psp, coefs
+        best_bp_std = bp_std.copy()
+        best_knots = self.knots
+        best_weights = self.weights.copy()
 
         self.knots = best_knots
         self.weights = best_weights
