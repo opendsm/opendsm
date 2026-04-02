@@ -45,6 +45,13 @@ class PSpline_Split_Selection_Definition(Split_Selection_Definition):
     improvement vs the DailyModel baseline.
     """
 
+    allow_splits: bool = CustomField(
+        default=True,
+        developer=False,
+        description="Enable season/weekday-weekend split selection. When False, "
+                    "fits a single model on all data (fw-su_sh_wi only).",
+    )
+
     penalty_multiplier: float = CustomField(
         default=0.40,
         ge=0,
@@ -198,6 +205,14 @@ class DailyPSplineSettings(BaseSettings):
         description="Third-derivative smoothing penalty weight; 0 disables smoothing",
     )
 
+    lambda_curvature: float = CustomField(
+        default=0.1,
+        ge=0,
+        developer=True,
+        description="Second-derivative (curvature) penalty weight; prevents rapid slope "
+                    "changes at data edges without dampening legitimate slopes",
+    )
+
     kappa_penalty: float = CustomField(
         default=1e9,
         gt=0,
@@ -217,6 +232,19 @@ class DailyPSplineSettings(BaseSettings):
         ge=1,
         developer=True,
         description="Maximum outer adaptive-reweighting iterations",
+    )
+
+    max_weight_iterations: int = CustomField(
+        default=2,
+        ge=1,
+        developer=True,
+        description=(
+            "Maximum number of kernel adaptive weight computations per degree. "
+            "Empirically, one round of reweighting (cap=2: unweighted fit then "
+            "weighted refit) captures the same accuracy as many iterations. "
+            "The weight_convergence_threshold provides early exit if weights "
+            "stabilize before this cap."
+        ),
     )
 
     freeze_bp_on_convergence: bool = CustomField(
@@ -298,6 +326,32 @@ class DailyPSplineSettings(BaseSettings):
     )
 
     # ------------------------------------------------------------------
+    # Uncertainty settings
+    # ------------------------------------------------------------------
+
+    uncertainty_alpha: float = CustomField(
+        default=0.1,
+        ge=0,
+        le=1,
+        developer=False,
+        description="Significance level for prediction intervals (0.1 = 90% PI)",
+    )
+
+    include_autocorrelation_in_uncertainty: bool = CustomField(
+        default=True,
+        developer=True,
+        description="Include autocorrelation VIF in per-row prediction uncertainty",
+    )
+
+    slope_threshold_pct: float = CustomField(
+        default=0.05,
+        ge=0,
+        le=1,
+        developer=True,
+        description="Fraction of max |f'| used to determine effective balance points",
+    )
+
+    # ------------------------------------------------------------------
     # Validators
     # ------------------------------------------------------------------
 
@@ -342,14 +396,3 @@ class DailyPSplineSettings(BaseSettings):
 
         _check_developer_mode(self)
         return self
-
-    # @pydantic.model_validator(mode="after")
-    # def _check_knot_degree_compatibility(self) -> "DailyPSplineSettings":
-    #     if self.zone_knot_count - 1 < self.bspline_degree:
-    #         raise ValueError(
-    #             f"zone_knot_count ({self.zone_knot_count}) must be >= "
-    #             f"bspline_degree ({self.bspline_degree}); "
-    #             f"a degree-{self.bspline_degree} spline requires at least "
-    #             f"{self.bspline_degree} knots per zone"
-    #         )
-    #     return self
