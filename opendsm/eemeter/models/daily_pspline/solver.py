@@ -55,6 +55,8 @@ class PSplineSolver:
         Third-derivative smoothing penalty weight.
     lambda_curvature : float
         Second-derivative curvature penalty weight; prevents rapid slope changes.
+    lambda_slope : float
+        First-derivative slope penalty weight; prevents steep slopes in sparse zones.
     bc_type : str or None
         Boundary condition type ('natural', 'clamped', or None).
     kappa : float
@@ -75,6 +77,7 @@ class PSplineSolver:
         kappa: float,
         B: Optional[np.ndarray] = None,
         lambda_curvature: float = 0.0,
+        lambda_slope: float = 0.0,
     ):
         self.x = x
         self.y = y
@@ -97,24 +100,31 @@ class PSplineSolver:
         self.D1T = D1.T
         self.n_deriv = D1.shape[0]
 
+        def _density_weighted_penalty(D_pen, lam, span):
+            """Build density-weighted penalty matrix lam * Dw'Dw.
+
+            Column sums of B measure how much data each coefficient "sees";
+            averaging ``span`` adjacent columns gives per-row support.
+            Weights are normalized so median support maps to 1.0, making
+            lambda interpretable as the penalty at typical data density.
+            """
+            col_support = self.B.sum(axis=0)  # (n_base,)
+            row_support = np.array([
+                np.mean(col_support[max(0, i):min(self.n_base, i + span)])
+                for i in range(D_pen.shape[0])
+            ])
+            median_support = np.median(row_support)
+            density_w = median_support / np.maximum(row_support, 1e-10)
+            Dw = D_pen * density_w[:, np.newaxis]
+            return lam * Dw.T @ Dw
+
         D2_penalty = 0.0
         if lambda_curvature > 0 and D2 is not None:
-            # Weight each D2 row by inverse basis-function support so the
-            # penalty is strong where data is sparse (edges) and weak where
-            # dense.  Column sums of B measure how much data each coefficient
-            # "sees"; averaging adjacent columns gives per-D2-row support.
-            # Weights are normalized so that median support maps to 1.0,
-            # making lambda_curvature interpretable as the penalty at
-            # typical data density.
-            col_support = self.B.sum(axis=0)  # (n_base,)
-            d2_support = np.array([
-                np.mean(col_support[max(0, i):min(self.n_base, i + 3)])
-                for i in range(D2.shape[0])
-            ])
-            median_support = np.median(d2_support)
-            density_w = median_support / np.maximum(d2_support, 1e-10)
-            D2w = D2 * density_w[:, np.newaxis]
-            D2_penalty = lambda_curvature * D2w.T @ D2w
+            D2_penalty = _density_weighted_penalty(D2, lambda_curvature, span=3)
+
+        D1_penalty = 0.0
+        if lambda_slope > 0 and k == 1:
+            D1_penalty = _density_weighted_penalty(D1, lambda_slope, span=2)
         D3_penalty = lambda_smoothing * D3.T @ D3 if lambda_smoothing > 0 and D3 is not None else 0.0
 
         bc_penalty = 0.0
@@ -125,7 +135,7 @@ class PSplineSolver:
             bm = np.vstack([D2[0, :], D2[-1, :]])
             bc_penalty = kappa * bm.T @ bm
 
-        self._penalty_sum = D2_penalty + D3_penalty + bc_penalty
+        self._penalty_sum = D1_penalty + D2_penalty + D3_penalty + bc_penalty
         self._ridge = _EPS_RIDGE * np.eye(self.n_base)
 
         # Preallocated solve-loop buffers

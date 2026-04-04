@@ -15,6 +15,7 @@ from scipy.interpolate import BSpline
 
 from opendsm.common.metrics import BaselineMetrics
 from opendsm.common.stats.adaptive_loss import KernelWeightCache
+from opendsm.common.stats.basic import median_absolute_deviation
 from opendsm.eemeter.models.daily.utilities.selection_criteria import selection_criteria
 
 from opendsm.eemeter.models.daily_pspline.solver import PSplineSolver, pad_knots, effective_df
@@ -63,17 +64,18 @@ def fit_segment(
     else:
         weights = np.ascontiguousarray(weights, dtype=float)
 
-    x_mean, x_std = np.mean(x), _clipped_std(x)
-    y_mean, y_std = np.mean(y), _clipped_std(y)
-    x_s = (x - x_mean) / x_std
-    y_s = (y - y_mean) / y_std
+    x_center, x_scale = np.median(x), _clipped_mad(x)
+    y_center, y_scale = np.median(y), _clipped_mad(y)
+    x_s = (x - x_center) / x_scale
+    y_s = (y - y_center) / y_scale
+
 
     degree = settings.bspline_degree
     zone_knot_count = settings.zone.knot_count_max if settings.zone.knot_count_max is not None else 10
     bp_provided = bp is not None
 
     if bp_provided:
-        bp_s = (np.asarray(bp, dtype=float) - x_mean) / x_std
+        bp_s = (np.asarray(bp, dtype=float) - x_center) / x_scale
     else:
         mid = 0.5 * (x_s[0] + x_s[-1])
         bp_s = np.array([mid, mid])
@@ -83,23 +85,35 @@ def fit_segment(
 
     solver, coefs, bp_s, V, final_lhs = _fit_degree(
         x_s, y_s, bp_s, bp_provided, weights, zone_knot_count, bic_maxiter, N,
-        "nlopt_direct", degree, settings,
+        "nlopt_direct_l", degree, settings,
     )
 
-    bp_orig = bp_s * x_std + x_mean
+    # Collapse zones with negligible slopes.  If the fitted spline has a
+    # zone (HDD or CDD) whose max slope is < slope_threshold_pct of the
+    # global max slope, the breakpoint is moved to the data edge and the
+    # model is refit without that zone.  This prevents the optimizer from
+    # wasting degrees of freedom on flat zones that hurt OOS accuracy.
+    if not bp_provided and degree >= 1:
+        bp_s, solver, coefs, V = _collapse_spurious_zones(
+            x_s, y_s, bp_s, solver, coefs, weights, zone_knot_count,
+            bic_maxiter, N, degree, settings, V,
+        )
+
+    bp_orig = bp_s * x_scale + x_center
     fit_bnds = np.array([x[0], x[-1]])
     num_params = solver.n_base - solver.k + 1
 
     # Compute predictions before construction (no mutation)
     pred = predict_raw(
         solver.padded_knots, coefs, solver.k,
-        x, x_mean, x_std, y_mean, y_std, fit_bnds, settings.bc_type,
+        x, x_center, x_scale, y_center, y_scale, fit_bnds, settings.bc_type,
     )
 
     config = {
         "n_min": settings.zone.n_min,
         "lambda_smoothing": settings.lambda_smoothing,
         "lambda_curvature": settings.lambda_curvature,
+        "lambda_slope": settings.lambda_slope,
         "kappa_penalty": settings.kappa_penalty,
         "maxiter": settings.maxiter,
         "slope_threshold_pct": settings.slope_threshold_pct,
@@ -111,8 +125,8 @@ def fit_segment(
         knots_std=solver.padded_knots,
         coefs_std=coefs,
         degree=solver.k,
-        x_mean=x_mean, x_std=x_std,
-        y_mean=y_mean, y_std=y_std,
+        x_mean=x_center, x_std=x_scale,
+        y_mean=y_center, y_std=y_scale,
         bp=bp_orig, fit_bnds=fit_bnds,
         bc_type=settings.bc_type,
         config=config,
@@ -125,9 +139,9 @@ def fit_segment(
             solver, coefs, V, x, y_s,
             residuals=y - pred,
             weights=weights,
-            y_std=y_std,
-            x_mean=x_mean,
-            x_std=x_std,
+            y_std=y_scale,
+            x_mean=x_center,
+            x_std=x_scale,
             settings=settings,
             n=N,
             ddof=num_params,
@@ -160,8 +174,20 @@ def _fit_degree(
         n_min=n_min, bspline_degree=degree,
         lambda_smoothing=s.lambda_smoothing,
         kappa_penalty=kappa, maxiter=s.maxiter,
-        lightweight=(zone_knot_count == 0),
+        lightweight=False,
     )
+
+    # Seed initial weights from the knots smoothing-spline residuals.
+    # The spline accounts for temperature dependence, so its residuals
+    # are a legitimate basis for outlier detection — unlike raw y which
+    # would misidentify extreme-temperature inliers as outliers.
+    spl_resid = y_s - knots_obj.spl(x_s)
+    mad_r = np.median(np.abs(spl_resid - np.median(spl_resid)))
+    if mad_r > 1e-10:
+        outlier_mask = np.abs(spl_resid - np.median(spl_resid)) > 3.0 * 1.4826 * mad_r
+        if np.any(outlier_mask):
+            weights = weights.copy()
+            weights[outlier_mask] *= 0.01
 
     B_cache: dict = {}
     prior_wrmse = np.inf
@@ -274,19 +300,95 @@ def _fit_degree(
         else:
             break
 
-    # Re-solve with curvature penalty applied (post model-selection).
-    # This is done after bp/knot selection so the penalty only regularizes
+    # Re-solve with derivative penalties applied (post model-selection).
+    # This is done after bp/knot selection so the penalties only regularize
     # the final coefficients without altering the model structure.
-    if s.lambda_curvature > 0 and solver is not None:
+    has_d2 = s.lambda_curvature > 0 and degree >= 2
+    has_d1 = s.lambda_slope > 0 and degree == 1
+    if (has_d2 or has_d1) and solver is not None:
         psp_final = PSplineSolver(
             x_s, y_s, solver.padded_knots, degree, weights,
             s.lambda_smoothing, s.bc_type, kappa, B=solver.B,
             lambda_curvature=s.lambda_curvature,
+            lambda_slope=s.lambda_slope,
         )
         coefs, V_final, final_lhs = psp_final.solve(bp_s, weights, kappa, s.maxiter)
         solver = psp_final
 
     return solver, coefs, bp_s, V_final, final_lhs
+
+
+# ------------------------------------------------------------------
+# Spurious zone collapse
+# ------------------------------------------------------------------
+
+def _collapse_spurious_zones(
+    x_s, y_s, bp_s, solver, coefs, weights, zone_knot_count,
+    bic_maxiter, N, degree, settings, V,
+):
+    """Collapse HDD/CDD zones with negligible slopes.
+
+    After bp optimization, checks if each zone's max slope is less than
+    slope_threshold_pct of the global max.  If so, moves the breakpoint
+    to the data edge (eliminating that zone) and refits.
+
+    Uses the same slope significance test as eff_bp — the difference is
+    that eff_bp only relabels, while this corrects the breakpoints and
+    refits the model.
+    """
+    pct = settings.slope_threshold_pct
+    spl = BSpline(solver.padded_knots, coefs, degree)
+    T_eval = np.linspace(x_s[0], x_s[-1], 500)
+    abs_slopes = np.abs(spl.derivative(1)(T_eval))
+    max_slope = np.max(abs_slopes)
+
+    if max_slope < 1e-12:
+        return bp_s, solver, coefs, V
+
+    threshold = pct * max_slope
+    changed = False
+
+    # Check HDD zone
+    if bp_s[0] - x_s[0] > 1e-6:
+        hdd_mask = T_eval < bp_s[0]
+        if np.any(hdd_mask) and np.max(abs_slopes[hdd_mask]) < threshold:
+            bp_s[0] = x_s[0]
+            changed = True
+
+    # Check CDD zone
+    if x_s[-1] - bp_s[1] > 1e-6:
+        cdd_mask = T_eval > bp_s[1]
+        if np.any(cdd_mask) and np.max(abs_slopes[cdd_mask]) < threshold:
+            bp_s[1] = x_s[-1]
+            changed = True
+
+    if not changed:
+        return bp_s, solver, coefs, V
+
+    # Refit with corrected bp
+    s = settings
+    kappa = s.kappa_penalty
+    knots_obj = Knots(
+        x_s, y_s, w=weights,
+        spline_interp_count=1000, spline_lambda=10,
+        n_min=s.zone.n_min, bspline_degree=degree,
+        lambda_smoothing=s.lambda_smoothing,
+        kappa_penalty=kappa, maxiter=s.maxiter,
+        lightweight=(zone_knot_count == 0),
+    )
+    knots = knots_obj.get_internal_knots(
+        bp=bp_s, n_knots=zone_knot_count, n_min=s.zone.n_min,
+    )
+    padded = pad_knots(knots, degree)
+    B = BSpline.design_matrix(x=x_s, t=padded, k=degree, extrapolate=True).toarray()
+    psp = PSplineSolver(
+        x_s, y_s, padded, degree, weights,
+        s.lambda_smoothing, s.bc_type, kappa, B=B,
+        lambda_curvature=s.lambda_curvature,
+        lambda_slope=s.lambda_slope,
+    )
+    coefs, V, _ = psp.solve(bp_s, weights, kappa, s.maxiter)
+    return bp_s, psp, coefs, V
 
 
 # ------------------------------------------------------------------
@@ -407,10 +509,16 @@ def _clipped_std(values: np.ndarray, clip_val: float = 1e-6) -> float:
     return 1.0 if std < clip_val else std
 
 
+def _clipped_mad(values: np.ndarray, clip_val: float = 1e-6) -> float:
+    """MAD-based robust scale estimate, clipped to avoid near-zero values."""
+    scale = median_absolute_deviation(values)
+    return 1.0 if scale < clip_val else float(scale)
+
+
 def _rescale_to_range(
     values: np.ndarray,
     new_min: float = 1.0,
-    new_max: float = 10.0,
+    new_max: float = 100.0,
 ) -> np.ndarray:
     """Min-max rescale to [new_min, new_max]."""
     values = np.asarray(values)
