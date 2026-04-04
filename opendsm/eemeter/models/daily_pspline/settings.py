@@ -206,11 +206,21 @@ class DailyPSplineSettings(BaseSettings):
     )
 
     lambda_curvature: float = CustomField(
+        default=10.0,
+        ge=0,
+        developer=True,
+        description="Density-weighted second-derivative (D2) penalty; suppresses rapid "
+                    "slope changes where data is sparse (edges) without dampening "
+                    "legitimate curvature in data-dense regions. Active for degree >= 2",
+    )
+
+    lambda_slope: float = CustomField(
         default=0.1,
         ge=0,
         developer=True,
-        description="Second-derivative (curvature) penalty weight; prevents rapid slope "
-                    "changes at data edges without dampening legitimate slopes",
+        description="Density-weighted first-derivative (D1) penalty; suppresses steep "
+                    "slopes where data is sparse (edges) without dampening legitimate "
+                    "slopes in data-dense regions. Only applied when bspline_degree == 1",
     )
 
     kappa_penalty: float = CustomField(
