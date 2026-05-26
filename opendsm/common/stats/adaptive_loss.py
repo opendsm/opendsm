@@ -592,6 +592,167 @@ def _fast_weighted_alpha(r_normalized, obs_weights, n_candidates=20):
     return best_alpha
 
 
+class KernelWeightCache:
+    """Pre-computed kernel geometry for repeated adaptive weight calls.
+
+    The kernel weight matrices depend only on the temperature array x and the
+    knot configuration — not on the residuals.  By constructing this cache
+    once per component and reusing it across adaptive iterations, we avoid
+    recomputing bandwidth, evaluation grids, and the Gaussian kernel matrices
+    on every call.
+    """
+
+    __slots__ = (
+        "N", "x", "M", "M_alpha", "eval_x", "alpha_x",
+        "scale_kernels", "alpha_kernels", "_q50",
+    )
+
+    def __init__(
+        self,
+        x: np.ndarray,
+        zone_knot_count: int = 10,
+        min_knot_spacing_pct: float = 0.025,
+        n_eff_min: int = 15,
+    ):
+        N = len(x)
+        self.N = N
+        self.x = x
+        self._q50 = np.array([0.5])
+
+        if N < 3 or (x[-1] - x[0]) <= 0:
+            self.M = 0
+            self.M_alpha = 0
+            self.eval_x = np.empty(0)
+            self.alpha_x = np.empty(0)
+            self.scale_kernels = []
+            self.alpha_kernels = []
+            return
+
+        x_range = x[-1] - x[0]
+
+        # Bandwidth selection
+        base_points = 12
+        knot_points = zone_knot_count * 3
+        h_model = x_range / max(base_points + knot_points, 1)
+        h_spacing = min_knot_spacing_pct * x_range
+        h_data = n_eff_min * x_range / (N * np.sqrt(2 * np.pi))
+        h = max(h_model, h_spacing, h_data)
+
+        # Scale evaluation grid
+        M = max(4, int(np.ceil(x_range / h)))
+        self.M = M
+        self.eval_x = np.linspace(x[0], x[-1], M)
+
+        # Alpha evaluation grid (coarser)
+        M_alpha = max(4, min(M, int(np.ceil(x_range / (h * 3)))))
+        self.M_alpha = M_alpha
+        self.alpha_x = np.linspace(x[0], x[-1], M_alpha)
+
+        # Pre-compute and normalize kernel weight vectors
+        self.scale_kernels = []
+        for i in range(M):
+            w = np.exp(-0.5 * ((x - self.eval_x[i]) / h) ** 2)
+            w_sum = w.sum()
+            if w_sum < 1e-12:
+                self.scale_kernels.append(None)
+            else:
+                self.scale_kernels.append(w / w_sum)
+
+        h_alpha = h * 3
+        self.alpha_kernels = []
+        for i in range(M_alpha):
+            w = np.exp(-0.5 * ((x - self.alpha_x[i]) / h_alpha) ** 2)
+            w_sum = w.sum()
+            if w_sum < 1e-12:
+                self.alpha_kernels.append(None)
+            else:
+                self.alpha_kernels.append(w / w_sum)
+
+    def compute_weights(
+        self,
+        residuals: np.ndarray,
+        min_weight: float = 0.0,
+        return_local_scale: bool = False,
+    ) -> Tuple[np.ndarray, float] | Tuple[np.ndarray, float, np.ndarray]:
+        """Compute adaptive weights using cached kernel geometry.
+
+        Args:
+            residuals: Model residuals (same length and order as x used
+                to construct this cache).
+            min_weight: Minimum weight value.
+            return_local_scale: If True, also return per-observation local
+                scale (MAD-based C) as a third element.
+
+        Returns:
+            Tuple of (weights, median_alpha) or (weights, median_alpha, C_local).
+        """
+        from scipy.interpolate import PchipInterpolator
+
+        N = self.N
+        if self.M == 0:
+            return np.ones(N, dtype=float), 2.0
+
+        # --- Pass 1: Scale (mu, C) at M points ---
+        M = self.M
+        eval_mu = np.empty(M)
+        eval_C = np.empty(M)
+
+        for i in range(M):
+            w = self.scale_kernels[i]
+            if w is None:
+                eval_mu[i] = 0.0
+                eval_C[i] = 1.0
+                continue
+            eval_mu[i] = _weighted_quantile(
+                residuals, self._q50, weights=w, values_presorted=False
+            )[0]
+            C_i = _median_absolute_deviation(residuals, median=eval_mu[i], weights=w)
+            eval_C[i] = max(C_i, 1e-10)
+
+        # Interpolate mu, C to all observations
+        x = self.x
+        mu_interp = PchipInterpolator(self.eval_x, eval_mu, extrapolate=True)(x)
+        C_interp = np.clip(
+            PchipInterpolator(self.eval_x, eval_C, extrapolate=True)(x),
+            1e-10, None,
+        )
+
+        # --- Pass 2: Alpha at M_alpha points ---
+        r_normalized_all = (residuals - mu_interp) / C_interp
+        r_normalized_all[~np.isfinite(r_normalized_all)] = 0.0
+
+        M_alpha = self.M_alpha
+        eval_alpha = np.empty(M_alpha)
+
+        for i in range(M_alpha):
+            w = self.alpha_kernels[i]
+            if w is None:
+                eval_alpha[i] = 2.0
+                continue
+            eval_alpha[i] = _fast_weighted_alpha(r_normalized_all, w)
+
+        # Interpolate alpha, clamp
+        alpha_interp = np.clip(
+            PchipInterpolator(self.alpha_x, eval_alpha, extrapolate=True)(x),
+            LOSS_ALPHA_MIN, 2.0,
+        )
+
+        # --- Per-observation weights (vectorized by alpha bucket) ---
+        weights = np.ones(N, dtype=float)
+        alpha_rounded = np.round(alpha_interp, 2)
+        for alpha_val in np.unique(alpha_rounded):
+            mask = alpha_rounded == alpha_val
+            weights[mask] = generalized_loss_weights(
+                r_normalized_all[mask], alpha=float(alpha_val),
+                min_weight=min_weight,
+            )
+
+        median_alpha = float(np.median(eval_alpha))
+        if return_local_scale:
+            return weights, median_alpha, C_interp
+        return weights, median_alpha
+
+
 def kernel_adaptive_weights(
     x: np.ndarray,
     residuals: np.ndarray,
@@ -599,132 +760,36 @@ def kernel_adaptive_weights(
     min_knot_spacing_pct: float = 0.025,
     n_eff_min: int = 15,
     min_weight: float = 0.0,
-) -> Tuple[np.ndarray, float]:
+    return_local_scale: bool = False,
+    _cache: Optional["KernelWeightCache"] = None,
+) -> Tuple[np.ndarray, float] | Tuple[np.ndarray, float, np.ndarray]:
     """Kernel-weighted adaptive weights with bandwidth tied to model resolution.
 
     Computes per-observation adaptive weights where both the scale (C) and
     shape (alpha) of the generalized loss function are estimated locally via
-    Gaussian kernel weighting.  Observations closer in temperature contribute
-    more to each evaluation point's (mu, C, alpha) estimates.
+    Gaussian kernel weighting.
 
-    The bandwidth is derived from the model's knot configuration so that
-    weight resolution matches model resolution.  Three constraints ensure
-    the bandwidth is neither too fine nor too coarse:
-
-    - ``h_model``: weight resolution matches model complexity
-    - ``h_spacing``: cannot exceed the minimum knot spacing
-    - ``h_data``: enough effective neighbors for reliable MAD estimation
-
-    Scale (mu, C) is estimated at M evaluation points (fine resolution).
-    Alpha is estimated at M_alpha <= M evaluation points (coarser, since
-    distribution shape changes slowly with temperature).  Both are
-    interpolated to all observations via PCHIP.
+    When called repeatedly on the same temperature array (e.g., across
+    adaptive iterations), pass a ``KernelWeightCache`` via ``_cache`` to
+    avoid recomputing bandwidth, evaluation grids, and kernel matrices.
 
     Args:
         x: Temperature values, sorted ascending (typically standardized).
         residuals: Model residuals corresponding to x (same length).
-        zone_knot_count: Maximum interior knots per zone.  Drives the
-            bandwidth: more knots → narrower bandwidth → finer local weights.
+        zone_knot_count: Maximum interior knots per zone.
         min_knot_spacing_pct: Minimum knot spacing as fraction of data range.
-            Provides a resolution ceiling (from Knots settings, default 0.025).
         n_eff_min: Minimum effective neighbors per evaluation point.
-            Safety floor for reliable weighted MAD estimation.
-        min_weight: Minimum weight value passed to generalized_loss_weights.
+        min_weight: Minimum weight value.
+        return_local_scale: If True, return per-observation local scale (C)
+            as a third element.
+        _cache: Pre-computed kernel geometry.  If None, created internally.
 
     Returns:
-        Tuple of (weights array with shape (len(x),), median alpha across
-        evaluation points for diagnostics).
+        Tuple of (weights, median_alpha) or (weights, median_alpha, C_local).
     """
-    from scipy.interpolate import PchipInterpolator
-
-    N = len(x)
-    if N < 3:
-        return np.ones(N, dtype=float), 2.0
-
-    x_range = x[-1] - x[0]
-    if x_range <= 0:
-        return np.ones(N, dtype=float), 2.0
-
-    # --- Bandwidth selection ---
-    base_points = 12  # minimum ~4 per zone for HDD/TIDD/CDD resolution
-    knot_points = zone_knot_count * 3  # HDD + TIDD + CDD
-    h_model = x_range / max(base_points + knot_points, 1)
-    h_spacing = min_knot_spacing_pct * x_range
-    h_data = n_eff_min * x_range / (N * np.sqrt(2 * np.pi))
-    h = max(h_model, h_spacing, h_data)
-
-    # --- Evaluation points ---
-    # Scale (mu, C): fine resolution at M points
-    M = max(4, int(np.ceil(x_range / h)))
-    eval_x = np.linspace(x[0], x[-1], M)
-
-    # Alpha: coarser resolution (shape changes slowly with temperature).
-    # Use ~3x wider spacing, minimum 4 points for zone resolution.
-    M_alpha = max(4, min(M, int(np.ceil(x_range / (h * 3)))))
-    alpha_x = np.linspace(x[0], x[-1], M_alpha)
-
-    _q50 = np.array([0.5])
-
-    # --- Pass 1: Scale (mu, C) at M points ---
-    eval_mu = np.empty(M)
-    eval_C = np.empty(M)
-
-    for i in range(M):
-        w = np.exp(-0.5 * ((x - eval_x[i]) / h) ** 2)
-        w_sum = w.sum()
-        if w_sum < 1e-12:
-            eval_mu[i] = 0.0
-            eval_C[i] = 1.0
-            continue
-        w /= w_sum
-
-        eval_mu[i] = _weighted_quantile(
-            residuals, _q50, weights=w, values_presorted=False
-        )[0]
-        C_i = _median_absolute_deviation(residuals, median=eval_mu[i], weights=w)
-        eval_C[i] = max(C_i, 1e-10)
-
-    # Interpolate mu, C to all observations
-    mu_interp = PchipInterpolator(eval_x, eval_mu, extrapolate=True)(x)
-    C_interp = np.clip(
-        PchipInterpolator(eval_x, eval_C, extrapolate=True)(x), 1e-10, None
-    )
-
-    # --- Pass 2: Alpha at M_alpha points (on scale-normalized residuals) ---
-    r_normalized_all = (residuals - mu_interp) / C_interp
-    r_normalized_all[~np.isfinite(r_normalized_all)] = 0.0
-
-    # Use wider bandwidth for alpha (3x scale bandwidth)
-    h_alpha = h * 3
-    eval_alpha = np.empty(M_alpha)
-
-    for i in range(M_alpha):
-        w = np.exp(-0.5 * ((x - alpha_x[i]) / h_alpha) ** 2)
-        w_sum = w.sum()
-        if w_sum < 1e-12:
-            eval_alpha[i] = 2.0
-            continue
-        w /= w_sum
-
-        eval_alpha[i] = _fast_weighted_alpha(r_normalized_all, w)
-
-    # Interpolate alpha to all observations, clamp to valid range
-    alpha_interp = np.clip(
-        PchipInterpolator(alpha_x, eval_alpha, extrapolate=True)(x),
-        LOSS_ALPHA_MIN, 2.0,
-    )
-
-    # --- Compute per-observation weights (vectorized by alpha bucket) ---
-    weights = np.ones(N, dtype=float)
-    alpha_rounded = np.round(alpha_interp, 2)
-    for alpha_val in np.unique(alpha_rounded):
-        mask = alpha_rounded == alpha_val
-        weights[mask] = generalized_loss_weights(
-            r_normalized_all[mask], alpha=float(alpha_val), min_weight=min_weight,
-        )
-
-    median_alpha = float(np.median(eval_alpha))
-    return weights, median_alpha
+    if _cache is None:
+        _cache = KernelWeightCache(x, zone_knot_count, min_knot_spacing_pct, n_eff_min)
+    return _cache.compute_weights(residuals, min_weight=min_weight, return_local_scale=return_local_scale)
 
 
 # Pre-compile all Numba JIT functions at import time to eliminate first-call
