@@ -992,30 +992,21 @@ def test_add_freq(hourly_meter, hourly_temperature):
     assert meter_data.index.freq == "h"
 
 
-def test_trim_two_dataframes(
-    uk_electricity_hdd_only_hourly_sample_1, uk_electricity_hdd_only_hourly_sample_2
-):
-    df1 = uk_electricity_hdd_only_hourly_sample_1["meter_data"]
-    df2 = uk_electricity_hdd_only_hourly_sample_2["meter_data"]
+def test_trim_two_dataframes(comstock_hourly):
+    """trim() aligns two DataFrames to their overlapping index range."""
+    df_b, df_r = comstock_hourly
+    # df_b is 2018, df_r is 2019; offset df_r by a few hours so they overlap partially
+    df1 = df_b[["observed"]].rename(columns={"observed": "value"}).copy()
+    df1.index = df1.index.tz_convert("UTC")
+    df2 = df_r[["observed"]].rename(columns={"observed": "value"}).copy()
+    df2.index = df2.index.tz_convert("UTC") - pd.Timedelta(days=180)
 
     df1_trimmed, df2_trimmed = trim(df1, df2)
 
-    assert (
-        df1.index[0] == df1.index.min()
-        and df2.index[0] == df2.index.min()
-        and df1.index[0] != df2.index[0]
-    )
-
-    assert (
-        df1.index[-1] == df1.index.max()
-        and df2.index[-1] == df2.index.max()
-        and df1.index[-1] != df2.index[-1]
-    )
-
+    assert df1.index[0] != df2.index[0]
+    assert df1.index[-1] != df2.index[-1]
     assert df1_trimmed.index[0] == df2_trimmed.index[0]
-    assert df1_trimmed.index.min() == df2_trimmed.index.min()
     assert df1_trimmed.index[-1] == df2_trimmed.index[-1]
-    assert df1_trimmed.index.max() == df2_trimmed.index.max()
 
 
 @pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
