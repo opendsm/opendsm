@@ -177,11 +177,13 @@ def _load_file(file: Path | str):
                 f.write(response.content)
 
             data = file
-            raise Exception("I dunno")
 
-        except:
+        except OSError as e:
             data = BytesIO(response.content)
-            print(f"Warning: Could not write file {file}. Ensure the directory exists and you have write permissions.")
+            print(
+                f"Warning: Could not write file {file}: {e}. "
+                "Ensure the directory exists and you have write permissions."
+            )
 
     try:
         if file_type == "csv":
