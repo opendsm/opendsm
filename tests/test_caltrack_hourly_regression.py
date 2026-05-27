@@ -27,7 +27,7 @@ from opendsm.eemeter.models.hourly_caltrack.model import fit_caltrack_hourly_mod
 from opendsm.eemeter.models.hourly_caltrack.segmentation import segment_time_series
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def caltrack_baseline_preliminary(comstock_hourly):
     df_b, _ = comstock_hourly
     meter_data = df_b["observed"].rename("value").to_frame()
@@ -37,7 +37,7 @@ def caltrack_baseline_preliminary(comstock_hourly):
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def caltrack_hourly_baseline_model(caltrack_baseline_preliminary):
     preliminary = caltrack_baseline_preliminary
     segmentation = segment_time_series(preliminary.index, "three_month_weighted")

@@ -56,6 +56,7 @@ def bad_daily_data(bad_daily_series) -> DailyBaselineData:
     return baseline_data
 
 
+@pytest.mark.slow
 def test_disqualified_data_error(missing_daily_data):
     with pytest.raises(DataSufficiencyError):
         model = DailyModel().fit(missing_daily_data)

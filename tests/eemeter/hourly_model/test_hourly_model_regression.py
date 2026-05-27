@@ -23,21 +23,21 @@ from opendsm.eemeter.models.hourly.settings import (
 )
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def hourly_baseline_data(comstock_hourly):
     df_b, _ = comstock_hourly
 
     return HourlyBaselineData(df=df_b.reset_index(), is_electricity_data=True)
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def hourly_reporting_data(comstock_hourly):
     _, df_r = comstock_hourly
 
     return HourlyReportingData(df=df_r.reset_index(), is_electricity_data=True)
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def hourly_nonsolar_fit(hourly_baseline_data):
     settings = HourlyNonSolarSettings(seed=42)
 
@@ -46,7 +46,7 @@ def hourly_nonsolar_fit(hourly_baseline_data):
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def hourly_solar_fit(hourly_baseline_data):
     settings = HourlySolarSettings(seed=42)
 
@@ -66,6 +66,8 @@ def _summary(series):
     }
 
 
+@pytest.mark.slow
+@pytest.mark.regression
 def test_hourly_nonsolar_baseline_predict_regression(
     hourly_nonsolar_fit, hourly_baseline_data, snapshot
 ):
@@ -77,6 +79,8 @@ def test_hourly_nonsolar_baseline_predict_regression(
     assert predicted.values.tolist() == snapshot(name="predicted_values")
 
 
+@pytest.mark.slow
+@pytest.mark.regression
 def test_hourly_nonsolar_reporting_predict_regression(
     hourly_nonsolar_fit, hourly_reporting_data, snapshot
 ):
@@ -88,6 +92,8 @@ def test_hourly_nonsolar_reporting_predict_regression(
     assert predicted.values.tolist() == snapshot(name="predicted_values")
 
 
+@pytest.mark.slow
+@pytest.mark.regression
 def test_hourly_solar_baseline_predict_regression(
     hourly_solar_fit, hourly_baseline_data, snapshot
 ):
@@ -99,6 +105,8 @@ def test_hourly_solar_baseline_predict_regression(
     assert predicted.values.tolist() == snapshot(name="predicted_values")
 
 
+@pytest.mark.slow
+@pytest.mark.regression
 def test_hourly_solar_reporting_predict_regression(
     hourly_solar_fit, hourly_reporting_data, snapshot
 ):

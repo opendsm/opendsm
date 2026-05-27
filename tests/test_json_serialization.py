@@ -14,6 +14,8 @@
 
 import json
 
+import pytest
+
 from opendsm.eemeter import (
     DailyBaselineData,
     DailyReportingData,
@@ -81,6 +83,7 @@ def test_json_hourly_with_zeros(comstock_hourly):
     assert reporting.df["observed"].isnull().all()
 
 
+@pytest.mark.slow
 def test_json_caltrack_hourly(comstock_hourly):
     df_b, df_r = comstock_hourly
     meter_b = df_b[["observed"]].rename(columns={"observed": "value"}).copy()

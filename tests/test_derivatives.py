@@ -47,19 +47,19 @@ def baseline_data_daily(comstock_daily):
     return DailyBaselineData(df=df_b.reset_index(), is_electricity_data=True)
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def baseline_model_daily(baseline_data_daily):
     return DailyModel().fit(baseline_data_daily, ignore_disqualification=True)
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def reporting_data_daily(comstock_daily):
     _, df_r = comstock_daily
 
     return DailyBaselineData(df=df_r.reset_index(), is_electricity_data=True)
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def reporting_model_daily(reporting_data_daily):
     model_results = DailyModel().fit(reporting_data_daily, ignore_disqualification=True)
     return model_results
@@ -96,7 +96,7 @@ def test_metered_savings_cdd_hdd_daily(
     assert metered_savings.values.tolist() == snapshot(name="metered_savings_values")
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def baseline_model_billing(comstock_monthly):
     df_b, _ = comstock_monthly
     baseline_data = BillingBaselineData(df=df_b.reset_index(), is_electricity_data=True)
@@ -104,7 +104,7 @@ def baseline_model_billing(comstock_monthly):
     return BillingModel().fit(baseline_data, ignore_disqualification=True)
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def reporting_model_billing(comstock_monthly):
     df_b, _ = comstock_monthly
     df_shifted = df_b.copy()
@@ -209,7 +209,7 @@ def test_metered_savings_cdd_hdd_billing_single_record_reporting_data(
     assert results.predicted.values.tolist() == snapshot(name="predicted_values")
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def baseline_model_billing_single_record_baseline_data(comstock_monthly, comstock_hourly):
     df_monthly, _ = comstock_monthly
     df_hourly, _ = comstock_hourly
@@ -347,7 +347,7 @@ def _fit_caltrack_hourly(meter_data, temperature_data):
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def baseline_model_hourly(comstock_hourly):
     df_b, _ = comstock_hourly
     meter_data = df_b[["observed"]].rename(columns={"observed": "value"}).copy()
@@ -358,7 +358,7 @@ def baseline_model_hourly(comstock_hourly):
     return _fit_caltrack_hourly(meter_data, temperature_data)
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def reporting_model_hourly(comstock_hourly):
     _, df_r = comstock_hourly
     meter_data = df_r[["observed"]].rename(columns={"observed": "value"}).copy()
@@ -491,7 +491,7 @@ def test_metered_savings_not_aligned_reporting_data(
         )
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def baseline_model_billing_single_record(comstock_monthly, comstock_hourly):
     df_monthly, _ = comstock_monthly
     df_hourly, _ = comstock_hourly
@@ -558,7 +558,7 @@ def test_metered_savings_model_single_record(
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def baseline_model_hourly_single_segment(comstock_hourly):
     df_b, _ = comstock_hourly
     meter_data = df_b[["observed"]].rename(columns={"observed": "value"}).copy()

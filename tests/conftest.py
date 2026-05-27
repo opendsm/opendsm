@@ -92,7 +92,7 @@ def _comstock_monthly_all():
     return _to_fahrenheit(df_b), _to_fahrenheit(df_r)
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def comstock_hourly(_comstock_hourly_all):
     """Single-meter hourly baseline+reporting DataFrames with freq='h'."""
     df_b, df_r = _comstock_hourly_all
@@ -102,14 +102,14 @@ def comstock_hourly(_comstock_hourly_all):
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def comstock_daily(_comstock_daily_all):
     """Single-meter daily baseline+reporting DataFrames."""
     df_b, df_r = _comstock_daily_all
     return _meter_subset(df_b, COMSTOCK_DEFAULT_METER_ID), _meter_subset(df_r, COMSTOCK_DEFAULT_METER_ID)
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def comstock_monthly(_comstock_monthly_all):
     """Single-meter monthly baseline+reporting DataFrames."""
     df_b, df_r = _comstock_monthly_all
