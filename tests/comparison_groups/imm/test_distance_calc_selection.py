@@ -12,12 +12,21 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+import os
 import random
 
 import pandas as pd
+import pytest
 
 from opendsm.comparison_groups.individual_meter_matching.settings import Settings
 from opendsm.comparison_groups.individual_meter_matching.distance_calc_selection import DistanceMatching
+
+
+def _total_memory_gb():
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1e9
+    except (AttributeError, ValueError):
+        return float("inf")
 
 
 def generate_group(n_entries, make_random=True, non_random_value=5, id_prefix="t"):
@@ -126,6 +135,10 @@ def test_distance_match_duplicates_forbidden():
     assert not comparison_group["duplicated"].any()
 
 
+@pytest.mark.skipif(
+    _total_memory_gb() < 12,
+    reason="Needs >12 GB RAM; large allocations OOM-kill the process on smaller machines",
+)
 def test_distance_match_large_treatments():
     random.seed(1)
 
