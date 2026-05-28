@@ -879,3 +879,51 @@ def test_dst_handling():
     baseline = DailyBaselineData(df, is_electricity_data=True)
     assert len(baseline.df) == 365
     assert (baseline.df.index.hour == 1).all()
+
+
+def _daily_df(observed, tz="UTC"):
+    idx = pd.date_range("2020-01-01", periods=len(observed), freq="D", tz=tz)
+    return pd.DataFrame({"observed": observed, "temperature": np.linspace(30, 90, len(observed))}, index=idx)
+
+
+def test_daily_baseline_insufficient_unique_observed_disqualifies():
+    """Observed data with fewer unique values than min_pct_unique_values disqualifies."""
+    rng = np.random.default_rng(0)
+    # 365 days, only 20 unique values -> 20/365 ~= 5.5% < 10% default
+    observed = rng.choice(np.arange(20), size=365)
+    baseline = DailyBaselineData(_daily_df(observed), is_electricity_data=True)
+
+    insufficient = [
+        d for d in baseline.disqualification
+        if "insufficient_unique_observed_values" in d.qualified_name
+    ]
+    assert len(insufficient) == 1
+    assert insufficient[0].data["n_unique"] <= 20
+    assert insufficient[0].data["pct_unique"] < 0.10
+
+
+def test_daily_baseline_sufficient_unique_observed_passes():
+    """Observed data above min_pct_unique_values threshold does not disqualify on uniqueness."""
+    rng = np.random.default_rng(0)
+    # 365 days, ~365 unique floats -> 100% > 10% threshold
+    observed = rng.uniform(10, 100, size=365)
+    baseline = DailyBaselineData(_daily_df(observed), is_electricity_data=True)
+
+    insufficient = [
+        d for d in baseline.disqualification
+        if "insufficient_unique_observed_values" in d.qualified_name
+    ]
+    assert len(insufficient) == 0
+
+
+def test_daily_reporting_skips_unique_values_check():
+    """Reporting data is not checked for uniqueness (reporting may legitimately be constant)."""
+    rng = np.random.default_rng(0)
+    observed = rng.choice(np.arange(5), size=365)  # heavily constant
+    reporting = DailyReportingData(_daily_df(observed), is_electricity_data=True)
+
+    insufficient = [
+        d for d in reporting.disqualification
+        if "insufficient_unique_observed_values" in d.qualified_name
+    ]
+    assert len(insufficient) == 0

@@ -91,6 +91,16 @@ class ObservedSufficiencySettings(MutableBaseSettings):
         description="Minimum percentage of monthly coverage.",
     )
 
+    min_pct_unique_values: float = pydantic.Field(
+        default=0.10,
+        gt=0,
+        le=1,
+        description=(
+            "Minimum ratio of unique observed values to non-null observed count. "
+            "Models cannot learn from constant or near-constant load."
+        ),
+    )
+
 
 class JointSufficiencySettings(MutableBaseSettings):
     min_pct_daily_coverage: float = pydantic.Field(
