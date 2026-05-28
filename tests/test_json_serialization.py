@@ -125,7 +125,7 @@ def test_legacy_deserialization_daily(comstock_daily, snapshot):
         metered_savings_dataframe["observed"] - metered_savings_dataframe["predicted"]
     ).sum()
 
-    snapshot.assert_match(round(float(total_metered_savings), 2), "total_metered_savings")
+    assert round(float(total_metered_savings), 2) == snapshot(name="total_metered_savings")
 
 
 def test_legacy_deserialization_hourly(request, comstock_hourly, snapshot):
@@ -143,4 +143,4 @@ def test_legacy_deserialization_hourly(request, comstock_hourly, snapshot):
         metered_savings_dataframe["observed"] - metered_savings_dataframe["predicted"]
     ).sum()
 
-    snapshot.assert_match(round(float(total_metered_savings), 2), "total_metered_savings")
+    assert round(float(total_metered_savings), 2) == snapshot(name="total_metered_savings")

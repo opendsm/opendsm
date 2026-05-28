@@ -14,11 +14,33 @@
 
 import json
 import importlib.resources
+import sys
 
 import pytest
 
 from opendsm.common.test_data import load_test_data
 from opendsm.eemeter.samples import load_sample
+
+from syrupy_extensions import TolerantJSONSnapshotExtension
+
+
+@pytest.fixture
+def snapshot(snapshot):
+    """Default the project's `snapshot` fixture to the tolerant JSON extension."""
+    return snapshot.use_extension(TolerantJSONSnapshotExtension)
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip @pytest.mark.regression tests off linux-x86_64; nlopt/BLAS optimizer convergence drifts beyond tolerance on macOS/Windows."""
+    if sys.platform == "linux":
+        return
+
+    skip = pytest.mark.skip(
+        reason="Snapshot pinned to linux-x86_64; cross-platform optimizer/BLAS drift exceeds tolerance"
+    )
+    for item in items:
+        if "regression" in item.keywords:
+            item.add_marker(skip)
 
 
 # ComStock meter ids selected for diverse load behavior.
@@ -33,33 +55,54 @@ COMSTOCK_METER_IDS = [116756, 115041, 115092, 116975, 117154]
 COMSTOCK_DEFAULT_METER_ID = COMSTOCK_METER_IDS[0]
 
 
-def _meter_subset(df, meter_id):
-    return df.xs(meter_id, level="id")
+def _meter_subset(df, meter_id, freq=None):
+    sub = df.xs(meter_id, level="id")
+    if freq is not None:
+        sub = sub.asfreq(freq)
+
+    return sub
+
+
+def _to_fahrenheit(df):
+    """ComStock parquet ships temperature in Celsius; opendsm data classes expect Fahrenheit."""
+    out = df.copy()
+    out["temperature"] = out["temperature"] * 9.0 / 5.0 + 32.0
+
+    return out
 
 
 @pytest.fixture(scope="session")
 def _comstock_hourly_all():
     """All 100 meters of ComStock hourly treatment data, (baseline, reporting)."""
-    return load_test_data("hourly_treatment_data")
+    df_b, df_r = load_test_data("hourly_treatment_data")
+
+    return _to_fahrenheit(df_b), _to_fahrenheit(df_r)
 
 
 @pytest.fixture(scope="session")
 def _comstock_daily_all():
     """All 100 meters aggregated daily (mean temperature, sum observed)."""
-    return load_test_data("daily_treatment_data")
+    df_b, df_r = load_test_data("daily_treatment_data")
+
+    return _to_fahrenheit(df_b), _to_fahrenheit(df_r)
 
 
 @pytest.fixture(scope="session")
 def _comstock_monthly_all():
     """All 100 meters aggregated monthly."""
-    return load_test_data("monthly_treatment_data")
+    df_b, df_r = load_test_data("monthly_treatment_data")
+
+    return _to_fahrenheit(df_b), _to_fahrenheit(df_r)
 
 
 @pytest.fixture
 def comstock_hourly(_comstock_hourly_all):
-    """Single-meter hourly baseline+reporting DataFrames."""
+    """Single-meter hourly baseline+reporting DataFrames with freq='h'."""
     df_b, df_r = _comstock_hourly_all
-    return _meter_subset(df_b, COMSTOCK_DEFAULT_METER_ID), _meter_subset(df_r, COMSTOCK_DEFAULT_METER_ID)
+    return (
+        _meter_subset(df_b, COMSTOCK_DEFAULT_METER_ID, freq="h"),
+        _meter_subset(df_r, COMSTOCK_DEFAULT_METER_ID, freq="h"),
+    )
 
 
 @pytest.fixture
@@ -78,9 +121,12 @@ def comstock_monthly(_comstock_monthly_all):
 
 @pytest.fixture(params=COMSTOCK_METER_IDS, ids=[str(i) for i in COMSTOCK_METER_IDS])
 def comstock_hourly_diverse(request, _comstock_hourly_all):
-    """Parametrized: yields each of the 5 diverse meters' hourly baseline+reporting."""
+    """Parametrized: yields each of the 5 diverse meters' hourly baseline+reporting with freq='h'."""
     df_b, df_r = _comstock_hourly_all
-    return _meter_subset(df_b, request.param), _meter_subset(df_r, request.param)
+    return (
+        _meter_subset(df_b, request.param, freq="h"),
+        _meter_subset(df_r, request.param, freq="h"),
+    )
 
 
 @pytest.fixture(params=COMSTOCK_METER_IDS, ids=[str(i) for i in COMSTOCK_METER_IDS])

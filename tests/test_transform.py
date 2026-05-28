@@ -91,7 +91,7 @@ def hourly_temperature(comstock_hourly):
 
 def test_as_freq_not_series(monthly_meter, monthly_temperature, snapshot):
     meter_data = monthly_meter
-    snapshot.assert_match(list(meter_data.shape), "meter_data_shape")
+    assert list(meter_data.shape) == snapshot(name="meter_data_shape")
     with pytest.raises(ValueError):
         as_freq(meter_data, freq="h")
 
@@ -99,80 +99,80 @@ def test_as_freq_not_series(monthly_meter, monthly_temperature, snapshot):
 @pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
 def test_as_freq_hourly(monthly_meter, monthly_temperature, snapshot):
     meter_data = monthly_meter
-    snapshot.assert_match(list(meter_data.shape), "meter_data_shape")
+    assert list(meter_data.shape) == snapshot(name="meter_data_shape")
     as_hourly = as_freq(meter_data.value, freq="h")
-    snapshot.assert_match(list(as_hourly.shape), "as_hourly_shape")
+    assert list(as_hourly.shape) == snapshot(name="as_hourly_shape")
     assert round(meter_data.value.sum(), 1) == round(as_hourly.sum(), 1) == 21290.2
 
 
 @pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
 def test_as_freq_daily(monthly_meter, monthly_temperature, snapshot):
     meter_data = monthly_meter
-    snapshot.assert_match(list(meter_data.shape), "meter_data_shape")
+    assert list(meter_data.shape) == snapshot(name="meter_data_shape")
     as_daily = as_freq(meter_data.value, freq="D")
-    snapshot.assert_match(list(as_daily.shape), "as_daily_shape")
+    assert list(as_daily.shape) == snapshot(name="as_daily_shape")
     assert round(meter_data.value.sum(), 1) == round(as_daily.sum(), 1) == 21290.2
 
 
 def test_as_freq_daily_all_nones_instantaneous(monthly_meter, monthly_temperature, snapshot):
     meter_data = monthly_meter
     meter_data["value"] = np.nan
-    snapshot.assert_match(list(meter_data.shape), "meter_data_shape")
+    assert list(meter_data.shape) == snapshot(name="meter_data_shape")
     as_daily = as_freq(meter_data.value, freq="D", series_type="instantaneous")
-    snapshot.assert_match(list(as_daily.shape), "as_daily_shape")
+    assert list(as_daily.shape) == snapshot(name="as_daily_shape")
     assert round(meter_data.value.sum(), 1) == round(as_daily.sum(), 1) == 0
 
 
 def test_as_freq_daily_all_nones(monthly_meter, monthly_temperature, snapshot):
     meter_data = monthly_meter
     meter_data["value"] = np.nan
-    snapshot.assert_match(list(meter_data.shape), "meter_data_shape")
+    assert list(meter_data.shape) == snapshot(name="meter_data_shape")
     as_daily = as_freq(meter_data.value, freq="D")
-    snapshot.assert_match(list(as_daily.shape), "as_daily_shape")
+    assert list(as_daily.shape) == snapshot(name="as_daily_shape")
     assert round(meter_data.value.sum(), 1) == round(as_daily.sum(), 1) == 0
 
 
 @pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
 def test_as_freq_month_start(monthly_meter, monthly_temperature, snapshot):
     meter_data = monthly_meter
-    snapshot.assert_match(list(meter_data.shape), "meter_data_shape")
+    assert list(meter_data.shape) == snapshot(name="meter_data_shape")
     as_month_start = as_freq(meter_data.value, freq="MS")
-    snapshot.assert_match(list(as_month_start.shape), "as_month_start_shape")
+    assert list(as_month_start.shape) == snapshot(name="as_month_start_shape")
     assert round(meter_data.value.sum(), 1) == round(as_month_start.sum(), 1) == 21290.2
 
 
 @pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
 def test_as_freq_hourly_temperature(monthly_meter, monthly_temperature, snapshot):
     temperature_data = monthly_temperature
-    snapshot.assert_match(list(temperature_data.shape), "temperature_data_shape")
+    assert list(temperature_data.shape) == snapshot(name="temperature_data_shape")
     as_hourly = as_freq(temperature_data, freq="h", series_type="instantaneous")
-    snapshot.assert_match(list(as_hourly.shape), "as_hourly_shape")
+    assert list(as_hourly.shape) == snapshot(name="as_hourly_shape")
     assert round(temperature_data.mean(), 1) == round(as_hourly.mean(), 1) == 54.6
 
 
 def test_as_freq_daily_temperature(monthly_meter, monthly_temperature, snapshot):
     temperature_data = monthly_temperature
-    snapshot.assert_match(list(temperature_data.shape), "temperature_data_shape")
+    assert list(temperature_data.shape) == snapshot(name="temperature_data_shape")
     as_daily = as_freq(temperature_data, freq="D", series_type="instantaneous")
-    snapshot.assert_match(list(as_daily.shape), "as_daily_shape")
+    assert list(as_daily.shape) == snapshot(name="as_daily_shape")
     assert abs(temperature_data.mean() - as_daily.mean()) <= 0.1
 
 
 def test_as_freq_month_start_temperature(monthly_meter, monthly_temperature, snapshot):
     temperature_data = monthly_temperature
-    snapshot.assert_match(list(temperature_data.shape), "temperature_data_shape")
+    assert list(temperature_data.shape) == snapshot(name="temperature_data_shape")
     as_month_start = as_freq(temperature_data, freq="MS", series_type="instantaneous")
-    snapshot.assert_match(list(as_month_start.shape), "as_month_start_shape")
-    snapshot.assert_match(round(float(as_month_start.mean()), 1), "as_month_start_mean___round")
+    assert list(as_month_start.shape) == snapshot(name="as_month_start_shape")
+    assert round(float(as_month_start.mean()), 1) == snapshot(name="as_month_start_mean___round")
 
 
 def test_as_freq_daily_temperature_monthly(monthly_meter, monthly_temperature, snapshot):
     temperature_data = monthly_temperature
     temperature_data = temperature_data.groupby(pd.Grouper(freq="MS")).mean()
-    snapshot.assert_match(list(temperature_data.shape), "temperature_data_shape")
+    assert list(temperature_data.shape) == snapshot(name="temperature_data_shape")
     as_daily = as_freq(temperature_data, freq="D", series_type="instantaneous")
-    snapshot.assert_match(list(as_daily.shape), "as_daily_shape")
-    snapshot.assert_match(round(float(as_daily.mean()), 1), "as_daily_mean___round")
+    assert list(as_daily.shape) == snapshot(name="as_daily_shape")
+    assert round(float(as_daily.mean()), 1) == snapshot(name="as_daily_mean___round")
 
 
 def test_as_freq_empty():
@@ -193,18 +193,18 @@ def test_as_freq_perserves_nulls(monthly_meter, monthly_temperature, snapshot):
         == round(daily_with_nulls.sum(), 2)
         == 11094.05
     )
-    snapshot.assert_match(round(float(monthly_with_nulls.value.isnull().sum()), 4), "monthly_with_nulls_value_isnull___sum")
-    snapshot.assert_match(round(float(daily_with_nulls.isnull().sum()), 4), "daily_with_nulls_isnull___sum")
+    assert round(float(monthly_with_nulls.value.isnull().sum()), 4) == snapshot(name="monthly_with_nulls_value_isnull___sum")
+    assert round(float(daily_with_nulls.isnull().sum()), 4) == snapshot(name="daily_with_nulls_isnull___sum")
 
 
 @pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
 def test_day_counts(monthly_meter, monthly_temperature, snapshot):
     data = monthly_meter.value
     counts = day_counts(data.index)
-    snapshot.assert_match(list(counts.shape), "counts_shape")
+    assert list(counts.shape) == snapshot(name="counts_shape")
     assert counts.iloc[0] == 29.0
     assert pd.isnull(counts.iloc[-1])
-    snapshot.assert_match(round(float(counts.sum()), 4), "counts_sum")
+    assert round(float(counts.sum()), 4) == snapshot(name="counts_sum")
 
 
 def test_day_counts_empty_series(snapshot):
@@ -212,14 +212,14 @@ def test_day_counts_empty_series(snapshot):
     index.freq = None
     data = pd.Series([], index=index)
     counts = day_counts(data.index)
-    snapshot.assert_match(list(counts.shape), "counts_shape")
+    assert list(counts.shape) == snapshot(name="counts_shape")
 
 
 def test_get_baseline_data(hourly_meter, hourly_temperature, snapshot):
     meter_data = hourly_meter
     baseline_data, warnings = get_baseline_data(meter_data)
     assert meter_data.shape == baseline_data.shape
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
 def test_get_baseline_data_with_timezones(hourly_meter, hourly_temperature, snapshot):
@@ -227,11 +227,11 @@ def test_get_baseline_data_with_timezones(hourly_meter, hourly_temperature, snap
     baseline_data, warnings = get_baseline_data(
         meter_data.tz_convert("America/New_York")
     )
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
     baseline_data, warnings = get_baseline_data(
         meter_data.tz_convert("Australia/Sydney")
     )
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
 @pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
@@ -239,8 +239,8 @@ def test_get_baseline_data_with_end(hourly_meter, hourly_temperature, snapshot):
     meter_data = hourly_meter
     blackout_start_date = pd.Timestamp("2019-01-01", tz="UTC")
     baseline_data, warnings = get_baseline_data(meter_data, end=blackout_start_date)
-    snapshot.assert_match(list(meter_data.shape != baseline_data.shape), "meter_data_shape____baseline_data_shape")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(meter_data.shape != baseline_data.shape) == snapshot(name="meter_data_shape____baseline_data_shape")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
 @pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
@@ -250,8 +250,8 @@ def test_get_baseline_data_with_end_no_max_days(hourly_meter, hourly_temperature
     baseline_data, warnings = get_baseline_data(
         meter_data, end=blackout_start_date, max_days=None
     )
-    snapshot.assert_match(list(meter_data.shape != baseline_data.shape), "meter_data_shape____baseline_data_shape")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(meter_data.shape != baseline_data.shape) == snapshot(name="meter_data_shape____baseline_data_shape")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
 def test_get_baseline_data_empty(hourly_meter, hourly_temperature):
@@ -267,7 +267,7 @@ def test_get_baseline_data_start_gap(hourly_meter, hourly_temperature, snapshot)
     start = meter_data.index.min() - timedelta(days=1)
     baseline_data, warnings = get_baseline_data(meter_data, start=start, max_days=None)
     assert meter_data.shape == baseline_data.shape
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
     warning = warnings[0]
     assert warning.qualified_name == "eemeter.get_baseline_data.gap_at_baseline_start"
     assert (
@@ -286,7 +286,7 @@ def test_get_baseline_data_end_gap(hourly_meter, hourly_temperature, snapshot):
     end = meter_data.index.max() + timedelta(days=1)
     baseline_data, warnings = get_baseline_data(meter_data, end=end, max_days=None)
     assert meter_data.shape == baseline_data.shape
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
     warning = warnings[0]
     assert warning.qualified_name == "eemeter.get_baseline_data.gap_at_baseline_end"
     assert (
@@ -308,9 +308,9 @@ def test_get_baseline_data_with_overshoot(monthly_meter, monthly_temperature, sn
         max_days=32,
         allow_billing_period_overshoot=True,
     )
-    snapshot.assert_match(list(baseline_data.shape), "baseline_data_shape")
-    snapshot.assert_match(round(float(baseline_data.value.sum()), 2), "baseline_data_value_sum___round")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
     baseline_data, warnings = get_baseline_data(
         meter_data,
@@ -318,9 +318,9 @@ def test_get_baseline_data_with_overshoot(monthly_meter, monthly_temperature, sn
         max_days=32,
         allow_billing_period_overshoot=False,
     )
-    snapshot.assert_match(list(baseline_data.shape), "baseline_data_shape")
-    snapshot.assert_match(round(float(baseline_data.value.sum()), 2), "baseline_data_value_sum___round")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
     baseline_data, warnings = get_baseline_data(
         meter_data,
@@ -328,9 +328,9 @@ def test_get_baseline_data_with_overshoot(monthly_meter, monthly_temperature, sn
         max_days=25,
         allow_billing_period_overshoot=True,
     )
-    snapshot.assert_match(list(baseline_data.shape), "baseline_data_shape")
-    snapshot.assert_match(round(float(baseline_data.value.sum()), 2), "baseline_data_value_sum___round")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
 @pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
@@ -342,9 +342,9 @@ def test_get_baseline_data_with_ignored_gap(monthly_meter, monthly_temperature, 
         max_days=45,
         ignore_billing_period_gap_for_day_count=True,
     )
-    snapshot.assert_match(list(baseline_data.shape), "baseline_data_shape")
-    snapshot.assert_match(round(float(baseline_data.value.sum()), 2), "baseline_data_value_sum___round")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
     baseline_data, warnings = get_baseline_data(
         meter_data,
@@ -352,9 +352,9 @@ def test_get_baseline_data_with_ignored_gap(monthly_meter, monthly_temperature, 
         max_days=45,
         ignore_billing_period_gap_for_day_count=False,
     )
-    snapshot.assert_match(list(baseline_data.shape), "baseline_data_shape")
-    snapshot.assert_match(round(float(baseline_data.value.sum()), 2), "baseline_data_value_sum___round")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
     baseline_data, warnings = get_baseline_data(
         meter_data,
@@ -362,9 +362,9 @@ def test_get_baseline_data_with_ignored_gap(monthly_meter, monthly_temperature, 
         max_days=25,
         ignore_billing_period_gap_for_day_count=True,
     )
-    snapshot.assert_match(list(baseline_data.shape), "baseline_data_shape")
-    snapshot.assert_match(round(float(baseline_data.value.sum()), 2), "baseline_data_value_sum___round")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
 @pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
@@ -378,9 +378,9 @@ def test_get_baseline_data_with_overshoot_and_ignored_gap(monthly_meter, monthly
         allow_billing_period_overshoot=True,
         ignore_billing_period_gap_for_day_count=True,
     )
-    snapshot.assert_match(list(baseline_data.shape), "baseline_data_shape")
-    snapshot.assert_match(round(float(baseline_data.value.sum()), 2), "baseline_data_value_sum___round")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
     baseline_data, warnings = get_baseline_data(
         meter_data,
@@ -389,9 +389,9 @@ def test_get_baseline_data_with_overshoot_and_ignored_gap(monthly_meter, monthly
         allow_billing_period_overshoot=False,
         ignore_billing_period_gap_for_day_count=False,
     )
-    snapshot.assert_match(list(baseline_data.shape), "baseline_data_shape")
-    snapshot.assert_match(round(float(baseline_data.value.sum()), 2), "baseline_data_value_sum___round")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
 @pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
@@ -406,9 +406,9 @@ def test_get_baseline_data_n_days_billing_period_overshoot(monthly_meter, monthl
         n_days_billing_period_overshoot=45,
         ignore_billing_period_gap_for_day_count=True,
     )
-    snapshot.assert_match(list(baseline_data.shape), "baseline_data_shape")
-    snapshot.assert_match(round(float(baseline_data.value.sum()), 2), "baseline_data_value_sum___round")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
 @pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
@@ -422,9 +422,9 @@ def test_get_baseline_data_too_far_from_date(monthly_meter, monthly_temperature,
         max_days=max_days,
         ignore_billing_period_gap_for_day_count=True,
     )
-    snapshot.assert_match(list(baseline_data.shape), "baseline_data_shape")
-    snapshot.assert_match(round(float(baseline_data.value.sum()), 2), "baseline_data_value_sum___round")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
     with pytest.raises(NoBaselineDataError):
         get_baseline_data(
             meter_data,
@@ -440,9 +440,9 @@ def test_get_baseline_data_too_far_from_date(monthly_meter, monthly_temperature,
         allow_billing_period_overshoot=True,
         ignore_billing_period_gap_for_day_count=True,
     )
-    snapshot.assert_match(list(baseline_data.shape), "baseline_data_shape")
-    snapshot.assert_match(round(float(baseline_data.value.sum()), 2), "baseline_data_value_sum___round")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
     # Includes 3 data points because data at index -3 is closer to start target
     # then data at index -2
     start_target = baseline_data.index[-1] - timedelta(days=max_days)
@@ -464,7 +464,7 @@ def test_get_reporting_data(hourly_meter, hourly_temperature, snapshot):
     meter_data = hourly_meter
     reporting_data, warnings = get_reporting_data(meter_data)
     assert meter_data.shape == reporting_data.shape
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
 def test_get_reporting_data_with_timezones(hourly_meter, hourly_temperature, snapshot):
@@ -472,11 +472,11 @@ def test_get_reporting_data_with_timezones(hourly_meter, hourly_temperature, sna
     reporting_data, warnings = get_reporting_data(
         meter_data.tz_convert("America/New_York")
     )
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
     reporting_data, warnings = get_reporting_data(
         meter_data.tz_convert("Australia/Sydney")
     )
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
 @pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
@@ -484,8 +484,8 @@ def test_get_reporting_data_with_start(hourly_meter, hourly_temperature, snapsho
     meter_data = hourly_meter
     blackout_end_date = pd.Timestamp("2019-01-02", tz="UTC")
     reporting_data, warnings = get_reporting_data(meter_data, start=blackout_end_date)
-    snapshot.assert_match(list(meter_data.shape != reporting_data.shape), "meter_data_shape____reporting_data_shape")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(meter_data.shape != reporting_data.shape) == snapshot(name="meter_data_shape____reporting_data_shape")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
 @pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
@@ -495,8 +495,8 @@ def test_get_reporting_data_with_start_no_max_days(hourly_meter, hourly_temperat
     reporting_data, warnings = get_reporting_data(
         meter_data, start=blackout_end_date, max_days=None
     )
-    snapshot.assert_match(list(meter_data.shape != reporting_data.shape), "meter_data_shape____reporting_data_shape")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(meter_data.shape != reporting_data.shape) == snapshot(name="meter_data_shape____reporting_data_shape")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
 def test_get_reporting_data_empty(hourly_meter, hourly_temperature):
@@ -514,7 +514,7 @@ def test_get_reporting_data_start_gap(hourly_meter, hourly_temperature, snapshot
         meter_data, start=start, max_days=None
     )
     assert meter_data.shape == reporting_data.shape
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
     warning = warnings[0]
     assert warning.qualified_name == "eemeter.get_reporting_data.gap_at_reporting_start"
     assert (
@@ -533,7 +533,7 @@ def test_get_reporting_data_end_gap(hourly_meter, hourly_temperature, snapshot):
     end = meter_data.index.max() + timedelta(days=1)
     reporting_data, warnings = get_reporting_data(meter_data, end=end, max_days=None)
     assert meter_data.shape == reporting_data.shape
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
     warning = warnings[0]
     assert warning.qualified_name == "eemeter.get_reporting_data.gap_at_reporting_end"
     assert (
@@ -555,9 +555,9 @@ def test_get_reporting_data_with_overshoot(monthly_meter, monthly_temperature, s
         max_days=30,
         allow_billing_period_overshoot=True,
     )
-    snapshot.assert_match(list(reporting_data.shape), "reporting_data_shape")
-    snapshot.assert_match(round(float(reporting_data.value.sum()), 2), "reporting_data_value_sum___round")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(reporting_data.shape) == snapshot(name="reporting_data_shape")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
     reporting_data, warnings = get_reporting_data(
         meter_data,
@@ -565,9 +565,9 @@ def test_get_reporting_data_with_overshoot(monthly_meter, monthly_temperature, s
         max_days=30,
         allow_billing_period_overshoot=False,
     )
-    snapshot.assert_match(list(reporting_data.shape), "reporting_data_shape")
-    snapshot.assert_match(round(float(reporting_data.value.sum()), 2), "reporting_data_value_sum___round")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(reporting_data.shape) == snapshot(name="reporting_data_shape")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
     reporting_data, warnings = get_reporting_data(
         meter_data,
@@ -575,9 +575,9 @@ def test_get_reporting_data_with_overshoot(monthly_meter, monthly_temperature, s
         max_days=25,
         allow_billing_period_overshoot=True,
     )
-    snapshot.assert_match(list(reporting_data.shape), "reporting_data_shape")
-    snapshot.assert_match(round(float(reporting_data.value.sum()), 2), "reporting_data_value_sum___round")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(reporting_data.shape) == snapshot(name="reporting_data_shape")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
 @pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
@@ -589,9 +589,9 @@ def test_get_reporting_data_with_ignored_gap(monthly_meter, monthly_temperature,
         max_days=45,
         ignore_billing_period_gap_for_day_count=True,
     )
-    snapshot.assert_match(list(reporting_data.shape), "reporting_data_shape")
-    snapshot.assert_match(round(float(reporting_data.value.sum()), 2), "reporting_data_value_sum___round")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(reporting_data.shape) == snapshot(name="reporting_data_shape")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
     reporting_data, warnings = get_reporting_data(
         meter_data,
@@ -599,9 +599,9 @@ def test_get_reporting_data_with_ignored_gap(monthly_meter, monthly_temperature,
         max_days=45,
         ignore_billing_period_gap_for_day_count=False,
     )
-    snapshot.assert_match(list(reporting_data.shape), "reporting_data_shape")
-    snapshot.assert_match(round(float(reporting_data.value.sum()), 2), "reporting_data_value_sum___round")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(reporting_data.shape) == snapshot(name="reporting_data_shape")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
     reporting_data, warnings = get_reporting_data(
         meter_data,
@@ -609,9 +609,9 @@ def test_get_reporting_data_with_ignored_gap(monthly_meter, monthly_temperature,
         max_days=25,
         ignore_billing_period_gap_for_day_count=True,
     )
-    snapshot.assert_match(list(reporting_data.shape), "reporting_data_shape")
-    snapshot.assert_match(round(float(reporting_data.value.sum()), 2), "reporting_data_value_sum___round")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(reporting_data.shape) == snapshot(name="reporting_data_shape")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
 @pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
@@ -625,9 +625,9 @@ def test_get_reporting_data_with_overshoot_and_ignored_gap(monthly_meter, monthl
         allow_billing_period_overshoot=True,
         ignore_billing_period_gap_for_day_count=True,
     )
-    snapshot.assert_match(list(reporting_data.shape), "reporting_data_shape")
-    snapshot.assert_match(round(float(reporting_data.value.sum()), 2), "reporting_data_value_sum___round")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(reporting_data.shape) == snapshot(name="reporting_data_shape")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
     reporting_data, warnings = get_reporting_data(
         meter_data,
@@ -636,9 +636,9 @@ def test_get_reporting_data_with_overshoot_and_ignored_gap(monthly_meter, monthl
         allow_billing_period_overshoot=False,
         ignore_billing_period_gap_for_day_count=False,
     )
-    snapshot.assert_match(list(reporting_data.shape), "reporting_data_shape")
-    snapshot.assert_match(round(float(reporting_data.value.sum()), 2), "reporting_data_value_sum___round")
-    snapshot.assert_match(int(len(warnings)), "warnings_len")
+    assert list(reporting_data.shape) == snapshot(name="reporting_data_shape")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
 def test_get_terms_unrecognized_method(monthly_meter, monthly_temperature):
@@ -686,7 +686,7 @@ def test_get_terms_empty_index_input(monthly_meter, monthly_temperature, snapsho
     meter_data = monthly_meter
 
     terms = get_terms(meter_data.index[:0], term_lengths=[60, 60, 60])
-    snapshot.assert_match(int(len(terms)), "terms_len")
+    assert int(len(terms)) == snapshot(name="terms_len")
 
 
 @pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
@@ -701,11 +701,11 @@ def test_get_terms_strict(monthly_meter, monthly_temperature, snapshot):
         method="strict",
     )
 
-    snapshot.assert_match(int(len(strict_terms)), "strict_terms_len")
+    assert int(len(strict_terms)) == snapshot(name="strict_terms_len")
 
     year1 = strict_terms[0]
     assert year1.label == "year1"
-    snapshot.assert_match(list(year1.index.shape), "year1_index_shape")
+    assert list(year1.index.shape) == snapshot(name="year1_index_shape")
     assert (
         year1.target_start_date
         == pd.Timestamp("2016-01-15 00:00:00+0000", tz="UTC").to_pydatetime()
@@ -729,7 +729,7 @@ def test_get_terms_strict(monthly_meter, monthly_temperature, snapshot):
     assert year1.complete
 
     year2 = strict_terms[1]
-    snapshot.assert_match(list(year2.index.shape), "year2_index_shape")
+    assert list(year2.index.shape) == snapshot(name="year2_index_shape")
     assert year2.label == "year2"
     assert year2.target_start_date == pd.Timestamp("2016-12-19 06:00:00+0000", tz="UTC")
     assert (
@@ -762,11 +762,11 @@ def test_get_terms_nearest(monthly_meter, monthly_temperature, snapshot):
         method="nearest",
     )
 
-    snapshot.assert_match(int(len(nearest_terms)), "nearest_terms_len")
+    assert int(len(nearest_terms)) == snapshot(name="nearest_terms_len")
 
     year1 = nearest_terms[0]
     assert year1.label == "year1"
-    snapshot.assert_match(list(year1.index.shape), "year1_index_shape")
+    assert list(year1.index.shape) == snapshot(name="year1_index_shape")
     assert year1.index[0] == pd.Timestamp("2016-01-22 06:00:00+0000", tz="UTC")
     assert year1.index[-1] == pd.Timestamp("2017-01-21 06:00:00+0000", tz="UTC")
     assert (
@@ -779,7 +779,7 @@ def test_get_terms_nearest(monthly_meter, monthly_temperature, snapshot):
 
     year2 = nearest_terms[1]
     assert year2.label == "year2"
-    snapshot.assert_match(list(year2.index.shape), "year2_index_shape")
+    assert list(year2.index.shape) == snapshot(name="year2_index_shape")
     assert year2.index[0] == pd.Timestamp("2017-01-21 06:00:00+0000", tz="UTC")
     assert year2.index[-1] == pd.Timestamp("2018-01-20 06:00:00+0000", tz="UTC")
     assert year2.target_start_date == pd.Timestamp("2017-01-21 06:00:00+0000", tz="UTC")
@@ -797,7 +797,7 @@ def test_get_terms_nearest(monthly_meter, monthly_temperature, snapshot):
     )
     year2 = nearest_terms[1]
     assert year2.label == "year2"
-    snapshot.assert_match(list(year2.index.shape), "year2_index_shape")
+    assert list(year2.index.shape) == snapshot(name="year2_index_shape")
     assert year2.index[0] == pd.Timestamp("2017-01-21 06:00:00+0000", tz="UTC")
     assert year2.index[-1] == pd.Timestamp("2017-12-22 06:00:00+00:00", tz="UTC")
     assert year2.target_start_date == pd.Timestamp("2017-01-21 06:00:00+0000", tz="UTC")
@@ -820,18 +820,18 @@ def test_term_repr(monthly_meter, monthly_temperature):
 def test_remove_duplicates_df(snapshot):
     index = pd.DatetimeIndex(["2017-01-01", "2017-01-02", "2017-01-02"])
     df = pd.DataFrame({"value": [1, 2, 3]}, index=index)
-    snapshot.assert_match(list(df.shape), "df_shape")
+    assert list(df.shape) == snapshot(name="df_shape")
     df_dedupe = remove_duplicates(df)
-    snapshot.assert_match(list(df_dedupe.shape), "df_dedupe_shape")
+    assert list(df_dedupe.shape) == snapshot(name="df_dedupe_shape")
     assert list(df_dedupe.value) == [1, 2]
 
 
 def test_remove_duplicates_series(snapshot):
     index = pd.DatetimeIndex(["2017-01-01", "2017-01-02", "2017-01-02"])
     series = pd.Series([1, 2, 3], index=index)
-    snapshot.assert_match(list(series.shape), "series_shape")
+    assert list(series.shape) == snapshot(name="series_shape")
     series_dedupe = remove_duplicates(series)
-    snapshot.assert_match(list(series_dedupe.shape), "series_dedupe_shape")
+    assert list(series_dedupe.shape) == snapshot(name="series_dedupe_shape")
     assert list(series_dedupe) == [1, 2]
 
 
@@ -840,18 +840,18 @@ def test_as_freq_hourly_to_daily(hourly_meter, hourly_temperature, snapshot):
     meter_data = hourly_meter
 
     meter_data.iloc[-1, meter_data.columns.get_loc("value")] = np.nan
-    snapshot.assert_match(list(meter_data.shape), "meter_data_shape")
+    assert list(meter_data.shape) == snapshot(name="meter_data_shape")
     as_daily = as_freq(meter_data.value, freq="D")
-    snapshot.assert_match(list(as_daily.shape), "as_daily_shape")
+    assert list(as_daily.shape) == snapshot(name="as_daily_shape")
     assert round(meter_data.value.sum(), 1) == round(as_daily.sum(), 1) == 21926.0
 
 
 @pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
 def test_as_freq_daily_to_daily(daily_meter, daily_temperature, snapshot):
     meter_data = daily_meter
-    snapshot.assert_match(list(meter_data.shape), "meter_data_shape")
+    assert list(meter_data.shape) == snapshot(name="meter_data_shape")
     as_daily = as_freq(meter_data.value, freq="D")
-    snapshot.assert_match(list(as_daily.shape), "as_daily_shape")
+    assert list(as_daily.shape) == snapshot(name="as_daily_shape")
     assert round(meter_data.value.sum(), 1) == round(as_daily.sum(), 1) == 21925.8
 
 
@@ -859,9 +859,9 @@ def test_as_freq_daily_to_daily(daily_meter, daily_temperature, snapshot):
 def test_as_freq_hourly_to_daily_include_coverage(hourly_meter, hourly_temperature, snapshot):
     meter_data = hourly_meter
     meter_data.iloc[-1, meter_data.columns.get_loc("value")] = np.nan
-    snapshot.assert_match(list(meter_data.shape), "meter_data_shape")
+    assert list(meter_data.shape) == snapshot(name="meter_data_shape")
     as_daily = as_freq(meter_data.value, freq="D", include_coverage=True)
-    snapshot.assert_match(list(as_daily.shape), "as_daily_shape")
+    assert list(as_daily.shape) == snapshot(name="as_daily_shape")
     assert round(meter_data.value.sum(), 1) == round(as_daily.value.sum(), 1) == 21926.0
 
 
@@ -870,14 +870,14 @@ def test_clean_caltrack_billing_daily_data_billing(monthly_meter, monthly_temper
 ):
     meter_data = monthly_meter
     cleaned_data = clean_caltrack_billing_daily_data(meter_data, "billing_monthly")
-    snapshot.assert_match(list(cleaned_data.shape), "cleaned_data_shape")
+    assert list(cleaned_data.shape) == snapshot(name="cleaned_data_shape")
     pd.testing.assert_frame_equal(meter_data, cleaned_data)
 
 
 def test_clean_caltrack_billing_daily_data_daily(daily_meter, daily_temperature, snapshot):
     meter_data = daily_meter
     cleaned_data = clean_caltrack_billing_daily_data(meter_data, "daily")
-    snapshot.assert_match(list(cleaned_data.shape), "cleaned_data_shape")
+    assert list(cleaned_data.shape) == snapshot(name="cleaned_data_shape")
     pd.testing.assert_frame_equal(meter_data, cleaned_data)
 
 
@@ -886,27 +886,27 @@ def test_clean_caltrack_billing_daily_data_daily_local_tz(daily_meter, daily_tem
     meter_data.index += timedelta(hours=6)
     meter_data = meter_data.tz_convert("America/Chicago")
     cleaned_data = clean_caltrack_billing_daily_data(meter_data, "daily")
-    snapshot.assert_match(list(cleaned_data.shape), "cleaned_data_shape")
+    assert list(cleaned_data.shape) == snapshot(name="cleaned_data_shape")
     pd.testing.assert_frame_equal(meter_data, cleaned_data)
 
 
 def test_clean_caltrack_billing_daily_data_hourly(hourly_meter, hourly_temperature, snapshot):
     meter_data = hourly_meter
     cleaned_data = clean_caltrack_billing_daily_data(meter_data, "hourly")
-    snapshot.assert_match(list(cleaned_data.shape), "cleaned_data_shape")
+    assert list(cleaned_data.shape) == snapshot(name="cleaned_data_shape")
 
 
 def test_clean_caltrack_daily_data_hourly(hourly_meter, hourly_temperature, snapshot):
     meter_data = hourly_meter
     cleaned_data = downsample_and_clean_caltrack_daily_data(meter_data)
-    snapshot.assert_match(list(cleaned_data.shape), "cleaned_data_shape")
+    assert list(cleaned_data.shape) == snapshot(name="cleaned_data_shape")
 
 
 def test_clean_caltrack_daily_data_hourly_local_tz(hourly_meter, hourly_temperature, snapshot):
     meter_data = hourly_meter
     meter_data = meter_data.tz_convert("America/Chicago")
     cleaned_data = downsample_and_clean_caltrack_daily_data(meter_data)
-    snapshot.assert_match(list(cleaned_data.shape), "cleaned_data_shape")
+    assert list(cleaned_data.shape) == snapshot(name="cleaned_data_shape")
 
 
 def test_clean_caltrack_billing_data_estimated(monthly_meter, monthly_temperature):
@@ -1069,7 +1069,7 @@ def test_format_energy_data_for_caltrack_hourly(hourly_meter, hourly_temperature
     assert df_reformatted.index.freq == "h"
     assert df_reformatted.columns[0] == "value"
     assert df_reformatted.index.tzinfo is not None
-    snapshot.assert_match(int(len(df_reformatted.columns)), "df_reformatted_columns_len")
+    assert int(len(df_reformatted.columns)) == snapshot(name="df_reformatted_columns_len")
 
 
 def test_format_energy_data_for_caltrack_daily(daily_meter, daily_temperature, snapshot):
@@ -1094,7 +1094,7 @@ def test_format_energy_data_for_caltrack_daily(daily_meter, daily_temperature, s
     assert df_reformatted.index.freq == "D"
     assert df_reformatted.columns[0] == "value"
     assert df_reformatted.index.tzinfo is not None
-    snapshot.assert_match(int(len(df_reformatted.columns)), "df_reformatted_columns_len")
+    assert int(len(df_reformatted.columns)) == snapshot(name="df_reformatted_columns_len")
 
 
 def test_format_energy_data_for_caltrack_billing(daily_meter, daily_temperature, snapshot):
@@ -1119,4 +1119,4 @@ def test_format_energy_data_for_caltrack_billing(daily_meter, daily_temperature,
     assert df_reformatted.index.freq == pd.tseries.offsets.MonthEnd()
     assert df_reformatted.columns[0] == "value"
     assert df_reformatted.index.tzinfo is not None
-    snapshot.assert_match(int(len(df_reformatted.columns)), "df_reformatted_columns_len")
+    assert int(len(df_reformatted.columns)) == snapshot(name="df_reformatted_columns_len")

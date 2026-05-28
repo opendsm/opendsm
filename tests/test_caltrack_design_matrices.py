@@ -53,7 +53,7 @@ def test_create_caltrack_hourly_preliminary_design_matrix(comstock_hourly, snaps
     ]
     # In newer pandas, categorical columns (like hour_of_week) arent included in sum
     design_matrix.hour_of_week = design_matrix.hour_of_week.astype(float)
-    snapshot.assert_match(round(float(design_matrix.sum().sum()), 2), "design_matrix_sum")
+    assert round(float(design_matrix.sum().sum()), 2) == snapshot(name="design_matrix_sum")
 
 
 def test_create_caltrack_daily_design_matrix(comstock_daily, comstock_hourly, snapshot):
@@ -71,7 +71,7 @@ def test_create_caltrack_daily_design_matrix(comstock_daily, comstock_hourly, sn
         "temperature_not_null",
         "temperature_null",
     ]
-    snapshot.assert_match(round(float(design_matrix.sum().sum()), 2), "design_matrix_sum")
+    assert round(float(design_matrix.sum().sum()), 2) == snapshot(name="design_matrix_sum")
 
 
 def test_create_caltrack_billing_design_matrix(comstock_monthly, comstock_hourly, snapshot):
@@ -89,8 +89,8 @@ def test_create_caltrack_billing_design_matrix(comstock_monthly, comstock_hourly
         "temperature_not_null",
         "temperature_null",
     ]
-    snapshot.assert_match(round(float(design_matrix.sum().sum()), 2), "design_matrix_sum")
-    snapshot.assert_match(list(design_matrix.shape), "design_matrix_shape")
+    assert round(float(design_matrix.sum().sum()), 2) == snapshot(name="design_matrix_sum")
+    assert list(design_matrix.shape) == snapshot(name="design_matrix_shape")
 
 
 @pytest.fixture
@@ -139,9 +139,9 @@ def test_create_caltrack_hourly_segmented_design_matrices(
     for segment_name in ("dec-jan-feb-weighted", "mar-apr-may-weighted"):
         design_matrix = design_matrices[segment_name]
         design_matrix.hour_of_week = design_matrix.hour_of_week.astype(float)
-        snapshot.assert_match(list(design_matrix.shape), f"{segment_name}_shape")
-        snapshot.assert_match(sorted(design_matrix.columns), f"{segment_name}_columns")
-        snapshot.assert_match(round(float(design_matrix.sum().sum()), 2), f"{segment_name}_sum")
+        assert list(design_matrix.shape) == snapshot(name=f"{segment_name}_shape")
+        assert sorted(design_matrix.columns) == snapshot(name=f"{segment_name}_columns")
+        assert round(float(design_matrix.sum().sum()), 2) == snapshot(name=f"{segment_name}_sum")
 
 
 def test_create_caltrack_billing_design_matrix_empty_temp(comstock_monthly, comstock_hourly):

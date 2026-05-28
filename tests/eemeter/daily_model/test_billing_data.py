@@ -436,9 +436,9 @@ def test_billing_baseline_data_with_specific_hourly_input(comstock_hourly, snaps
     cls = BillingBaselineData.from_series(meter, temperature, is_electricity_data=True)
 
     assert cls.df is not None
-    snapshot.assert_match(round(float(cls.df.observed.sum()), 2), "observed_sum")
-    snapshot.assert_match(sorted({w.qualified_name for w in cls.warnings}), "warnings")
-    snapshot.assert_match(sorted({d.qualified_name for d in cls.disqualification}), "disqualification")
+    assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
+    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
 
 
 def test_billing_baseline_data_with_specific_daily_input(comstock_daily, comstock_hourly, snapshot):
@@ -453,9 +453,9 @@ def test_billing_baseline_data_with_specific_daily_input(comstock_daily, comstoc
     cls = BillingBaselineData.from_series(meter, temperature, is_electricity_data=True)
 
     assert cls.df is not None
-    snapshot.assert_match(round(float(cls.df.observed.sum()), 2), "observed_sum")
-    snapshot.assert_match(sorted({w.qualified_name for w in cls.warnings}), "warnings")
-    snapshot.assert_match(sorted({d.qualified_name for d in cls.disqualification}), "disqualification")
+    assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
+    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
 
 
 def test_billing_baseline_data_with_specific_missing_daily_input(comstock_daily, comstock_hourly, snapshot):
@@ -472,8 +472,8 @@ def test_billing_baseline_data_with_specific_missing_daily_input(comstock_daily,
     cls = BillingBaselineData.from_series(meter, temperature, is_electricity_data=True)
 
     assert cls.df is not None
-    snapshot.assert_match(sorted({w.qualified_name for w in cls.warnings}), "warnings")
-    snapshot.assert_match(sorted({d.qualified_name for d in cls.disqualification}), "disqualification")
+    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
 
 
 def test_billing_baseline_data_with_specific_monthly_input(comstock_monthly, comstock_hourly, snapshot):
@@ -488,9 +488,9 @@ def test_billing_baseline_data_with_specific_monthly_input(comstock_monthly, com
     cls = BillingBaselineData.from_series(meter, temperature, is_electricity_data=True)
 
     assert cls.df is not None
-    snapshot.assert_match(round(float(cls.df.observed.sum()), 2), "observed_sum")
-    snapshot.assert_match(sorted({w.qualified_name for w in cls.warnings}), "warnings")
-    snapshot.assert_match(sorted({d.qualified_name for d in cls.disqualification}), "disqualification")
+    assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
+    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
 
 
 @pytest.mark.parametrize(

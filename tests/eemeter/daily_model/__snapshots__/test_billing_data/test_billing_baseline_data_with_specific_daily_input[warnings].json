@@ -1,0 +1,5 @@
+[
+  "eemeter.data_quality.utc_index",
+  "eemeter.sufficiency_criteria.inferior_model_usage",
+  "eemeter.sufficiency_criteria.missing_high_frequency_temperature_data"
+]

@@ -410,10 +410,10 @@ def test_daily_baseline_data_with_specific_hourly_input(comstock_hourly, snapsho
     cls = DailyBaselineData.from_series(meter, temperature, is_electricity_data=True)
 
     assert cls.df is not None
-    snapshot.assert_match(int(len(cls.df)), "df_length")
-    snapshot.assert_match(round(float(cls.df.observed.sum()), 2), "observed_sum")
-    snapshot.assert_match(sorted({w.qualified_name for w in cls.warnings}), "warnings")
-    snapshot.assert_match(sorted({d.qualified_name for d in cls.disqualification}), "disqualification")
+    assert int(len(cls.df)) == snapshot(name="df_length")
+    assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
+    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
 
 
 def test_daily_baseline_data_with_specific_daily_input(comstock_daily, comstock_hourly, snapshot):
@@ -427,10 +427,10 @@ def test_daily_baseline_data_with_specific_daily_input(comstock_daily, comstock_
     cls = DailyBaselineData.from_series(meter, temperature, is_electricity_data=True)
 
     assert cls.df is not None
-    snapshot.assert_match(int(len(cls.df)), "df_length")
-    snapshot.assert_match(round(float(cls.df.observed.sum()), 2), "observed_sum")
-    snapshot.assert_match(sorted({w.qualified_name for w in cls.warnings}), "warnings")
-    snapshot.assert_match(sorted({d.qualified_name for d in cls.disqualification}), "disqualification")
+    assert int(len(cls.df)) == snapshot(name="df_length")
+    assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
+    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
 
 
 def test_daily_baseline_data_with_missing_specific_daily_input(comstock_daily, comstock_hourly, snapshot):
@@ -446,10 +446,10 @@ def test_daily_baseline_data_with_missing_specific_daily_input(comstock_daily, c
     cls = DailyBaselineData.from_series(meter, temperature, is_electricity_data=True)
 
     assert cls.df is not None
-    snapshot.assert_match(int(len(cls.df)), "df_length")
-    snapshot.assert_match(round(float(cls.df.observed.sum()), 2), "observed_sum")
-    snapshot.assert_match(sorted({w.qualified_name for w in cls.warnings}), "warnings")
-    snapshot.assert_match(sorted({d.qualified_name for d in cls.disqualification}), "disqualification")
+    assert int(len(cls.df)) == snapshot(name="df_length")
+    assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
+    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
 
 
 def test_daily_baseline_data_with_missing_hourly_temperature_data(
@@ -810,7 +810,9 @@ def baseline_data_daily_params(comstock_daily, comstock_hourly):
 
 
 @pytest.mark.parametrize(
-    ["tz", "hour"], [["US/Pacific", 3], ["US/Eastern", 8], ["Europe/London", 13]]
+    ["tz", "hour"],
+    [["US/Pacific", 3], ["US/Eastern", 8], ["Europe/London", 13]],
+    ids=["pacific_3", "eastern_8", "london_13"],
 )
 def test_offset_temperature_aggregations(baseline_data_daily_params, tz, hour, snapshot):
     baseline_meter_data, temp_series = baseline_data_daily_params(tz=tz, hour=hour)
@@ -824,7 +826,7 @@ def test_offset_temperature_aggregations(baseline_data_daily_params, tz, hour, s
             temp_series[day : day + pd.Timedelta(hours=23)].mean()
             - baseline.df.temperature.loc[day].squeeze()
         )
-    snapshot.assert_match(round(float(abs_diff), 4), f"abs_diff_{tz}_{hour}")
+    assert round(float(abs_diff), 4) == snapshot(name="abs_diff")
 
 
 def test_non_ns_datetime_index(comstock_hourly, snapshot):
@@ -840,7 +842,7 @@ def test_non_ns_datetime_index(comstock_hourly, snapshot):
     cls = DailyBaselineData.from_series(meter, temperature, is_electricity_data=True)
 
     assert cls.df is not None
-    snapshot.assert_match(int(len(cls.df)), "df_length")
+    assert int(len(cls.df)) == snapshot(name="df_length")
 
 
 def test_offset_aggregations_hourly(comstock_hourly, snapshot):
@@ -852,7 +854,7 @@ def test_offset_aggregations_hourly(comstock_hourly, snapshot):
 
     baseline = DailyBaselineData.from_series(meter, temperature, is_electricity_data=True)
     assert baseline is not None
-    snapshot.assert_match(int(len(baseline.df)), "df_length")
+    assert int(len(baseline.df)) == snapshot(name="df_length")
 
 
 def test_dst_handling():

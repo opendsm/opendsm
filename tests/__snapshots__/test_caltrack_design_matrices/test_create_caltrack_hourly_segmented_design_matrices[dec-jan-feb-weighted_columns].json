@@ -1,0 +1,19 @@
+[
+  "bin_0_occupied",
+  "bin_0_unoccupied",
+  "bin_1_occupied",
+  "bin_1_unoccupied",
+  "bin_2_occupied",
+  "bin_2_unoccupied",
+  "bin_3_occupied",
+  "bin_3_unoccupied",
+  "bin_4_occupied",
+  "bin_4_unoccupied",
+  "bin_5_occupied",
+  "bin_5_unoccupied",
+  "bin_6_occupied",
+  "bin_6_unoccupied",
+  "hour_of_week",
+  "meter_value",
+  "weight"
+]
