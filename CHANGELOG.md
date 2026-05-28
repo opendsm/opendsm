@@ -4,6 +4,8 @@ Changelog
 Development
 -----------
 
+* `mu_sigma`: scope numpy error policy via `np.errstate` instead of `np.seterr` so `'raise'` no longer leaks into every subsequent caller in the process
+* HourlyModel: propagate `settings.seed` to `temporal_cluster.wavelet_transform` and `temporal_cluster.fpca_transform` so all stochastic components inherit the same seed (fits are now reproducible end-to-end when `seed` is set)
 * Migrate test suite from `eemeter.samples` (bundled IL/UK CSVs) to ComStock fixtures backed by `hourly_data_2.parquet`; mark 64 IL-data-shape-dependent assertions as skipped pending rewrite
 * Add per-model snapshot regression tests (daily, billing, hourly solar + non-solar, caltrack hourly) pinned via `syrupy`
 * Replace unmaintained `snapshottest` dev dependency with `syrupy>=5,<6`; add `TolerantJSONSnapshotExtension` using `math.isclose(atol=1e-10, rtol=1e-10)` for cross-machine BLAS portability

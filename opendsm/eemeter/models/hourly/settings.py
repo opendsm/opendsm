@@ -424,6 +424,15 @@ class BaseHourlySettings(BaseSettings):
 
         self.elasticnet._seed = self._seed
         self.temporal_cluster._seed = self._seed
+        # ClusteringSettings._check_seed propagates to its transforms when it
+        # runs, but it ran with a random seed before we override _seed here;
+        # re-propagate so wavelet / fpca match the hourly seed too.
+        for transform in (
+            self.temporal_cluster.wavelet_transform,
+            self.temporal_cluster.fpca_transform,
+        ):
+            if transform is not None:
+                transform._seed = self._seed
 
         return self
 
