@@ -46,91 +46,81 @@ def plot(
     include_resid=False,
     plot_gaussian_ellipses=False,
     plot_outliers=True,
+    ax=None,
+    include_scatter=True,
+    model_color="tab:orange",
 ):
     # sort meter_eval by temperature
     meter_eval = meter_eval.sort_values(by="temperature")
     meter_eval = meter_eval.dropna(subset=["temperature", "predicted"])
 
-    fig = plt.figure(figsize=(14, 4), dpi=300)
-    if include_resid:
-        gs = fig.add_gridspec(2, hspace=0, height_ratios=[2.5, 1])
-        ax = gs.subplots()
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(14, 4), dpi=300)
     else:
-        ax = [fig.subplots()]
+        fig = ax.get_figure()
 
     # Plot scatter and Gaussian ellipses
-    for n, season in enumerate(["summer", "shoulder", "winter"]):
-        for day_type, day_num in enumerate([[0, 1, 2, 3, 4], [5, 6]]):
-            if day_type == 0:
-                color = c[n]
-                marker = "o"
-                s = 7**2
-                label = f"{season} weekday"
-            else:
-                color = adjust_lightness(copy(c[n]), amount=0.8)
-                marker = "D"
-                s = 5.5**2
-                label = f"{season} weekend"
+    if include_scatter:
+        for n, season in enumerate(["summer", "shoulder", "winter"]):
+            for day_label in ["weekday", "weekend"]:
+                if day_label == "weekday":
+                    color = c[n]
+                    marker = "o"
+                    s = 7**2
+                else:
+                    color = adjust_lightness(copy(c[n]), amount=0.8)
+                    marker = "D"
+                    s = 5.5**2
 
-            meter_season = meter_eval[
-                (meter_eval["season"] == season) & (meter_eval["observed"].notna())
-            ]
-            meter_season = meter_season[meter_season["day_of_week"].isin(day_num)]
+                label = f"{season} {day_label}"
+                meter_season = meter_eval[
+                    (meter_eval["season"] == season)
+                    & (meter_eval["weekday_weekend"] == day_label)
+                    & (meter_eval["observed"].notna())
+                ]
 
-            T = meter_season["temperature"].values
-            obs = meter_season["observed"].values
-            model = meter_season["predicted"].values
-            resid = obs - model
+                T = meter_season["temperature"].values
+                obs = meter_season["observed"].values
+                model = meter_season["predicted"].values
 
-            ax[0].scatter(T, obs, color=color, marker=marker, s=s, label=label)
-            if include_resid:
-                ax[1].scatter(T, resid, color=color, marker=marker, s=s)
+                y = (obs - model) if include_resid else obs
+                ax.scatter(T, y, color=color, marker=marker, s=s, label=label)
 
-            if not plot_gaussian_ellipses:
-                continue
+                if not plot_gaussian_ellipses:
+                    continue
 
-            std_sqr = std = np.array(fit.model_settings.reduce_splits_num_std)[:, None]
-            std_sqr = std.T * std
+                std_sqr = std = np.array(fit.model_settings.reduce_splits_num_std)[:, None]
+                std_sqr = std.T * std
 
-            mu, cov, a, b, phi = robust_confidence_ellipse(T, obs, std_sqr)
+                mu, cov, a, b, phi = robust_confidence_ellipse(T, obs, std_sqr)
 
-            ell = mpl.patches.Ellipse(
-                mu, 2 * a, 2 * b, np.degrees(phi), color=color, zorder=10
+                ell = mpl.patches.Ellipse(
+                    mu, 2 * a, 2 * b, np.degrees(phi), color=color, zorder=10
+                )
+                ell.set_clip_box(ax.bbox)
+                ell.set_alpha(0.3)
+                ax.add_artist(ell)
+
+    # Plot models (only meaningful when not showing residuals)
+    if not include_resid:
+        splits = meter_eval["model_split"].unique()
+        n_splits = len(splits)
+        for i, split in enumerate(splits):
+            # Cycle lightness across splits so each segment is visually distinct
+            color = adjust_lightness(model_color, 1.0 - 0.25 * i) if n_splits > 1 else model_color
+            meter_segment = meter_eval[meter_eval["model_split"] == split]
+            name = f"{split}__{meter_segment['model_type'].iloc[0]}"
+            ax.plot(
+                meter_segment["temperature"],
+                meter_segment["predicted"],
+                color=color,
+                label=f"{name}",
             )
-            ell.set_clip_box(ax[0].bbox)
-            ell.set_alpha(0.3)
-            ax[0].add_artist(ell)
-
-    # Plot models
-    for split in meter_eval["model_split"].unique():
-        meter_segment = meter_eval[meter_eval["model_split"] == split]
-
-        name = f"{split}__{meter_segment['model_type'].iloc[0]}"
-        ax[0].plot(
-            meter_segment["temperature"],
-            meter_segment["predicted"],
-            color="tab:orange",
-            label=f"{name}",
-        )
-
-    # ax[0].plot(T, model["c_hdd_baseline"].model, color="tab:red", label=f"c_hdd_baseline")
-
-    if include_resid:
-        ax[1].axhline(y=0, linestyle=(0, (5, 1)), linewidth=1.5, color=(0.4, 0.4, 0.4))
-        ax[0].get_shared_x_axes().join(ax[0], ax[1])
-        ax[1].set_xlabel("Temperature", labelpad=10, fontsize=fontsize)
-        ax[1].set_ylabel("Resid", labelpad=10, fontsize=fontsize)
-
     else:
-        ax[0].set_xlabel("Temperature", labelpad=10, fontsize=fontsize)
+        ax.axhline(y=0, linestyle=(0, (5, 1)), linewidth=1.5, color=(0.4, 0.4, 0.4))
 
-    # ax.plot(hours, meter[:,2], linewidth=1.5, linestyle=(0, (6, 1)), color='firebrick')
-    # ax.plot(hours, meter[:,2], linewidth=2.0, linestyle='-.')
-    # ax.fill_between(hours, cg_lb, cg_ub, alpha=0.3, facecolor='peru')
-
-    # ax.set_xlim([T[0], T[-1]])
-    # ax.set_xticks(np.arange(0, 505, 168))
-    ax[0].tick_params(axis="both", which="major", labelsize=0.85 * fontsize)
+    ax.set_xlabel("Temperature", labelpad=10, fontsize=fontsize)
+    ax.tick_params(axis="both", which="major", labelsize=0.85 * fontsize)
 
     if not plot_outliers:
         # Ignores crazy points when plotting based on iqr
@@ -145,16 +135,12 @@ def plot(
         ylim = np.quantile(meter_eval["observed"], [0, 1])
 
     ylim_border = 0.1 * (ylim[1] - ylim[0])
-    ax[0].set_ylim([ylim[0] - ylim_border, ylim[1] + ylim_border])
-    # ax.xaxis.set_minor_locator(mpl.ticker.AutoMinorLocator(7))
-    # ax.tick_params(axis='both', which='major', labelsize=0.85*fontsize)
-    # ax.yaxis.set_tick_params(which='minor', left=False)
-    ax[0].set_ylabel("Usage", labelpad=10, fontsize=fontsize)
+    ax.set_ylim([ylim[0] - ylim_border, ylim[1] + ylim_border])
+    ax.set_ylabel("Resid" if include_resid else "Usage", labelpad=10, fontsize=fontsize)
 
-    legend = ax[0].legend(framealpha=0.0, fontsize=0.5 * fontsize)
-    # legend._legend_box.align = 'left'
+    legend = ax.legend(framealpha=0.0, fontsize=0.5 * fontsize)
 
-    plt.show()
+    # plt.show()
 
     # if figsize is None:
     #     figsize = (10, 4)
@@ -182,4 +168,4 @@ def plot(
     # if title is not None:
     #     ax.set_title(title)
 
-    return ax
+    return fig, ax

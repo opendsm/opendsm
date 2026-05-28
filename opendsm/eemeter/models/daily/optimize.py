@@ -247,27 +247,28 @@ class NLoptOptimizer(BaseOptimizer):
         opt.set_upper_bounds(bnds_opt[1])
 
         # initial_step
-        max_initial_step = np.max(np.abs(bnds_opt - x0_opt), axis=0)
+        if settings.initial_step is not None:
+            max_initial_step = np.max(np.abs(bnds_opt - x0_opt), axis=0)
 
-        initial_step = (bnds_opt[1] - bnds_opt[0]) * settings.initial_step
+            initial_step = (bnds_opt[1] - bnds_opt[0]) * settings.initial_step
 
-        # TODO: bring this back in at some point?
-        # coef_id_opt = [id for n, id in enumerate(self.coef_id) if n in idx_opt]
-        # for n, coef_name in enumerate(coef_id_opt):
-        #     if "dd_bp" in coef_name:
-        #         initial_step[n] *= 2
+            # TODO: bring this back in at some point?
+            # coef_id_opt = [id for n, id in enumerate(self.coef_id) if n in idx_opt]
+            # for n, coef_name in enumerate(coef_id_opt):
+            #     if "dd_bp" in coef_name:
+            #         initial_step[n] *= 2
 
-        #     if coef_name == "hdd_bp":
-        #         initial_step[n] *= -1
+            #     if coef_name == "hdd_bp":
+            #         initial_step[n] *= -1
 
-        initial_step = np.clip(initial_step, -max_initial_step, max_initial_step)
+            initial_step = np.clip(initial_step, -max_initial_step, max_initial_step)
 
-        x1 = x0_opt + initial_step
-        np.putmask(
-            initial_step, (x1 < bnds_opt[0]) | (x1 > bnds_opt[1]), -initial_step
-        )  # first step in direction of more variable space
+            x1 = x0_opt + initial_step
+            np.putmask(
+                initial_step, (x1 < bnds_opt[0]) | (x1 > bnds_opt[1]), -initial_step
+            )  # first step in direction of more variable space
 
-        opt.set_initial_step(initial_step)
+            opt.set_initial_step(initial_step)        
 
         # alter default size of population in relevant algorithms
         if settings.algorithm == "nlopt_crs2_lm":

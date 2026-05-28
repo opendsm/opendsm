@@ -182,9 +182,10 @@ def test_obj_fcn_decorator():
         coef_id,
         initial_fit,
     )
+    # Symmetric adaptive weighting changes the loss for negative residuals.
     assert (
         obj_fcn(
             [1.5, 0.0, 0.0, 85.5, 10.254, 0.0, 50.85], [model_fcn_full, obs, [0, 1]]
         )
-        == 1295.1226641177577
+        == 1319.610128283927
     )

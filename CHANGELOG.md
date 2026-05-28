@@ -4,6 +4,10 @@ Changelog
 Development
 -----------
 
+* `generalized_loss_weights`: weight negative and positive residuals symmetrically by magnitude (previously only positive residuals were downweighted)
+* `adaptive_loss`: kernel-localized adaptive weighting (`kernel_adaptive_weights`, `KernelWeightCache`, `_fast_weighted_alpha`) so scale and shape of the generalized loss vary smoothly across the temperature axis; optional `obs_weights` for `adaptive_loss_fcn`
+* `ellipsoid_test`: improved split filter; daily-model optimizer no longer errors when `initial_step` is `None`
+* `daily/plot.py`: plot function accepts `ax`, `include_scatter`, `model_color`, `include_uncertainty`; returns axes; reworked normalize-axes logic
 * `mu_sigma`: scope numpy error policy via `np.errstate` instead of `np.seterr` so `'raise'` no longer leaks into every subsequent caller in the process
 * HourlyModel: propagate `settings.seed` to `temporal_cluster.wavelet_transform` and `temporal_cluster.fpca_transform` so all stochastic components inherit the same seed (fits are now reproducible end-to-end when `seed` is set)
 * Migrate test suite from `eemeter.samples` (bundled IL/UK CSVs) to ComStock fixtures backed by `hourly_data_2.parquet`; mark 64 IL-data-shape-dependent assertions as skipped pending rewrite

@@ -444,20 +444,22 @@ class DailyModel:
     def plot(
         self,
         data: DailyBaselineData | DailyReportingData,
-    ) -> None:
+        ax=None,
+        **kwargs,
+    ):
         """Plot a model fit with baseline or reporting data. Requires matplotlib to use.
 
         Args:
-            df_eval: The baseline or reporting data object to plot.
+            data: The baseline or reporting data object to plot.
+            ax: Optional existing matplotlib Axes to plot onto. Creates a new figure if None.
+            **kwargs: Additional keyword arguments forwarded to the plot function.
         """
         try:
             from opendsm.eemeter.models.daily.plot import plot
         except ImportError:  # pragma: no cover
             raise ImportError("matplotlib is required for plotting.")
 
-        # TODO: pass more kwargs to plotting function
-
-        plot(self, self._predict(data.df))
+        return plot(self, self._predict(data.df), ax=ax, **kwargs)
 
     def _create_params_from_fit_model(self):
         submodels = {}
@@ -520,15 +522,16 @@ class DailyModel:
             except:
                 raise TypeError("Could not convert 'meter_data.index' to datetime")
 
-        for col in ["season", "day_of_week"]:
+        for col in ["season", "day_of_week", "weekday_weekend"]:
             if col in cols:
                 meter_data.drop([col], axis=1, inplace=True)
                 cols.remove(col)
 
         meter_data["season"] = meter_data.index.month.map(self.settings.season._num_dict)
         meter_data["day_of_week"] = meter_data.index.dayofweek + 1
+        meter_data["weekday_weekend"] = np.where(meter_data["day_of_week"] <= 5, "weekday", "weekend")
         meter_data = meter_data.sort_index()
-        meter_data = meter_data[["season", "day_of_week", *cols]]
+        meter_data = meter_data[["season", "day_of_week", "weekday_weekend", *cols]]
 
         dropped_rows = meter_data.copy()
         meter_data = meter_data.dropna()

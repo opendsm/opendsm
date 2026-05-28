@@ -79,12 +79,8 @@ def _safe_standardize(
     # For positions where scale was near zero, use only centered value
     near_zero_mask = scale <= threshold
     if np.any(near_zero_mask):
-        # Use broadcasting to apply mask
-        if centered.ndim == 2 and scale.ndim == 1:
-            # Expand mask to match data dimensions
-            result = np.where(near_zero_mask, centered, result)
-        else:
-            result[near_zero_mask] = centered[near_zero_mask]
+        # Use np.where for broadcasting-safe masking
+        result = np.where(near_zero_mask, centered, result)
 
     return result
 
@@ -93,17 +89,39 @@ def normalize(
     data: np.ndarray,
     settings: _settings.NormalizeSettings
 ) -> np.ndarray:
+    """Normalize data along a specified axis using various normalization methods.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Input data to normalize.
+    settings : NormalizeSettings
+        Configuration specifying normalization method and axis.
+
+    Returns
+    -------
+    np.ndarray
+        Normalized data with same shape as input.
+    """
     method = settings.method
     axis = settings.axis
 
     if method == _settings.NormalizeChoice.STANDARDIZE:
         mean = np.mean(data, axis=axis)
         std = np.std(data, axis=axis)
+        # Reshape mean and std for proper broadcasting if axis is specified
+        if axis is not None:
+            mean = np.expand_dims(mean, axis=axis)
+            std = np.expand_dims(std, axis=axis)
         data = _safe_standardize(data, mean, std)
 
     elif method == _settings.NormalizeChoice.MED_MAD:
         median = np.median(data, axis=axis)
         mad = _basic.median_absolute_deviation(data, median=median, axis=axis)
+        # Reshape median and mad for proper broadcasting if axis is specified
+        if axis is not None:
+            median = np.expand_dims(median, axis=axis)
+            mad = np.expand_dims(mad, axis=axis)
         data = _safe_standardize(data, median, mad)
 
     elif method == _settings.NormalizeChoice.MIN_MAX_QUANTILE:
@@ -115,43 +133,24 @@ def normalize(
         # Handle different axis cases
         if axis is None:
             # Global normalization
-            if min_val == max_val:
+            if np.isclose(min_val, max_val, atol=1e-6):
                 data = np.full_like(data, (a + b) / 2)
             else:
-                data = (b - a) * (data - min_val) / (max_val - min_val) + a
+                data = (b - a) * (data - min_val) / (max_val - min_val + 1e-16) + a
         else:
-            # Axis-specific normalization
-            idx_same = np.argwhere(min_val == max_val).flatten()
+            # Axis-specific normalization: reshape for proper broadcasting
+            min_val = np.expand_dims(min_val, axis=axis)
+            max_val = np.expand_dims(max_val, axis=axis)
 
-            # Determine which axis we're normalizing over
-            # If axis=0, we normalize columns (iterate over axis 1)
-            # If axis=1, we normalize rows (iterate over axis 0)
-            other_axis = 1 - axis if axis in [0, 1] else None
+            # Create mask for constant slices (min == max)
+            const_mask = np.isclose(min_val, max_val, atol=1e-6)
 
-            if other_axis is not None:
-                n_elements = data.shape[other_axis]
-                idx_diff = np.array([idx for idx in range(n_elements) if idx not in idx_same])
-
-                if len(idx_diff) > 0:
-                    # Reshape min_val and max_val for proper broadcasting
-                    shape = [1, 1]
-                    shape[other_axis] = len(idx_diff)
-                    min_val_reshaped = min_val[idx_diff].reshape(shape)
-                    max_val_reshaped = max_val[idx_diff].reshape(shape)
-
-                    # Create slice objects for indexing
-                    slices = [slice(None), slice(None)]
-                    slices[other_axis] = idx_diff
-                    slices = tuple(slices)
-
-                    # Normalize
-                    data[slices] = (b - a) * (data[slices] - min_val_reshaped) / (max_val_reshaped - min_val_reshaped) + a
-
-                if len(idx_same) > 0:
-                    slices = [slice(None), slice(None)]
-                    slices[other_axis] = idx_same
-                    slices = tuple(slices)
-                    data[slices] = (a + b) / 2
+            # Set constant slices to midpoint
+            data = np.where(
+                const_mask,
+                (a + b) / 2,
+                (b - a) * (data - min_val) / (max_val - min_val + 1e-16) + a
+            )
 
     return data
 
