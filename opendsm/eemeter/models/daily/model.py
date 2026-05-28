@@ -888,24 +888,26 @@ class DailyModel:
             str: The best combination of parameters as a string.
         """
 
-        HoF = {"combination_str": None, "selection_criteria": np.inf}
-        # Require improvement to exceed cross-platform float-roundoff before
-        # switching the winner. self.combinations is sorted (len, lex) so ties
-        # consistently resolve to the earlier (simpler) combination on every
-        # platform. Without this, BIC/AIC accumulation order in BLAS produced
-        # sub-roundoff score differences that flipped the winner across runs.
+        # When two combinations score within float-roundoff of each other, prefer
+        # the one with fewer components (Occam: simpler model wins ties). Final
+        # tiebreak on lex-sorted combo string keeps the choice deterministic
+        # regardless of iteration order or BLAS accumulation differences.
         TIE_TOLERANCE = 1e-6
+        scored = []
         for combo in self.combinations:
             selection_criteria = self._combination_selection_criteria(combo)
+            n_components = len(combo.split("__"))
+            scored.append((selection_criteria, n_components, combo))
 
-            if selection_criteria < HoF["selection_criteria"] - TIE_TOLERANCE:
-                HoF["combination_str"] = combo
-                HoF["selection_criteria"] = selection_criteria
+        best_score = min(s for s, _, _ in scored)
+        within_tol = [s for s in scored if s[0] <= best_score + TIE_TOLERANCE]
+        winner = min(within_tol, key=lambda s: (s[1], s[2]))
 
-            if print_out:
-                print(f"{combo:>40s} {selection_criteria:>8.1f}")
+        HoF = {"combination_str": winner[2], "selection_criteria": winner[0]}
 
         if print_out:
+            for selection_criteria, _, combo in scored:
+                print(f"{combo:>40s} {selection_criteria:>8.1f}")
             print(f"{HoF['combination_str']:>40s} {HoF['selection_criteria']:>8.1f}")
 
         return HoF["combination_str"]
