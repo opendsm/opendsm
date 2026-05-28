@@ -81,7 +81,10 @@ def test_adaptive_weights():
     sigma = np.std(x)
     x = (x - mu) / sigma
     weights, C, alpha = adaptive_weights(x, alpha=3)
-    assert np.allclose(weights, np.array([1, 1, 1, 1.02496275, 1.09644634]), atol=1e-3)
+    # Symmetric weighting: residuals are downweighted by magnitude regardless of sign.
+    assert np.allclose(
+        weights, np.array([1.09644634, 1.02496275, 1, 1.02496275, 1.09644634]), atol=1e-3
+    )
     assert np.isclose(C, 3.1450695413615257)
     assert np.isclose(alpha, 3.0)
 
@@ -97,6 +100,12 @@ def test_adaptive_weights():
     # Test case 4: x contains outliers
     x = np.array([1, 2, 3, 4, 5, 100])
     weights, C, alpha = adaptive_weights(x)
-    assert np.allclose(weights, np.array([1, 1, 1, 0.9865, 0.9479, 0.0011]), atol=1e-3)
+    # Symmetric weighting at alpha < 2: all non-zero residuals are downweighted
+    # by magnitude; the 100 outlier gets near-zero weight.
+    assert np.allclose(
+        weights,
+        np.array([0.9479, 0.9865, 1.0, 0.9865, 0.9479, 0.0011]),
+        atol=1e-3,
+    )
     assert np.isclose(C, 6.05975)
     assert np.isclose(alpha, -1.0928, atol=1e-2)

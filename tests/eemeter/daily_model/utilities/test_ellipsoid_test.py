@@ -106,6 +106,17 @@ def test_ellipsoid_split_filter():
                 "winter",
             ],
             "day_of_week": [1, 2, 3, 4, 5, 6, 7, 1, 2],
+            "weekday_weekend": [
+                "weekday",
+                "weekday",
+                "weekday",
+                "weekday",
+                "weekday",
+                "weekend",
+                "weekend",
+                "weekday",
+                "weekday",
+            ],
             "temperature": [20, 25, 30, 15, 20, 25, 10, 5, 0],
             "observed": [10, 20, 30, 15, 25, 35, 5, 10, 15],
         }
