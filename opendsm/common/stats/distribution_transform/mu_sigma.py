@@ -85,7 +85,7 @@ def robust_mu_sigma(x, robust_type="huber_m_estimate", **kwargs):
                 kwargs["maxiter"] = 50
 
             # raise RuntimeWarning to error
-            with np.seterr(all='raise'):
+            with np.errstate(all='raise'):
                 mu, sigma = huber_m_estimate(**kwargs)(x)
 
         except Exception as e:
