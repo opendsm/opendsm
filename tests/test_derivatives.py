@@ -56,13 +56,19 @@ def baseline_model_daily(baseline_data_daily):
 def reporting_data_daily(comstock_daily):
     _, df_r = comstock_daily
 
-    return DailyBaselineData(df=df_r.reset_index(), is_electricity_data=True)
+    return DailyReportingData(df=df_r.reset_index(), is_electricity_data=True)
 
 
 @pytest.fixture(scope="session")
-def reporting_model_daily(reporting_data_daily):
-    model_results = DailyModel().fit(reporting_data_daily, ignore_disqualification=True)
-    return model_results
+def reporting_model_daily(comstock_daily):
+    # Reporting-period DailyModel is trained as a baseline fit on the reporting period;
+    # use DailyBaselineData here because DailyReportingData has no observed values to fit on.
+    _, df_r = comstock_daily
+
+    return DailyModel().fit(
+        DailyBaselineData(df=df_r.reset_index(), is_electricity_data=True),
+        ignore_disqualification=True,
+    )
 
 
 @pytest.fixture
@@ -499,8 +505,9 @@ def baseline_model_billing_single_record(comstock_monthly, comstock_hourly):
     meter_data.index = meter_data.index.tz_convert("UTC")
     temperature_data = df_hourly["temperature"]
     temperature_data.index = temperature_data.index.tz_convert("UTC")
-    # using two records until bounds failure is fixed
-    baseline_meter_data = meter_data[-3:]
+    # 4 monthly records → 3 billing periods (minimum that exercises the optimizer
+    # without collapsing observed stdev to zero on the design matrix)
+    baseline_meter_data = meter_data[-4:]
     baseline_data = create_caltrack_billing_design_matrix(
         baseline_meter_data, temperature_data
     ).rename(columns={"meter_value": "observed", "temperature_mean": "temperature"})
@@ -511,9 +518,6 @@ def baseline_model_billing_single_record(comstock_monthly, comstock_hourly):
     )
 
 
-@pytest.mark.skip(
-    reason="ComStock migration: 3-record edge case triggers optimizer numerical issue; rewrite pending"
-)
 @pytest.mark.regression
 def test_metered_savings_model_single_record(
     baseline_model_billing_single_record,

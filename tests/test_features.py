@@ -53,7 +53,7 @@ def monthly_meter(comstock_monthly):
 @pytest.fixture
 def monthly_temperature(comstock_hourly):
     df_b, df_r = comstock_hourly
-    return _utc_temperature(pd.concat([df_b, df_r]))
+    return _utc_temperature(pd.concat([df_b, df_r]).asfreq("h"))
 
 
 @pytest.fixture
@@ -65,23 +65,22 @@ def daily_meter(comstock_daily):
 @pytest.fixture
 def daily_temperature(comstock_hourly):
     df_b, df_r = comstock_hourly
-    return _utc_temperature(pd.concat([df_b, df_r]))
+    return _utc_temperature(pd.concat([df_b, df_r]).asfreq("h"))
 
 
 @pytest.fixture
 def hourly_meter(comstock_hourly):
     df_b, df_r = comstock_hourly
-    return _utc_meter(pd.concat([df_b, df_r]))
+    return _utc_meter(pd.concat([df_b, df_r]).asfreq("h"))
 
 
 @pytest.fixture
 def hourly_temperature(comstock_hourly):
     df_b, df_r = comstock_hourly
-    return _utc_temperature(pd.concat([df_b, df_r]))
+    return _utc_temperature(pd.concat([df_b, df_r]).asfreq("h"))
 
 
-def test_compute_temperature_features_no_freq_index(monthly_meter, monthly_temperature,
-):
+def test_compute_temperature_features_no_freq_index(monthly_meter, monthly_temperature):
     # pick a slice with both hdd and cdd
     meter_data = monthly_meter
     temperature_data = monthly_temperature
@@ -90,8 +89,7 @@ def test_compute_temperature_features_no_freq_index(monthly_meter, monthly_tempe
         compute_temperature_features(meter_data.index, temperature_data)
 
 
-def test_compute_temperature_features_no_meter_data_tz(monthly_meter, monthly_temperature,
-):
+def test_compute_temperature_features_no_meter_data_tz(monthly_meter, monthly_temperature):
     meter_data = monthly_meter
     temperature_data = monthly_temperature
     meter_data.index = meter_data.index.tz_localize(None)
@@ -99,8 +97,7 @@ def test_compute_temperature_features_no_meter_data_tz(monthly_meter, monthly_te
         compute_temperature_features(meter_data.index, temperature_data)
 
 
-def test_compute_temperature_features_no_temp_data_tz(monthly_meter, monthly_temperature,
-):
+def test_compute_temperature_features_no_temp_data_tz(monthly_meter, monthly_temperature):
     # pick a slice with both hdd and cdd
     meter_data = monthly_meter
     temperature_data = monthly_temperature
@@ -109,8 +106,7 @@ def test_compute_temperature_features_no_temp_data_tz(monthly_meter, monthly_tem
         compute_temperature_features(meter_data.index, temperature_data)
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
-def test_compute_temperature_features_hourly_temp_mean(hourly_meter, hourly_temperature):
+def test_compute_temperature_features_hourly_temp_mean(hourly_meter, hourly_temperature, snapshot):
     # pick a slice with both hdd and cdd
     meter_data = hourly_meter["2018-03-01":"2018-07-01"]
     temperature_data = hourly_temperature[
@@ -122,12 +118,11 @@ def test_compute_temperature_features_hourly_temp_mean(hourly_meter, hourly_temp
         "n_hours_kept",
         "temperature_mean",
     ]
-    assert df.shape == (2952, 3)
+    assert list(df.shape) == snapshot(name="df_shape")
 
-    assert round(df.temperature_mean.mean()) == 62.0
+    assert round(df.temperature_mean.mean()) == snapshot(name="temp_mean")
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
 def test_compute_temperature_features_hourly_hourly_degree_days(hourly_meter, hourly_temperature, snapshot
 ):
     # pick a slice with both hdd and cdd
@@ -151,7 +146,7 @@ def test_compute_temperature_features_hourly_hourly_degree_days(hourly_meter, ho
         "n_hours_dropped",
         "n_hours_kept",
     ]
-    assert df.shape == (2952, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert [
             round(df.hdd_60.mean(), 2),
             round(df.hdd_61.mean(), 2),
@@ -162,7 +157,6 @@ def test_compute_temperature_features_hourly_hourly_degree_days(hourly_meter, ho
         ] == snapshot(name="values")
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
 def test_compute_temperature_features_hourly_hourly_degree_days_use_mean_false(hourly_meter, hourly_temperature, snapshot
 ):
     # pick a slice with both hdd and cdd
@@ -179,7 +173,7 @@ def test_compute_temperature_features_hourly_hourly_degree_days_use_mean_false(h
         degree_day_method="hourly",
         use_mean_daily_values=False,
     )
-    assert df.shape == (2952, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -198,8 +192,7 @@ def test_compute_temperature_features_hourly_hourly_degree_days_use_mean_false(h
         ] == snapshot(name="values")
 
 
-def test_compute_temperature_features_hourly_daily_degree_days_fail(hourly_meter, hourly_temperature,
-):
+def test_compute_temperature_features_hourly_daily_degree_days_fail(hourly_meter, hourly_temperature):
     # pick a slice with both hdd and cdd
     meter_data = hourly_meter["2018-03-01":"2018-07-01"]
     temperature_data = hourly_temperature[
@@ -216,8 +209,7 @@ def test_compute_temperature_features_hourly_daily_degree_days_fail(hourly_meter
         )
 
 
-def test_compute_temperature_features_hourly_daily_missing_explicit_freq(hourly_meter, hourly_temperature,
-):
+def test_compute_temperature_features_hourly_daily_missing_explicit_freq(hourly_meter, hourly_temperature):
     # pick a slice with both hdd and cdd
     meter_data = hourly_meter["2018-03-01":"2018-07-01"]
     temperature_data = hourly_temperature[
@@ -235,8 +227,7 @@ def test_compute_temperature_features_hourly_daily_missing_explicit_freq(hourly_
         )
 
 
-def test_compute_temperature_features_hourly_bad_degree_days(hourly_meter, hourly_temperature,
-):
+def test_compute_temperature_features_hourly_bad_degree_days(hourly_meter, hourly_temperature):
     # pick a slice with both hdd and cdd
     meter_data = hourly_meter["2018-03-01":"2018-07-01"]
     temperature_data = hourly_temperature[
@@ -253,9 +244,7 @@ def test_compute_temperature_features_hourly_bad_degree_days(hourly_meter, hourl
         )
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
-def test_compute_temperature_features_hourly_data_quality(hourly_meter, hourly_temperature,
-):
+def test_compute_temperature_features_hourly_data_quality(hourly_meter, hourly_temperature, snapshot):
     # pick a slice with both hdd and cdd
     meter_data = hourly_meter["2018-03-01":"2018-07-01"]
     temperature_data = hourly_temperature[
@@ -265,33 +254,31 @@ def test_compute_temperature_features_hourly_data_quality(hourly_meter, hourly_t
     df = compute_temperature_features(
         meter_data.index, temperature_data, temperature_mean=False, data_quality=True
     )
-    assert df.shape == (2952, 4)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "n_hours_dropped",
         "n_hours_kept",
         "temperature_not_null",
         "temperature_null",
     ]
-    assert round(df.temperature_not_null.mean(), 2) == 1.0
-    assert round(df.temperature_null.mean(), 2) == 0.0
+    assert round(df.temperature_not_null.mean(), 2) == snapshot(name="temp_not_null_mean")
+    assert round(df.temperature_null.mean(), 2) == snapshot(name="temp_null_mean")
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
-def test_compute_temperature_features_daily_temp_mean(daily_meter, daily_temperature):
+def test_compute_temperature_features_daily_temp_mean(daily_meter, daily_temperature, snapshot):
     meter_data = daily_meter
     temperature_data = daily_temperature
     df = compute_temperature_features(meter_data.index, temperature_data)
-    assert df.shape == (810, 3)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "n_days_dropped",
         "n_days_kept",
         "temperature_mean",
     ]
 
-    assert round(df.temperature_mean.mean()) == 55.0
+    assert round(df.temperature_mean.mean()) == snapshot(name="temp_mean")
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
 def test_compute_temperature_features_daily_daily_degree_days(daily_meter, daily_temperature, snapshot
 ):
     meter_data = daily_meter
@@ -304,7 +291,7 @@ def test_compute_temperature_features_daily_daily_degree_days(daily_meter, daily
         temperature_mean=False,
         degree_day_method="daily",
     )
-    assert df.shape == (810, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -323,7 +310,6 @@ def test_compute_temperature_features_daily_daily_degree_days(daily_meter, daily
         ] == snapshot(name="values")
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
 def test_compute_temperature_features_daily_daily_degree_days_use_mean_false(daily_meter, daily_temperature, snapshot
 ):
     meter_data = daily_meter
@@ -337,7 +323,7 @@ def test_compute_temperature_features_daily_daily_degree_days_use_mean_false(dai
         degree_day_method="daily",
         use_mean_daily_values=False,
     )
-    assert df.shape == (810, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -356,7 +342,6 @@ def test_compute_temperature_features_daily_daily_degree_days_use_mean_false(dai
         ] == snapshot(name="values")
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
 def test_compute_temperature_features_daily_hourly_degree_days(daily_meter, daily_temperature, snapshot
 ):
     meter_data = daily_meter
@@ -369,7 +354,7 @@ def test_compute_temperature_features_daily_hourly_degree_days(daily_meter, dail
         temperature_mean=False,
         degree_day_method="hourly",
     )
-    assert df.shape == (810, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -388,7 +373,6 @@ def test_compute_temperature_features_daily_hourly_degree_days(daily_meter, dail
         ] == snapshot(name="values")
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
 def test_compute_temperature_features_daily_hourly_degree_days_use_mean_false(daily_meter, daily_temperature, snapshot
 ):
     meter_data = daily_meter
@@ -402,7 +386,7 @@ def test_compute_temperature_features_daily_hourly_degree_days_use_mean_false(da
         degree_day_method="hourly",
         use_mean_daily_values=False,
     )
-    assert df.shape == (810, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -421,8 +405,7 @@ def test_compute_temperature_features_daily_hourly_degree_days_use_mean_false(da
         ] == snapshot(name="values")
 
 
-def test_compute_temperature_features_daily_bad_degree_days(daily_meter, daily_temperature,
-):
+def test_compute_temperature_features_daily_bad_degree_days(daily_meter, daily_temperature):
     meter_data = daily_meter
     temperature_data = daily_temperature
     with pytest.raises(ValueError):
@@ -435,40 +418,36 @@ def test_compute_temperature_features_daily_bad_degree_days(daily_meter, daily_t
         )
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
-def test_compute_temperature_features_daily_data_quality(daily_meter, daily_temperature):
+def test_compute_temperature_features_daily_data_quality(daily_meter, daily_temperature, snapshot):
     meter_data = daily_meter
     temperature_data = daily_temperature
     df = compute_temperature_features(
         meter_data.index, temperature_data, temperature_mean=False, data_quality=True
     )
-    assert df.shape == (810, 4)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "n_days_dropped",
         "n_days_kept",
         "temperature_not_null",
         "temperature_null",
     ]
-    assert round(df.temperature_not_null.mean(), 2) == 23.99
-    assert round(df.temperature_null.mean(), 2) == 0.00
+    assert round(df.temperature_not_null.mean(), 2) == snapshot(name="temp_not_null_mean")
+    assert round(df.temperature_null.mean(), 2) == snapshot(name="temp_null_mean")
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
-def test_compute_temperature_features_billing_monthly_temp_mean(monthly_meter, monthly_temperature,
-):
+def test_compute_temperature_features_billing_monthly_temp_mean(monthly_meter, monthly_temperature, snapshot):
     meter_data = monthly_meter
     temperature_data = monthly_temperature
     df = compute_temperature_features(meter_data.index, temperature_data)
-    assert df.shape == (27, 3)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "n_days_dropped",
         "n_days_kept",
         "temperature_mean",
     ]
-    assert round(df.temperature_mean.mean()) == 55.0
+    assert round(df.temperature_mean.mean()) == snapshot(name="temp_mean")
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
 def test_compute_temperature_features_billing_monthly_daily_degree_days(monthly_meter, monthly_temperature, snapshot
 ):
     meter_data = monthly_meter
@@ -481,7 +460,7 @@ def test_compute_temperature_features_billing_monthly_daily_degree_days(monthly_
         temperature_mean=False,
         degree_day_method="daily",
     )
-    assert df.shape == (27, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -500,7 +479,6 @@ def test_compute_temperature_features_billing_monthly_daily_degree_days(monthly_
         ] == snapshot(name="values")
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
 def test_compute_temperature_features_billing_monthly_daily_degree_days_use_mean_false(monthly_meter, monthly_temperature, snapshot
 ):
     meter_data = monthly_meter
@@ -514,7 +492,7 @@ def test_compute_temperature_features_billing_monthly_daily_degree_days_use_mean
         degree_day_method="daily",
         use_mean_daily_values=False,
     )
-    assert df.shape == (27, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -533,7 +511,6 @@ def test_compute_temperature_features_billing_monthly_daily_degree_days_use_mean
         ] == snapshot(name="values")
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
 def test_compute_temperature_features_billing_monthly_hourly_degree_days(monthly_meter, monthly_temperature, snapshot
 ):
     meter_data = monthly_meter
@@ -546,7 +523,7 @@ def test_compute_temperature_features_billing_monthly_hourly_degree_days(monthly
         temperature_mean=False,
         degree_day_method="hourly",
     )
-    assert df.shape == (27, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -565,7 +542,6 @@ def test_compute_temperature_features_billing_monthly_hourly_degree_days(monthly
         ] == snapshot(name="values")
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
 def test_compute_temperature_features_billing_monthly_hourly_degree_days_use_mean_false(monthly_meter, monthly_temperature, snapshot
 ):
     meter_data = monthly_meter
@@ -579,7 +555,7 @@ def test_compute_temperature_features_billing_monthly_hourly_degree_days_use_mea
         degree_day_method="hourly",
         use_mean_daily_values=False,
     )
-    assert df.shape == (27, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -598,8 +574,7 @@ def test_compute_temperature_features_billing_monthly_hourly_degree_days_use_mea
         ] == snapshot(name="values")
 
 
-def test_compute_temperature_features_billing_monthly_bad_degree_day_method(monthly_meter, monthly_temperature,
-):
+def test_compute_temperature_features_billing_monthly_bad_degree_day_method(monthly_meter, monthly_temperature):
     meter_data = monthly_meter
     temperature_data = monthly_temperature
     with pytest.raises(ValueError):
@@ -612,41 +587,36 @@ def test_compute_temperature_features_billing_monthly_bad_degree_day_method(mont
         )
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
-def test_compute_temperature_features_billing_monthly_data_quality(monthly_meter, monthly_temperature,
-):
+def test_compute_temperature_features_billing_monthly_data_quality(monthly_meter, monthly_temperature, snapshot):
     meter_data = monthly_meter
     temperature_data = monthly_temperature
     df = compute_temperature_features(
         meter_data.index, temperature_data, temperature_mean=False, data_quality=True
     )
-    assert df.shape == (27, 4)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "n_days_dropped",
         "n_days_kept",
         "temperature_not_null",
         "temperature_null",
     ]
-    assert round(df.temperature_not_null.mean(), 2) == 729.23
-    assert round(df.temperature_null.mean(), 2) == 0.0
+    assert round(df.temperature_not_null.mean(), 2) == snapshot(name="temp_not_null_mean")
+    assert round(df.temperature_null.mean(), 2) == snapshot(name="temp_null_mean")
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
-def test_compute_temperature_features_billing_bimonthly_temp_mean(monthly_meter, monthly_temperature,
-):
+def test_compute_temperature_features_billing_bimonthly_temp_mean(monthly_meter, monthly_temperature, snapshot):
     meter_data = monthly_meter
     temperature_data = monthly_temperature
     df = compute_temperature_features(meter_data.index, temperature_data)
-    assert df.shape == (14, 3)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "n_days_dropped",
         "n_days_kept",
         "temperature_mean",
     ]
-    assert round(df.temperature_mean.mean()) == 55.0
+    assert round(df.temperature_mean.mean()) == snapshot(name="temp_mean")
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
 def test_compute_temperature_features_billing_bimonthly_daily_degree_days(monthly_meter, monthly_temperature, snapshot
 ):
     meter_data = monthly_meter
@@ -659,7 +629,7 @@ def test_compute_temperature_features_billing_bimonthly_daily_degree_days(monthl
         temperature_mean=False,
         degree_day_method="daily",
     )
-    assert df.shape == (14, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -678,7 +648,6 @@ def test_compute_temperature_features_billing_bimonthly_daily_degree_days(monthl
         ] == snapshot(name="values")
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
 def test_compute_temperature_features_billing_bimonthly_hourly_degree_days(monthly_meter, monthly_temperature, snapshot
 ):
     meter_data = monthly_meter
@@ -691,7 +660,7 @@ def test_compute_temperature_features_billing_bimonthly_hourly_degree_days(month
         temperature_mean=False,
         degree_day_method="hourly",
     )
-    assert df.shape == (14, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -710,8 +679,7 @@ def test_compute_temperature_features_billing_bimonthly_hourly_degree_days(month
         ] == snapshot(name="values")
 
 
-def test_compute_temperature_features_billing_bimonthly_bad_degree_days(monthly_meter, monthly_temperature,
-):
+def test_compute_temperature_features_billing_bimonthly_bad_degree_days(monthly_meter, monthly_temperature):
     meter_data = monthly_meter
     temperature_data = monthly_temperature
     with pytest.raises(ValueError):
@@ -724,28 +692,24 @@ def test_compute_temperature_features_billing_bimonthly_bad_degree_days(monthly_
         )
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
-def test_compute_temperature_features_billing_bimonthly_data_quality(monthly_meter, monthly_temperature,
-):
+def test_compute_temperature_features_billing_bimonthly_data_quality(monthly_meter, monthly_temperature, snapshot):
     meter_data = monthly_meter
     temperature_data = monthly_temperature
     df = compute_temperature_features(
         meter_data.index, temperature_data, temperature_mean=False, data_quality=True
     )
-    assert df.shape == (14, 4)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "n_days_dropped",
         "n_days_kept",
         "temperature_not_null",
         "temperature_null",
     ]
-    assert round(df.temperature_not_null.mean(), 2) == 1478.77
-    assert round(df.temperature_null.mean(), 2) == 0.0
+    assert round(df.temperature_not_null.mean(), 2) == snapshot(name="temp_not_null_mean")
+    assert round(df.temperature_null.mean(), 2) == snapshot(name="temp_null_mean")
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
-def test_compute_temperature_features_shorter_temperature_data(daily_meter, daily_temperature,
-):
+def test_compute_temperature_features_shorter_temperature_data(daily_meter, daily_temperature, snapshot):
     meter_data = daily_meter
     temperature_data = daily_temperature
 
@@ -753,17 +717,16 @@ def test_compute_temperature_features_shorter_temperature_data(daily_meter, dail
     temperature_data = temperature_data[:-200]
 
     df = compute_temperature_features(meter_data.index, temperature_data)
-    assert df.shape == (810, 3)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "n_days_dropped",
         "n_days_kept",
         "temperature_mean",
     ]
-    assert round(df.temperature_mean.sum()) == 43958.0
+    assert round(df.temperature_mean.sum()) == snapshot(name="temp_sum")
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
-def test_compute_temperature_features_shorter_meter_data(daily_meter, daily_temperature):
+def test_compute_temperature_features_shorter_meter_data(daily_meter, daily_temperature, snapshot):
     meter_data = daily_meter
     temperature_data = daily_temperature
 
@@ -771,20 +734,18 @@ def test_compute_temperature_features_shorter_meter_data(daily_meter, daily_temp
     meter_data = meter_data[:-10]
 
     df = compute_temperature_features(meter_data.index, temperature_data)
-    assert df.shape == (800, 3)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "n_days_dropped",
         "n_days_kept",
         "temperature_mean",
     ]
-    assert round(df.temperature_mean.sum()) == 43904.0
+    assert round(df.temperature_mean.sum()) == snapshot(name="temp_sum")
     # ensure last row is NaN'ed
     assert pd.isnull(df.iloc[-1].n_days_kept)
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
-def test_compute_temperature_features_with_duplicated_index(monthly_meter, monthly_temperature,
-):
+def test_compute_temperature_features_with_duplicated_index(monthly_meter, monthly_temperature):
     meter_data = monthly_meter
     temperature_data = monthly_temperature
 
@@ -923,12 +884,11 @@ def partial_hour_of_week_feature():
     return hour_of_week_feature
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
-def test_get_missing_hours_of_week_warning_triggered(partial_hour_of_week_feature):
+def test_get_missing_hours_of_week_warning_triggered(partial_hour_of_week_feature, snapshot):
     warning = get_missing_hours_of_week_warning(partial_hour_of_week_feature)
     assert warning.qualified_name is not None
     assert warning.description is not None
-    assert warning.data["missing_hours_of_week"] == list(range(60, 144))
+    assert warning.data["missing_hours_of_week"] == snapshot(name="missing_hours")
 
 
 def test_compute_time_features_bad_freq():
@@ -981,12 +941,11 @@ def occupancy_precursor(hourly_meter, hourly_temperature):
     )
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
-def test_estimate_hour_of_week_occupancy_no_segmentation(occupancy_precursor):
+def test_estimate_hour_of_week_occupancy_no_segmentation(occupancy_precursor, snapshot):
     occupancy = estimate_hour_of_week_occupancy(occupancy_precursor)
     assert list(occupancy.columns) == ["occupancy"]
     assert occupancy.shape == (168, 1)
-    assert occupancy.sum().sum() == 0
+    assert occupancy.sum().sum() == snapshot(name="occupancy_sum")
 
 
 @pytest.fixture
@@ -994,10 +953,7 @@ def one_month_segmentation(occupancy_precursor):
     return segment_time_series(occupancy_precursor.index, segment_type="one_month")
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
-def test_estimate_hour_of_week_occupancy_one_month_segmentation(
-    occupancy_precursor, one_month_segmentation
-):
+def test_estimate_hour_of_week_occupancy_one_month_segmentation( occupancy_precursor, one_month_segmentation , snapshot):
     occupancy = estimate_hour_of_week_occupancy(
         occupancy_precursor, segmentation=one_month_segmentation
     )
@@ -1016,7 +972,7 @@ def test_estimate_hour_of_week_occupancy_one_month_segmentation(
         "dec",
     ]
     assert occupancy.shape == (168, 12)
-    assert occupancy.sum().sum() == 84.0
+    assert occupancy.sum().sum() == snapshot(name="occupancy_sum")
 
 
 @pytest.fixture
@@ -1040,10 +996,7 @@ def occupancy_lookup_no_segmentation(occupancy_precursor):
     return occupancy
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
-def test_fit_temperature_bins_no_segmentation_with_occupancy(
-    temperature_means, occupancy_lookup_no_segmentation
-):
+def test_fit_temperature_bins_no_segmentation_with_occupancy( temperature_means, occupancy_lookup_no_segmentation , snapshot):
     occupied_bins, unoccupied_bins = fit_temperature_bins(
         temperature_means,
         segmentation=None,
@@ -1051,14 +1004,13 @@ def test_fit_temperature_bins_no_segmentation_with_occupancy(
     )
     assert list(occupied_bins.columns) == ["keep_bin_endpoint"]
     assert occupied_bins.shape == (6, 1)
-    assert occupied_bins.sum().sum() == 0
+    assert occupied_bins.sum().sum() == snapshot(name="occupied_bins_sum")
 
     assert list(unoccupied_bins.columns) == ["keep_bin_endpoint"]
     assert unoccupied_bins.shape == (6, 1)
-    assert unoccupied_bins.sum().sum() == 4
+    assert unoccupied_bins.sum().sum() == snapshot(name="unoccupied_bins_sum")
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
 def test_fit_temperature_bins_one_month_segmentation(
     temperature_means, one_month_segmentation
 ):
@@ -1091,10 +1043,7 @@ def occupancy_lookup_one_month_segmentation(
     return occupancy_lookup
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
-def test_fit_temperature_bins_with_occupancy_lookup(
-    temperature_means, one_month_segmentation, occupancy_lookup_one_month_segmentation
-):
+def test_fit_temperature_bins_with_occupancy_lookup( temperature_means, one_month_segmentation, occupancy_lookup_one_month_segmentation , snapshot):
     occupied_bins, unoccupied_bins = fit_temperature_bins(
         temperature_means,
         segmentation=one_month_segmentation,
@@ -1115,7 +1064,7 @@ def test_fit_temperature_bins_with_occupancy_lookup(
         "dec",
     ]
     assert occupied_bins.shape == (6, 12)
-    assert occupied_bins.sum().sum() == 0
+    assert occupied_bins.sum().sum() == snapshot(name="occupied_bins_sum")
 
     assert list(unoccupied_bins.columns) == [
         "jan",
@@ -1132,7 +1081,7 @@ def test_fit_temperature_bins_with_occupancy_lookup(
         "dec",
     ]
     assert unoccupied_bins.shape == (6, 12)
-    assert unoccupied_bins.sum().sum() == 12
+    assert unoccupied_bins.sum().sum() == snapshot(name="unoccupied_bins_sum")
 
 
 def test_fit_temperature_bins_empty(temperature_means):
@@ -1186,7 +1135,7 @@ def test_compute_occupancy_feature_with_nans(even_occupancy):
 @pytest.fixture
 def occupancy_precursor_only_nan(hourly_meter, hourly_temperature):
     meter_data = hourly_meter
-    meter_data = meter_data["2017-01-04":"2017-06-01"].copy()
+    meter_data = meter_data["2018-01-04":"2018-06-01"].copy()
     meter_data.iloc[-1] = np.nan
     # Simulates a segment where there is only a single nan value
     temperature_data = hourly_temperature
@@ -1210,7 +1159,6 @@ def segmentation_only_nan(occupancy_precursor_only_nan):
     )
 
 
-@pytest.mark.skip(reason="ComStock migration: assertion relies on IL-specific data shape/values; rewrite pending")
 def test_estimate_hour_of_week_occupancy_segmentation_only_nan(
     occupancy_precursor_only_nan, segmentation_only_nan
 ):

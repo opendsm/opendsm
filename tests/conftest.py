@@ -12,8 +12,6 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-import sys
-
 import pytest
 
 from opendsm.common.test_data import load_test_data
@@ -25,19 +23,6 @@ from syrupy_extensions import TolerantJSONSnapshotExtension
 def snapshot(snapshot):
     """Default the project's `snapshot` fixture to the tolerant JSON extension."""
     return snapshot.use_extension(TolerantJSONSnapshotExtension)
-
-
-def pytest_collection_modifyitems(config, items):
-    """Skip @pytest.mark.regression tests off linux-x86_64; nlopt/BLAS optimizer convergence drifts beyond tolerance on macOS/Windows."""
-    if sys.platform == "linux":
-        return
-
-    skip = pytest.mark.skip(
-        reason="Snapshot pinned to linux-x86_64; cross-platform optimizer/BLAS drift exceeds tolerance"
-    )
-    for item in items:
-        if "regression" in item.keywords:
-            item.add_marker(skip)
 
 
 # ComStock meter ids selected for diverse load behavior.
@@ -60,36 +45,22 @@ def _meter_subset(df, meter_id, freq=None):
     return sub
 
 
-def _to_fahrenheit(df):
-    """ComStock parquet ships temperature in Celsius; opendsm data classes expect Fahrenheit."""
-    out = df.copy()
-    out["temperature"] = out["temperature"] * 9.0 / 5.0 + 32.0
-
-    return out
-
-
 @pytest.fixture(scope="session")
 def _comstock_hourly_all():
     """All 100 meters of ComStock hourly treatment data, (baseline, reporting)."""
-    df_b, df_r = load_test_data("hourly_treatment_data")
-
-    return _to_fahrenheit(df_b), _to_fahrenheit(df_r)
+    return load_test_data("hourly_treatment_data")
 
 
 @pytest.fixture(scope="session")
 def _comstock_daily_all():
     """All 100 meters aggregated daily (mean temperature, sum observed)."""
-    df_b, df_r = load_test_data("daily_treatment_data")
-
-    return _to_fahrenheit(df_b), _to_fahrenheit(df_r)
+    return load_test_data("daily_treatment_data")
 
 
 @pytest.fixture(scope="session")
 def _comstock_monthly_all():
     """All 100 meters aggregated monthly."""
-    df_b, df_r = load_test_data("monthly_treatment_data")
-
-    return _to_fahrenheit(df_b), _to_fahrenheit(df_r)
+    return load_test_data("monthly_treatment_data")
 
 
 @pytest.fixture(scope="session")

@@ -100,7 +100,6 @@ def cluster_labels_with_outliers():
 # Tests for _cluster_merge
 # =============================================================================
 
-@pytest.mark.skip(reason="Skipping due to non-functioning function.")
 class TestClusterMerge:
     """Tests for _cluster_merge function."""
 
@@ -167,21 +166,25 @@ class TestClusterMerge:
         assert result_low.shape == cluster_labels.shape
         assert result_high.shape == cluster_labels.shape
 
-    @pytest.mark.skip(reason="Skipping due to non-functioning function.")
-    def test_merge_multiple_clusters(self, simple_data):
-        """Test merging with more than two clusters."""
-        # Create labels for 3 clusters
+    def test_merge_multiple_clusters(self):
+        """Test merging with more than two clusters — close clusters merge, distant ones don't."""
+        # 3 clusters: two close to each other (mergeable), one well-separated
+        np.random.seed(42)
+        cluster_a = np.random.randn(20, 5) + np.array([0, 0, 0, 0, 0])
+        cluster_b = np.random.randn(20, 5) + np.array([0.5, 0.5, 0.5, 0.5, 0.5])
+        cluster_c = np.random.randn(20, 5) + np.array([100, 100, 100, 100, 100])
+        data = np.vstack([cluster_a, cluster_b, cluster_c])
         cluster_labels = np.array([0] * 20 + [1] * 20 + [2] * 20)
 
         settings = ClusteringSettings(
             algorithm_selection=ClusterAlgorithms.SPECTRAL,
-            seed=42
+            seed=42,
         )
 
-        result = _cluster_merge(cluster_labels, simple_data, settings, W=0.5)
+        result = _cluster_merge(cluster_labels, data, settings, W=0.5)
 
         assert result.shape == cluster_labels.shape
-        # Result should have < 3 clusters (some may have merged)
+        # Two close clusters should merge, distant one stays separate
         assert len(np.unique(result)) < 3
 
 
