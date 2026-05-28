@@ -96,13 +96,10 @@ def test_metered_savings_cdd_hdd_daily(
     results = baseline_model_daily.predict(reporting_data)
     metered_savings = results["predicted"] - results["observed"]
 
-    # Structural: predicting on synthetic constant-load reporting data subtracts
-    # observed=1 from predicted, producing finite savings. Exact value pinning
-    # is not cross-platform stable because daily-model fit drift amplifies in
-    # the predicted - observed subtraction (linear in fit error).
-    assert metered_savings.shape == reporting_meter_data_daily.shape[:1]
-    assert np.isfinite(metered_savings).all()
-    assert (metered_savings != 0).all(), "all-zero savings would mean predict() returned the input"
+    assert round(float(metered_savings.sum()), 4) == snapshot(
+        name="metered_savings_sum"
+    )
+    assert metered_savings.values.tolist() == snapshot(name="metered_savings_values")
 
 
 @pytest.fixture(scope="session")
@@ -315,11 +312,10 @@ def test_modeled_savings_cdd_hdd_daily(
     modeled_savings = (
         baseline_model_result["predicted"] - reporting_model_result["predicted"]
     )
-    # Structural: small per-prediction differences between baseline and reporting
-    # models compound when subtracted, so exact savings is not cross-platform
-    # stable. Verify the computation produces finite values of the right shape.
-    assert modeled_savings.shape == reporting_meter_data_daily.shape[:1]
-    assert np.isfinite(modeled_savings).all()
+    assert round(float(modeled_savings.sum()), 4) == snapshot(
+        name="modeled_savings_sum"
+    )
+    assert modeled_savings.values.tolist() == snapshot(name="modeled_savings_values")
 
 
 # TODO move to dataclass testing

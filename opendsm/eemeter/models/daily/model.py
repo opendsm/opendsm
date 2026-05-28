@@ -889,10 +889,16 @@ class DailyModel:
         """
 
         HoF = {"combination_str": None, "selection_criteria": np.inf}
+        # Require improvement to exceed cross-platform float-roundoff before
+        # switching the winner. self.combinations is sorted (len, lex) so ties
+        # consistently resolve to the earlier (simpler) combination on every
+        # platform. Without this, BIC/AIC accumulation order in BLAS produced
+        # sub-roundoff score differences that flipped the winner across runs.
+        TIE_TOLERANCE = 1e-6
         for combo in self.combinations:
             selection_criteria = self._combination_selection_criteria(combo)
 
-            if selection_criteria < HoF["selection_criteria"]:
+            if selection_criteria < HoF["selection_criteria"] - TIE_TOLERANCE:
                 HoF["combination_str"] = combo
                 HoF["selection_criteria"] = selection_criteria
 

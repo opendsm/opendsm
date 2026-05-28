@@ -11,8 +11,8 @@ from typing import Any, Iterator
 
 from syrupy.extensions.json import JSONSnapshotExtension
 
-FLOAT_ATOL = 1e-3
-FLOAT_RTOL = 1e-2
+FLOAT_ATOL = 1e-7
+FLOAT_RTOL = 1e-6
 
 
 class TolerantJSONSnapshotExtension(JSONSnapshotExtension):
