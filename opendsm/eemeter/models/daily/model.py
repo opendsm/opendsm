@@ -888,29 +888,24 @@ class DailyModel:
             str: The best combination of parameters as a string.
         """
 
-        # When two combinations score within float-roundoff of each other, prefer
-        # the one with fewer components (Occam: simpler model wins ties). Final
-        # tiebreak on lex-sorted combo string keeps the choice deterministic
-        # regardless of iteration order or BLAS accumulation differences.
+        # When scores are within float-roundoff, prefer fewer components (Occam);
+        # final tiebreak is lex on the combo string for full determinism.
         TIE_TOLERANCE = 1e-6
-        scored = []
-        for combo in self.combinations:
-            selection_criteria = self._combination_selection_criteria(combo)
-            n_components = len(combo.split("__"))
-            scored.append((selection_criteria, n_components, combo))
+        scored = [
+            (self._combination_selection_criteria(combo), len(combo.split("__")), combo)
+            for combo in self.combinations
+        ]
 
-        best_score = min(s for s, _, _ in scored)
+        best_score = min(score for score, _, _ in scored)
         within_tol = [s for s in scored if s[0] <= best_score + TIE_TOLERANCE]
-        winner = min(within_tol, key=lambda s: (s[1], s[2]))
-
-        HoF = {"combination_str": winner[2], "selection_criteria": winner[0]}
+        winner_score, _, winner_combo = min(within_tol, key=lambda s: (s[1], s[2]))
 
         if print_out:
-            for selection_criteria, _, combo in scored:
-                print(f"{combo:>40s} {selection_criteria:>8.1f}")
-            print(f"{HoF['combination_str']:>40s} {HoF['selection_criteria']:>8.1f}")
+            for score, _, combo in scored:
+                print(f"{combo:>40s} {score:>8.1f}")
+            print(f"{winner_combo:>40s} {winner_score:>8.1f}")
 
-        return HoF["combination_str"]
+        return winner_combo
 
     def _final_fit(self, combination):
         """
