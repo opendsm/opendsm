@@ -13,9 +13,7 @@
 #  limitations under the License.
 from datetime import datetime
 
-from opendsm.eemeter.common.transform import get_baseline_data
 from opendsm.eemeter.models.daily.data import DailyBaselineData, DailyReportingData
-from opendsm.eemeter.samples import load_sample
 import numpy as np
 import pandas as pd
 from pandas import Timestamp, DatetimeIndex, DataFrame
@@ -396,58 +394,62 @@ def test_daily_baseline_data_with_extreme_and_negative_values_in_daily_and_hourl
     )
 
 
-def test_daily_baseline_data_with_specific_hourly_input():
-    meter, temperature, _ = load_sample("il-electricity-cdd-hdd-hourly")
-    meter = meter[meter.index.year == 2017]
-    temperature = temperature[temperature.index.year == 2017]
+def _to_utc(df):
+    out = df.copy()
+    out.index = out.index.tz_convert("UTC")
+
+    return out
+
+
+def test_daily_baseline_data_with_specific_hourly_input(comstock_hourly, snapshot):
+    df_b, _ = comstock_hourly
+    sub = _to_utc(df_b)
+    meter = sub[["observed"]].rename(columns={"observed": "value"})
+    temperature = sub["temperature"]
+
     cls = DailyBaselineData.from_series(meter, temperature, is_electricity_data=True)
 
     assert cls.df is not None
-    assert len(cls.df) == NUM_DAYS_IN_YEAR
-    # TODO: Because of the weird behaviour of as_freq() on the last hour for downsampling, so we can't add it
-    assert round(cls.df.observed.sum(), 2) == round(meter.value[:-1].sum(), 2)
-    assert len(cls.warnings) == 2
-    assert [warning.qualified_name for warning in cls.warnings] == [
-        "eemeter.data_quality.utc_index",
-        "eemeter.sufficiency_criteria.extreme_values_detected",
-    ]
-    assert len(cls.disqualification) == 0
+    assert int(len(cls.df)) == snapshot(name="df_length")
+    assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
+    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
 
 
-def test_daily_baseline_data_with_specific_daily_input():
-    meter, temperature, _ = load_sample("il-electricity-cdd-hdd-daily")
-    meter = meter[meter.index.year == 2017]
-    temperature = temperature[temperature.index.year == 2017]
+def test_daily_baseline_data_with_specific_daily_input(comstock_daily, comstock_hourly, snapshot):
+    df_daily, _ = comstock_daily
+    df_hourly, _ = comstock_hourly
+    sub_daily = _to_utc(df_daily)
+    sub_hourly = _to_utc(df_hourly)
+    meter = sub_daily[["observed"]].rename(columns={"observed": "value"})
+    temperature = sub_hourly["temperature"]
+
     cls = DailyBaselineData.from_series(meter, temperature, is_electricity_data=True)
 
     assert cls.df is not None
-    assert len(cls.df) == NUM_DAYS_IN_YEAR
-    assert round(cls.df.observed.sum(), 2) == round(meter.value.sum(), 2)
-    assert len(cls.warnings) == 2
-    assert [warning.qualified_name for warning in cls.warnings] == [
-        "eemeter.data_quality.utc_index",
-        "eemeter.sufficiency_criteria.extreme_values_detected",
-    ]
-    assert len(cls.disqualification) == 0
+    assert int(len(cls.df)) == snapshot(name="df_length")
+    assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
+    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
 
 
-def test_daily_baseline_data_with_missing_specific_daily_input():
-    meter, temperature, _ = load_sample("il-electricity-cdd-hdd-daily")
-    meter = meter[meter.index.year == 2017]
+def test_daily_baseline_data_with_missing_specific_daily_input(comstock_daily, comstock_hourly, snapshot):
+    df_daily, _ = comstock_daily
+    df_hourly, _ = comstock_hourly
+    sub_daily = _to_utc(df_daily)
+    sub_hourly = _to_utc(df_hourly)
+    meter = sub_daily[["observed"]].rename(columns={"observed": "value"})
     # Set 1 month meter data to NaN
     meter.loc[meter.index.month == 4] = np.nan
-    temperature = temperature[temperature.index.year == 2017]
+    temperature = sub_hourly["temperature"]
+
     cls = DailyBaselineData.from_series(meter, temperature, is_electricity_data=True)
 
     assert cls.df is not None
-    assert len(cls.df) == NUM_DAYS_IN_YEAR
-    assert round(cls.df.observed.sum(), 2) == round(meter.value.sum(), 2)
-    assert len(cls.warnings) == 2
-    assert [warning.qualified_name for warning in cls.warnings] == [
-        "eemeter.data_quality.utc_index",
-        "eemeter.sufficiency_criteria.extreme_values_detected",
-    ]
-    assert len(cls.disqualification) == 0
+    assert int(len(cls.df)) == snapshot(name="df_length")
+    assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
+    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
 
 
 def test_daily_baseline_data_with_missing_hourly_temperature_data(
@@ -789,32 +791,34 @@ def test_daily_reporting_data_with_missing_daily_frequencies(get_datetime_index)
 
 
 @pytest.fixture
-def baseline_data_daily_params(il_electricity_cdd_hdd_daily):
+def baseline_data_daily_params(comstock_daily, comstock_hourly):
     def _baseline(tz="UTC", hour=0):
-        meter_data = il_electricity_cdd_hdd_daily["meter_data"]
-        temperature_data = il_electricity_cdd_hdd_daily["temperature_data"]
-        blackout_start_date = il_electricity_cdd_hdd_daily["blackout_start_date"]
-        baseline_meter_data, warnings = get_baseline_data(
-            meter_data, end=blackout_start_date
-        )
-        baseline_meter_data.index = map(
-            lambda x: x.replace(hour=x.hour + hour), baseline_meter_data.index
-        )
+        df_daily, _ = comstock_daily
+        df_hourly, _ = comstock_hourly
+        sub_daily = df_daily.copy()
+        sub_daily.index = sub_daily.index.tz_convert("UTC")
+        baseline_meter_data = sub_daily[["observed"]].rename(columns={"observed": "value"})
+        baseline_meter_data.index = baseline_meter_data.index + pd.Timedelta(hours=hour)
         baseline_meter_data.index = baseline_meter_data.index.tz_convert(tz)
+        sub_hourly = df_hourly.copy()
+        sub_hourly.index = sub_hourly.index.tz_convert("UTC")
+        temperature_data = sub_hourly["temperature"]
+
         return baseline_meter_data, temperature_data
 
     yield _baseline
 
 
 @pytest.mark.parametrize(
-    ["tz", "hour"], [["US/Pacific", 3], ["US/Eastern", 8], ["Europe/London", 13]]
+    ["tz", "hour"],
+    [["US/Pacific", 3], ["US/Eastern", 8], ["Europe/London", 13]],
+    ids=["pacific_3", "eastern_8", "london_13"],
 )
-def test_offset_temperature_aggregations(baseline_data_daily_params, tz, hour):
+def test_offset_temperature_aggregations(baseline_data_daily_params, tz, hour, snapshot):
     baseline_meter_data, temp_series = baseline_data_daily_params(tz=tz, hour=hour)
     baseline = DailyBaselineData.from_series(
         baseline_meter_data, temp_series, is_electricity_data=True
     )
-    tz = baseline_meter_data.index.tz
 
     abs_diff = 0
     for day in baseline.df.index:
@@ -822,13 +826,15 @@ def test_offset_temperature_aggregations(baseline_data_daily_params, tz, hour):
             temp_series[day : day + pd.Timedelta(hours=23)].mean()
             - baseline.df.temperature.loc[day].squeeze()
         )
-    assert abs_diff < 0.000001
+    assert round(float(abs_diff), 4) == snapshot(name="abs_diff")
 
 
-def test_non_ns_datetime_index():
-    meter, temperature, _ = load_sample("il-electricity-cdd-hdd-hourly")
-    meter = meter[meter.index.year == 2017]
-    temperature = temperature[temperature.index.year == 2017]
+def test_non_ns_datetime_index(comstock_hourly, snapshot):
+    df_b, _ = comstock_hourly
+    sub = df_b.copy()
+    sub.index = sub.index.tz_convert("UTC")
+    meter = sub[["observed"]].rename(columns={"observed": "value"})
+    temperature = sub["temperature"]
 
     # convert to microseconds
     meter.index = meter.index.astype("datetime64[us, UTC]")
@@ -836,22 +842,19 @@ def test_non_ns_datetime_index():
     cls = DailyBaselineData.from_series(meter, temperature, is_electricity_data=True)
 
     assert cls.df is not None
-    assert len(cls.df) == NUM_DAYS_IN_YEAR
+    assert int(len(cls.df)) == snapshot(name="df_length")
 
 
-def test_offset_aggregations_hourly(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_hourly["temperature_data"]
-    blackout_start_date = il_electricity_cdd_hdd_hourly["blackout_start_date"]
-    baseline_meter_data, warnings = get_baseline_data(
-        meter_data, end=blackout_start_date
-    )
-    baseline_meter_data = baseline_meter_data.iloc[3:]  # begin from 3AM UTC
-    baseline = DailyBaselineData.from_series(
-        baseline_meter_data, temperature_data, is_electricity_data=True
-    )
+def test_offset_aggregations_hourly(comstock_hourly, snapshot):
+    df_b, _ = comstock_hourly
+    sub = df_b.copy()
+    sub.index = sub.index.tz_convert("UTC")
+    meter = sub[["observed"]].rename(columns={"observed": "value"}).iloc[3:]
+    temperature = sub["temperature"]
+
+    baseline = DailyBaselineData.from_series(meter, temperature, is_electricity_data=True)
     assert baseline is not None
-    assert len(baseline.df) == NUM_DAYS_IN_YEAR
+    assert int(len(baseline.df)) == snapshot(name="df_length")
 
 
 def test_dst_handling():

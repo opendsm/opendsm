@@ -570,6 +570,7 @@ class TestFpcaTransform:
         assert result.shape[1] < simple_time_series_data.shape[1]
         assert result.shape[1] > 0
 
+    @pytest.mark.slow
     def test_fpca_transform_different_var_ratios(self, simple_time_series_data):
         """Test FPCA with different variance ratios."""
         n_components = []
@@ -589,6 +590,7 @@ class TestFpcaTransform:
         # Higher variance ratio typically needs more components
         assert max(n_components) >= min(n_components)
 
+    @pytest.mark.slow
     def test_fpca_transform_small_dataset(self, small_dataset):
         """Test FPCA on small dataset."""
         settings = ClusteringSettings(
@@ -621,6 +623,7 @@ class TestFpcaTransform:
         with pytest.raises(FpcaError):
             fpca_transform(data, settings)
 
+    @pytest.mark.slow
     def test_fpca_transform_deterministic(self, simple_time_series_data):
         """Test that FPCA transform produces consistent results."""
         settings = ClusteringSettings(

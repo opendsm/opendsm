@@ -30,43 +30,87 @@ from opendsm.eemeter.common.features import (
 from opendsm.eemeter.models.hourly_caltrack.segmentation import segment_time_series
 
 
-def test_compute_temperature_features_no_freq_index(
-    il_electricity_cdd_hdd_billing_monthly,
-):
+def _utc_meter(df):
+    out = df[["observed"]].rename(columns={"observed": "value"}).copy()
+    out.index = out.index.tz_convert("UTC")
+
+    return out
+
+
+def _utc_temperature(df):
+    out = df["temperature"].copy()
+    out.index = out.index.tz_convert("UTC")
+
+    return out
+
+
+@pytest.fixture
+def monthly_meter(comstock_monthly):
+    df_b, df_r = comstock_monthly
+    return _utc_meter(pd.concat([df_b, df_r]).dropna(subset=["observed"]))
+
+
+@pytest.fixture
+def monthly_temperature(comstock_hourly):
+    df_b, df_r = comstock_hourly
+    return _utc_temperature(pd.concat([df_b, df_r]).asfreq("h"))
+
+
+@pytest.fixture
+def daily_meter(comstock_daily):
+    df_b, df_r = comstock_daily
+    return _utc_meter(pd.concat([df_b, df_r]))
+
+
+@pytest.fixture
+def daily_temperature(comstock_hourly):
+    df_b, df_r = comstock_hourly
+    return _utc_temperature(pd.concat([df_b, df_r]).asfreq("h"))
+
+
+@pytest.fixture
+def hourly_meter(comstock_hourly):
+    df_b, df_r = comstock_hourly
+    return _utc_meter(pd.concat([df_b, df_r]).asfreq("h"))
+
+
+@pytest.fixture
+def hourly_temperature(comstock_hourly):
+    df_b, df_r = comstock_hourly
+    return _utc_temperature(pd.concat([df_b, df_r]).asfreq("h"))
+
+
+def test_compute_temperature_features_no_freq_index(monthly_meter, monthly_temperature):
     # pick a slice with both hdd and cdd
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"]
+    meter_data = monthly_meter
+    temperature_data = monthly_temperature
     temperature_data.index.freq = None
     with pytest.raises(ValueError):
         compute_temperature_features(meter_data.index, temperature_data)
 
 
-def test_compute_temperature_features_no_meter_data_tz(
-    il_electricity_cdd_hdd_billing_monthly,
-):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"]
+def test_compute_temperature_features_no_meter_data_tz(monthly_meter, monthly_temperature):
+    meter_data = monthly_meter
+    temperature_data = monthly_temperature
     meter_data.index = meter_data.index.tz_localize(None)
     with pytest.raises(ValueError):
         compute_temperature_features(meter_data.index, temperature_data)
 
 
-def test_compute_temperature_features_no_temp_data_tz(
-    il_electricity_cdd_hdd_billing_monthly,
-):
+def test_compute_temperature_features_no_temp_data_tz(monthly_meter, monthly_temperature):
     # pick a slice with both hdd and cdd
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"]
+    meter_data = monthly_meter
+    temperature_data = monthly_temperature
     temperature_data = temperature_data.tz_localize(None)
     with pytest.raises(ValueError):
         compute_temperature_features(meter_data.index, temperature_data)
 
 
-def test_compute_temperature_features_hourly_temp_mean(il_electricity_cdd_hdd_hourly):
+def test_compute_temperature_features_hourly_temp_mean(hourly_meter, hourly_temperature, snapshot):
     # pick a slice with both hdd and cdd
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]["2016-03-01":"2016-07-01"]
-    temperature_data = il_electricity_cdd_hdd_hourly["temperature_data"][
-        "2016-03-01":"2016-07-01"
+    meter_data = hourly_meter["2018-03-01":"2018-07-01"]
+    temperature_data = hourly_temperature[
+        "2018-03-01":"2018-07-01"
     ]
     df = compute_temperature_features(meter_data.index, temperature_data)
     assert list(sorted(df.columns)) == [
@@ -74,18 +118,17 @@ def test_compute_temperature_features_hourly_temp_mean(il_electricity_cdd_hdd_ho
         "n_hours_kept",
         "temperature_mean",
     ]
-    assert df.shape == (2952, 3)
+    assert list(df.shape) == snapshot(name="df_shape")
 
-    assert round(df.temperature_mean.mean()) == 62.0
+    assert round(df.temperature_mean.mean()) == snapshot(name="temp_mean")
 
 
-def test_compute_temperature_features_hourly_hourly_degree_days(
-    il_electricity_cdd_hdd_hourly, snapshot
+def test_compute_temperature_features_hourly_hourly_degree_days(hourly_meter, hourly_temperature, snapshot
 ):
     # pick a slice with both hdd and cdd
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]["2016-03-01":"2016-07-01"]
-    temperature_data = il_electricity_cdd_hdd_hourly["temperature_data"][
-        "2016-03-01":"2016-07-01"
+    meter_data = hourly_meter["2018-03-01":"2018-07-01"]
+    temperature_data = hourly_temperature[
+        "2018-03-01":"2018-07-01"
     ]
     df = compute_temperature_features(
         meter_data.index,
@@ -103,27 +146,23 @@ def test_compute_temperature_features_hourly_hourly_degree_days(
         "n_hours_dropped",
         "n_hours_kept",
     ]
-    assert df.shape == (2952, 6)
-    snapshot.assert_match(
-        [
+    assert list(df.shape) == snapshot(name="df_shape")
+    assert [
             round(df.hdd_60.mean(), 2),
             round(df.hdd_61.mean(), 2),
             round(df.cdd_65.mean(), 2),
             round(df.cdd_66.mean(), 2),
             round(df.n_hours_kept.mean(), 2),
             round(df.n_hours_dropped.mean(), 2),
-        ],
-        "values",
-    )
+        ] == snapshot(name="values")
 
 
-def test_compute_temperature_features_hourly_hourly_degree_days_use_mean_false(
-    il_electricity_cdd_hdd_hourly, snapshot
+def test_compute_temperature_features_hourly_hourly_degree_days_use_mean_false(hourly_meter, hourly_temperature, snapshot
 ):
     # pick a slice with both hdd and cdd
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]["2016-03-01":"2016-07-01"]
-    temperature_data = il_electricity_cdd_hdd_hourly["temperature_data"][
-        "2016-03-01":"2016-07-01"
+    meter_data = hourly_meter["2018-03-01":"2018-07-01"]
+    temperature_data = hourly_temperature[
+        "2018-03-01":"2018-07-01"
     ]
     df = compute_temperature_features(
         meter_data.index,
@@ -134,7 +173,7 @@ def test_compute_temperature_features_hourly_hourly_degree_days_use_mean_false(
         degree_day_method="hourly",
         use_mean_daily_values=False,
     )
-    assert df.shape == (2952, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -143,26 +182,21 @@ def test_compute_temperature_features_hourly_hourly_degree_days_use_mean_false(
         "n_hours_dropped",
         "n_hours_kept",
     ]
-    snapshot.assert_match(
-        [
+    assert [
             round(df.hdd_60.mean(), 2),
             round(df.hdd_61.mean(), 2),
             round(df.cdd_65.mean(), 2),
             round(df.cdd_66.mean(), 2),
             round(df.n_hours_kept.mean(), 2),
             round(df.n_hours_dropped.mean(), 2),
-        ],
-        "values",
-    )
+        ] == snapshot(name="values")
 
 
-def test_compute_temperature_features_hourly_daily_degree_days_fail(
-    il_electricity_cdd_hdd_hourly,
-):
+def test_compute_temperature_features_hourly_daily_degree_days_fail(hourly_meter, hourly_temperature):
     # pick a slice with both hdd and cdd
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]["2016-03-01":"2016-07-01"]
-    temperature_data = il_electricity_cdd_hdd_hourly["temperature_data"][
-        "2016-03-01":"2016-07-01"
+    meter_data = hourly_meter["2018-03-01":"2018-07-01"]
+    temperature_data = hourly_temperature[
+        "2018-03-01":"2018-07-01"
     ]
 
     with pytest.raises(ValueError):
@@ -175,13 +209,11 @@ def test_compute_temperature_features_hourly_daily_degree_days_fail(
         )
 
 
-def test_compute_temperature_features_hourly_daily_missing_explicit_freq(
-    il_electricity_cdd_hdd_hourly,
-):
+def test_compute_temperature_features_hourly_daily_missing_explicit_freq(hourly_meter, hourly_temperature):
     # pick a slice with both hdd and cdd
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]["2016-03-01":"2016-07-01"]
-    temperature_data = il_electricity_cdd_hdd_hourly["temperature_data"][
-        "2016-03-01":"2016-07-01"
+    meter_data = hourly_meter["2018-03-01":"2018-07-01"]
+    temperature_data = hourly_temperature[
+        "2018-03-01":"2018-07-01"
     ]
 
     meter_data.index.freq = None
@@ -195,13 +227,11 @@ def test_compute_temperature_features_hourly_daily_missing_explicit_freq(
         )
 
 
-def test_compute_temperature_features_hourly_bad_degree_days(
-    il_electricity_cdd_hdd_hourly,
-):
+def test_compute_temperature_features_hourly_bad_degree_days(hourly_meter, hourly_temperature):
     # pick a slice with both hdd and cdd
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]["2016-03-01":"2016-07-01"]
-    temperature_data = il_electricity_cdd_hdd_hourly["temperature_data"][
-        "2016-03-01":"2016-07-01"
+    meter_data = hourly_meter["2018-03-01":"2018-07-01"]
+    temperature_data = hourly_temperature[
+        "2018-03-01":"2018-07-01"
     ]
 
     with pytest.raises(ValueError):
@@ -214,48 +244,45 @@ def test_compute_temperature_features_hourly_bad_degree_days(
         )
 
 
-def test_compute_temperature_features_hourly_data_quality(
-    il_electricity_cdd_hdd_hourly,
-):
+def test_compute_temperature_features_hourly_data_quality(hourly_meter, hourly_temperature, snapshot):
     # pick a slice with both hdd and cdd
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]["2016-03-01":"2016-07-01"]
-    temperature_data = il_electricity_cdd_hdd_hourly["temperature_data"][
-        "2016-03-01":"2016-07-01"
+    meter_data = hourly_meter["2018-03-01":"2018-07-01"]
+    temperature_data = hourly_temperature[
+        "2018-03-01":"2018-07-01"
     ]
 
     df = compute_temperature_features(
         meter_data.index, temperature_data, temperature_mean=False, data_quality=True
     )
-    assert df.shape == (2952, 4)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "n_hours_dropped",
         "n_hours_kept",
         "temperature_not_null",
         "temperature_null",
     ]
-    assert round(df.temperature_not_null.mean(), 2) == 1.0
-    assert round(df.temperature_null.mean(), 2) == 0.0
+    assert round(df.temperature_not_null.mean(), 2) == snapshot(name="temp_not_null_mean")
+    assert round(df.temperature_null.mean(), 2) == snapshot(name="temp_null_mean")
 
 
-def test_compute_temperature_features_daily_temp_mean(il_electricity_cdd_hdd_daily):
-    meter_data = il_electricity_cdd_hdd_daily["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_daily["temperature_data"]
+def test_compute_temperature_features_daily_temp_mean(daily_meter, daily_temperature, snapshot):
+    meter_data = daily_meter
+    temperature_data = daily_temperature
     df = compute_temperature_features(meter_data.index, temperature_data)
-    assert df.shape == (810, 3)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "n_days_dropped",
         "n_days_kept",
         "temperature_mean",
     ]
 
-    assert round(df.temperature_mean.mean()) == 55.0
+    assert round(df.temperature_mean.mean()) == snapshot(name="temp_mean")
 
 
-def test_compute_temperature_features_daily_daily_degree_days(
-    il_electricity_cdd_hdd_daily, snapshot
+def test_compute_temperature_features_daily_daily_degree_days(daily_meter, daily_temperature, snapshot
 ):
-    meter_data = il_electricity_cdd_hdd_daily["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_daily["temperature_data"]
+    meter_data = daily_meter
+    temperature_data = daily_temperature
     df = compute_temperature_features(
         meter_data.index,
         temperature_data,
@@ -264,7 +291,7 @@ def test_compute_temperature_features_daily_daily_degree_days(
         temperature_mean=False,
         degree_day_method="daily",
     )
-    assert df.shape == (810, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -273,24 +300,20 @@ def test_compute_temperature_features_daily_daily_degree_days(
         "n_days_dropped",
         "n_days_kept",
     ]
-    snapshot.assert_match(
-        [
+    assert [
             round(df.hdd_60.mean(), 2),
             round(df.hdd_61.mean(), 2),
             round(df.cdd_65.mean(), 2),
             round(df.cdd_66.mean(), 2),
             round(df.n_days_kept.mean(), 2),
             round(df.n_days_dropped.mean(), 2),
-        ],
-        "values",
-    )
+        ] == snapshot(name="values")
 
 
-def test_compute_temperature_features_daily_daily_degree_days_use_mean_false(
-    il_electricity_cdd_hdd_daily, snapshot
+def test_compute_temperature_features_daily_daily_degree_days_use_mean_false(daily_meter, daily_temperature, snapshot
 ):
-    meter_data = il_electricity_cdd_hdd_daily["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_daily["temperature_data"]
+    meter_data = daily_meter
+    temperature_data = daily_temperature
     df = compute_temperature_features(
         meter_data.index,
         temperature_data,
@@ -300,7 +323,7 @@ def test_compute_temperature_features_daily_daily_degree_days_use_mean_false(
         degree_day_method="daily",
         use_mean_daily_values=False,
     )
-    assert df.shape == (810, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -309,24 +332,20 @@ def test_compute_temperature_features_daily_daily_degree_days_use_mean_false(
         "n_days_dropped",
         "n_days_kept",
     ]
-    snapshot.assert_match(
-        [
+    assert [
             round(df.hdd_60.mean(), 2),
             round(df.hdd_61.mean(), 2),
             round(df.cdd_65.mean(), 2),
             round(df.cdd_66.mean(), 2),
             round(df.n_days_kept.mean(), 2),
             round(df.n_days_dropped.mean(), 2),
-        ],
-        "values",
-    )
+        ] == snapshot(name="values")
 
 
-def test_compute_temperature_features_daily_hourly_degree_days(
-    il_electricity_cdd_hdd_daily, snapshot
+def test_compute_temperature_features_daily_hourly_degree_days(daily_meter, daily_temperature, snapshot
 ):
-    meter_data = il_electricity_cdd_hdd_daily["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_daily["temperature_data"]
+    meter_data = daily_meter
+    temperature_data = daily_temperature
     df = compute_temperature_features(
         meter_data.index,
         temperature_data,
@@ -335,7 +354,7 @@ def test_compute_temperature_features_daily_hourly_degree_days(
         temperature_mean=False,
         degree_day_method="hourly",
     )
-    assert df.shape == (810, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -344,24 +363,20 @@ def test_compute_temperature_features_daily_hourly_degree_days(
         "n_hours_dropped",
         "n_hours_kept",
     ]
-    snapshot.assert_match(
-        [
+    assert [
             round(df.hdd_60.mean(), 2),
             round(df.hdd_61.mean(), 2),
             round(df.cdd_65.mean(), 2),
             round(df.cdd_66.mean(), 2),
             round(df.n_hours_kept.mean(), 2),
             round(df.n_hours_dropped.mean(), 2),
-        ],
-        "values",
-    )
+        ] == snapshot(name="values")
 
 
-def test_compute_temperature_features_daily_hourly_degree_days_use_mean_false(
-    il_electricity_cdd_hdd_daily, snapshot
+def test_compute_temperature_features_daily_hourly_degree_days_use_mean_false(daily_meter, daily_temperature, snapshot
 ):
-    meter_data = il_electricity_cdd_hdd_daily["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_daily["temperature_data"]
+    meter_data = daily_meter
+    temperature_data = daily_temperature
     df = compute_temperature_features(
         meter_data.index,
         temperature_data,
@@ -371,7 +386,7 @@ def test_compute_temperature_features_daily_hourly_degree_days_use_mean_false(
         degree_day_method="hourly",
         use_mean_daily_values=False,
     )
-    assert df.shape == (810, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -380,24 +395,19 @@ def test_compute_temperature_features_daily_hourly_degree_days_use_mean_false(
         "n_hours_dropped",
         "n_hours_kept",
     ]
-    snapshot.assert_match(
-        [
+    assert [
             round(df.hdd_60.mean(), 2),
             round(df.hdd_61.mean(), 2),
             round(df.cdd_65.mean(), 2),
             round(df.cdd_66.mean(), 2),
             round(df.n_hours_kept.mean(), 2),
             round(df.n_hours_dropped.mean(), 2),
-        ],
-        "values",
-    )
+        ] == snapshot(name="values")
 
 
-def test_compute_temperature_features_daily_bad_degree_days(
-    il_electricity_cdd_hdd_daily,
-):
-    meter_data = il_electricity_cdd_hdd_daily["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_daily["temperature_data"]
+def test_compute_temperature_features_daily_bad_degree_days(daily_meter, daily_temperature):
+    meter_data = daily_meter
+    temperature_data = daily_temperature
     with pytest.raises(ValueError):
         compute_temperature_features(
             meter_data.index,
@@ -408,43 +418,40 @@ def test_compute_temperature_features_daily_bad_degree_days(
         )
 
 
-def test_compute_temperature_features_daily_data_quality(il_electricity_cdd_hdd_daily):
-    meter_data = il_electricity_cdd_hdd_daily["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_daily["temperature_data"]
+def test_compute_temperature_features_daily_data_quality(daily_meter, daily_temperature, snapshot):
+    meter_data = daily_meter
+    temperature_data = daily_temperature
     df = compute_temperature_features(
         meter_data.index, temperature_data, temperature_mean=False, data_quality=True
     )
-    assert df.shape == (810, 4)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "n_days_dropped",
         "n_days_kept",
         "temperature_not_null",
         "temperature_null",
     ]
-    assert round(df.temperature_not_null.mean(), 2) == 23.99
-    assert round(df.temperature_null.mean(), 2) == 0.00
+    assert round(df.temperature_not_null.mean(), 2) == snapshot(name="temp_not_null_mean")
+    assert round(df.temperature_null.mean(), 2) == snapshot(name="temp_null_mean")
 
 
-def test_compute_temperature_features_billing_monthly_temp_mean(
-    il_electricity_cdd_hdd_billing_monthly,
-):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"]
+def test_compute_temperature_features_billing_monthly_temp_mean(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
+    temperature_data = monthly_temperature
     df = compute_temperature_features(meter_data.index, temperature_data)
-    assert df.shape == (27, 3)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "n_days_dropped",
         "n_days_kept",
         "temperature_mean",
     ]
-    assert round(df.temperature_mean.mean()) == 55.0
+    assert round(df.temperature_mean.mean()) == snapshot(name="temp_mean")
 
 
-def test_compute_temperature_features_billing_monthly_daily_degree_days(
-    il_electricity_cdd_hdd_billing_monthly, snapshot
+def test_compute_temperature_features_billing_monthly_daily_degree_days(monthly_meter, monthly_temperature, snapshot
 ):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"]
+    meter_data = monthly_meter
+    temperature_data = monthly_temperature
     df = compute_temperature_features(
         meter_data.index,
         temperature_data,
@@ -453,7 +460,7 @@ def test_compute_temperature_features_billing_monthly_daily_degree_days(
         temperature_mean=False,
         degree_day_method="daily",
     )
-    assert df.shape == (27, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -462,24 +469,20 @@ def test_compute_temperature_features_billing_monthly_daily_degree_days(
         "n_days_dropped",
         "n_days_kept",
     ]
-    snapshot.assert_match(
-        [
+    assert [
             round(df.hdd_60.mean(), 2),
             round(df.hdd_61.mean(), 2),
             round(df.cdd_65.mean(), 2),
             round(df.cdd_66.mean(), 2),
             round(df.n_days_kept.mean(), 2),
             round(df.n_days_dropped.mean(), 2),
-        ],
-        "values",
-    )
+        ] == snapshot(name="values")
 
 
-def test_compute_temperature_features_billing_monthly_daily_degree_days_use_mean_false(
-    il_electricity_cdd_hdd_billing_monthly, snapshot
+def test_compute_temperature_features_billing_monthly_daily_degree_days_use_mean_false(monthly_meter, monthly_temperature, snapshot
 ):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"]
+    meter_data = monthly_meter
+    temperature_data = monthly_temperature
     df = compute_temperature_features(
         meter_data.index,
         temperature_data,
@@ -489,7 +492,7 @@ def test_compute_temperature_features_billing_monthly_daily_degree_days_use_mean
         degree_day_method="daily",
         use_mean_daily_values=False,
     )
-    assert df.shape == (27, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -498,24 +501,20 @@ def test_compute_temperature_features_billing_monthly_daily_degree_days_use_mean
         "n_days_dropped",
         "n_days_kept",
     ]
-    snapshot.assert_match(
-        [
+    assert [
             round(df.hdd_60.mean(), 2),
             round(df.hdd_61.mean(), 2),
             round(df.cdd_65.mean(), 2),
             round(df.cdd_66.mean(), 2),
             round(df.n_days_kept.mean(), 2),
             round(df.n_days_dropped.mean(), 2),
-        ],
-        "values",
-    )
+        ] == snapshot(name="values")
 
 
-def test_compute_temperature_features_billing_monthly_hourly_degree_days(
-    il_electricity_cdd_hdd_billing_monthly, snapshot
+def test_compute_temperature_features_billing_monthly_hourly_degree_days(monthly_meter, monthly_temperature, snapshot
 ):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"]
+    meter_data = monthly_meter
+    temperature_data = monthly_temperature
     df = compute_temperature_features(
         meter_data.index,
         temperature_data,
@@ -524,7 +523,7 @@ def test_compute_temperature_features_billing_monthly_hourly_degree_days(
         temperature_mean=False,
         degree_day_method="hourly",
     )
-    assert df.shape == (27, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -533,24 +532,20 @@ def test_compute_temperature_features_billing_monthly_hourly_degree_days(
         "n_hours_dropped",
         "n_hours_kept",
     ]
-    snapshot.assert_match(
-        [
+    assert [
             round(df.hdd_60.mean(), 2),
             round(df.hdd_61.mean(), 2),
             round(df.cdd_65.mean(), 2),
             round(df.cdd_66.mean(), 2),
             round(df.n_hours_kept.mean(), 2),
             round(df.n_hours_dropped.mean(), 2),
-        ],
-        "values",
-    )
+        ] == snapshot(name="values")
 
 
-def test_compute_temperature_features_billing_monthly_hourly_degree_days_use_mean_false(
-    il_electricity_cdd_hdd_billing_monthly, snapshot
+def test_compute_temperature_features_billing_monthly_hourly_degree_days_use_mean_false(monthly_meter, monthly_temperature, snapshot
 ):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"]
+    meter_data = monthly_meter
+    temperature_data = monthly_temperature
     df = compute_temperature_features(
         meter_data.index,
         temperature_data,
@@ -560,7 +555,7 @@ def test_compute_temperature_features_billing_monthly_hourly_degree_days_use_mea
         degree_day_method="hourly",
         use_mean_daily_values=False,
     )
-    assert df.shape == (27, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -569,24 +564,19 @@ def test_compute_temperature_features_billing_monthly_hourly_degree_days_use_mea
         "n_hours_dropped",
         "n_hours_kept",
     ]
-    snapshot.assert_match(
-        [
+    assert [
             round(df.hdd_60.mean(), 2),
             round(df.hdd_61.mean(), 2),
             round(df.cdd_65.mean(), 2),
             round(df.cdd_66.mean(), 2),
             round(df.n_hours_kept.mean(), 2),
             round(df.n_hours_dropped.mean(), 2),
-        ],
-        "values",
-    )
+        ] == snapshot(name="values")
 
 
-def test_compute_temperature_features_billing_monthly_bad_degree_day_method(
-    il_electricity_cdd_hdd_billing_monthly,
-):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"]
+def test_compute_temperature_features_billing_monthly_bad_degree_day_method(monthly_meter, monthly_temperature):
+    meter_data = monthly_meter
+    temperature_data = monthly_temperature
     with pytest.raises(ValueError):
         compute_temperature_features(
             meter_data.index,
@@ -597,45 +587,40 @@ def test_compute_temperature_features_billing_monthly_bad_degree_day_method(
         )
 
 
-def test_compute_temperature_features_billing_monthly_data_quality(
-    il_electricity_cdd_hdd_billing_monthly,
-):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"]
+def test_compute_temperature_features_billing_monthly_data_quality(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
+    temperature_data = monthly_temperature
     df = compute_temperature_features(
         meter_data.index, temperature_data, temperature_mean=False, data_quality=True
     )
-    assert df.shape == (27, 4)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "n_days_dropped",
         "n_days_kept",
         "temperature_not_null",
         "temperature_null",
     ]
-    assert round(df.temperature_not_null.mean(), 2) == 729.23
-    assert round(df.temperature_null.mean(), 2) == 0.0
+    assert round(df.temperature_not_null.mean(), 2) == snapshot(name="temp_not_null_mean")
+    assert round(df.temperature_null.mean(), 2) == snapshot(name="temp_null_mean")
 
 
-def test_compute_temperature_features_billing_bimonthly_temp_mean(
-    il_electricity_cdd_hdd_billing_bimonthly,
-):
-    meter_data = il_electricity_cdd_hdd_billing_bimonthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_bimonthly["temperature_data"]
+def test_compute_temperature_features_billing_bimonthly_temp_mean(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
+    temperature_data = monthly_temperature
     df = compute_temperature_features(meter_data.index, temperature_data)
-    assert df.shape == (14, 3)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "n_days_dropped",
         "n_days_kept",
         "temperature_mean",
     ]
-    assert round(df.temperature_mean.mean()) == 55.0
+    assert round(df.temperature_mean.mean()) == snapshot(name="temp_mean")
 
 
-def test_compute_temperature_features_billing_bimonthly_daily_degree_days(
-    il_electricity_cdd_hdd_billing_bimonthly, snapshot
+def test_compute_temperature_features_billing_bimonthly_daily_degree_days(monthly_meter, monthly_temperature, snapshot
 ):
-    meter_data = il_electricity_cdd_hdd_billing_bimonthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_bimonthly["temperature_data"]
+    meter_data = monthly_meter
+    temperature_data = monthly_temperature
     df = compute_temperature_features(
         meter_data.index,
         temperature_data,
@@ -644,7 +629,7 @@ def test_compute_temperature_features_billing_bimonthly_daily_degree_days(
         temperature_mean=False,
         degree_day_method="daily",
     )
-    assert df.shape == (14, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -653,24 +638,20 @@ def test_compute_temperature_features_billing_bimonthly_daily_degree_days(
         "n_days_dropped",
         "n_days_kept",
     ]
-    snapshot.assert_match(
-        [
+    assert [
             round(df.hdd_60.mean(), 2),
             round(df.hdd_61.mean(), 2),
             round(df.cdd_65.mean(), 2),
             round(df.cdd_66.mean(), 2),
             round(df.n_days_kept.mean(), 2),
             round(df.n_days_dropped.mean(), 2),
-        ],
-        "values",
-    )
+        ] == snapshot(name="values")
 
 
-def test_compute_temperature_features_billing_bimonthly_hourly_degree_days(
-    il_electricity_cdd_hdd_billing_bimonthly, snapshot
+def test_compute_temperature_features_billing_bimonthly_hourly_degree_days(monthly_meter, monthly_temperature, snapshot
 ):
-    meter_data = il_electricity_cdd_hdd_billing_bimonthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_bimonthly["temperature_data"]
+    meter_data = monthly_meter
+    temperature_data = monthly_temperature
     df = compute_temperature_features(
         meter_data.index,
         temperature_data,
@@ -679,7 +660,7 @@ def test_compute_temperature_features_billing_bimonthly_hourly_degree_days(
         temperature_mean=False,
         degree_day_method="hourly",
     )
-    assert df.shape == (14, 6)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "cdd_65",
         "cdd_66",
@@ -688,24 +669,19 @@ def test_compute_temperature_features_billing_bimonthly_hourly_degree_days(
         "n_hours_dropped",
         "n_hours_kept",
     ]
-    snapshot.assert_match(
-        [
+    assert [
             round(df.hdd_60.mean(), 2),
             round(df.hdd_61.mean(), 2),
             round(df.cdd_65.mean(), 2),
             round(df.cdd_66.mean(), 2),
             round(df.n_hours_kept.mean(), 2),
             round(df.n_hours_dropped.mean(), 2),
-        ],
-        "values",
-    )
+        ] == snapshot(name="values")
 
 
-def test_compute_temperature_features_billing_bimonthly_bad_degree_days(
-    il_electricity_cdd_hdd_billing_bimonthly,
-):
-    meter_data = il_electricity_cdd_hdd_billing_bimonthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_bimonthly["temperature_data"]
+def test_compute_temperature_features_billing_bimonthly_bad_degree_days(monthly_meter, monthly_temperature):
+    meter_data = monthly_meter
+    temperature_data = monthly_temperature
     with pytest.raises(ValueError):
         compute_temperature_features(
             meter_data.index,
@@ -716,68 +692,62 @@ def test_compute_temperature_features_billing_bimonthly_bad_degree_days(
         )
 
 
-def test_compute_temperature_features_billing_bimonthly_data_quality(
-    il_electricity_cdd_hdd_billing_bimonthly,
-):
-    meter_data = il_electricity_cdd_hdd_billing_bimonthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_bimonthly["temperature_data"]
+def test_compute_temperature_features_billing_bimonthly_data_quality(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
+    temperature_data = monthly_temperature
     df = compute_temperature_features(
         meter_data.index, temperature_data, temperature_mean=False, data_quality=True
     )
-    assert df.shape == (14, 4)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "n_days_dropped",
         "n_days_kept",
         "temperature_not_null",
         "temperature_null",
     ]
-    assert round(df.temperature_not_null.mean(), 2) == 1478.77
-    assert round(df.temperature_null.mean(), 2) == 0.0
+    assert round(df.temperature_not_null.mean(), 2) == snapshot(name="temp_not_null_mean")
+    assert round(df.temperature_null.mean(), 2) == snapshot(name="temp_null_mean")
 
 
-def test_compute_temperature_features_shorter_temperature_data(
-    il_electricity_cdd_hdd_daily,
-):
-    meter_data = il_electricity_cdd_hdd_daily["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_daily["temperature_data"]
+def test_compute_temperature_features_shorter_temperature_data(daily_meter, daily_temperature, snapshot):
+    meter_data = daily_meter
+    temperature_data = daily_temperature
 
     # drop some data
     temperature_data = temperature_data[:-200]
 
     df = compute_temperature_features(meter_data.index, temperature_data)
-    assert df.shape == (810, 3)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "n_days_dropped",
         "n_days_kept",
         "temperature_mean",
     ]
-    assert round(df.temperature_mean.sum()) == 43958.0
+    assert round(df.temperature_mean.sum()) == snapshot(name="temp_sum")
 
 
-def test_compute_temperature_features_shorter_meter_data(il_electricity_cdd_hdd_daily):
-    meter_data = il_electricity_cdd_hdd_daily["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_daily["temperature_data"]
+def test_compute_temperature_features_shorter_meter_data(daily_meter, daily_temperature, snapshot):
+    meter_data = daily_meter
+    temperature_data = daily_temperature
 
     # drop some data
     meter_data = meter_data[:-10]
 
     df = compute_temperature_features(meter_data.index, temperature_data)
-    assert df.shape == (800, 3)
+    assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
         "n_days_dropped",
         "n_days_kept",
         "temperature_mean",
     ]
-    assert round(df.temperature_mean.sum()) == 43904.0
+    assert round(df.temperature_mean.sum()) == snapshot(name="temp_sum")
     # ensure last row is NaN'ed
     assert pd.isnull(df.iloc[-1].n_days_kept)
 
 
-def test_compute_temperature_features_with_duplicated_index(
-    il_electricity_cdd_hdd_billing_monthly,
-):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"]
+def test_compute_temperature_features_with_duplicated_index(monthly_meter, monthly_temperature):
+    meter_data = monthly_meter
+    temperature_data = monthly_temperature
 
     # these are specifically formed to give a less readable error if
     # duplicates are not caught
@@ -825,7 +795,7 @@ def test_compute_temperature_features_empty_meter_data():
 
 
 def test_merge_features():
-    index = pd.date_range("2017-01-01", periods=100, freq="h", tz="UTC")
+    index = pd.date_range("2018-01-01", periods=100, freq="h", tz="UTC")
     features = merge_features(
         [
             pd.Series(1, index=index, name="a"),
@@ -851,14 +821,14 @@ def test_merge_features_empty_raises():
 
 @pytest.fixture
 def meter_data_hourly():
-    index = pd.date_range("2017-01-01", periods=100, freq="h", tz="UTC")
+    index = pd.date_range("2018-01-01", periods=100, freq="h", tz="UTC")
     return pd.DataFrame({"value": 1}, index=index)
 
 
 def test_compute_usage_per_day_feature_hourly(meter_data_hourly):
     usage_per_day = compute_usage_per_day_feature(meter_data_hourly)
     assert usage_per_day.name == "usage_per_day"
-    assert usage_per_day["2017-01-01T00:00:00Z"] == 24
+    assert usage_per_day["2018-01-01T00:00:00Z"] == 24
     assert usage_per_day.sum() == 2376.0
 
 
@@ -871,31 +841,31 @@ def test_compute_usage_per_day_feature_hourly_series_name(meter_data_hourly):
 
 @pytest.fixture
 def meter_data_daily():
-    index = pd.date_range("2017-01-01", periods=100, freq="D", tz="UTC")
+    index = pd.date_range("2018-01-01", periods=100, freq="D", tz="UTC")
     return pd.DataFrame({"value": 1}, index=index)
 
 
 def test_compute_usage_per_day_feature_daily(meter_data_daily):
     usage_per_day = compute_usage_per_day_feature(meter_data_daily)
-    assert usage_per_day["2017-01-01T00:00:00Z"] == 1
+    assert usage_per_day["2018-01-01T00:00:00Z"] == 1
     assert usage_per_day.sum() == 99.0
 
 
 @pytest.fixture
 def meter_data_billing():
-    index = pd.date_range("2017-01-01", periods=100, freq="MS", tz="UTC")
+    index = pd.date_range("2018-01-01", periods=100, freq="MS", tz="UTC")
     return pd.DataFrame({"value": 1}, index=index)
 
 
 def test_compute_usage_per_day_feature_billing(meter_data_billing):
     usage_per_day = compute_usage_per_day_feature(meter_data_billing)
-    assert usage_per_day["2017-01-01T00:00:00Z"] == 1.0 / 31
+    assert usage_per_day["2018-01-01T00:00:00Z"] == 1.0 / 31
     assert usage_per_day.sum().round(3) == 3.257
 
 
 @pytest.fixture
 def complete_hour_of_week_feature():
-    index = pd.date_range("2017-01-01", periods=168, freq="h", tz="UTC")
+    index = pd.date_range("2018-01-01", periods=168, freq="h", tz="UTC")
     time_features = compute_time_features(index, hour_of_week=True)
     hour_of_week_feature = time_features.hour_of_week
     return hour_of_week_feature
@@ -908,27 +878,27 @@ def test_get_missing_hours_of_week_warning_ok(complete_hour_of_week_feature):
 
 @pytest.fixture
 def partial_hour_of_week_feature():
-    index = pd.date_range("2017-01-01", periods=84, freq="h", tz="UTC")
+    index = pd.date_range("2018-01-01", periods=84, freq="h", tz="UTC")
     time_features = compute_time_features(index, hour_of_week=True)
     hour_of_week_feature = time_features.hour_of_week
     return hour_of_week_feature
 
 
-def test_get_missing_hours_of_week_warning_triggered(partial_hour_of_week_feature):
+def test_get_missing_hours_of_week_warning_triggered(partial_hour_of_week_feature, snapshot):
     warning = get_missing_hours_of_week_warning(partial_hour_of_week_feature)
     assert warning.qualified_name is not None
     assert warning.description is not None
-    assert warning.data["missing_hours_of_week"] == list(range(60, 144))
+    assert warning.data["missing_hours_of_week"] == snapshot(name="missing_hours")
 
 
 def test_compute_time_features_bad_freq():
-    index = pd.date_range("2017-01-01", periods=168, freq="D", tz="UTC")
+    index = pd.date_range("2018-01-01", periods=168, freq="D", tz="UTC")
     with pytest.raises(ValueError):
         compute_time_features(index)
 
 
 def test_compute_time_features_all():
-    index = pd.date_range("2017-01-01", periods=168, freq="h", tz="UTC")
+    index = pd.date_range("2018-01-01", periods=168, freq="h", tz="UTC")
     features = compute_time_features(index)
     assert list(features.columns) == ["day_of_week", "hour_of_day", "hour_of_week"]
     assert features.shape == (168, 3)
@@ -947,7 +917,7 @@ def test_compute_time_features_all():
 
 
 def test_compute_time_features_none():
-    index = pd.date_range("2017-01-01", periods=168, freq="h", tz="UTC")
+    index = pd.date_range("2018-01-01", periods=168, freq="h", tz="UTC")
     with pytest.raises(ValueError):
         compute_time_features(
             index, hour_of_week=False, day_of_week=False, hour_of_day=False
@@ -955,9 +925,9 @@ def test_compute_time_features_none():
 
 
 @pytest.fixture
-def occupancy_precursor(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_hourly["temperature_data"]
+def occupancy_precursor(hourly_meter, hourly_temperature):
+    meter_data = hourly_meter
+    temperature_data = hourly_temperature
     time_features = compute_time_features(meter_data.index)
     temperature_features = compute_temperature_features(
         meter_data.index,
@@ -971,11 +941,11 @@ def occupancy_precursor(il_electricity_cdd_hdd_hourly):
     )
 
 
-def test_estimate_hour_of_week_occupancy_no_segmentation(occupancy_precursor):
+def test_estimate_hour_of_week_occupancy_no_segmentation(occupancy_precursor, snapshot):
     occupancy = estimate_hour_of_week_occupancy(occupancy_precursor)
     assert list(occupancy.columns) == ["occupancy"]
     assert occupancy.shape == (168, 1)
-    assert occupancy.sum().sum() == 0
+    assert occupancy.sum().sum() == snapshot(name="occupancy_sum")
 
 
 @pytest.fixture
@@ -983,9 +953,7 @@ def one_month_segmentation(occupancy_precursor):
     return segment_time_series(occupancy_precursor.index, segment_type="one_month")
 
 
-def test_estimate_hour_of_week_occupancy_one_month_segmentation(
-    occupancy_precursor, one_month_segmentation
-):
+def test_estimate_hour_of_week_occupancy_one_month_segmentation( occupancy_precursor, one_month_segmentation , snapshot):
     occupancy = estimate_hour_of_week_occupancy(
         occupancy_precursor, segmentation=one_month_segmentation
     )
@@ -1004,12 +972,12 @@ def test_estimate_hour_of_week_occupancy_one_month_segmentation(
         "dec",
     ]
     assert occupancy.shape == (168, 12)
-    assert occupancy.sum().sum() == 84.0
+    assert occupancy.sum().sum() == snapshot(name="occupancy_sum")
 
 
 @pytest.fixture
 def temperature_means():
-    index = pd.date_range("2017-01-01", periods=2000, freq="h", tz="UTC")
+    index = pd.date_range("2018-01-01", periods=2000, freq="h", tz="UTC")
     return pd.DataFrame({"temperature_mean": [10, 35, 55, 80, 100] * 400}, index=index)
 
 
@@ -1028,9 +996,7 @@ def occupancy_lookup_no_segmentation(occupancy_precursor):
     return occupancy
 
 
-def test_fit_temperature_bins_no_segmentation_with_occupancy(
-    temperature_means, occupancy_lookup_no_segmentation
-):
+def test_fit_temperature_bins_no_segmentation_with_occupancy( temperature_means, occupancy_lookup_no_segmentation , snapshot):
     occupied_bins, unoccupied_bins = fit_temperature_bins(
         temperature_means,
         segmentation=None,
@@ -1038,11 +1004,11 @@ def test_fit_temperature_bins_no_segmentation_with_occupancy(
     )
     assert list(occupied_bins.columns) == ["keep_bin_endpoint"]
     assert occupied_bins.shape == (6, 1)
-    assert occupied_bins.sum().sum() == 0
+    assert occupied_bins.sum().sum() == snapshot(name="occupied_bins_sum")
 
     assert list(unoccupied_bins.columns) == ["keep_bin_endpoint"]
     assert unoccupied_bins.shape == (6, 1)
-    assert unoccupied_bins.sum().sum() == 4
+    assert unoccupied_bins.sum().sum() == snapshot(name="unoccupied_bins_sum")
 
 
 def test_fit_temperature_bins_one_month_segmentation(
@@ -1077,9 +1043,7 @@ def occupancy_lookup_one_month_segmentation(
     return occupancy_lookup
 
 
-def test_fit_temperature_bins_with_occupancy_lookup(
-    temperature_means, one_month_segmentation, occupancy_lookup_one_month_segmentation
-):
+def test_fit_temperature_bins_with_occupancy_lookup( temperature_means, one_month_segmentation, occupancy_lookup_one_month_segmentation , snapshot):
     occupied_bins, unoccupied_bins = fit_temperature_bins(
         temperature_means,
         segmentation=one_month_segmentation,
@@ -1100,7 +1064,7 @@ def test_fit_temperature_bins_with_occupancy_lookup(
         "dec",
     ]
     assert occupied_bins.shape == (6, 12)
-    assert occupied_bins.sum().sum() == 0
+    assert occupied_bins.sum().sum() == snapshot(name="occupied_bins_sum")
 
     assert list(unoccupied_bins.columns) == [
         "jan",
@@ -1117,7 +1081,7 @@ def test_fit_temperature_bins_with_occupancy_lookup(
         "dec",
     ]
     assert unoccupied_bins.shape == (6, 12)
-    assert unoccupied_bins.sum().sum() == 12
+    assert unoccupied_bins.sum().sum() == snapshot(name="unoccupied_bins_sum")
 
 
 def test_fit_temperature_bins_empty(temperature_means):
@@ -1141,7 +1105,7 @@ def even_occupancy():
 
 
 def test_compute_occupancy_feature(even_occupancy):
-    index = pd.date_range("2017-01-01", periods=1000, freq="h", tz="UTC")
+    index = pd.date_range("2018-01-01", periods=1000, freq="h", tz="UTC")
     time_features = compute_time_features(index, hour_of_week=True)
     hour_of_week = time_features.hour_of_week
     occupancy = compute_occupancy_feature(hour_of_week, even_occupancy)
@@ -1152,7 +1116,7 @@ def test_compute_occupancy_feature(even_occupancy):
 
 def test_compute_occupancy_feature_with_nans(even_occupancy):
     """If there are less than 168 periods, the NaN at the end causes problems"""
-    index = pd.date_range("2017-01-01", periods=100, freq="h", tz="UTC")
+    index = pd.date_range("2018-01-01", periods=100, freq="h", tz="UTC")
     time_features = compute_time_features(index, hour_of_week=True)
     time_features.iloc[-1, time_features.columns.get_loc("hour_of_week")] = np.nan
     hour_of_week = time_features.hour_of_week
@@ -1169,12 +1133,12 @@ def test_compute_occupancy_feature_with_nans(even_occupancy):
 
 
 @pytest.fixture
-def occupancy_precursor_only_nan(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
-    meter_data = meter_data["2017-01-04":"2017-06-01"].copy()
+def occupancy_precursor_only_nan(hourly_meter, hourly_temperature):
+    meter_data = hourly_meter
+    meter_data = meter_data["2018-01-04":"2018-06-01"].copy()
     meter_data.iloc[-1] = np.nan
     # Simulates a segment where there is only a single nan value
-    temperature_data = il_electricity_cdd_hdd_hourly["temperature_data"]
+    temperature_data = hourly_temperature
     time_features = compute_time_features(meter_data.index)
     temperature_features = compute_temperature_features(
         meter_data.index,
@@ -1204,7 +1168,7 @@ def test_estimate_hour_of_week_occupancy_segmentation_only_nan(
 
 
 def test_compute_occupancy_feature_hour_of_week_has_nan(even_occupancy):
-    index = pd.date_range("2017-01-01", periods=72, freq="h", tz="UTC")
+    index = pd.date_range("2018-01-01", periods=72, freq="h", tz="UTC")
     time_features = compute_time_features(index, hour_of_week=True)
     hour_of_week = time_features.hour_of_week
     hour_of_week.iloc[-1] = np.nan

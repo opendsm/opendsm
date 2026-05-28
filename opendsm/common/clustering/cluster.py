@@ -77,8 +77,9 @@ def _cluster_merge(
         
         return cluster_labels
 
-    # if there are more than two clusters, merge them if the similarity is less than W
-    mean_similarity = np.mean(inter_cluster_similarity)
+    # inter_cluster_similarity's upper triangle is NaN by construction; nanmean
+    # excludes those so the threshold reflects actual inter-cluster distances.
+    mean_similarity = np.nanmean(inter_cluster_similarity)
 
     for i in reversed(range(len(unique_labels))):
         for j in reversed(range(len(unique_labels))):

@@ -888,21 +888,24 @@ class DailyModel:
             str: The best combination of parameters as a string.
         """
 
-        HoF = {"combination_str": None, "selection_criteria": np.inf}
-        for combo in self.combinations:
-            selection_criteria = self._combination_selection_criteria(combo)
+        # When scores are within float-roundoff, prefer fewer components (Occam);
+        # final tiebreak is lex on the combo string for full determinism.
+        TIE_TOLERANCE = 1e-6
+        scored = [
+            (self._combination_selection_criteria(combo), len(combo.split("__")), combo)
+            for combo in self.combinations
+        ]
 
-            if selection_criteria < HoF["selection_criteria"]:
-                HoF["combination_str"] = combo
-                HoF["selection_criteria"] = selection_criteria
-
-            if print_out:
-                print(f"{combo:>40s} {selection_criteria:>8.1f}")
+        best_score = min(score for score, _, _ in scored)
+        within_tol = [s for s in scored if s[0] <= best_score + TIE_TOLERANCE]
+        winner_score, _, winner_combo = min(within_tol, key=lambda s: (s[1], s[2]))
 
         if print_out:
-            print(f"{HoF['combination_str']:>40s} {HoF['selection_criteria']:>8.1f}")
+            for score, _, combo in scored:
+                print(f"{combo:>40s} {score:>8.1f}")
+            print(f"{winner_combo:>40s} {winner_score:>8.1f}")
 
-        return HoF["combination_str"]
+        return winner_combo
 
     def _final_fit(self, combination):
         """

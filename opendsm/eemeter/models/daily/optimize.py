@@ -291,6 +291,11 @@ class NLoptOptimizer(BaseOptimizer):
             sub_opt.set_ftol_rel(settings.f_tol_rel)
             opt.set_local_optimizer(sub_opt)
 
+        # Seed NLopt's internal RNG so stochastic algorithms (SBPLX initial-step
+        # perturbation, DIRECT_L_RAND, CRS2_LM, MLSL, ISRES, ESCH) converge to
+        # the same minimum across platforms / BLAS / CPU instruction sets.
+        if settings.seed is not None:
+            nlopt.srand(settings.seed)
         x_opt = opt.optimize(x0_opt)  # optimize!
 
         if nlopt.SUCCESS > 0:

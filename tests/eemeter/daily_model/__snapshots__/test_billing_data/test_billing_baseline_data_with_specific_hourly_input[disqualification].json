@@ -1,0 +1,8 @@
+[
+  "eemeter.sufficiency_criteria.missing_monthly_temperature_data",
+  "eemeter.sufficiency_criteria.no_data",
+  "eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data",
+  "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
+  "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data",
+  "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data"
+]

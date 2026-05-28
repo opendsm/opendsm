@@ -12,9 +12,17 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+import sys
+
 import numpy as np
 import pandas as pd
 import pytest
+
+# DailyModel-derived tests (metered_savings_*_daily, modeled_savings_*_daily)
+# pin output values that diverge on Windows because nonlinear (SBPLX) optimizer
+# convergence is platform-specific. Linux + macOS match the default snapshot;
+# Windows pins its own with a _win suffix.
+SNAP_SUFFIX = "_win" if sys.platform == "win32" else ""
 
 from opendsm.eemeter.models.hourly_caltrack.design_matrices import (
     create_caltrack_billing_design_matrix,
@@ -31,7 +39,6 @@ from opendsm.eemeter.common.features import (
     fit_temperature_bins,
 )
 from opendsm.eemeter.models.hourly_caltrack.segmentation import segment_time_series
-from opendsm.eemeter.common.transform import get_baseline_data, get_reporting_data
 from opendsm.eemeter.models.daily.model import DailyModel
 from opendsm.eemeter.models.daily.data import DailyBaselineData, DailyReportingData
 from opendsm.eemeter.models.billing.model import BillingModel
@@ -41,61 +48,55 @@ from opendsm.eemeter.models.billing.data import (
 )
 
 
-@pytest.fixture
-def baseline_data_daily(il_electricity_cdd_hdd_daily):
-    meter_data = il_electricity_cdd_hdd_daily["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_daily["temperature_data"]
-    blackout_start_date = il_electricity_cdd_hdd_daily["blackout_start_date"]
-    baseline_meter_data, warnings = get_baseline_data(
-        meter_data, end=blackout_start_date
-    )
-    baseline_data = DailyBaselineData.from_series(
-        baseline_meter_data, temperature_data, is_electricity_data=True
-    )
+@pytest.fixture(scope="session")
+def baseline_data_daily(comstock_daily):
+    df_b, _ = comstock_daily
 
-    return baseline_data
+    return DailyBaselineData(df=df_b.reset_index(), is_electricity_data=True)
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def baseline_model_daily(baseline_data_daily):
-    model_results = DailyModel().fit(baseline_data_daily, ignore_disqualification=True)
-    return model_results
+    return DailyModel().fit(baseline_data_daily, ignore_disqualification=True)
 
 
-@pytest.fixture
-def reporting_data_daily(il_electricity_cdd_hdd_daily):
-    meter_data = il_electricity_cdd_hdd_daily["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_daily["temperature_data"]
-    blackout_end_date = il_electricity_cdd_hdd_daily["blackout_end_date"]
-    reporting_meter_data, warnings = get_reporting_data(
-        meter_data, start=blackout_end_date
+@pytest.fixture(scope="session")
+def reporting_data_daily(comstock_daily):
+    _, df_r = comstock_daily
+
+    return DailyReportingData(df=df_r.reset_index(), is_electricity_data=True)
+
+
+@pytest.fixture(scope="session")
+def reporting_model_daily(comstock_daily):
+    # Reporting-period DailyModel is trained as a baseline fit on the reporting period;
+    # use DailyBaselineData here because DailyReportingData has no observed values to fit on.
+    _, df_r = comstock_daily
+
+    return DailyModel().fit(
+        DailyBaselineData(df=df_r.reset_index(), is_electricity_data=True),
+        ignore_disqualification=True,
     )
-    reporting_data = DailyBaselineData.from_series(
-        reporting_meter_data, temperature_data, is_electricity_data=True
-    )
-    return reporting_data
-
-
-@pytest.fixture
-def reporting_model_daily(reporting_data_daily):
-    model_results = DailyModel().fit(reporting_data_daily, ignore_disqualification=True)
-    return model_results
 
 
 @pytest.fixture
 def reporting_meter_data_daily():
-    index = pd.date_range("2011-01-01", freq="D", periods=60, tz="UTC")
+    index = pd.date_range("2019-01-01", freq="D", periods=60, tz="America/Chicago")
     return pd.DataFrame({"value": 1}, index=index)
 
 
 @pytest.fixture
 def reporting_temperature_data():
-    index = pd.date_range("2011-01-01", freq="D", periods=60, tz="UTC")
+    index = pd.date_range("2019-01-01", freq="D", periods=60, tz="America/Chicago")
     return pd.Series(np.arange(30.0, 90.0), index=index).asfreq("h").ffill()
 
 
+@pytest.mark.regression
 def test_metered_savings_cdd_hdd_daily(
-    baseline_model_daily, reporting_meter_data_daily, reporting_temperature_data
+    baseline_model_daily,
+    reporting_meter_data_daily,
+    reporting_temperature_data,
+    snapshot,
 ):
     reporting_data = DailyReportingData.from_series(
         reporting_meter_data_daily, reporting_temperature_data, is_electricity_data=True
@@ -103,49 +104,45 @@ def test_metered_savings_cdd_hdd_daily(
     results = baseline_model_daily.predict(reporting_data)
     metered_savings = results["predicted"] - results["observed"]
 
-    # platform difference on Windows requires bigger tolerance here
-    assert np.isclose(metered_savings.sum(), 1630, rtol=1e-2)
+    assert round(float(metered_savings.sum()), 4) == snapshot(
+        name=f"metered_savings_sum{SNAP_SUFFIX}"
+    )
+    if sys.platform != "win32":
+        assert metered_savings.values.tolist() == snapshot(name="metered_savings_values")
 
 
-@pytest.fixture
-def baseline_model_billing(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"]
-    blackout_start_date = il_electricity_cdd_hdd_billing_monthly["blackout_start_date"]
-    baseline_meter_data, warnings = get_baseline_data(
-        meter_data, end=blackout_start_date
-    )
-    baseline_data = BillingBaselineData.from_series(
-        baseline_meter_data, temperature_data, is_electricity_data=True
-    )
-    model_results = BillingModel().fit(baseline_data, ignore_disqualification=True)
-    return model_results
+@pytest.fixture(scope="session")
+def baseline_model_billing(comstock_monthly):
+    df_b, _ = comstock_monthly
+    baseline_data = BillingBaselineData(df=df_b.reset_index(), is_electricity_data=True)
+
+    return BillingModel().fit(baseline_data, ignore_disqualification=True)
 
 
-@pytest.fixture
-def reporting_model_billing(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    meter_data.value = meter_data.value - 50
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"]
-    blackout_start_date = il_electricity_cdd_hdd_billing_monthly["blackout_start_date"]
-    baseline_meter_data, warnings = get_baseline_data(
-        meter_data, end=blackout_start_date
+@pytest.fixture(scope="session")
+def reporting_model_billing(comstock_monthly):
+    df_b, _ = comstock_monthly
+    df_shifted = df_b.copy()
+    df_shifted["observed"] = df_shifted["observed"] - 50
+    baseline_data = BillingBaselineData(
+        df=df_shifted.reset_index(), is_electricity_data=True
     )
-    baseline_data = BillingBaselineData.from_series(
-        baseline_meter_data, temperature_data, is_electricity_data=True
-    )
-    model_results = BillingModel().fit(baseline_data, ignore_disqualification=True)
-    return model_results
+
+    return BillingModel().fit(baseline_data, ignore_disqualification=True)
 
 
 @pytest.fixture
 def reporting_meter_data_billing():
-    index = pd.date_range("2011-01-01", freq="MS", periods=13, tz="UTC")
+    index = pd.date_range("2019-01-01", freq="MS", periods=13, tz="America/Chicago")
     return pd.DataFrame({"value": 1}, index=index)
 
 
+@pytest.mark.regression
 def test_metered_savings_cdd_hdd_billing(
-    baseline_model_billing, reporting_meter_data_billing, reporting_temperature_data
+    baseline_model_billing,
+    reporting_meter_data_billing,
+    reporting_temperature_data,
+    snapshot,
 ):
     reporting_data = BillingReportingData.from_series(
         reporting_meter_data_billing,
@@ -153,12 +150,21 @@ def test_metered_savings_cdd_hdd_billing(
         is_electricity_data=True,
     )
     results = baseline_model_billing.predict(reporting_data)
-    metered_savings = (results["predicted"] - results["observed"]).sum()
-    assert np.isclose(metered_savings, 1605.14, rtol=1e-3)
+    metered_savings_series = results["predicted"] - results["observed"]
+    assert round(float(metered_savings_series.sum()), 4) == snapshot(
+        name="metered_savings_sum"
+    )
+    assert metered_savings_series.values.tolist() == snapshot(
+        name="metered_savings_values"
+    )
 
 
+@pytest.mark.regression
 def test_metered_savings_cdd_hdd_billing_no_reporting_data(
-    baseline_model_billing, reporting_meter_data_billing, reporting_temperature_data
+    baseline_model_billing,
+    reporting_meter_data_billing,
+    reporting_temperature_data,
+    snapshot,
 ):
     # TODO test makes less sense without the use of derivatives functions. can just be merged with other predict() tests
     results = baseline_model_billing.predict(
@@ -178,12 +184,16 @@ def test_metered_savings_cdd_hdd_billing_no_reporting_data(
         "model_split",
         "model_type",
     ]
-    predicted_sum = results.predicted.sum()
-    assert np.isclose(predicted_sum, 1607.1, rtol=1e-3)
+    assert round(float(results.predicted.sum()), 4) == snapshot(name="predicted_sum")
+    assert results.predicted.values.tolist() == snapshot(name="predicted_values")
 
 
+@pytest.mark.regression
 def test_metered_savings_cdd_hdd_billing_single_record_reporting_data(
-    baseline_model_billing, reporting_meter_data_billing, reporting_temperature_data
+    baseline_model_billing,
+    reporting_meter_data_billing,
+    reporting_temperature_data,
+    snapshot,
 ):
     # results, error_bands = metered_savings(
     #     baseline_model_billing,
@@ -210,35 +220,36 @@ def test_metered_savings_cdd_hdd_billing_single_record_reporting_data(
         "model_split",
         "model_type",
     ]
-    assert round(results.predicted.sum(), 2) == 0.0
+    assert round(float(results.predicted.sum()), 4) == snapshot(name="predicted_sum")
+    assert results.predicted.values.tolist() == snapshot(name="predicted_values")
 
 
-@pytest.fixture
-def baseline_model_billing_single_record_baseline_data(
-    il_electricity_cdd_hdd_billing_monthly,
-):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"]
-    blackout_start_date = il_electricity_cdd_hdd_billing_monthly["blackout_start_date"]
-    baseline_meter_data, warnings = get_baseline_data(
-        meter_data, end=blackout_start_date
-    )
+@pytest.fixture(scope="session")
+def baseline_model_billing_single_record_baseline_data(comstock_monthly, comstock_hourly):
+    df_monthly, _ = comstock_monthly
+    df_hourly, _ = comstock_hourly
+    meter_data = df_monthly[["observed"]].rename(columns={"observed": "value"}).dropna()
+    meter_data.index = meter_data.index.tz_convert("UTC")
+    temperature_data = df_hourly["temperature"]
+    temperature_data.index = temperature_data.index.tz_convert("UTC")
+
     baseline_data = create_caltrack_billing_design_matrix(
-        baseline_meter_data, temperature_data
+        meter_data, temperature_data
     ).rename(columns={"meter_value": "observed", "temperature_mean": "temperature"})
     baseline_data = baseline_data[:60]
 
-    model_results = BillingModel().fit(
+    return BillingModel().fit(
         BillingBaselineData(baseline_data, is_electricity_data=True),
         ignore_disqualification=True,
     )
-    return model_results
 
 
+@pytest.mark.regression
 def test_metered_savings_cdd_hdd_billing_single_record_baseline_data(
     baseline_model_billing_single_record_baseline_data,
     reporting_meter_data_billing,
     reporting_temperature_data,
+    snapshot,
 ):
     # results, error_bands = metered_savings(
     #     baseline_model_billing_single_record_baseline_data,
@@ -267,8 +278,13 @@ def test_metered_savings_cdd_hdd_billing_single_record_baseline_data(
         "model_split",
         "model_type",
     ]
-    metered_savings = (results.predicted - results.observed).sum()
-    assert np.isclose(metered_savings, 1785.8, rtol=1e-2)
+    metered_savings_series = results.predicted - results.observed
+    assert round(float(metered_savings_series.sum()), 4) == snapshot(
+        name="metered_savings_sum"
+    )
+    assert metered_savings_series.values.tolist() == snapshot(
+        name="metered_savings_values"
+    )
 
 
 @pytest.fixture
@@ -289,11 +305,13 @@ def test_metered_savings_cdd_hdd_billing_reporting_data_wrong_timestamp(
         )
 
 
+@pytest.mark.regression
 def test_modeled_savings_cdd_hdd_daily(
     baseline_model_daily,
     reporting_model_daily,
     reporting_meter_data_daily,
     reporting_temperature_data,
+    snapshot,
 ):
     reporting_data = DailyReportingData.from_series(
         reporting_meter_data_daily, reporting_temperature_data, is_electricity_data=True
@@ -303,7 +321,11 @@ def test_modeled_savings_cdd_hdd_daily(
     modeled_savings = (
         baseline_model_result["predicted"] - reporting_model_result["predicted"]
     )
-    assert np.isclose(modeled_savings.sum(), 177.02, rtol=0.1)
+    assert round(float(modeled_savings.sum()), 4) == snapshot(
+        name=f"modeled_savings_sum{SNAP_SUFFIX}"
+    )
+    if sys.platform != "win32":
+        assert modeled_savings.values.tolist() == snapshot(name="modeled_savings_values")
 
 
 # TODO move to dataclass testing
@@ -317,92 +339,64 @@ def test_modeled_savings_daily_empty_temperature_data(
         reporting = DailyReportingData(temperature_data, True)
 
 
-@pytest.fixture
-def baseline_model_hourly(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_hourly["temperature_data"]
-    blackout_start_date = il_electricity_cdd_hdd_hourly["blackout_start_date"]
-    baseline_meter_data, warnings = get_baseline_data(
-        meter_data, end=blackout_start_date
+def _fit_caltrack_hourly(meter_data, temperature_data):
+    preliminary = create_caltrack_hourly_preliminary_design_matrix(
+        meter_data, temperature_data
     )
-    preliminary_hourly_design_matrix = create_caltrack_hourly_preliminary_design_matrix(
-        baseline_meter_data, temperature_data
-    )
-    segmentation = segment_time_series(
-        preliminary_hourly_design_matrix.index, "three_month_weighted"
-    )
+    segmentation = segment_time_series(preliminary.index, "three_month_weighted")
     occupancy_lookup = estimate_hour_of_week_occupancy(
-        preliminary_hourly_design_matrix, segmentation=segmentation
+        preliminary, segmentation=segmentation
     )
-    occupied_temperature_bins, unoccupied_temperature_bins = fit_temperature_bins(
-        preliminary_hourly_design_matrix,
-        segmentation=segmentation,
-        occupancy_lookup=occupancy_lookup,
+    occ_bins, unocc_bins = fit_temperature_bins(
+        preliminary, segmentation=segmentation, occupancy_lookup=occupancy_lookup
     )
-    design_matrices = create_caltrack_hourly_segmented_design_matrices(
-        preliminary_hourly_design_matrix,
-        segmentation,
+    design = create_caltrack_hourly_segmented_design_matrices(
+        preliminary, segmentation, occupancy_lookup, occ_bins, unocc_bins
+    )
+
+    return fit_caltrack_hourly_model(
+        design,
         occupancy_lookup,
-        occupied_temperature_bins,
-        unoccupied_temperature_bins,
-    )
-    segmented_model = fit_caltrack_hourly_model(
-        design_matrices,
-        occupancy_lookup,
-        occupied_temperature_bins,
-        unoccupied_temperature_bins,
+        occ_bins,
+        unocc_bins,
         segment_type="three_month_weighted",
     )
-    return segmented_model
 
 
-@pytest.fixture
-def reporting_model_hourly(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_hourly["temperature_data"]
-    blackout_end_date = il_electricity_cdd_hdd_hourly["blackout_end_date"]
-    reporting_meter_data, warnings = get_reporting_data(
-        meter_data, start=blackout_end_date
-    )
-    preliminary_hourly_design_matrix = create_caltrack_hourly_preliminary_design_matrix(
-        reporting_meter_data, temperature_data
-    )
-    segmentation = segment_time_series(
-        preliminary_hourly_design_matrix.index, "three_month_weighted"
-    )
-    occupancy_lookup = estimate_hour_of_week_occupancy(
-        preliminary_hourly_design_matrix, segmentation=segmentation
-    )
-    occupied_temperature_bins, unoccupied_temperature_bins = fit_temperature_bins(
-        preliminary_hourly_design_matrix,
-        segmentation=segmentation,
-        occupancy_lookup=occupancy_lookup,
-    )
-    design_matrices = create_caltrack_hourly_segmented_design_matrices(
-        preliminary_hourly_design_matrix,
-        segmentation,
-        occupancy_lookup,
-        occupied_temperature_bins,
-        unoccupied_temperature_bins,
-    )
-    segmented_model = fit_caltrack_hourly_model(
-        design_matrices,
-        occupancy_lookup,
-        occupied_temperature_bins,
-        unoccupied_temperature_bins,
-        segment_type="three_month_weighted",
-    )
-    return segmented_model
+@pytest.fixture(scope="session")
+def baseline_model_hourly(comstock_hourly):
+    df_b, _ = comstock_hourly
+    meter_data = df_b[["observed"]].rename(columns={"observed": "value"}).copy()
+    meter_data.index = meter_data.index.tz_convert("UTC")
+    temperature_data = df_b["temperature"].copy()
+    temperature_data.index = temperature_data.index.tz_convert("UTC")
+
+    return _fit_caltrack_hourly(meter_data, temperature_data)
+
+
+@pytest.fixture(scope="session")
+def reporting_model_hourly(comstock_hourly):
+    _, df_r = comstock_hourly
+    meter_data = df_r[["observed"]].rename(columns={"observed": "value"}).copy()
+    meter_data.index = meter_data.index.tz_convert("UTC")
+    temperature_data = df_r["temperature"].copy()
+    temperature_data.index = temperature_data.index.tz_convert("UTC")
+
+    return _fit_caltrack_hourly(meter_data, temperature_data)
 
 
 @pytest.fixture
 def reporting_meter_data_hourly():
-    index = pd.date_range("2011-01-01", freq="D", periods=60, tz="UTC")
+    index = pd.date_range("2019-01-01", freq="D", periods=60, tz="America/Chicago")
     return pd.DataFrame({"value": 1}, index=index).asfreq("h").ffill()
 
 
+@pytest.mark.regression
 def test_metered_savings_cdd_hdd_hourly(
-    baseline_model_hourly, reporting_meter_data_hourly, reporting_temperature_data
+    baseline_model_hourly,
+    reporting_meter_data_hourly,
+    reporting_temperature_data,
+    snapshot,
 ):
     results, error_bands = metered_savings(
         baseline_model_hourly, reporting_meter_data_hourly, reporting_temperature_data
@@ -412,15 +406,22 @@ def test_metered_savings_cdd_hdd_hourly(
         "counterfactual_usage",
         "metered_savings",
     ]
-    assert round(results.metered_savings.sum(), 2) == -403.7
+    assert round(float(results.metered_savings.sum()), 4) == snapshot(
+        name="metered_savings_sum"
+    )
+    assert results.metered_savings.values.tolist() == snapshot(
+        name="metered_savings_values"
+    )
     assert error_bands is None
 
 
+@pytest.mark.regression
 def test_modeled_savings_cdd_hdd_hourly(
     baseline_model_hourly,
     reporting_model_hourly,
     reporting_meter_data_hourly,
     reporting_temperature_data,
+    snapshot,
 ):
     # using reporting data for convenience, but intention is to use normal data
     results, error_bands = modeled_savings(
@@ -434,19 +435,28 @@ def test_modeled_savings_cdd_hdd_hourly(
         "modeled_reporting_usage",
         "modeled_savings",
     ]
-    assert round(results.modeled_savings.sum(), 1) == 55.3
+    assert round(float(results.modeled_savings.sum()), 4) == snapshot(
+        name="modeled_savings_sum"
+    )
+    assert results.modeled_savings.values.tolist() == snapshot(
+        name="modeled_savings_values"
+    )
     assert error_bands is None
 
 
 @pytest.fixture
 def normal_year_temperature_data():
-    index = pd.date_range("2015-01-01", freq="D", periods=365, tz="UTC")
+    index = pd.date_range("2019-01-01", freq="D", periods=365, tz="America/Chicago")
     np.random.seed(0)
     return pd.Series(np.random.rand(365) * 30 + 45, index=index).asfreq("h").ffill()
 
 
+@pytest.mark.regression
 def test_modeled_savings_cdd_hdd_billing(
-    baseline_model_billing, reporting_model_billing, normal_year_temperature_data
+    baseline_model_billing,
+    reporting_model_billing,
+    normal_year_temperature_data,
+    snapshot,
 ):
     # results, error_bands = modeled_savings(
     #     baseline_model_billing,
@@ -475,8 +485,8 @@ def test_modeled_savings_cdd_hdd_billing(
         "model_split",
         "model_type",
     ]
-    predicted_sum = results.predicted.sum()
-    assert np.isclose(predicted_sum, 8245.37, rtol=1e-2)
+    assert round(float(results.predicted.sum()), 4) == snapshot(name="predicted_sum")
+    assert results.predicted.values.tolist() == snapshot(name="predicted_values")
 
 
 @pytest.fixture
@@ -497,26 +507,33 @@ def test_metered_savings_not_aligned_reporting_data(
         )
 
 
-@pytest.fixture
-def baseline_model_billing_single_record(il_electricity_cdd_hdd_billing_monthly):
-    # using two records until bounds failure is fixed
-    baseline_meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"][-3:]
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"]
-    blackout_start_date = il_electricity_cdd_hdd_billing_monthly["blackout_start_date"]
+@pytest.fixture(scope="session")
+def baseline_model_billing_single_record(comstock_monthly, comstock_hourly):
+    df_monthly, _ = comstock_monthly
+    df_hourly, _ = comstock_hourly
+    meter_data = df_monthly[["observed"]].rename(columns={"observed": "value"}).dropna()
+    meter_data.index = meter_data.index.tz_convert("UTC")
+    temperature_data = df_hourly["temperature"]
+    temperature_data.index = temperature_data.index.tz_convert("UTC")
+    # 4 monthly records → 3 billing periods (minimum that exercises the optimizer
+    # without collapsing observed stdev to zero on the design matrix)
+    baseline_meter_data = meter_data[-4:]
     baseline_data = create_caltrack_billing_design_matrix(
         baseline_meter_data, temperature_data
     ).rename(columns={"meter_value": "observed", "temperature_mean": "temperature"})
-    model_results = BillingModel().fit(
+
+    return BillingModel().fit(
         BillingBaselineData(baseline_data, is_electricity_data=True),
         ignore_disqualification=True,
     )
-    return model_results
 
 
+@pytest.mark.regression
 def test_metered_savings_model_single_record(
     baseline_model_billing_single_record,
     reporting_meter_data_billing,
     reporting_temperature_data,
+    snapshot,
 ):
     # results, error_bands = metered_savings(
     #     baseline_model_billing_single_record,
@@ -546,44 +563,21 @@ def test_metered_savings_model_single_record(
         "model_split",
         "model_type",
     ]
-    metered_savings = (results.predicted - results.observed).sum()
-    assert np.isclose(metered_savings, 1436.72, rtol=1e-3)
+    metered_savings_series = results.predicted - results.observed
+    assert round(float(metered_savings_series.sum()), 4) == snapshot(
+        name="metered_savings_sum"
+    )
+    assert metered_savings_series.values.tolist() == snapshot(
+        name="metered_savings_values"
+    )
 
 
-@pytest.fixture
-def baseline_model_hourly_single_segment(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_hourly["temperature_data"]
-    blackout_start_date = il_electricity_cdd_hdd_hourly["blackout_start_date"]
-    baseline_meter_data, warnings = get_baseline_data(
-        meter_data, end=blackout_start_date
-    )
-    preliminary_hourly_design_matrix = create_caltrack_hourly_preliminary_design_matrix(
-        baseline_meter_data, temperature_data
-    )
-    segmentation = segment_time_series(
-        preliminary_hourly_design_matrix.index, "three_month_weighted"
-    )
-    occupancy_lookup = estimate_hour_of_week_occupancy(
-        preliminary_hourly_design_matrix, segmentation=segmentation
-    )
-    occupied_temperature_bins, unoccupied_temperature_bins = fit_temperature_bins(
-        preliminary_hourly_design_matrix,
-        segmentation=segmentation,
-        occupancy_lookup=occupancy_lookup,
-    )
-    design_matrices = create_caltrack_hourly_segmented_design_matrices(
-        preliminary_hourly_design_matrix,
-        segmentation,
-        occupancy_lookup,
-        occupied_temperature_bins,
-        unoccupied_temperature_bins,
-    )
-    segmented_model = fit_caltrack_hourly_model(
-        design_matrices,
-        occupancy_lookup,
-        occupied_temperature_bins,
-        unoccupied_temperature_bins,
-        segment_type="three_month_weighted",
-    )
-    return segmented_model
+@pytest.fixture(scope="session")
+def baseline_model_hourly_single_segment(comstock_hourly):
+    df_b, _ = comstock_hourly
+    meter_data = df_b[["observed"]].rename(columns={"observed": "value"}).copy()
+    meter_data.index = meter_data.index.tz_convert("UTC")
+    temperature_data = df_b["temperature"].copy()
+    temperature_data.index = temperature_data.index.tz_convert("UTC")
+
+    return _fit_caltrack_hourly(meter_data, temperature_data)

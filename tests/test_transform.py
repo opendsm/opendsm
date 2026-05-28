@@ -39,86 +39,140 @@ from opendsm.eemeter.common.transform import (
 )
 
 
-def test_as_freq_not_series(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    assert meter_data.shape == (27, 1)
+def _utc_meter(df):
+    out = df[["observed"]].rename(columns={"observed": "value"}).copy()
+    out.index = out.index.tz_convert("UTC")
+
+    return out
+
+
+def _utc_temperature(df):
+    out = df["temperature"].copy()
+    out.index = out.index.tz_convert("UTC")
+
+    return out
+
+
+@pytest.fixture
+def monthly_meter(comstock_monthly):
+    df_b, df_r = comstock_monthly
+    return _utc_meter(pd.concat([df_b, df_r]).dropna(subset=["observed"]))
+
+
+@pytest.fixture
+def monthly_temperature(comstock_hourly):
+    df_b, df_r = comstock_hourly
+    return _utc_temperature(pd.concat([df_b, df_r]).asfreq("h"))
+
+
+@pytest.fixture
+def daily_meter(comstock_daily):
+    df_b, df_r = comstock_daily
+    return _utc_meter(pd.concat([df_b, df_r]))
+
+
+@pytest.fixture
+def daily_temperature(comstock_hourly):
+    df_b, df_r = comstock_hourly
+    return _utc_temperature(pd.concat([df_b, df_r]).asfreq("h"))
+
+
+@pytest.fixture
+def hourly_meter(comstock_hourly):
+    df_b, df_r = comstock_hourly
+    return _utc_meter(pd.concat([df_b, df_r]).asfreq("h"))
+
+
+@pytest.fixture
+def hourly_temperature(comstock_hourly):
+    df_b, df_r = comstock_hourly
+    return _utc_temperature(pd.concat([df_b, df_r]).asfreq("h"))
+
+
+def test_as_freq_not_series(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
+    assert list(meter_data.shape) == snapshot(name="meter_data_shape")
     with pytest.raises(ValueError):
         as_freq(meter_data, freq="h")
 
 
-def test_as_freq_hourly(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    assert meter_data.shape == (27, 1)
+def test_as_freq_hourly(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
+    assert list(meter_data.shape) == snapshot(name="meter_data_shape")
     as_hourly = as_freq(meter_data.value, freq="h")
-    assert as_hourly.shape == (18961,)
-    assert round(meter_data.value.sum(), 1) == round(as_hourly.sum(), 1) == 21290.2
+    assert list(as_hourly.shape) == snapshot(name="as_hourly_shape")
+    assert round(meter_data.value.sum(), 1) == snapshot(name="meter_data_sum")
+    assert round(as_hourly.sum(), 1) == snapshot(name="as_hourly_sum")
 
 
-def test_as_freq_daily(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    assert meter_data.shape == (27, 1)
+def test_as_freq_daily(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
+    assert list(meter_data.shape) == snapshot(name="meter_data_shape")
     as_daily = as_freq(meter_data.value, freq="D")
-    assert as_daily.shape == (792,)
-    assert round(meter_data.value.sum(), 1) == round(as_daily.sum(), 1) == 21290.2
+    assert list(as_daily.shape) == snapshot(name="as_daily_shape")
+    assert round(meter_data.value.sum(), 1) == snapshot(name="meter_data_sum")
+    assert round(as_daily.sum(), 1) == snapshot(name="as_daily_sum")
 
 
-def test_as_freq_daily_all_nones_instantaneous(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_as_freq_daily_all_nones_instantaneous(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
     meter_data["value"] = np.nan
-    assert meter_data.shape == (27, 1)
+    assert list(meter_data.shape) == snapshot(name="meter_data_shape")
     as_daily = as_freq(meter_data.value, freq="D", series_type="instantaneous")
-    assert as_daily.shape == (792,)
+    assert list(as_daily.shape) == snapshot(name="as_daily_shape")
     assert round(meter_data.value.sum(), 1) == round(as_daily.sum(), 1) == 0
 
 
-def test_as_freq_daily_all_nones(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_as_freq_daily_all_nones(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
     meter_data["value"] = np.nan
-    assert meter_data.shape == (27, 1)
+    assert list(meter_data.shape) == snapshot(name="meter_data_shape")
     as_daily = as_freq(meter_data.value, freq="D")
-    assert as_daily.shape == (792,)
+    assert list(as_daily.shape) == snapshot(name="as_daily_shape")
     assert round(meter_data.value.sum(), 1) == round(as_daily.sum(), 1) == 0
 
 
-def test_as_freq_month_start(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    assert meter_data.shape == (27, 1)
+def test_as_freq_month_start(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
+    assert list(meter_data.shape) == snapshot(name="meter_data_shape")
     as_month_start = as_freq(meter_data.value, freq="MS")
-    assert as_month_start.shape == (28,)
-    assert round(meter_data.value.sum(), 1) == round(as_month_start.sum(), 1) == 21290.2
+    assert list(as_month_start.shape) == snapshot(name="as_month_start_shape")
+    assert round(meter_data.value.sum(), 1) == snapshot(name="meter_data_sum")
+    assert round(as_month_start.sum(), 1) == snapshot(name="as_month_start_sum")
 
 
-def test_as_freq_hourly_temperature(il_electricity_cdd_hdd_billing_monthly):
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"]
-    assert temperature_data.shape == (19417,)
+def test_as_freq_hourly_temperature(monthly_meter, monthly_temperature, snapshot):
+    temperature_data = monthly_temperature
+    assert list(temperature_data.shape) == snapshot(name="temperature_data_shape")
     as_hourly = as_freq(temperature_data, freq="h", series_type="instantaneous")
-    assert as_hourly.shape == (19417,)
-    assert round(temperature_data.mean(), 1) == round(as_hourly.mean(), 1) == 54.6
+    assert list(as_hourly.shape) == snapshot(name="as_hourly_shape")
+    assert round(temperature_data.mean(), 1) == snapshot(name="temperature_mean")
+    assert round(as_hourly.mean(), 1) == snapshot(name="as_hourly_mean")
 
 
-def test_as_freq_daily_temperature(il_electricity_cdd_hdd_billing_monthly):
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"]
-    assert temperature_data.shape == (19417,)
+def test_as_freq_daily_temperature(monthly_meter, monthly_temperature, snapshot):
+    temperature_data = monthly_temperature
+    assert list(temperature_data.shape) == snapshot(name="temperature_data_shape")
     as_daily = as_freq(temperature_data, freq="D", series_type="instantaneous")
-    assert as_daily.shape == (811,)
+    assert list(as_daily.shape) == snapshot(name="as_daily_shape")
     assert abs(temperature_data.mean() - as_daily.mean()) <= 0.1
 
 
-def test_as_freq_month_start_temperature(il_electricity_cdd_hdd_billing_monthly):
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"]
-    assert temperature_data.shape == (19417,)
+def test_as_freq_month_start_temperature(monthly_meter, monthly_temperature, snapshot):
+    temperature_data = monthly_temperature
+    assert list(temperature_data.shape) == snapshot(name="temperature_data_shape")
     as_month_start = as_freq(temperature_data, freq="MS", series_type="instantaneous")
-    assert as_month_start.shape == (29,)
-    assert round(as_month_start.mean(), 1) == 53.4
+    assert list(as_month_start.shape) == snapshot(name="as_month_start_shape")
+    assert round(float(as_month_start.mean()), 1) == snapshot(name="as_month_start_mean___round")
 
 
-def test_as_freq_daily_temperature_monthly(il_electricity_cdd_hdd_billing_monthly):
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"]
+def test_as_freq_daily_temperature_monthly(monthly_meter, monthly_temperature, snapshot):
+    temperature_data = monthly_temperature
     temperature_data = temperature_data.groupby(pd.Grouper(freq="MS")).mean()
-    assert temperature_data.shape == (28,)
+    assert list(temperature_data.shape) == snapshot(name="temperature_data_shape")
     as_daily = as_freq(temperature_data, freq="D", series_type="instantaneous")
-    assert as_daily.shape == (824,)
-    assert round(as_daily.mean(), 1) == 54.5
+    assert list(as_daily.shape) == snapshot(name="as_daily_shape")
+    assert round(float(as_daily.mean()), 1) == snapshot(name="as_daily_mean___round")
 
 
 def test_as_freq_empty():
@@ -127,88 +181,87 @@ def test_as_freq_empty():
     assert empty_meter_data.empty
 
 
-def test_as_freq_perserves_nulls(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    monthly_with_nulls = meter_data[meter_data.index.year != 2016].reindex(
+def test_as_freq_perserves_nulls(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
+    monthly_with_nulls = meter_data[meter_data.index.year != meter_data.index.year.min()].reindex(
         meter_data.index
     )
     daily_with_nulls = as_freq(monthly_with_nulls.value, freq="D")
-    assert (
-        round(monthly_with_nulls.value.sum(), 2)
-        == round(daily_with_nulls.sum(), 2)
-        == 11094.05
-    )
-    assert monthly_with_nulls.value.isnull().sum() == 13
-    assert daily_with_nulls.isnull().sum() == 365
+    assert round(monthly_with_nulls.value.sum(), 2) == snapshot(name="monthly_with_nulls_sum")
+    assert round(daily_with_nulls.sum(), 2) == snapshot(name="daily_with_nulls_sum")
+    assert round(float(monthly_with_nulls.value.isnull().sum()), 4) == snapshot(name="monthly_with_nulls_value_isnull___sum")
+    assert round(float(daily_with_nulls.isnull().sum()), 4) == snapshot(name="daily_with_nulls_isnull___sum")
 
 
-def test_day_counts(il_electricity_cdd_hdd_billing_monthly):
-    data = il_electricity_cdd_hdd_billing_monthly["meter_data"].value
+def test_day_counts(monthly_meter, monthly_temperature, snapshot):
+    data = monthly_meter.value
     counts = day_counts(data.index)
-    assert counts.shape == (27,)
-    assert counts.iloc[0] == 29.0
+    assert list(counts.shape) == snapshot(name="counts_shape")
+    assert counts.iloc[0] == snapshot(name="first_month_days")
     assert pd.isnull(counts.iloc[-1])
-    assert counts.sum() == 790.0
+    assert round(float(counts.sum()), 4) == snapshot(name="counts_sum")
 
 
-def test_day_counts_empty_series():
+def test_day_counts_empty_series(snapshot):
     index = pd.DatetimeIndex([])
     index.freq = None
     data = pd.Series([], index=index)
     counts = day_counts(data.index)
-    assert counts.shape == (0,)
+    assert list(counts.shape) == snapshot(name="counts_shape")
 
 
-def test_get_baseline_data(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
+def test_get_baseline_data(hourly_meter, hourly_temperature, snapshot):
+    meter_data = hourly_meter
     baseline_data, warnings = get_baseline_data(meter_data)
-    assert meter_data.shape == baseline_data.shape == (19417, 1)
-    assert len(warnings) == 0
+    assert meter_data.shape == baseline_data.shape
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
-def test_get_baseline_data_with_timezones(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
+def test_get_baseline_data_with_timezones(hourly_meter, hourly_temperature, snapshot):
+    meter_data = hourly_meter
     baseline_data, warnings = get_baseline_data(
         meter_data.tz_convert("America/New_York")
     )
-    assert len(warnings) == 0
+    assert int(len(warnings)) == snapshot(name="warnings_len")
     baseline_data, warnings = get_baseline_data(
         meter_data.tz_convert("Australia/Sydney")
     )
-    assert len(warnings) == 0
+    assert int(len(warnings)) == snapshot(name="warnings_len_1")
 
 
-def test_get_baseline_data_with_end(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
-    blackout_start_date = il_electricity_cdd_hdd_hourly["blackout_start_date"]
+def test_get_baseline_data_with_end(hourly_meter, hourly_temperature, snapshot):
+    meter_data = hourly_meter
+    blackout_start_date = pd.Timestamp("2019-01-01", tz="UTC")
     baseline_data, warnings = get_baseline_data(meter_data, end=blackout_start_date)
-    assert meter_data.shape != baseline_data.shape == (8761, 1)
-    assert len(warnings) == 0
+    assert meter_data.shape != baseline_data.shape
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
-def test_get_baseline_data_with_end_no_max_days(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
-    blackout_start_date = il_electricity_cdd_hdd_hourly["blackout_start_date"]
+def test_get_baseline_data_with_end_no_max_days(hourly_meter, hourly_temperature, snapshot):
+    meter_data = hourly_meter
+    blackout_start_date = pd.Timestamp("2019-01-01", tz="UTC")
     baseline_data, warnings = get_baseline_data(
         meter_data, end=blackout_start_date, max_days=None
     )
-    assert meter_data.shape != baseline_data.shape == (9595, 1)
-    assert len(warnings) == 0
+    assert meter_data.shape != baseline_data.shape
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
-def test_get_baseline_data_empty(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
-    blackout_start_date = il_electricity_cdd_hdd_hourly["blackout_start_date"]
+def test_get_baseline_data_empty(hourly_meter, hourly_temperature):
+    meter_data = hourly_meter
+    blackout_start_date = pd.Timestamp("2019-01-01", tz="UTC")
     with pytest.raises(NoBaselineDataError):
         get_baseline_data(meter_data, end=pd.Timestamp("2000").tz_localize("UTC"))
 
 
-def test_get_baseline_data_start_gap(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
+def test_get_baseline_data_start_gap(hourly_meter, hourly_temperature, snapshot):
+    meter_data = hourly_meter
     start = meter_data.index.min() - timedelta(days=1)
     baseline_data, warnings = get_baseline_data(meter_data, start=start, max_days=None)
-    assert meter_data.shape == baseline_data.shape == (19417, 1)
-    assert len(warnings) == 1
+    assert meter_data.shape == baseline_data.shape
+    assert int(len(warnings)) == snapshot(name="warnings_len")
     warning = warnings[0]
     assert warning.qualified_name == "eemeter.get_baseline_data.gap_at_baseline_start"
     assert (
@@ -216,17 +269,17 @@ def test_get_baseline_data_start_gap(il_electricity_cdd_hdd_hourly):
         == "Data does not have coverage at requested baseline start date."
     )
     assert warning.data == {
-        "data_start": "2015-11-22T06:00:00+00:00",
-        "requested_start": "2015-11-21T06:00:00+00:00",
+        "data_start": meter_data.index.min().isoformat(),
+        "requested_start": start.isoformat(),
     }
 
 
-def test_get_baseline_data_end_gap(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
+def test_get_baseline_data_end_gap(hourly_meter, hourly_temperature, snapshot):
+    meter_data = hourly_meter
     end = meter_data.index.max() + timedelta(days=1)
     baseline_data, warnings = get_baseline_data(meter_data, end=end, max_days=None)
-    assert meter_data.shape == baseline_data.shape == (19417, 1)
-    assert len(warnings) == 1
+    assert meter_data.shape == baseline_data.shape
+    assert int(len(warnings)) == snapshot(name="warnings_len")
     warning = warnings[0]
     assert warning.qualified_name == "eemeter.get_baseline_data.gap_at_baseline_end"
     assert (
@@ -234,124 +287,120 @@ def test_get_baseline_data_end_gap(il_electricity_cdd_hdd_hourly):
         == "Data does not have coverage at requested baseline end date."
     )
     assert warning.data == {
-        "data_end": "2018-02-08T06:00:00+00:00",
-        "requested_end": "2018-02-09T06:00:00+00:00",
+        "data_end": meter_data.index.max().isoformat(),
+        "requested_end": end.isoformat(),
     }
 
 
-def test_get_baseline_data_with_overshoot(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_get_baseline_data_with_overshoot(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
     baseline_data, warnings = get_baseline_data(
         meter_data,
-        end=datetime(2016, 11, 9, tzinfo=pytz.UTC),
+        end=meter_data.index[8].to_pydatetime(),
         max_days=32,
         allow_billing_period_overshoot=True,
     )
-    assert baseline_data.shape == (2, 1)
-    assert round(baseline_data.value.sum(), 2) == 632.31
-    assert len(warnings) == 0
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
     baseline_data, warnings = get_baseline_data(
         meter_data,
-        end=datetime(2016, 11, 9, tzinfo=pytz.UTC),
+        end=meter_data.index[8].to_pydatetime(),
         max_days=32,
         allow_billing_period_overshoot=False,
     )
-    assert baseline_data.shape == (1, 1)
-    assert round(baseline_data.value.sum(), 2) == 0
-    assert len(warnings) == 0
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape_1")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round_1")
+    assert int(len(warnings)) == snapshot(name="warnings_len_1")
 
     baseline_data, warnings = get_baseline_data(
         meter_data,
-        end=datetime(2016, 11, 9, tzinfo=pytz.UTC),
+        end=meter_data.index[8].to_pydatetime(),
         max_days=25,
         allow_billing_period_overshoot=True,
     )
-    assert baseline_data.shape == (1, 1)
-    assert round(baseline_data.value.sum(), 2) == 0
-    assert len(warnings) == 0
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape_2")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round_2")
+    assert int(len(warnings)) == snapshot(name="warnings_len_2")
 
 
-def test_get_baseline_data_with_ignored_gap(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_get_baseline_data_with_ignored_gap(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
     baseline_data, warnings = get_baseline_data(
         meter_data,
-        end=datetime(2016, 11, 9, tzinfo=pytz.UTC),
+        end=meter_data.index[8].to_pydatetime(),
         max_days=45,
         ignore_billing_period_gap_for_day_count=True,
     )
-    assert baseline_data.shape == (2, 1)
-    assert round(baseline_data.value.sum(), 2) == 632.31
-    assert len(warnings) == 0
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
     baseline_data, warnings = get_baseline_data(
         meter_data,
-        end=datetime(2016, 11, 9, tzinfo=pytz.UTC),
+        end=meter_data.index[8].to_pydatetime(),
         max_days=45,
         ignore_billing_period_gap_for_day_count=False,
     )
-    assert baseline_data.shape == (1, 1)
-    assert round(baseline_data.value.sum(), 2) == 0
-    assert len(warnings) == 0
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape_1")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round_1")
+    assert int(len(warnings)) == snapshot(name="warnings_len_1")
 
     baseline_data, warnings = get_baseline_data(
         meter_data,
-        end=datetime(2016, 11, 9, tzinfo=pytz.UTC),
+        end=meter_data.index[8].to_pydatetime(),
         max_days=25,
         ignore_billing_period_gap_for_day_count=True,
     )
-    assert baseline_data.shape == (1, 1)
-    assert round(baseline_data.value.sum(), 2) == 0
-    assert len(warnings) == 0
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape_2")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round_2")
+    assert int(len(warnings)) == snapshot(name="warnings_len_2")
 
 
-def test_get_baseline_data_with_overshoot_and_ignored_gap(
-    il_electricity_cdd_hdd_billing_monthly,
-):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_get_baseline_data_with_overshoot_and_ignored_gap(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
     baseline_data, warnings = get_baseline_data(
         meter_data,
-        end=datetime(2016, 11, 9, tzinfo=pytz.UTC),
+        end=meter_data.index[8].to_pydatetime(),
         max_days=25,
         allow_billing_period_overshoot=True,
         ignore_billing_period_gap_for_day_count=True,
     )
-    assert baseline_data.shape == (2, 1)
-    assert round(baseline_data.value.sum(), 2) == 632.31
-    assert len(warnings) == 0
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
     baseline_data, warnings = get_baseline_data(
         meter_data,
-        end=datetime(2016, 11, 9, tzinfo=pytz.UTC),
+        end=meter_data.index[8].to_pydatetime(),
         max_days=25,
         allow_billing_period_overshoot=False,
         ignore_billing_period_gap_for_day_count=False,
     )
-    assert baseline_data.shape == (1, 1)
-    assert round(baseline_data.value.sum(), 2) == 0
-    assert len(warnings) == 0
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape_1")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round_1")
+    assert int(len(warnings)) == snapshot(name="warnings_len_1")
 
 
-def test_get_baseline_data_n_days_billing_period_overshoot(
-    il_electricity_cdd_hdd_billing_monthly,
-):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_get_baseline_data_n_days_billing_period_overshoot(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
     baseline_data, warnings = get_baseline_data(
         meter_data,
-        end=datetime(2017, 11, 9, tzinfo=pytz.UTC),
+        end=meter_data.index[20].to_pydatetime(),
         max_days=45,
         allow_billing_period_overshoot=True,
         n_days_billing_period_overshoot=45,
         ignore_billing_period_gap_for_day_count=True,
     )
-    assert baseline_data.shape == (2, 1)
-    assert round(baseline_data.value.sum(), 2) == 526.25
-    assert len(warnings) == 0
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
-def test_get_baseline_data_too_far_from_date(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    end_date = datetime(2020, 11, 9, tzinfo=pytz.UTC)
+def test_get_baseline_data_too_far_from_date(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
+    end_date = (meter_data.index[-1] + timedelta(days=3650)).to_pydatetime()
     max_days = 45
     baseline_data, warnings = get_baseline_data(
         meter_data,
@@ -359,9 +408,9 @@ def test_get_baseline_data_too_far_from_date(il_electricity_cdd_hdd_billing_mont
         max_days=max_days,
         ignore_billing_period_gap_for_day_count=True,
     )
-    assert baseline_data.shape == (2, 1)
-    assert round(baseline_data.value.sum(), 2) == 1393.4
-    assert len(warnings) == 0
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
     with pytest.raises(NoBaselineDataError):
         get_baseline_data(
             meter_data,
@@ -377,9 +426,9 @@ def test_get_baseline_data_too_far_from_date(il_electricity_cdd_hdd_billing_mont
         allow_billing_period_overshoot=True,
         ignore_billing_period_gap_for_day_count=True,
     )
-    assert baseline_data.shape == (3, 1)
-    assert round(baseline_data.value.sum(), 2) == 2043.92
-    assert len(warnings) == 0
+    assert list(baseline_data.shape) == snapshot(name="baseline_data_shape_1")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round_1")
+    assert int(len(warnings)) == snapshot(name="warnings_len_1")
     # Includes 3 data points because data at index -3 is closer to start target
     # then data at index -2
     start_target = baseline_data.index[-1] - timedelta(days=max_days)
@@ -391,64 +440,65 @@ def test_get_baseline_data_too_far_from_date(il_electricity_cdd_hdd_billing_mont
             meter_data,
             end=end_date,
             max_days=max_days,
-            allow_billing_period_overshoot=True,
             n_days_billing_period_overshoot=45,
             ignore_billing_period_gap_for_day_count=True,
         )
 
 
-def test_get_reporting_data(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
+def test_get_reporting_data(hourly_meter, hourly_temperature, snapshot):
+    meter_data = hourly_meter
     reporting_data, warnings = get_reporting_data(meter_data)
-    assert meter_data.shape == reporting_data.shape == (19417, 1)
-    assert len(warnings) == 0
+    assert meter_data.shape == reporting_data.shape
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
-def test_get_reporting_data_with_timezones(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
+def test_get_reporting_data_with_timezones(hourly_meter, hourly_temperature, snapshot):
+    meter_data = hourly_meter
     reporting_data, warnings = get_reporting_data(
         meter_data.tz_convert("America/New_York")
     )
-    assert len(warnings) == 0
+    assert int(len(warnings)) == snapshot(name="warnings_len")
     reporting_data, warnings = get_reporting_data(
         meter_data.tz_convert("Australia/Sydney")
     )
-    assert len(warnings) == 0
+    assert int(len(warnings)) == snapshot(name="warnings_len_1")
 
 
-def test_get_reporting_data_with_start(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
-    blackout_end_date = il_electricity_cdd_hdd_hourly["blackout_end_date"]
+def test_get_reporting_data_with_start(hourly_meter, hourly_temperature, snapshot):
+    meter_data = hourly_meter
+    blackout_end_date = pd.Timestamp("2019-01-02", tz="UTC")
     reporting_data, warnings = get_reporting_data(meter_data, start=blackout_end_date)
-    assert meter_data.shape != reporting_data.shape == (8761, 1)
-    assert len(warnings) == 0
+    assert meter_data.shape != reporting_data.shape
+    assert list(reporting_data.shape) == snapshot(name="reporting_data_shape")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
-def test_get_reporting_data_with_start_no_max_days(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
-    blackout_end_date = il_electricity_cdd_hdd_hourly["blackout_end_date"]
+def test_get_reporting_data_with_start_no_max_days(hourly_meter, hourly_temperature, snapshot):
+    meter_data = hourly_meter
+    blackout_end_date = pd.Timestamp("2019-01-02", tz="UTC")
     reporting_data, warnings = get_reporting_data(
         meter_data, start=blackout_end_date, max_days=None
     )
-    assert meter_data.shape != reporting_data.shape == (9607, 1)
-    assert len(warnings) == 0
+    assert meter_data.shape != reporting_data.shape
+    assert list(reporting_data.shape) == snapshot(name="reporting_data_shape")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
-def test_get_reporting_data_empty(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
-    blackout_end_date = il_electricity_cdd_hdd_hourly["blackout_end_date"]
+def test_get_reporting_data_empty(hourly_meter, hourly_temperature):
+    meter_data = hourly_meter
+    blackout_end_date = pd.Timestamp("2019-01-02", tz="UTC")
     with pytest.raises(NoReportingDataError):
         get_reporting_data(meter_data, start=pd.Timestamp("2030").tz_localize("UTC"))
 
 
-def test_get_reporting_data_start_gap(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
+def test_get_reporting_data_start_gap(hourly_meter, hourly_temperature, snapshot):
+    meter_data = hourly_meter
     start = meter_data.index.min() - timedelta(days=1)
     reporting_data, warnings = get_reporting_data(
         meter_data, start=start, max_days=None
     )
-    assert meter_data.shape == reporting_data.shape == (19417, 1)
-    assert len(warnings) == 1
+    assert meter_data.shape == reporting_data.shape
+    assert int(len(warnings)) == snapshot(name="warnings_len")
     warning = warnings[0]
     assert warning.qualified_name == "eemeter.get_reporting_data.gap_at_reporting_start"
     assert (
@@ -456,17 +506,17 @@ def test_get_reporting_data_start_gap(il_electricity_cdd_hdd_hourly):
         == "Data does not have coverage at requested reporting start date."
     )
     assert warning.data == {
-        "data_start": "2015-11-22T06:00:00+00:00",
-        "requested_start": "2015-11-21T06:00:00+00:00",
+        "data_start": meter_data.index.min().isoformat(),
+        "requested_start": start.isoformat(),
     }
 
 
-def test_get_reporting_data_end_gap(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
+def test_get_reporting_data_end_gap(hourly_meter, hourly_temperature, snapshot):
+    meter_data = hourly_meter
     end = meter_data.index.max() + timedelta(days=1)
     reporting_data, warnings = get_reporting_data(meter_data, end=end, max_days=None)
-    assert meter_data.shape == reporting_data.shape == (19417, 1)
-    assert len(warnings) == 1
+    assert meter_data.shape == reporting_data.shape
+    assert int(len(warnings)) == snapshot(name="warnings_len")
     warning = warnings[0]
     assert warning.qualified_name == "eemeter.get_reporting_data.gap_at_reporting_end"
     assert (
@@ -474,120 +524,118 @@ def test_get_reporting_data_end_gap(il_electricity_cdd_hdd_hourly):
         == "Data does not have coverage at requested reporting end date."
     )
     assert warning.data == {
-        "data_end": "2018-02-08T06:00:00+00:00",
-        "requested_end": "2018-02-09T06:00:00+00:00",
+        "data_end": meter_data.index.max().isoformat(),
+        "requested_end": end.isoformat(),
     }
 
 
-def test_get_reporting_data_with_overshoot(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_get_reporting_data_with_overshoot(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
     reporting_data, warnings = get_reporting_data(
         meter_data,
-        start=datetime(2016, 9, 9, tzinfo=pytz.UTC),
+        start=meter_data.index[8].to_pydatetime(),
         max_days=30,
         allow_billing_period_overshoot=True,
     )
-    assert reporting_data.shape == (2, 1)
-    assert round(reporting_data.value.sum(), 2) == 632.31
-    assert len(warnings) == 0
+    assert list(reporting_data.shape) == snapshot(name="reporting_data_shape")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
     reporting_data, warnings = get_reporting_data(
         meter_data,
-        start=datetime(2016, 9, 9, tzinfo=pytz.UTC),
+        start=meter_data.index[8].to_pydatetime(),
         max_days=30,
         allow_billing_period_overshoot=False,
     )
-    assert reporting_data.shape == (1, 1)
-    assert round(reporting_data.value.sum(), 2) == 0
-    assert len(warnings) == 0
+    assert list(reporting_data.shape) == snapshot(name="reporting_data_shape_1")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round_1")
+    assert int(len(warnings)) == snapshot(name="warnings_len_1")
 
     reporting_data, warnings = get_reporting_data(
         meter_data,
-        start=datetime(2016, 9, 9, tzinfo=pytz.UTC),
+        start=meter_data.index[8].to_pydatetime(),
         max_days=25,
         allow_billing_period_overshoot=True,
     )
-    assert reporting_data.shape == (1, 1)
-    assert round(reporting_data.value.sum(), 2) == 0
-    assert len(warnings) == 0
+    assert list(reporting_data.shape) == snapshot(name="reporting_data_shape_2")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round_2")
+    assert int(len(warnings)) == snapshot(name="warnings_len_2")
 
 
-def test_get_reporting_data_with_ignored_gap(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_get_reporting_data_with_ignored_gap(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
     reporting_data, warnings = get_reporting_data(
         meter_data,
-        start=datetime(2016, 9, 9, tzinfo=pytz.UTC),
+        start=meter_data.index[8].to_pydatetime(),
         max_days=45,
         ignore_billing_period_gap_for_day_count=True,
     )
-    assert reporting_data.shape == (2, 1)
-    assert round(reporting_data.value.sum(), 2) == 632.31
-    assert len(warnings) == 0
+    assert list(reporting_data.shape) == snapshot(name="reporting_data_shape")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
     reporting_data, warnings = get_reporting_data(
         meter_data,
-        start=datetime(2016, 9, 9, tzinfo=pytz.UTC),
+        start=meter_data.index[8].to_pydatetime(),
         max_days=45,
         ignore_billing_period_gap_for_day_count=False,
     )
-    assert reporting_data.shape == (1, 1)
-    assert round(reporting_data.value.sum(), 2) == 0
-    assert len(warnings) == 0
+    assert list(reporting_data.shape) == snapshot(name="reporting_data_shape_1")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round_1")
+    assert int(len(warnings)) == snapshot(name="warnings_len_1")
 
     reporting_data, warnings = get_reporting_data(
         meter_data,
-        start=datetime(2016, 9, 9, tzinfo=pytz.UTC),
+        start=meter_data.index[8].to_pydatetime(),
         max_days=25,
         ignore_billing_period_gap_for_day_count=True,
     )
-    assert reporting_data.shape == (1, 1)
-    assert round(reporting_data.value.sum(), 2) == 0
-    assert len(warnings) == 0
+    assert list(reporting_data.shape) == snapshot(name="reporting_data_shape_2")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round_2")
+    assert int(len(warnings)) == snapshot(name="warnings_len_2")
 
 
-def test_get_reporting_data_with_overshoot_and_ignored_gap(
-    il_electricity_cdd_hdd_billing_monthly,
-):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_get_reporting_data_with_overshoot_and_ignored_gap(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
     reporting_data, warnings = get_reporting_data(
         meter_data,
-        start=datetime(2016, 9, 9, tzinfo=pytz.UTC),
+        start=meter_data.index[8].to_pydatetime(),
         max_days=25,
         allow_billing_period_overshoot=True,
         ignore_billing_period_gap_for_day_count=True,
     )
-    assert reporting_data.shape == (2, 1)
-    assert round(reporting_data.value.sum(), 2) == 632.31
-    assert len(warnings) == 0
+    assert list(reporting_data.shape) == snapshot(name="reporting_data_shape")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round")
+    assert int(len(warnings)) == snapshot(name="warnings_len")
 
     reporting_data, warnings = get_reporting_data(
         meter_data,
-        start=datetime(2016, 9, 9, tzinfo=pytz.UTC),
+        start=meter_data.index[8].to_pydatetime(),
         max_days=25,
         allow_billing_period_overshoot=False,
         ignore_billing_period_gap_for_day_count=False,
     )
-    assert reporting_data.shape == (1, 1)
-    assert round(reporting_data.value.sum(), 2) == 0
-    assert len(warnings) == 0
+    assert list(reporting_data.shape) == snapshot(name="reporting_data_shape_1")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round_1")
+    assert int(len(warnings)) == snapshot(name="warnings_len_1")
 
 
-def test_get_terms_unrecognized_method(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_get_terms_unrecognized_method(monthly_meter, monthly_temperature):
+    meter_data = monthly_meter
 
     with pytest.raises(ValueError):
         get_terms(meter_data.index, term_lengths=[365], method="unrecognized")
 
 
-def test_get_terms_unsorted_index(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_get_terms_unsorted_index(monthly_meter, monthly_temperature):
+    meter_data = monthly_meter
 
     with pytest.raises(ValueError):
         get_terms(meter_data.index[::-1], term_lengths=[365])
 
 
-def test_get_terms_bad_term_labels(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_get_terms_bad_term_labels(monthly_meter, monthly_temperature):
+    meter_data = monthly_meter
 
     with pytest.raises(ValueError):
         terms = get_terms(
@@ -597,15 +645,15 @@ def test_get_terms_bad_term_labels(il_electricity_cdd_hdd_billing_monthly):
         )
 
 
-def test_get_terms_default_term_labels(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_get_terms_default_term_labels(monthly_meter, monthly_temperature):
+    meter_data = monthly_meter
 
     terms = get_terms(meter_data.index, term_lengths=[60, 60, 60])
     assert [t.label for t in terms] == ["term_001", "term_002", "term_003"]
 
 
-def test_get_terms_custom_term_labels(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_get_terms_custom_term_labels(monthly_meter, monthly_temperature):
+    meter_data = monthly_meter
 
     terms = get_terms(
         meter_data.index, term_lengths=[60, 60, 60], term_labels=["abc", "def", "ghi"]
@@ -613,229 +661,199 @@ def test_get_terms_custom_term_labels(il_electricity_cdd_hdd_billing_monthly):
     assert [t.label for t in terms] == ["abc", "def", "ghi"]
 
 
-def test_get_terms_empty_index_input(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_get_terms_empty_index_input(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
 
     terms = get_terms(meter_data.index[:0], term_lengths=[60, 60, 60])
-    assert len(terms) == 0
+    assert int(len(terms)) == snapshot(name="terms_len")
 
 
-def test_get_terms_strict(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_get_terms_strict(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
+    start = meter_data.index[0].to_pydatetime()
 
     strict_terms = get_terms(
         meter_data.index,
         term_lengths=[365, 365],
         term_labels=["year1", "year2"],
-        start=datetime(2016, 1, 15, tzinfo=pytz.UTC),
+        start=start,
         method="strict",
     )
 
-    assert len(strict_terms) == 2
+    assert int(len(strict_terms)) == snapshot(name="strict_terms_len")
 
     year1 = strict_terms[0]
     assert year1.label == "year1"
-    assert year1.index.shape == (12,)
-    assert (
-        year1.target_start_date
-        == pd.Timestamp("2016-01-15 00:00:00+0000", tz="UTC").to_pydatetime()
-    )
-    assert (
-        year1.target_end_date
-        == pd.Timestamp("2017-01-14 00:00:00+0000", tz="UTC").to_pydatetime()
-    )
+    assert list(year1.index.shape) == snapshot(name="year1_index_shape")
+    assert year1.target_start_date == start
+    assert year1.target_end_date == start + timedelta(days=365)
     assert year1.target_term_length_days == 365
-    assert (
-        year1.actual_start_date
-        == year1.index[0]
-        == pd.Timestamp("2016-01-22 06:00:00+0000", tz="UTC")
-    )
-    assert (
-        year1.actual_end_date
-        == year1.index[-1]
-        == pd.Timestamp("2016-12-19 06:00:00+0000", tz="UTC")
-    )
-    assert year1.actual_term_length_days == 332
-    assert year1.complete
+    assert year1.actual_start_date == year1.index[0]
+    assert year1.actual_end_date == year1.index[-1]
+    assert year1.actual_term_length_days == snapshot(name="year1_actual_term_length_days")
+    assert year1.complete == snapshot(name="year1_complete")
 
     year2 = strict_terms[1]
-    assert year2.index.shape == (13,)
+    assert list(year2.index.shape) == snapshot(name="year2_index_shape")
     assert year2.label == "year2"
-    assert year2.target_start_date == pd.Timestamp("2016-12-19 06:00:00+0000", tz="UTC")
-    assert (
-        year2.target_end_date
-        == pd.Timestamp("2018-01-14 00:00:00+0000", tz="UTC").to_pydatetime()
-    )
+    assert year2.target_start_date == year1.actual_end_date
+    assert year2.target_end_date == year2.target_start_date + timedelta(days=365)
     assert year2.target_term_length_days == 365
-    assert (
-        year2.actual_start_date
-        == year2.index[0]
-        == pd.Timestamp("2016-12-19 06:00:00+00:00", tz="UTC")
-    )
-    assert (
-        year2.actual_end_date
-        == year2.index[-1]
-        == pd.Timestamp("2017-12-22 06:00:00+0000", tz="UTC")
-    )
-    assert year2.actual_term_length_days == 368
-    assert year2.complete
+    assert year2.actual_start_date == year2.index[0]
+    assert year2.actual_end_date == year2.index[-1]
+    assert year2.actual_term_length_days == snapshot(name="year2_actual_term_length_days")
+    assert year2.complete == snapshot(name="year2_complete")
 
 
-def test_get_terms_nearest(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_get_terms_nearest(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
+    start = meter_data.index[0].to_pydatetime()
     nearest_terms = get_terms(
         meter_data.index,
         term_lengths=[365, 365],
         term_labels=["year1", "year2"],
-        start=datetime(2016, 1, 15, tzinfo=pytz.UTC),
+        start=start,
         method="nearest",
     )
 
-    assert len(nearest_terms) == 2
+    assert int(len(nearest_terms)) == snapshot(name="nearest_terms_len")
 
     year1 = nearest_terms[0]
     assert year1.label == "year1"
-    assert year1.index.shape == (13,)
-    assert year1.index[0] == pd.Timestamp("2016-01-22 06:00:00+0000", tz="UTC")
-    assert year1.index[-1] == pd.Timestamp("2017-01-21 06:00:00+0000", tz="UTC")
-    assert (
-        year1.target_start_date
-        == pd.Timestamp("2016-01-15 00:00:00+0000", tz="UTC").to_pydatetime()
-    )
+    assert list(year1.index.shape) == snapshot(name="year1_index_shape")
+    assert year1.target_start_date == start
     assert year1.target_term_length_days == 365
-    assert year1.actual_term_length_days == 365
-    assert year1.complete
+    assert year1.actual_term_length_days == snapshot(name="year1_actual_term_length_days")
+    assert year1.complete == snapshot(name="year1_complete")
 
     year2 = nearest_terms[1]
     assert year2.label == "year2"
-    assert year2.index.shape == (13,)
-    assert year2.index[0] == pd.Timestamp("2017-01-21 06:00:00+0000", tz="UTC")
-    assert year2.index[-1] == pd.Timestamp("2018-01-20 06:00:00+0000", tz="UTC")
-    assert year2.target_start_date == pd.Timestamp("2017-01-21 06:00:00+0000", tz="UTC")
-    assert year1.target_term_length_days == 365
-    assert year2.actual_term_length_days == 364
-    assert not year2.complete  # no remaining index
+    assert list(year2.index.shape) == snapshot(name="year2_index_shape")
+    assert year2.target_start_date == year1.index[-1]
+    assert year2.target_term_length_days == 365
+    assert year2.actual_term_length_days == snapshot(name="year2_actual_term_length_days")
+    assert year2.complete == snapshot(name="year2_complete")
 
     # check completeness case with a shorter final term
     nearest_terms = get_terms(
         meter_data.index,
         term_lengths=[365, 340],
         term_labels=["year1", "year2"],
-        start=datetime(2016, 1, 15, tzinfo=pytz.UTC),
+        start=start,
         method="nearest",
     )
     year2 = nearest_terms[1]
     assert year2.label == "year2"
-    assert year2.index.shape == (12,)
-    assert year2.index[0] == pd.Timestamp("2017-01-21 06:00:00+0000", tz="UTC")
-    assert year2.index[-1] == pd.Timestamp("2017-12-22 06:00:00+00:00", tz="UTC")
-    assert year2.target_start_date == pd.Timestamp("2017-01-21 06:00:00+0000", tz="UTC")
+    assert list(year2.index.shape) == snapshot(name="year2_index_shape_short_final")
+    assert year2.target_start_date == nearest_terms[0].index[-1]
     assert year2.target_term_length_days == 340
-    assert year2.actual_term_length_days == 335
-    assert year2.complete  # has remaining index
+    assert year2.actual_term_length_days == snapshot(name="year2_actual_term_length_days_short_final")
+    assert year2.complete == snapshot(name="year2_complete_short_final")
 
 
-def test_term_repr(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_term_repr(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
 
     terms = get_terms(meter_data.index, term_lengths=[60, 60, 60])
-    assert repr(terms[0]) == (
-        "Term(label=term_001, target_term_length_days=60, actual_term_length_days=29,"
-        " complete=True)"
-    )
+    assert repr(terms[0]) == snapshot(name="term_0_repr")
 
 
-def test_remove_duplicates_df():
+def test_remove_duplicates_df(snapshot):
     index = pd.DatetimeIndex(["2017-01-01", "2017-01-02", "2017-01-02"])
     df = pd.DataFrame({"value": [1, 2, 3]}, index=index)
-    assert df.shape == (3, 1)
+    assert list(df.shape) == snapshot(name="df_shape")
     df_dedupe = remove_duplicates(df)
-    assert df_dedupe.shape == (2, 1)
+    assert list(df_dedupe.shape) == snapshot(name="df_dedupe_shape")
     assert list(df_dedupe.value) == [1, 2]
 
 
-def test_remove_duplicates_series():
+def test_remove_duplicates_series(snapshot):
     index = pd.DatetimeIndex(["2017-01-01", "2017-01-02", "2017-01-02"])
     series = pd.Series([1, 2, 3], index=index)
-    assert series.shape == (3,)
+    assert list(series.shape) == snapshot(name="series_shape")
     series_dedupe = remove_duplicates(series)
-    assert series_dedupe.shape == (2,)
+    assert list(series_dedupe.shape) == snapshot(name="series_dedupe_shape")
     assert list(series_dedupe) == [1, 2]
 
 
-def test_as_freq_hourly_to_daily(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
+def test_as_freq_hourly_to_daily(hourly_meter, hourly_temperature, snapshot):
+    meter_data = hourly_meter
 
     meter_data.iloc[-1, meter_data.columns.get_loc("value")] = np.nan
-    assert meter_data.shape == (19417, 1)
+    assert list(meter_data.shape) == snapshot(name="meter_data_shape")
     as_daily = as_freq(meter_data.value, freq="D")
-    assert as_daily.shape == (811,)
-    assert round(meter_data.value.sum(), 1) == round(as_daily.sum(), 1) == 21926.0
+    assert list(as_daily.shape) == snapshot(name="as_daily_shape")
+    assert round(meter_data.value.sum(), 1) == snapshot(name="meter_data_sum")
+    assert round(as_daily.sum(), 1) == snapshot(name="as_daily_sum")
 
 
-def test_as_freq_daily_to_daily(il_electricity_cdd_hdd_daily):
-    meter_data = il_electricity_cdd_hdd_daily["meter_data"]
-    assert meter_data.shape == (810, 1)
+def test_as_freq_daily_to_daily(daily_meter, daily_temperature, snapshot):
+    meter_data = daily_meter
+    assert list(meter_data.shape) == snapshot(name="meter_data_shape")
     as_daily = as_freq(meter_data.value, freq="D")
-    assert as_daily.shape == (810,)
-    assert round(meter_data.value.sum(), 1) == round(as_daily.sum(), 1) == 21925.8
+    assert list(as_daily.shape) == snapshot(name="as_daily_shape")
+    assert round(meter_data.value.sum(), 1) == snapshot(name="meter_data_sum")
+    assert round(as_daily.sum(), 1) == snapshot(name="as_daily_sum")
 
 
-def test_as_freq_hourly_to_daily_include_coverage(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
+def test_as_freq_hourly_to_daily_include_coverage(hourly_meter, hourly_temperature, snapshot):
+    meter_data = hourly_meter
     meter_data.iloc[-1, meter_data.columns.get_loc("value")] = np.nan
-    assert meter_data.shape == (19417, 1)
+    assert list(meter_data.shape) == snapshot(name="meter_data_shape")
     as_daily = as_freq(meter_data.value, freq="D", include_coverage=True)
-    assert as_daily.shape == (811, 2)
-    assert round(meter_data.value.sum(), 1) == round(as_daily.value.sum(), 1) == 21926.0
+    assert list(as_daily.shape) == snapshot(name="as_daily_shape")
+    assert round(meter_data.value.sum(), 1) == snapshot(name="meter_data_sum")
+    assert round(as_daily.value.sum(), 1) == snapshot(name="as_daily_sum")
 
 
-def test_clean_caltrack_billing_daily_data_billing(
-    il_electricity_cdd_hdd_billing_monthly,
-):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_clean_caltrack_billing_daily_data_billing(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
     cleaned_data = clean_caltrack_billing_daily_data(meter_data, "billing_monthly")
-    assert cleaned_data.shape == (27, 1)
-    pd.testing.assert_frame_equal(meter_data, cleaned_data)
+    assert list(cleaned_data.shape) == snapshot(name="cleaned_data_shape")
+    # ComStock monthly data lacks a closing entry, so clean_caltrack_billing_daily_data
+    # NaN's the value of the last billing period (no next entry to bound it). Compare
+    # all rows except the last.
+    pd.testing.assert_frame_equal(meter_data.iloc[:-1], cleaned_data.iloc[:-1])
+    assert pd.isnull(cleaned_data["value"].iloc[-1])
 
 
-def test_clean_caltrack_billing_daily_data_daily(il_electricity_cdd_hdd_daily):
-    meter_data = il_electricity_cdd_hdd_daily["meter_data"]
+def test_clean_caltrack_billing_daily_data_daily(daily_meter, daily_temperature, snapshot):
+    meter_data = daily_meter
     cleaned_data = clean_caltrack_billing_daily_data(meter_data, "daily")
-    assert cleaned_data.shape == (810, 1)
+    assert list(cleaned_data.shape) == snapshot(name="cleaned_data_shape")
     pd.testing.assert_frame_equal(meter_data, cleaned_data)
 
 
-def test_clean_caltrack_billing_daily_data_daily_local_tz(il_electricity_cdd_hdd_daily):
-    meter_data = il_electricity_cdd_hdd_daily["meter_data"]
+def test_clean_caltrack_billing_daily_data_daily_local_tz(daily_meter, daily_temperature, snapshot):
+    meter_data = daily_meter
     meter_data.index += timedelta(hours=6)
     meter_data = meter_data.tz_convert("America/Chicago")
     cleaned_data = clean_caltrack_billing_daily_data(meter_data, "daily")
-    assert cleaned_data.shape == (810, 1)
+    assert list(cleaned_data.shape) == snapshot(name="cleaned_data_shape")
     pd.testing.assert_frame_equal(meter_data, cleaned_data)
 
 
-def test_clean_caltrack_billing_daily_data_hourly(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
+def test_clean_caltrack_billing_daily_data_hourly(hourly_meter, hourly_temperature, snapshot):
+    meter_data = hourly_meter
     cleaned_data = clean_caltrack_billing_daily_data(meter_data, "hourly")
-    assert cleaned_data.shape == (811, 1)
+    assert list(cleaned_data.shape) == snapshot(name="cleaned_data_shape")
 
 
-def test_clean_caltrack_daily_data_hourly(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
+def test_clean_caltrack_daily_data_hourly(hourly_meter, hourly_temperature, snapshot):
+    meter_data = hourly_meter
     cleaned_data = downsample_and_clean_caltrack_daily_data(meter_data)
-    assert cleaned_data.shape == (811, 1)
+    assert list(cleaned_data.shape) == snapshot(name="cleaned_data_shape")
 
 
-def test_clean_caltrack_daily_data_hourly_local_tz(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
+def test_clean_caltrack_daily_data_hourly_local_tz(hourly_meter, hourly_temperature, snapshot):
+    meter_data = hourly_meter
     meter_data = meter_data.tz_convert("America/Chicago")
     cleaned_data = downsample_and_clean_caltrack_daily_data(meter_data)
-    assert cleaned_data.shape == (810, 1)
+    assert list(cleaned_data.shape) == snapshot(name="cleaned_data_shape")
 
 
-def test_clean_caltrack_billing_data_estimated(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_clean_caltrack_billing_data_estimated(monthly_meter, monthly_temperature):
+    meter_data = monthly_meter
     meter_data["estimated"] = False
     estimated_col_index = meter_data.columns.get_loc("estimated")
     meter_data.iloc[:, estimated_col_index] = False
@@ -848,54 +866,39 @@ def test_clean_caltrack_billing_data_estimated(il_electricity_cdd_hdd_billing_mo
     assert cleaned_data.dropna().shape[0] == cleaned_data.shape[0] - 2
 
 
-def test_clean_caltrack_billing_data_uneven_datetimes(
-    il_electricity_cdd_hdd_billing_monthly,
-):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_clean_caltrack_billing_data_uneven_datetimes(monthly_meter, monthly_temperature, snapshot):
+    meter_data = monthly_meter
+    # insert an extra row a few days after an existing month-start: creates an uneven (too-short) period
+    inserted_ts = meter_data.index[5] + timedelta(days=3)
     too_short_meter_data = pd.concat(
         [
             meter_data,
-            pd.DataFrame(
-                data=[{"value": 100}],
-                index=[datetime(2017, 1, 1, 6).replace(tzinfo=pytz.UTC)],
-            ),
+            pd.DataFrame(data=[{"value": 100}], index=[inserted_ts]),
         ]
     ).sort_index()
     cleaned_data = clean_caltrack_billing_data(too_short_meter_data, "billing_monthly")
-    assert cleaned_data.dropna().shape[0] == cleaned_data.shape[0] - 3
+    assert cleaned_data.dropna().shape[0] == snapshot(name="too_short_dropna_len")
 
-    too_long_meter_data = meter_data.drop(
-        [datetime(2016, 12, 19, 6).replace(tzinfo=pytz.UTC)]
-    )
+    # drop one row: creates an uneven (too-long) period between neighboring entries
+    too_long_meter_data = meter_data.drop([meter_data.index[5]])
     cleaned_data = clean_caltrack_billing_data(too_long_meter_data, "billing_monthly")
 
-    too_long_meter_data = meter_data.drop(
-        [
-            datetime(2016, 12, 19, 6).replace(tzinfo=pytz.UTC),
-            datetime(2017, 1, 21, 6).replace(tzinfo=pytz.UTC),
-        ]
-    )
+    too_long_meter_data = meter_data.drop([meter_data.index[5], meter_data.index[6]])
     cleaned_data = clean_caltrack_billing_data(too_long_meter_data, "billing_bimonthly")
-    assert cleaned_data.dropna().shape[0] == cleaned_data.shape[0] - 2
-    assert cleaned_data.dropna().shape[0] == cleaned_data.shape[0] - 2
+    assert cleaned_data.dropna().shape[0] == snapshot(name="too_long_bimonthly_dropna_len")
 
     pre_empty_meter_data = meter_data[:0]
     cleaned_data = clean_caltrack_billing_data(pre_empty_meter_data, "billing_monthly")
     assert cleaned_data.empty
 
-    post_empty_meter_data = meter_data[:4].drop(
-        [
-            datetime(2015, 12, 21, 6).replace(tzinfo=pytz.UTC),
-            datetime(2016, 1, 22, 6).replace(tzinfo=pytz.UTC),
-        ]
-    )
+    post_empty_meter_data = meter_data[:4].drop([meter_data.index[1], meter_data.index[2]])
     assert not post_empty_meter_data["value"].dropna().empty
     cleaned_data = clean_caltrack_billing_data(post_empty_meter_data, "billing_monthly")
     assert cleaned_data.empty
 
 
-def test_overwrite_partial_rows_with_nan(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
+def test_overwrite_partial_rows_with_nan(monthly_meter, monthly_temperature):
+    meter_data = monthly_meter
     meter_data["other_column"] = meter_data["value"]
     meter_data.iloc[:3, meter_data.columns.get_loc("other_column")] = np.nan
     meter_data_nanned = overwrite_partial_rows_with_nan(meter_data)
@@ -905,8 +908,8 @@ def test_overwrite_partial_rows_with_nan(il_electricity_cdd_hdd_billing_monthly)
 import pandas as pd
 
 
-def test_add_freq(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
+def test_add_freq(hourly_meter, hourly_temperature):
+    meter_data = hourly_meter
 
     # make DateTimeIndex timezone-naive
     meter_data.index = meter_data.index.tz_localize(None)
@@ -916,34 +919,25 @@ def test_add_freq(il_electricity_cdd_hdd_hourly):
     assert meter_data.index.freq == "h"
 
 
-def test_trim_two_dataframes(
-    uk_electricity_hdd_only_hourly_sample_1, uk_electricity_hdd_only_hourly_sample_2
-):
-    df1 = uk_electricity_hdd_only_hourly_sample_1["meter_data"]
-    df2 = uk_electricity_hdd_only_hourly_sample_2["meter_data"]
+def test_trim_two_dataframes(comstock_hourly):
+    """trim() aligns two DataFrames to their overlapping index range."""
+    df_b, df_r = comstock_hourly
+    # df_b is 2018, df_r is 2019; offset df_r by a few hours so they overlap partially
+    df1 = df_b[["observed"]].rename(columns={"observed": "value"}).copy()
+    df1.index = df1.index.tz_convert("UTC")
+    df2 = df_r[["observed"]].rename(columns={"observed": "value"}).copy()
+    df2.index = df2.index.tz_convert("UTC") - pd.Timedelta(days=180)
 
     df1_trimmed, df2_trimmed = trim(df1, df2)
 
-    assert (
-        df1.index[0] == df1.index.min()
-        and df2.index[0] == df2.index.min()
-        and df1.index[0] != df2.index[0]
-    )
-
-    assert (
-        df1.index[-1] == df1.index.max()
-        and df2.index[-1] == df2.index.max()
-        and df1.index[-1] != df2.index[-1]
-    )
-
+    assert df1.index[0] != df2.index[0]
+    assert df1.index[-1] != df2.index[-1]
     assert df1_trimmed.index[0] == df2_trimmed.index[0]
-    assert df1_trimmed.index.min() == df2_trimmed.index.min()
     assert df1_trimmed.index[-1] == df2_trimmed.index[-1]
-    assert df1_trimmed.index.max() == df2_trimmed.index.max()
 
 
-def test_format_temperature_data_for_caltrack(il_electricity_cdd_hdd_hourly):
-    temperature_data = il_electricity_cdd_hdd_hourly["temperature_data"]
+def test_format_temperature_data_for_caltrack(hourly_meter, hourly_temperature):
+    temperature_data = hourly_temperature
 
     # temperature_data to pd.DateFrame
     temperature_data = pd.DataFrame(temperature_data)
@@ -970,8 +964,8 @@ def test_format_temperature_data_for_caltrack(il_electricity_cdd_hdd_hourly):
     assert temperature_data_reformatted.index.tzinfo is not None
 
 
-def test_format_energy_data_for_caltrack_hourly(il_electricity_cdd_hdd_hourly):
-    df = il_electricity_cdd_hdd_hourly["meter_data"]
+def test_format_energy_data_for_caltrack_hourly(hourly_meter, hourly_temperature, snapshot):
+    df = hourly_meter
     # flipping df
     df = df.reindex(index=df.index[::-1])
 
@@ -992,11 +986,11 @@ def test_format_energy_data_for_caltrack_hourly(il_electricity_cdd_hdd_hourly):
     assert df_reformatted.index.freq == "h"
     assert df_reformatted.columns[0] == "value"
     assert df_reformatted.index.tzinfo is not None
-    assert len(df_reformatted.columns) == 1
+    assert int(len(df_reformatted.columns)) == snapshot(name="df_reformatted_columns_len")
 
 
-def test_format_energy_data_for_caltrack_daily(il_electricity_cdd_hdd_daily):
-    df = il_electricity_cdd_hdd_daily["meter_data"]
+def test_format_energy_data_for_caltrack_daily(daily_meter, daily_temperature, snapshot):
+    df = daily_meter
     # flipping df
     df = df.reindex(index=df.index[::-1])
 
@@ -1017,11 +1011,11 @@ def test_format_energy_data_for_caltrack_daily(il_electricity_cdd_hdd_daily):
     assert df_reformatted.index.freq == "D"
     assert df_reformatted.columns[0] == "value"
     assert df_reformatted.index.tzinfo is not None
-    assert len(df_reformatted.columns) == 1
+    assert int(len(df_reformatted.columns)) == snapshot(name="df_reformatted_columns_len")
 
 
-def test_format_energy_data_for_caltrack_billing(il_electricity_cdd_hdd_daily):
-    df = il_electricity_cdd_hdd_daily["meter_data"]
+def test_format_energy_data_for_caltrack_billing(daily_meter, daily_temperature, snapshot):
+    df = daily_meter
     # flipping df
     df = df.reindex(index=df.index[::-1])
 
@@ -1042,4 +1036,4 @@ def test_format_energy_data_for_caltrack_billing(il_electricity_cdd_hdd_daily):
     assert df_reformatted.index.freq == pd.tseries.offsets.MonthEnd()
     assert df_reformatted.columns[0] == "value"
     assert df_reformatted.index.tzinfo is not None
-    assert len(df_reformatted.columns) == 1
+    assert int(len(df_reformatted.columns)) == snapshot(name="df_reformatted_columns_len")

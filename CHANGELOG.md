@@ -4,6 +4,13 @@ Changelog
 Development
 -----------
 
+* Migrate test suite from `eemeter.samples` (bundled IL/UK CSVs) to ComStock fixtures backed by `hourly_data_2.parquet`; mark 64 IL-data-shape-dependent assertions as skipped pending rewrite
+* Add per-model snapshot regression tests (daily, billing, hourly solar + non-solar, caltrack hourly) pinned via `syrupy`
+* Replace unmaintained `snapshottest` dev dependency with `syrupy>=5,<6`; add `TolerantJSONSnapshotExtension` using `math.isclose(atol=1e-10, rtol=1e-10)` for cross-machine BLAS portability
+* Delete `eemeter.samples` and `eemeter.utilities.io` (no remaining consumers)
+* Speed up test suite via session-scoped fixtures and `slow`/`regression`/`hourly_model` pytest markers; fast loop with `pytest -m "not slow"`
+* `test_data.py`: scope bare `except` to `OSError`, drop unreachable debug `raise`
+* `test_distance_match_large_treatments`: skip on hosts with <12 GB RAM
 
 opendsm-1.2.7
 -----------

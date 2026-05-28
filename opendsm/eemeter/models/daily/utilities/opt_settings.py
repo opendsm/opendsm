@@ -120,6 +120,11 @@ class OptimizationSettings(BaseSettings):
         description="Initial population multiplier for the optimization algorithm",
     )
 
+    seed: Optional[int] = CustomField(
+        default=0,
+        description="Seed passed to nlopt.srand for deterministic convergence; set to None to use system entropy",
+    )
+
 
     @pydantic.model_validator(mode="after")
     def _check_population_multiplier(self):

@@ -15,7 +15,6 @@ from opendsm.eemeter.models.billing.data import (
     BillingBaselineData,
     BillingReportingData,
 )
-from opendsm.eemeter.samples import load_sample
 import numpy as np
 import pandas as pd
 from pandas import Timestamp, DatetimeIndex, DataFrame
@@ -420,121 +419,78 @@ def test_billing_baseline_data_with_bimonthly_daily_frequencies(
     assert len(cls.disqualification) == 0
 
 
-def test_billing_baseline_data_with_specific_hourly_input():
-    meter, temperature, _ = load_sample("il-electricity-cdd-hdd-hourly")
-    # Take the extra month for billing data
-    meter = meter[
-        (meter.index.year == 2017)
-        | ((meter.index.year == 2018) & (meter.index.month == 1))
-    ]
-    temperature = temperature[
-        (temperature.index.year == 2017)
-        | ((temperature.index.year == 2018) & (temperature.index.month == 1))
-    ]
+def _meter_temp(df_hourly_baseline):
+    """Extract (meter_df_with_value, temperature_series) in UTC from a ComStock hourly baseline DataFrame."""
+    sub = df_hourly_baseline.copy()
+    sub.index = sub.index.tz_convert("UTC")
+    meter = sub[["observed"]].rename(columns={"observed": "value"})
+    temperature = sub["temperature"]
+
+    return meter, temperature
+
+
+def test_billing_baseline_data_with_specific_hourly_input(comstock_hourly, snapshot):
+    df_b, _ = comstock_hourly
+    meter, temperature = _meter_temp(df_b)
 
     cls = BillingBaselineData.from_series(meter, temperature, is_electricity_data=True)
 
     assert cls.df is not None
-    assert (
-        len(cls.df) == (meter.index[-1] - meter.index[0]).days + 1
-    )  # hourly series does not have trailing nan
-    assert round(cls.df.observed.sum(), 2) == round(meter.value.sum(), 2)
-    assert len(cls.warnings) == 2
-    assert [warning.qualified_name for warning in cls.warnings] == [
-        "eemeter.data_quality.utc_index",
-        "eemeter.sufficiency_criteria.inferior_model_usage",
-    ]
-    assert len(cls.disqualification) == 1
-    assert (
-        cls.disqualification[0].qualified_name
-        == "eemeter.sufficiency_criteria.incorrect_number_of_total_days"
-    )
+    assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
+    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
 
 
-def test_billing_baseline_data_with_specific_daily_input():
-    meter, temperature, _ = load_sample("il-electricity-cdd-hdd-daily")
-    # Take the extra month for billing data
-    meter = meter[
-        (meter.index.year == 2017)
-        | ((meter.index.year == 2018) & (meter.index.month == 1))
-    ]
-    temperature = temperature[
-        (temperature.index.year == 2017)
-        | ((temperature.index.year == 2018) & (temperature.index.month == 1))
-    ]
+def test_billing_baseline_data_with_specific_daily_input(comstock_daily, comstock_hourly, snapshot):
+    df_daily, _ = comstock_daily
+    df_hourly, _ = comstock_hourly
+
+    sub_daily = df_daily.copy()
+    sub_daily.index = sub_daily.index.tz_convert("UTC")
+    meter = sub_daily[["observed"]].rename(columns={"observed": "value"})
+    _, temperature = _meter_temp(df_hourly)
+
     cls = BillingBaselineData.from_series(meter, temperature, is_electricity_data=True)
 
     assert cls.df is not None
-    assert (
-        len(cls.df) == (meter.index[-1] - meter.index[0]).days + 1
-    )  # daily series does not have trailing nan
-    assert round(cls.df.observed.sum(), 2) == round(meter.value.sum(), 2)
-    assert len(cls.warnings) == 2
-    assert [warning.qualified_name for warning in cls.warnings] == [
-        "eemeter.data_quality.utc_index",
-        "eemeter.sufficiency_criteria.inferior_model_usage",
-    ]
-    assert len(cls.disqualification) == 1
-    assert (
-        cls.disqualification[0].qualified_name
-        == "eemeter.sufficiency_criteria.incorrect_number_of_total_days"
-    )
+    assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
+    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
 
 
-def test_billing_baseline_data_with_specific_missing_daily_input():
-    meter, temperature, _ = load_sample("il-electricity-cdd-hdd-daily")
-    # Take the extra month for billing data
-    meter = meter[
-        (meter.index.year == 2017)
-        | ((meter.index.year == 2018) & (meter.index.month == 1))
-    ]
-    temperature = temperature[
-        (temperature.index.year == 2017)
-        | ((temperature.index.year == 2018) & (temperature.index.month == 1))
-    ]
+def test_billing_baseline_data_with_specific_missing_daily_input(comstock_daily, comstock_hourly, snapshot):
+    df_daily, _ = comstock_daily
+    df_hourly, _ = comstock_hourly
+
+    sub_daily = df_daily.copy()
+    sub_daily.index = sub_daily.index.tz_convert("UTC")
+    meter = sub_daily[["observed"]].rename(columns={"observed": "value"})
     # Set 1 month meter data to NaN
     meter.loc[meter.index.month == 4] = np.nan
+    _, temperature = _meter_temp(df_hourly)
 
     cls = BillingBaselineData.from_series(meter, temperature, is_electricity_data=True)
 
     assert cls.df is not None
-    assert (
-        len(cls.df) == (meter.index[-1] - meter.index[0]).days + 1
-    )  # daily series does not have trailing nan
-    assert round(cls.df.observed.sum(), 2) == round(meter.value.sum(), 2)
-    assert len(cls.warnings) == 2
-    assert [warning.qualified_name for warning in cls.warnings] == [
-        "eemeter.data_quality.utc_index",
-        "eemeter.sufficiency_criteria.inferior_model_usage",
-    ]
-    assert len(cls.disqualification) == 1
-    assert (
-        cls.disqualification[0].qualified_name
-        == "eemeter.sufficiency_criteria.incorrect_number_of_total_days"
-    )
+    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
 
 
-def test_billing_baseline_data_with_specific_monthly_input():
-    meter, temperature, _ = load_sample("il-electricity-cdd-hdd-billing_monthly")
-    # Take the extra month for billing data
-    meter = meter[
-        (meter.index.year == 2017)
-        | ((meter.index.year == 2018) & (meter.index.month == 1))
-    ]
-    temperature = temperature[
-        (temperature.index.year == 2017)
-        | ((temperature.index.year == 2018) & (temperature.index.month == 1))
-    ]
+def test_billing_baseline_data_with_specific_monthly_input(comstock_monthly, comstock_hourly, snapshot):
+    df_monthly, _ = comstock_monthly
+    df_hourly, _ = comstock_hourly
+
+    sub_monthly = df_monthly.copy()
+    sub_monthly.index = sub_monthly.index.tz_convert("UTC")
+    meter = sub_monthly[["observed"]].rename(columns={"observed": "value"}).dropna()
+    _, temperature = _meter_temp(df_hourly)
+
     cls = BillingBaselineData.from_series(meter, temperature, is_electricity_data=True)
 
     assert cls.df is not None
-    assert len(cls.df) == (meter.index[-1] - meter.index[0]).days
-    assert round(cls.df.observed.sum(), 2) == round(meter.value.sum(), 2)
-    assert len(cls.warnings) == 1
-    assert set([warning.qualified_name for warning in cls.warnings]) == set(
-        ["eemeter.data_quality.utc_index"]
-    )
-    assert len(cls.disqualification) == 0
+    assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
+    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
 
 
 @pytest.mark.parametrize(

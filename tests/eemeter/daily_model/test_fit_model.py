@@ -16,6 +16,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
+
 from opendsm.eemeter.models.daily.model import DailyModel
 from opendsm.eemeter.models.daily.data import DailyBaselineData
 from opendsm.eemeter.models.daily.optimize_results import OptimizedResult
@@ -34,6 +36,7 @@ class TestFitModel:
         df = df[["temperature", "observed"]]
         cls.meter_data = DailyBaselineData(df, is_electricity_data=True)
 
+    @pytest.mark.slow
     def test_fit_model(self):
         # Create a DailyModel instance
         fm = DailyModel().fit(self.meter_data, ignore_disqualification=True)

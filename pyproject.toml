@@ -46,7 +46,7 @@ dev = [
   "pytest-cov>=7.0.0",
   "pytest-profiling",
   "pytest-xdist",
-  "snapshottest==0.6.0",
+  "syrupy>=5,<6",
   "tox",
   "twine",
   "typing",
