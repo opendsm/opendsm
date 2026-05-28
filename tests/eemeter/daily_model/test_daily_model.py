@@ -16,8 +16,6 @@ import pytest
 import numpy as np
 
 from opendsm.eemeter import DailyModel, DailyBaselineData, DailyReportingData
-from opendsm.eemeter.samples import load_sample
-from opendsm.eemeter.common.transform import get_baseline_data
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
     DisqualifiedModelError,
@@ -25,24 +23,21 @@ from opendsm.eemeter.common.exceptions import (
 
 
 @pytest.fixture
-def daily_series():
-    meter_data, temperature_data, sample_metadata = load_sample(
-        "il-electricity-cdd-hdd-daily"
-    )
-    blackout_start_date = sample_metadata["blackout_start_date"]
-    meter_data.index = meter_data.index.tz_convert("US/Pacific")
+def daily_series(comstock_daily):
+    """(meter_df, temperature_series) extracted from ComStock daily baseline."""
+    df_b, _ = comstock_daily
+    meter = df_b[["observed"]].rename(columns={"observed": "value"}).copy()
+    meter.index = meter.index.tz_convert("US/Pacific")
+    temp = df_b["temperature"].copy()
+    temp.index = temp.index.tz_convert("UTC")
 
-    baseline_meter_data, warnings = get_baseline_data(
-        meter_data, end=blackout_start_date, max_days=365
-    )
-    baseline_meter_data = baseline_meter_data[:-1]  # drop nan
-    return baseline_meter_data, temperature_data
+    return meter, temp
 
 
 @pytest.fixture
 def bad_daily_series(daily_series):
     meter, temp = daily_series
-    meter[:50] += 3000
+    meter.iloc[:50] += meter["value"].median() * 50
     return meter, temp
 
 

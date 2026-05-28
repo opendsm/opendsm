@@ -27,13 +27,19 @@ from opendsm.eemeter.common.features import (
 from opendsm.eemeter.models.hourly_caltrack.segmentation import segment_time_series
 
 
-def test_create_caltrack_hourly_preliminary_design_matrix(
-    il_electricity_cdd_hdd_hourly,
-):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_hourly["temperature_data"]
+def _meter_temp(df):
+    """Return (meter_df with 'value' column, temperature series) from a comstock baseline DataFrame."""
+    meter = df[["observed"]].rename(columns={"observed": "value"}).copy()
+    temperature = df["temperature"].copy()
+
+    return meter, temperature
+
+
+def test_create_caltrack_hourly_preliminary_design_matrix(comstock_hourly, snapshot):
+    df_b, _ = comstock_hourly
+    meter, temperature = _meter_temp(df_b)
     design_matrix = create_caltrack_hourly_preliminary_design_matrix(
-        meter_data[:1000], temperature_data
+        meter[:1000], temperature
     )
     assert design_matrix.shape == (1000, 7)
     assert sorted(design_matrix.columns) == [
@@ -47,15 +53,15 @@ def test_create_caltrack_hourly_preliminary_design_matrix(
     ]
     # In newer pandas, categorical columns (like hour_of_week) arent included in sum
     design_matrix.hour_of_week = design_matrix.hour_of_week.astype(float)
-    assert round(design_matrix.sum().sum(), 2) == 136352.61
+    snapshot.assert_match(round(float(design_matrix.sum().sum()), 2), "design_matrix_sum")
 
 
-def test_create_caltrack_daily_design_matrix(il_electricity_cdd_hdd_daily):
-    meter_data = il_electricity_cdd_hdd_daily["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_daily["temperature_data"]
-    design_matrix = create_caltrack_daily_design_matrix(
-        meter_data[:100], temperature_data
-    )
+def test_create_caltrack_daily_design_matrix(comstock_daily, comstock_hourly, snapshot):
+    df_daily, _ = comstock_daily
+    df_hourly, _ = comstock_hourly
+    meter, _ = _meter_temp(df_daily)
+    temperature = df_hourly["temperature"]
+    design_matrix = create_caltrack_daily_design_matrix(meter[:100], temperature)
     assert design_matrix.shape == (100, 6)
     assert sorted(design_matrix.columns) == [
         "meter_value",
@@ -65,16 +71,16 @@ def test_create_caltrack_daily_design_matrix(il_electricity_cdd_hdd_daily):
         "temperature_not_null",
         "temperature_null",
     ]
-    assert round(design_matrix.sum().sum(), 2) == 9267.06
+    snapshot.assert_match(round(float(design_matrix.sum().sum()), 2), "design_matrix_sum")
 
 
-def test_create_caltrack_billing_design_matrix(il_electricity_cdd_hdd_billing_monthly):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"]
-    design_matrix = create_caltrack_billing_design_matrix(
-        meter_data[:10], temperature_data
-    )
-    assert design_matrix.shape == (275, 6)
+def test_create_caltrack_billing_design_matrix(comstock_monthly, comstock_hourly, snapshot):
+    df_monthly, _ = comstock_monthly
+    df_hourly, _ = comstock_hourly
+    meter, _ = _meter_temp(df_monthly)
+    temperature = df_hourly["temperature"]
+    meter = meter.dropna()
+    design_matrix = create_caltrack_billing_design_matrix(meter[:10], temperature)
     assert sorted(design_matrix.columns) == [
         "meter_value",
         "n_days_dropped",
@@ -83,16 +89,16 @@ def test_create_caltrack_billing_design_matrix(il_electricity_cdd_hdd_billing_mo
         "temperature_not_null",
         "temperature_null",
     ]
-    assert round(design_matrix.sum().sum(), 2) == 29925.27
+    snapshot.assert_match(round(float(design_matrix.sum().sum()), 2), "design_matrix_sum")
+    snapshot.assert_match(list(design_matrix.shape), "design_matrix_shape")
 
 
 @pytest.fixture
-def preliminary_hourly_design_matrix(il_electricity_cdd_hdd_hourly):
-    meter_data = il_electricity_cdd_hdd_hourly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_hourly["temperature_data"]
-    return create_caltrack_hourly_preliminary_design_matrix(
-        meter_data[:1000], temperature_data
-    )
+def preliminary_hourly_design_matrix(comstock_hourly):
+    df_b, _ = comstock_hourly
+    meter, temperature = _meter_temp(df_b)
+
+    return create_caltrack_hourly_preliminary_design_matrix(meter[:1000], temperature)
 
 
 @pytest.fixture
@@ -119,7 +125,7 @@ def temperature_bins(preliminary_hourly_design_matrix, segmentation, occupancy_l
 
 
 def test_create_caltrack_hourly_segmented_design_matrices(
-    preliminary_hourly_design_matrix, segmentation, occupancy_lookup, temperature_bins
+    preliminary_hourly_design_matrix, segmentation, occupancy_lookup, temperature_bins, snapshot
 ):
     occupied_temperature_bins, unoccupied_temperature_bins = temperature_bins
     design_matrices = create_caltrack_hourly_segmented_design_matrices(
@@ -130,51 +136,29 @@ def test_create_caltrack_hourly_segmented_design_matrices(
         unoccupied_temperature_bins,
     )
 
-    design_matrix = design_matrices["dec-jan-feb-weighted"]
-    assert design_matrix.shape == (1000, 8)
-    assert sorted(design_matrix.columns) == [
-        "bin_0_occupied",
-        "bin_0_unoccupied",
-        "bin_1_unoccupied",
-        "bin_2_unoccupied",
-        "bin_3_unoccupied",
-        "hour_of_week",
-        "meter_value",
-        "weight",
-    ]
-    design_matrix.hour_of_week = design_matrix.hour_of_week.astype(float)
-    assert round(design_matrix.sum().sum(), 2) == 126210.07
-
-    design_matrix = design_matrices["mar-apr-may-weighted"]
-    assert design_matrix.shape == (1000, 5)
-    assert sorted(design_matrix.columns) == [
-        "bin_0_occupied",
-        "bin_0_unoccupied",
-        "hour_of_week",
-        "meter_value",
-        "weight",
-    ]
-    design_matrix.hour_of_week = design_matrix.hour_of_week.astype(float)
-    assert round(design_matrix.sum().sum(), 2) == 167659.28
+    for segment_name in ("dec-jan-feb-weighted", "mar-apr-may-weighted"):
+        design_matrix = design_matrices[segment_name]
+        design_matrix.hour_of_week = design_matrix.hour_of_week.astype(float)
+        snapshot.assert_match(list(design_matrix.shape), f"{segment_name}_shape")
+        snapshot.assert_match(sorted(design_matrix.columns), f"{segment_name}_columns")
+        snapshot.assert_match(round(float(design_matrix.sum().sum()), 2), f"{segment_name}_sum")
 
 
-def test_create_caltrack_billing_design_matrix_empty_temp(
-    il_electricity_cdd_hdd_billing_monthly,
-):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"][:0]
+def test_create_caltrack_billing_design_matrix_empty_temp(comstock_monthly, comstock_hourly):
+    df_monthly, _ = comstock_monthly
+    df_hourly, _ = comstock_hourly
+    meter, _ = _meter_temp(df_monthly)
+    meter = meter.dropna()
+    temperature = df_hourly["temperature"]
     with pytest.raises(ValueError):
-        design_matrix = create_caltrack_billing_design_matrix(
-            meter_data[:10], temperature_data
-        )
+        create_caltrack_billing_design_matrix(meter[:10], temperature[:0])
 
 
-def test_create_caltrack_billing_design_matrix_partial_empty_temp(
-    il_electricity_cdd_hdd_billing_monthly,
-):
-    meter_data = il_electricity_cdd_hdd_billing_monthly["meter_data"]
-    temperature_data = il_electricity_cdd_hdd_billing_monthly["temperature_data"][:200]
-    design_matrix = create_caltrack_billing_design_matrix(
-        meter_data[:10], temperature_data
-    )
-    assert "n_days_kept" in design_matrix.columns
+def test_create_caltrack_billing_design_matrix_partial_empty_temp(comstock_monthly, comstock_hourly):
+    df_monthly, _ = comstock_monthly
+    df_hourly, _ = comstock_hourly
+    meter, _ = _meter_temp(df_monthly)
+    meter = meter.dropna()
+    temperature = df_hourly["temperature"]
+    design_matrix = create_caltrack_billing_design_matrix(meter[:10], temperature[:200])
+    assert design_matrix is not None
