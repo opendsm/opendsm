@@ -12,16 +12,15 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from .standardize import robust_standardize
-from .bisymlog import bisymlog
-from .scipy_yeo_johnson import scipy_YJ, robust_scipy_YJ
-from .raymaekers_robust_yeo_johnson import raymaekers_robust_YJ
+from .standardize import Standardize
+from .bisymlog import Bisymlog
+from .yeo_johnson import YeoJohnson
+from .box_cox import BoxCox
 
 
 __all__ = (
-    "robust_standardize",
-    "bisymlog",
-    "scipy_YJ",
-    "robust_scipy_YJ"
-    "raymaekers_robust_YJ",
+    "Standardize",
+    "Bisymlog",
+    "YeoJohnson",
+    "BoxCox",
 )

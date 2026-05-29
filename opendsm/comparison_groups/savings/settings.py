@@ -26,9 +26,10 @@ from opendsm.common.base_settings import BaseSettings
 class TransformChoice(str, Enum):
     STANDARDIZE = "standardize"
     BISYMLOG = "bisymlog"
-    SCIPY_YJ = "scipy_yj"
-    ROBUST_SCIPY_YJ = "robust_scipy_yj"
-    ROBUST_YJ = "robust_yj"
+    YEO_JOHNSON = "yeo_johnson"
+    ROBUST_YEO_JOHNSON = "robust_yeo_johnson"
+    BOX_COX = "box_cox"
+    ROBUST_BOX_COX = "robust_box_cox"
 
 
 class OutlierRejectionSettings(BaseSettings):

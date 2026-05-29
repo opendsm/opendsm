@@ -184,9 +184,7 @@ def safe_divide(num, den, min_denominator=1e-3, return_all=True):
 
 
 def OoM(x, method="round"):
-    if not isinstance(x, np.ndarray):
-        x = np.array(x)
-
+    x = np.atleast_1d(np.asarray(x, dtype=float))
     return OoM_numba(x, method=method)
 
 
