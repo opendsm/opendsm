@@ -13,87 +13,126 @@
 #  limitations under the License.
 
 import warnings
+from copy import deepcopy
+from typing import List, Optional
 
-import numba
 import numpy as np
 import numpy.ma as ma
+import pandas as pd
 
+# Unused imports kept for potential future use
 from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import IterativeImputer
 from sklearn.linear_model import BayesianRidge
-
 from scipy.interpolate import RBFInterpolator
 
-from copy import deepcopy as copy
 
+def _autocorr_fcn(x, lags, exclude_0=True):
+    """Compute autocorrelation function for given lags.
 
-def autocorr_fcn(x, lags, exclude_0=True):
-    """manualy compute, non partial"""
-    x_msk = ma.masked_invalid(x)
-    mean = ma.mean(x_msk)
-    var = ma.var(x_msk)
-    xp = x_msk - mean
-    corr = [1.0 if l == 0 else ma.sum(xp[l:] * xp[:-l]) / len(x) / var for l in lags]
+    Manually computes non-partial autocorrelation, handling missing values
+    via masked arrays. Returns both positive lags (future) and negative lags
+    (past) by mirroring the correlation values.
 
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", "Warning: converting a masked element to nan")
-        # combine the lags, the correlation values, and mirror to get leads/lags
-        res = np.vstack((lags, corr)).T
-    if exclude_0:  # remove the 0 lag
-        res = res[1:]
-        rev_res = copy(res)[::-1]
-    else:
-        rev_res = copy(res)[::-1][:-1]
+    Args:
+        x: Input array (may contain NaN values)
+        lags: Array of lag values to compute correlation for
+        exclude_0: Whether to exclude zero-lag correlation (always 1.0)
 
-    rev_res[:, 0] = -rev_res[:, 0]
-    res = np.vstack((rev_res, res))
+    Returns:
+        2D array with shape (n_lags, 2) containing [lag, correlation] pairs
+    """
+    x_masked = ma.masked_invalid(x)
+    mean = ma.mean(x_masked)
+    var = ma.var(x_masked)
 
-    return res
+    if var == 0:
+        var = 1.0
 
-
-# unused
-def autocorr_fcn2(x, lags):
-    """np.correlate, non partial"""
-    x_msk = ma.masked_invalid(x)
-    mean = ma.mean(x_msk)
-    var = ma.var(x_msk)
-    xp = x_msk - mean
-
-    corr = ma.correlate(xp, xp, "full")[len(x) - 1 :] / var / len(x)
-
-    return corr[: len(lags)]
-
-
-# unused
-def autocorr_fcn3(x, lags):
-    """fft, pad 0s, non partial"""
-    x_msk = ma.masked_invalid(x)
+    x_centered = x_masked - mean
     n = len(x)
-    # pad 0s to 2n-1
+
+    # Compute correlation for each lag
+    corr = np.zeros(len(lags))
+
+    for idx, lag in enumerate(lags):
+        if lag == 0:
+            corr[idx] = 1.0
+        else:
+            lag_corr = ma.sum(x_centered[lag:] * x_centered[:-lag]) / n / var
+            corr[idx] = ma.filled(lag_corr, 0.0)
+
+    result = np.vstack((lags, corr)).T
+
+    # Handle zero-lag exclusion and create mirrored negative lags
+    if exclude_0:
+        result = result[1:]
+        reversed_result = deepcopy(result)[::-1]
+
+    else:
+        reversed_result = deepcopy(result)[::-1][:-1]
+
+    reversed_result[:, 0] = -reversed_result[:, 0]
+    result = np.vstack((reversed_result, result))
+
+    return result
+
+
+def _autocorr_fcn2(x, lags):
+    """Alternative autocorr using np.correlate (unused, kept for reference).
+
+    Computes non-partial autocorrelation using numpy's correlate function.
+    Generally slower than _autocorr_fcn for typical use cases.
+    """
+    x_masked = ma.masked_invalid(x)
+    mean = ma.mean(x_masked)
+    var = ma.var(x_masked)
+    x_centered = x_masked - mean
+
+    corr = ma.correlate(x_centered, x_centered, "full")[len(x) - 1:] / var / len(x)
+
+    return corr[:len(lags)]
+
+
+def _autocorr_fcn3(x, lags):
+    """Alternative autocorr using FFT (unused, kept for reference).
+
+    Computes non-partial autocorrelation using Fast Fourier Transform.
+    Most efficient for very long time series but has higher memory overhead.
+    """
+    x_masked = ma.masked_invalid(x)
+    n = len(x)
+
+    # Pad to nearest power of 2 for FFT efficiency
     ext_size = 2 * n - 1
-    # nearest power of 2
-    fsize = 2 ** np.ceil(np.log2(ext_size)).astype("int")
+    fft_size = 2 ** np.ceil(np.log2(ext_size)).astype("int")
 
-    mean = ma.mean(x_msk)
-    var = ma.var(x_msk)
-    xp = x - mean
+    mean = ma.mean(x_masked)
+    var = ma.var(x_masked)
+    x_centered = x - mean
 
-    # do fft and ifft
-    cf = np.fft.fft(xp, fsize)
+    # Compute autocorrelation via FFT
+    cf = np.fft.fft(x_centered, fft_size)
     sf = cf.conjugate() * cf
     corr = np.fft.ifft(sf).real
     corr = corr / var / n
 
-    return corr[: len(lags)]
+    return corr[:len(lags)]
 
 
-# unused
-def multiple_imputation(df, columns=None, **kwargs):
-    # get indices of missing values
-    missing_idx = df[columns].isna().any(axis=1)
+def _multiple_imputation(df, columns=None, **kwargs):
+    """Alternative imputation using sklearn IterativeImputer (unused).
+
+    Uses Bayesian Ridge regression to iteratively impute missing values
+    based on temporal features (hour, day, month). Generally slower than
+    autocorrelation-based method but can handle complex patterns.
+    """
+    # Get indices of missing values
+    missing_mask = df[columns].isna().any(axis=1)
 
     df_imputed = df[columns].reset_index()
-    # convert datetime to hours since earliest datetime
+
+    # Convert datetime to numerical features
     df_imputed["datetime_elapsed"] = (
         df_imputed["datetime"] - df_imputed["datetime"].min()
     ).dt.total_seconds() / 3600
@@ -102,169 +141,214 @@ def multiple_imputation(df, columns=None, **kwargs):
     df_imputed["month"] = df_imputed["datetime"].dt.month
     df_imputed = df_imputed.set_index("datetime")
 
-    settings_dict = {
-        "estimator": BayesianRidge(),  # can use SVR, BayesianRidge, etc.
+    # Configure imputer
+    imputer_settings = {
+        "estimator": BayesianRidge(),
         "max_iter": 10,
         "random_state": None,
     }
-    settings_dict.update(kwargs)
+    imputer_settings.update(kwargs)
 
-    imputer = IterativeImputer(**settings_dict)
+    imputer = IterativeImputer(**imputer_settings)
     imputer.fit(df_imputed)
     df_imputed[:] = imputer.transform(df_imputed)
 
-    # add df_imputed back to df
-    df.loc[missing_idx, columns] = df_imputed.loc[missing_idx, columns]
+    # Copy imputed values back to original dataframe
+    df.loc[missing_mask, columns] = df_imputed.loc[missing_mask, columns]
 
-    # add additional columns to indicate which values were imputed
+    # Add interpolation flags
     for col in columns:
-        interp_bool_col = f"interpolated_{col}"
-
-        df[interp_bool_col] = False
-        df.loc[missing_idx, interp_bool_col] = True
+        flag_col = f"interpolated_{col}"
+        df[flag_col] = False
+        df.loc[missing_mask, flag_col] = True
 
     return df
 
 
-# @numba.njit
-def shift_array(arr, num, fill_value=np.nan):
-    # Courtesy of https://stackoverflow.com/questions/30399534/shift-elements-in-a-numpy-array
-    # get size of arr
-    arr_size = arr.shape[0]
+def _shift_array(arr, num, fill_value=np.nan):
+    """Shift array elements by num positions, filling with fill_value.
 
-    if arr_size <= 20000:
-        if num >= 0:
-            return np.concatenate((np.full(num, fill_value), arr[:-num]))
-        else:
-            return np.concatenate((arr[-num:], np.full(-num, fill_value)))
-    else:
-        result = np.empty_like(arr)
+    Optimized for large arrays using pre-allocated memory to avoid
+    concatenation overhead.
 
-        if num > 0:
-            result[:num] = fill_value
-            result[num:] = arr[:-num]
-        elif num < 0:
-            result[num:] = fill_value
-            result[:num] = arr[-num:]
-        else:
-            result[:] = arr
+    Args:
+        arr: Input array to shift
+        num: Number of positions to shift (positive=right, negative=left)
+        fill_value: Value to fill shifted positions with
 
-        return result
+    Returns:
+        Shifted array with same shape as input
+    """
+    if num == 0:
+        return arr.copy()
+
+    result = np.empty_like(arr)
+
+    if num > 0:
+        result[:num] = fill_value
+        result[num:] = arr[:-num]
+    else:  # num < 0
+        result[num:] = fill_value
+        result[:num] = arr[-num:]
+
+    return result
 
 
 def _interpolate_col(x, lags):
-    # check that the column has nans
-    if x.isna().sum() == 0:
+    """Interpolate missing values using autocorrelation-based method.
+
+    Uses temporal patterns (lags/leads) with highest autocorrelation to
+    fill missing values. Iteratively relaxes requirements to fill all gaps.
+
+    Args:
+        x: Pandas Series with potential missing values
+        lags: Maximum lag to consider for autocorrelation
+
+    Returns:
+        Series with missing values filled
+    """
+    # Early exit if no missing values or all missing
+    nan_count = x.isna().sum()
+    if nan_count == 0 or nan_count == len(x):
         return x
 
-    elif x.isna().sum() == len(x):
-        return x
-
-    # calculate the number of lags and leads to consider
+    # Calculate number of autocorrelation indices to use
     if x.name == "observed":
-        missing_frac = x.isna().sum() / len(x)
-        n_cor_idx_heuristic = (
-            np.round((4.012 * np.log(missing_frac) + 24.38) / 2, 0) * 2
-        )
+        missing_frac = nan_count / len(x)
+        n_cor_idx_heuristic = np.round((4.012 * np.log(missing_frac) + 24.38) / 2, 0) * 2
         n_cor_idx = int(np.max([6, n_cor_idx_heuristic]))
     else:
         n_cor_idx = 6
 
-    # Calculate the correlation of col with its lags and leads
-    # create lags from -lags to lags
+    # Calculate autocorrelation for lags 1 to lags
     lag_array = np.arange(lags + 1)
-    autocorr = autocorr_fcn(x.values, lag_array, exclude_0=True)
+    autocorr = _autocorr_fcn(x.values, lag_array, exclude_0=True)
 
-    # take the largest n_cor_idx from second column using argpartition
-    idx = np.argpartition(autocorr[:, 1], -n_cor_idx)[-n_cor_idx:]
-    autocorr = autocorr[idx]
-
-    # sort autocorr by the autocorrelation value
+    # Select top n_cor_idx lags by correlation strength
+    top_idx = np.argpartition(autocorr[:, 1], -n_cor_idx)[-n_cor_idx:]
+    autocorr = autocorr[top_idx]
     autocorr = autocorr[np.argsort(autocorr[:, 1])[::-1]]
-    autocorr_idx = autocorr[:, 0]
+    best_lags = autocorr[:, 0].astype(int)
 
-    # interpolate and update the values
+    # Pre-compute shifted arrays for all selected lags (avoid recomputing in loop)
+    num_rows = len(x)
+    num_lags = len(best_lags)
+    shifted_arrays = np.empty((num_rows, num_lags))
+
+    for col_idx, lag in enumerate(best_lags):
+        shifted_arrays[:, col_idx] = _shift_array(x.values, lag)
+
+    # Iteratively fill missing values, relaxing minimum valid helpers requirement
     max_iter = 10
-    for i, cnt_min in enumerate(np.linspace(n_cor_idx, 1, max_iter).astype(int)):
-        num_rows = x.shape[0]
-        num_cols = len(autocorr_idx)
+    min_valid_counts = np.linspace(n_cor_idx, 1, max_iter).astype(int)
 
-        autocorr_helpers = np.empty((num_rows, num_cols))
-        for i in range(num_cols):
-            shift = int(autocorr_idx[i])
-            autocorr_helpers[:, i] = shift_array(x.values, shift)
+    for min_valid in min_valid_counts:
+        # Get current missing value indices
+        nan_mask = x.isna().values
+        if not nan_mask.any():
+            break
 
-        # get the indices of the missing values
-        nan_series_idx = x.index[x.isna()]
-        nan_idx = x.index.get_indexer(nan_series_idx)
+        nan_indices = np.where(nan_mask)[0]
 
-        # nan values where helpers are not nan
-        valid_idx = np.sum(~np.isnan(autocorr_helpers[nan_idx, :]), axis=1) >= cnt_min
-        if valid_idx.sum() == 0:
+        # Count valid (non-NaN) helpers for each missing position
+        valid_helper_counts = np.sum(~np.isnan(shifted_arrays[nan_indices, :]), axis=1)
+        can_fill_mask = valid_helper_counts >= min_valid
+
+        if not can_fill_mask.any():
             continue
 
-        nan_series_idx = nan_series_idx[valid_idx]
-        nan_idx = x.index.get_indexer(nan_series_idx)
+        # Fill positions that have enough valid helpers
+        fillable_indices = nan_indices[can_fill_mask]
+        fill_values = np.nanmean(shifted_arrays[fillable_indices, :], axis=1)
 
-        # for each row, if the value is missing, calculate the mean of the lags and leads
-        # ignore FutureWarning from pandas for now
         with warnings.catch_warnings():
             warnings.simplefilter(action="ignore", category=FutureWarning)
-            x.loc[nan_series_idx] = np.nanmean(autocorr_helpers[nan_idx, :], axis=1)
+            x.iloc[fillable_indices] = fill_values
 
-        if x.isna().sum() == 0:
-            break
+        # Update shifted arrays with newly filled values for next iteration
+        for col_idx, lag in enumerate(best_lags):
+            shifted_arrays[:, col_idx] = _shift_array(x.values, lag)
 
     return x
 
 
-def interpolate(df, columns=None):
-    skip_autocorr_interpolation = False
-    if len(df) > 6 * 24 * 7:
-        lags = 24 * 7 * 2 + 1
-    elif (len(df) > 3 * 24 * 7) and (len(df) <= 6 * 24 * 7):
-        lags = 24 * 7 + 1
-    elif (len(df) > 3 * 24) and (len(df) <= 3 * 24 * 7):
-        lags = 24 + 1
+def interpolate(df: pd.DataFrame, columns: Optional[List[str]] = None) -> pd.DataFrame:
+    """Interpolate missing values in hourly time series data.
+
+    Uses autocorrelation-based method to leverage temporal patterns, with
+    fallback to simpler methods (time-based, forward fill, backward fill)
+    for any remaining gaps. Adds boolean flags indicating interpolated values.
+
+    The autocorr method is most effective for large gaps (24+ hours) where
+    daily/weekly patterns can be leveraged. For very short time series,
+    simpler methods are used directly.
+
+    Args:
+        df: DataFrame with datetime index and hourly data
+        columns: List of column names to interpolate. Defaults to
+                ["temperature", "ghi", "observed"]
+
+    Returns:
+        DataFrame with missing values filled and "interpolated_{col}" flag
+        columns added for each interpolated column
+    """
+    # Determine lag window based on data length
+    n_hours = len(df)
+    HOURS_PER_DAY = 24
+    HOURS_PER_WEEK = HOURS_PER_DAY * 7
+
+    lags = None
+    use_autocorr = True
+    if n_hours > 6 * HOURS_PER_WEEK:
+        lags = 2 * HOURS_PER_WEEK + 1
+    elif n_hours > 3 * HOURS_PER_WEEK:
+        lags = HOURS_PER_WEEK + 1
+    elif n_hours > 3 * HOURS_PER_DAY:
+        lags = HOURS_PER_DAY + 1
     else:
-        skip_autocorr_interpolation = True
+        use_autocorr = False
 
-    interp_cols = columns
-    if interp_cols is None:
-        interp_cols = ["temperature", "ghi", "observed"]
+    # Default columns to interpolate
+    if columns is None:
+        columns = ["temperature", "ghi", "observed"]
 
-    # check if the columns are in the dataframe and modify columns appropriately
-    for col in interp_cols:
+    # Process each column
+    for col in columns:
+        # Skip if column doesn't exist
         if col not in df.columns:
             continue
 
-        interp_bool_col = f"interpolated_{col}"
-        if interp_bool_col in df.columns:
+        flag_col = f"interpolated_{col}"
+
+        # Skip if interpolation flag already exists
+        if flag_col in df.columns:
             continue
 
-        # main interpolation method
-        idx_missing = df.loc[df[col].isna()].index
-        if not skip_autocorr_interpolation:
+        # Store original missing indices
+        missing_indices = df[col].isna()
+        originally_missing = df.index[missing_indices]
+
+        # Apply autocorr-based interpolation if data is long enough
+        if use_autocorr:
             df[col] = _interpolate_col(df[col].copy(), lags)
 
-        # backup interpolation methods
-        for method in ["time", "ffill", "bfill"]:
-            na_datetime = df.loc[df[col].isna()].index
-            if len(na_datetime) == 0:
+        # Fallback methods for any remaining missing values
+        backup_methods = ["time", "ffill", "bfill"]
+
+        for method in backup_methods:
+            if not df[col].isna().any():
                 break
 
             if method == "time":
                 df[col] = df[col].interpolate(method="time", limit_direction="both")
-
             elif method == "ffill":
                 df[col] = df[col].ffill()
-
             elif method == "bfill":
                 df[col] = df[col].bfill()
 
-        # TODO: we can check if we have similar values multiple times back to back, if yes, raise a warning
-        # where na_datetime_original is True and the col is not na, set the interpolation boolean to True
-        df[interp_bool_col] = False
-        df.loc[df.index.isin(idx_missing) & ~df[col].isna(), interp_bool_col] = True
+        # Create interpolation flag: True where originally missing and now filled
+        df[flag_col] = False
+        was_filled = df.index.isin(originally_missing) & ~df[col].isna()
+        df.loc[was_filled, flag_col] = True
 
     return df
