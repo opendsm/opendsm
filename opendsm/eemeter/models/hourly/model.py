@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import os
-import warnings
 
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -23,12 +22,8 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
 import re
 
-from pydantic import BaseModel, ConfigDict
-
 import numpy as np
 import pandas as pd
-
-from copy import deepcopy as copy
 
 import sklearn
 
@@ -36,215 +31,204 @@ sklearn.set_config(
     assume_finite=True, skip_parameter_validation=True
 )  # Faster, we do checking
 
+from scipy.spatial.distance import cdist
 from scipy.sparse import csr_matrix
 
-from scipy.spatial.distance import cdist
-
-from sklearn.linear_model import ElasticNet, LinearRegression, Ridge, Lasso
+from sklearn.linear_model import ElasticNet, Ridge
 from sklearn.kernel_ridge import KernelRidge
-from sklearn.preprocessing import StandardScaler, RobustScaler
-
-from timeit import default_timer as timer
 
 import json
 
 from opendsm.eemeter.models.hourly import settings as _settings
 from opendsm.eemeter.models.hourly import HourlyBaselineData, HourlyReportingData
+from opendsm.eemeter.models.hourly.scalers import (
+    SafeStandardScaler,
+    SafeRobustScaler,
+)
+from opendsm.eemeter.models.hourly.regressors import (
+    SafeLinearRegression,
+    SafeRidge,
+    SafeLasso,
+    SafeElasticNet,
+    AdaptiveElasticNetRegressor,
+)
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
     DisqualifiedModelError,
 )
 from opendsm.eemeter.common.warnings import EEMeterWarning
 from opendsm.common.clustering.cluster import cluster_features
-from opendsm.common.stats.adaptive_loss import adaptive_weights
 from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict, ReportingMetrics
 from opendsm import __version__
 
 
 
-class AdaptiveElasticNetRegressor:  
-    def __init__(self, base_model, settings):
-        self.settings = settings
+def _get_interpolated_mask(df):
+    cols = [col for col in df.columns if col.startswith("interpolated_")]
+    return df[cols].any(axis=1)
 
-        self.base_model = base_model
-        self.base_model.warm_start = True
 
-        self._hour_model = copy(self.base_model)
+def _eliminate_empty_bins(bin_edges, temp):
+    valid_bin_edges = [-np.inf]
+    for i in range(len(bin_edges) - 1):
+        bin_count = ((temp >= bin_edges[i]) & (temp < bin_edges[i + 1])).sum()
+        if bin_count > 0:
+            valid_bin_edges.append(bin_edges[i + 1])
 
-    
-    def fit(self, X, y, sample_weight=None):
-        """
-        Fit the model with X, y data.
-        
-        Parameters:
-        -----------
-        X : array-like of shape (n_samples, n_features)
-            The training input samples.
-        y : array-like of shape (n_samples,) or (n_samples, n_targets)
-            The target values.
-        sample_weight : array-like of shape (n_samples,), default=None
-            Sample weights.
-            
-        Returns:
-        --------
-        self : returns an instance of self.
-        """
-        settings = self.settings.adaptive_weights
-        window_size = self.settings.adaptive_weights.window_size - 1
-        tol = self.settings.adaptive_weights.tol
+    valid_bin_edges[-1] = np.inf
 
-        num_hours = y.shape[1]
+    return np.array(valid_bin_edges)
 
-        # fit the base model as an initial guess
-        self.base_model.fit(X, y, sample_weight=sample_weight)
 
-        if sample_weight is None:
-            weights = np.ones((X.shape[0], num_hours))
-        else:
-            weights = sample_weight
+def _merge_bins(bin_edges, temp, min_bin_count):
+    # if less than min_bin_count values from temperature are in a bin,
+    # remove bin edge starting from edges and moving inwards
+    bin_edges = _eliminate_empty_bins(bin_edges, temp)
+    for i in range(int(np.ceil(len(bin_edges) / 2)) - 1):
+        if bin_edges[i + 1] == bin_edges[-(i + 2)]:
+            continue  # only 1 bin edge left
 
-        hour_fit = [False for _ in range(num_hours)]
-        alpha_prior = np.array([2.0 for _ in range(num_hours)])
-        alpha_min = alpha_prior.copy()
-        for i in range(settings.max_iter):
-            if all(hour_fit):
-                i -= 1
+        # left side
+        bin_count = ((temp >= bin_edges[i]) & (temp < bin_edges[i + 1])).sum()
+        if bin_count < min_bin_count:
+            bin_edges[i + 1] = bin_edges[i]
+
+        # right side
+        bin_count = ((temp >= bin_edges[-(i + 2)]) & (temp < bin_edges[-(i + 1)])).sum()
+        if bin_count < min_bin_count:
+            bin_edges[-(i + 2)] = bin_edges[-(i + 1)]
+
+    return np.unique(bin_edges)
+
+
+def _fit_exp_growth_decay(x, y, k_only=True, is_x_sorted=False):
+    # Courtsey: https://math.stackexchange.com/questions/1337601/fit-exponential-with-constant
+    #           https://www.scribd.com/doc/14674814/Regressions-et-equations-integrales
+    #           Jean Jacquelin
+
+    # fitting function is actual b*exp(c*x) + a
+
+    # sort x in order
+    x = np.array(x)
+    y = np.array(y)
+    n = len(x)
+
+    if not is_x_sorted:
+        sort_idx = np.argsort(x)
+        x = x[sort_idx]
+        y = y[sort_idx]
+
+    # cumulative trapezoidal integration
+    s = np.concatenate(([0], np.cumsum(0.5 * (y[:-1] + y[1:]) * np.diff(x))))
+
+    x_shifted = x - x[0]
+    y_shifted = y - y[0]
+
+    x_diff_sq = np.sum(x_shifted ** 2)
+    xs_diff = np.sum(s * x_shifted)
+    s_sq = np.sum(s**2)
+    xy_diff = np.sum(x_shifted * y_shifted)
+    ys_diff = np.sum(s * y_shifted)
+
+    A = np.array([[x_diff_sq, xs_diff], [xs_diff, s_sq]])
+    b = np.array([xy_diff, ys_diff])
+
+    _, c = np.linalg.solve(A, b)
+    with np.errstate(divide='ignore'):
+        k = 1 / c # ignore divide by zero, it will be filtered later
+
+    if k_only:
+        a, b = None, None
+    else:
+        theta_i = np.exp(c * x)
+
+        theta = np.sum(theta_i)
+        theta_sq = np.sum(theta_i**2)
+        y_sum = np.sum(y)
+        y_theta = np.sum(y * theta_i)
+
+        A = np.array([[n, theta], [theta, theta_sq]])
+        b = np.array([y_sum, y_theta])
+
+        a, b = np.linalg.solve(A, b)
+
+    return a, b, k
+
+
+def _get_dst_indices(df):
+    """
+    given a datetime-indexed dataframe,
+    return the indices which need to be interpolated and averaged
+    in order to ensure exact 24 hour slots
+    """
+    # TODO test on baselines that begin/end on DST change
+    counts = df.groupby(df.index.date).count()
+    first_col = counts.columns[0]
+    interp = counts[counts[first_col] == 23]
+    mean = counts[counts[first_col] == 25]
+
+    interp_idx = []
+    for idx in interp.index:
+        day_data = df.loc[idx.isoformat()]
+        date_idx = counts.index.get_loc(idx)
+        missing_hour = set(range(24)) - set(day_data.index.hour)
+        if len(missing_hour) != 1:
+            raise ValueError("too many missing hours")
+
+        interp_idx.append((date_idx, missing_hour.pop()))
+
+    mean_idx = []
+    for idx in mean.index:
+        date_idx = counts.index.get_loc(idx)
+        day_data = df.loc[idx.isoformat()]
+        seen = set()
+        for i in day_data.index:
+            if i.hour in seen:
+                mean_idx.append((date_idx, i.hour))
                 break
 
-            # get prediction and residuals for all hours
-            y_fit = self.base_model.predict(X)
-            resid = y - y_fit
+            seen.add(i.hour)
 
-            for hour in range(num_hours):
-                # if hour_fit[hour]:
-                #     continue
+    return interp_idx, mean_idx
 
-                # Update weights
-                # Calculate weights using window of hours
-                window_idx = np.arange(hour - window_size, hour + window_size + 1)
 
-                # if idx_i < 0, roll to the end or if idx_i >= num_hours, roll to the beginning 
-                for idx_i in range(len(window_idx)):
-                    if window_idx[idx_i] < 0:
-                        window_idx[idx_i] = num_hours + window_idx[idx_i]
+def _transform_dst(prediction, dst_indices):
+    interp, mean = dst_indices
 
-                    if window_idx[idx_i] >= num_hours:
-                        window_idx[idx_i] = window_idx[idx_i] - num_hours
+    START_END = 0
+    REMOVE = 1
+    INTERPOLATE = 2
 
-                # unique values in idx only
-                window_idx = list(set(window_idx))
-  
-                # calculate weights
-                weights_update, _, alpha = adaptive_weights(
-                    resid[:,window_idx].flatten(), 
-                    alpha="adaptive", 
-                    sigma=settings.sigma, 
-                    quantile=0.25, 
-                    min_weight=0.0,
-                    C_algo=settings.c_algo,
-                )
+    # get concrete indices
+    remove_idx = [(REMOVE, date * 24 + hour) for date, hour in interp]
+    interp_idx = [(INTERPOLATE, date * 24 + hour + 1) for date, hour in mean]
 
-                # break criteria
-                if (alpha == 2) or (np.abs(alpha - alpha_prior[hour]) <= tol):
-                    hour_fit[hour] = True
-                    continue
-                else:
-                    hour_fit[hour] = False
+    # these values will be inserted for the 25th hour
+    interpolated_vals = []
+    for _, idx in interp_idx:
+        interpolated = (prediction[idx - 1] + prediction[idx]) / 2
+        interpolated_vals.append(interpolated)
 
-                # update weights and alpha_prior
-                alpha_prior[hour] = alpha
-                alpha_min[hour] = min(alpha_min[hour], alpha)
+    interpolation = iter(interpolated_vals)
 
-                # trim weights to hour size
-                if window_size > 0:
-                    # get index of hour in window_idx
-                    idx = window_idx.index(hour)
-                    hour_len = int(len(weights_update)/len(window_idx))
+    # sort "operations" by index (can't assume a strict back-and-forth ordering)
+    ops = sorted(remove_idx + interp_idx, key=lambda t: t[1])
 
-                    weights_update = weights_update[idx*hour_len:(idx+1)*hour_len]
+    # create fenceposts where slices end
+    pairs = list(zip([(START_END, 0)] + ops, ops + [(START_END, None)]))
+    slices = []
+    for start, end in pairs:
+        start_i = start[1]
+        end_i = end[1]
+        if start[0] == REMOVE:
+            start_i += 1
 
-                weights[:, hour] *= weights_update
-                
-                # update hour model from base model
-                self._hour_model.coef_ = self.base_model.coef_[hour,:]
-                self._hour_model.intercept_ = self.base_model.intercept_[hour]
+        if start[0] == INTERPOLATE:
+            slices.append([next(interpolation)])
 
-                # fit
-                self._hour_model.fit(
-                    X, 
-                    y[:, hour], 
-                    sample_weight=weights[:, hour]
-                )
-                
-                # update base model from refit hour model            
-                self.base_model.coef_[hour,:] = self._hour_model.coef_
-                self.base_model.intercept_[hour] = self._hour_model.intercept_
+        slices.append(prediction[slice(start_i, end_i)])
 
-        # save info to base_model
-        self.base_model.adaptive_iterations = i
-        self.base_model.adaptive_alpha = alpha_min
-        self.base_model.adaptive_weights = weights
-           
-        return self
-
-    @property
-    def is_fit(self):
-        """Check if the model is fitted."""
-        is_fit = True
-
-        if not hasattr(self.base_model, "coef_"):
-            is_fit = False
-
-        if not hasattr(self.base_model, "intercept_"):
-            is_fit = False
-
-        return is_fit
-    
-    def predict(self, X):
-        """
-        Predict using the model.
-        
-        Parameters:
-        -----------
-        X : array-like of shape (n_samples, n_features)
-            The input samples.
-            
-        Returns:
-        --------
-        y : array of shape (n_samples,) or (n_samples, n_targets)
-            The predicted values.
-        """
-        if not self.is_fit:
-            raise RuntimeError("Model must be fit before predictions can be made.")
-
-        y = self.base_model.predict(X)
-
-        return y
-    
-    @property
-    def coef_(self):
-        """Get model coefficients."""
-        if not hasattr(self.base_model, "coef_"):
-            raise RuntimeError("Model coefficients must be set before accessed.")
-        
-        return self.base_model.coef_
-        
-    @coef_.setter
-    def coef_(self, val):
-        self.base_model.coef_ = val
-
-    @property
-    def intercept_(self):
-        """Get model intercepts."""
-        if not hasattr(self.base_model, "intercept_"):
-            raise RuntimeError("Model intercepts must be set before accessed.")
-
-        return self.base_model.intercept_
-        
-    @intercept_.setter
-    def intercept_(self, val):
-        """Set model intercepts"""
-        self.base_model.intercept_ = val
+    return np.concatenate(slices)
 
 
 class HourlyModel:
@@ -287,7 +271,8 @@ class HourlyModel:
 
         # TODO move this logic into HourlySettings init
         if isinstance(settings, dict):
-            if features := settings.get("train_features"):
+            features = settings.get("train_features")
+            if features is not None:
                 if "ghi" in features:
                     settings = _settings.HourlySolarSettings(**settings)
                 else:
@@ -307,7 +292,6 @@ class HourlyModel:
 
         self._T_bin_edges = None
         self._T_edge_bin_coeffs = None
-        self._T_edge_bin_rate = None
         self._df_temporal_clusters = None
         self._categorical_features = None
         self._ts_feature_norm = None
@@ -327,14 +311,23 @@ class HourlyModel:
         self.version = __version__
 
     
+    def _warn_model_mismatch(self, description):
+        warning = self._model_warning(
+            qualified_name="eemeter.potential_model_mismatch",
+            description=description,
+            data={},
+        )
+        warning.warn()
+        self.warnings.append(warning)
+
     def _set_scalers(self):
         # set scalers
         if self.settings.scaling_method == _settings.ScalingChoice.STANDARD_SCALER:
-            self._feature_scaler = StandardScaler()
-            self._y_scaler = StandardScaler()
+            self._feature_scaler = SafeStandardScaler()
+            self._y_scaler = SafeStandardScaler()
         elif self.settings.scaling_method == _settings.ScalingChoice.ROBUST_SCALER:
-            self._feature_scaler = RobustScaler(unit_variance=True)
-            self._y_scaler = RobustScaler(unit_variance=True)
+            self._feature_scaler = SafeRobustScaler(unit_variance=True)
+            self._y_scaler = SafeRobustScaler(unit_variance=True)
 
 
     def _set_model(self):
@@ -342,16 +335,17 @@ class HourlyModel:
         if self.settings.base_model == _settings.BaseModel.ELASTICNET:
             settings = self.settings.elasticnet
             if settings.alpha <= self._alpha_model_threshold:
-                model = LinearRegression(
+                model = SafeLinearRegression(
                     fit_intercept=settings.fit_intercept
                 )
+
             else:
                 if settings.l1_ratio < self._l1_ratio_model_threshold:
-                    base_model = Ridge
+                    base_model = SafeRidge
                 elif settings.l1_ratio > (1 - self._l1_ratio_model_threshold):
-                    base_model = Lasso
+                    base_model = SafeLasso
                 else:
-                    base_model = ElasticNet
+                    base_model = SafeElasticNet
 
                 model = base_model(
                     alpha=settings.alpha,
@@ -382,6 +376,35 @@ class HourlyModel:
 
         return model
 
+    def _model_prefit_check(self, baseline_data):
+        if "ghi" in self._ts_features and "ghi" not in baseline_data.df.columns:
+            raise ValueError(
+                "Model was explicitly set to use GHI, but baseline data does not contain GHI."
+            )
+
+        if "ghi" in baseline_data.df.columns and "ghi" not in self._ts_features:
+            self._warn_model_mismatch(
+                "Model was explicitly set to ignore GHI, but baseline period contained a GHI column."
+            )
+
+        if np.allclose(baseline_data.df["observed"].values, 0):
+            model_fit_warning = self._model_warning(
+                qualified_name="eemeter.model_fit",
+                description="Model cannot be fit: Observed column contains all zeros.",
+            )
+            model_fit_warning.warn()
+            self.disqualification.append(model_fit_warning)
+            raise DataSufficiencyError("Cannot fit model: Baseline data contains all zeros in observed values")
+
+        if baseline_data.df["observed"].isnull().all():
+            model_fit_warning = self._model_warning(
+                qualified_name="eemeter.model_fit",
+                description="Model cannot be fit: Observed column contains no finite values.",
+            )
+            model_fit_warning.warn()
+            self.disqualification.append(model_fit_warning)
+            raise DataSufficiencyError("Cannot fit model: Baseline data contains no finite observed values")
+
 
     def fit(
         self, baseline_data: HourlyBaselineData, ignore_disqualification: bool = False
@@ -401,13 +424,11 @@ class HourlyModel:
         """
         if not isinstance(baseline_data, HourlyBaselineData):
             raise TypeError("baseline_data must be an HourlyBaselineData object")
+
         baseline_data.log_warnings()
+
         if baseline_data.disqualification and not ignore_disqualification:
             raise DataSufficiencyError("Can't fit model on disqualified baseline data")
-        if "ghi" in self._ts_features and not "ghi" in baseline_data.df.columns:
-            raise ValueError(
-                "Model was explicitly set to use GHI, but baseline data does not contain GHI."
-            )
 
         self.warnings = baseline_data.warnings
         self.disqualification = baseline_data.disqualification
@@ -416,16 +437,7 @@ class HourlyModel:
             self.settings = self.settings.add_default_features(baseline_data.df.columns)
             self._ts_features = self.settings.train_features.copy()
 
-        if "ghi" in baseline_data.df.columns and not "ghi" in self._ts_features:
-            model_mismatch_warning = self._model_warning(
-                qualified_name="eemeter.potential_model_mismatch",
-                description=(
-                    "Model was explicitly set to ignore GHI, but baseline period contained a GHI column."
-                ),
-                data={},
-            )
-            model_mismatch_warning.warn()
-            self.warnings.append(model_mismatch_warning)
+        self._model_prefit_check(baseline_data)
         
         self._fit(baseline_data)
         self._check_model_fit()
@@ -451,7 +463,7 @@ class HourlyModel:
         # get model prediction of baseline
         df_meter = self._predict(meter_data, X=X)
 
-        self._set_baseline_metrics(df_meter)
+        self._set_baseline_metrics(df_meter, X_fit=X_fit)
 
         return self
 
@@ -484,16 +496,10 @@ class HourlyModel:
                 f"Reporting data is missing the following features: {missing_features}"
             )
 
-        if "ghi" in reporting_data.df.columns and not "ghi" in self._ts_features:
-            model_mismatch_warning = self._model_warning(
-                qualified_name="eemeter.potential_model_mismatch",
-                description=(
-                    "Reporting data contains GHI, but model was fit without GHI."
-                ),
-                data={},
+        if "ghi" in reporting_data.df.columns and "ghi" not in self._ts_features:
+            self._warn_model_mismatch(
+                "Reporting data contains GHI, but model was fit without GHI."
             )
-            model_mismatch_warning.warn()
-            self.warnings.append(model_mismatch_warning)
 
         if str(self.baseline_timezone) != str(reporting_data.tz):
             raise ValueError(
@@ -525,8 +531,8 @@ class HourlyModel:
 
         df_eval = eval_data.df  # used to have a copy here
         dst_indices = _get_dst_indices(df_eval)
-        datetime_original = eval_data.df.index
-        # # get list of columns to keep in output
+        datetime_original = df_eval.index
+        # get list of columns to keep in output
         columns = df_eval.columns.tolist()
         if "datetime" in columns:
             columns.remove("datetime")  # index in output, not column
@@ -534,16 +540,14 @@ class HourlyModel:
         if X is None:
             X, _, _ = self._prepare_features(df_eval)
 
-        y_predict_scaled = self._model.predict(X)
-        y_predict = self._y_scaler.inverse_transform(y_predict_scaled)
-        y_predict = y_predict.flatten()
+        y_predict = self._y_scaler.inverse_transform(self._model.predict(X)).flatten()
 
         y_predict = _transform_dst(y_predict, dst_indices)
 
         df_eval["predicted"] = y_predict
         df_eval = self._calculate_predicted_uncertianty(df_eval)
 
-        # # remove columns not in original columns and predicted
+        # remove columns not in original columns and predicted
         df_eval = df_eval[[*columns, "predicted", "predicted_unc"]]
 
         # reindex to original datetime index
@@ -552,22 +556,7 @@ class HourlyModel:
         return df_eval
 
     def _prepare_features(self, meter_data):
-        """
-        Initializes the meter data by performing the following operations:
-        - Renames the 'model' column to 'model_old' if it exists
-        - Converts the index to a DatetimeIndex if it is not already
-        - Adds a 'season' column based on the month of the index using the settings.season dictionary
-        - Adds a 'day_of_week' column based on the day of the week of the index
-        - Removes any rows with NaN values in the 'temperature' or 'observed' columns
-        - Sorts the data by the index
-        - Reorders the columns to have 'season' and 'day_of_week' first, followed by the remaining columns
-
-        Parameters:
-        - meter_data: A pandas DataFrame containing the meter data
-
-        Returns:
-        - A pandas DataFrame containing the initialized meter data
-        """
+        """Prepare feature matrices from meter data for model fitting or prediction."""
         dst_indices = _get_dst_indices(meter_data)
         meter_data = self._add_categorical_features(meter_data)
         self._add_supplemental_features(meter_data)
@@ -585,6 +574,7 @@ class HourlyModel:
         selected_features = self._ts_feature_norm + self._categorical_features
         if "observed_norm" in meter_data.columns:
             selected_features += ["observed_norm"]
+
         self._processed_meter_data_full = meter_data
         self._processed_meter_data = self._processed_meter_data_full[selected_features]
 
@@ -657,42 +647,10 @@ class HourlyModel:
                     )
 
             elif settings.method == "fixed_bins":
-                temp =  df["temperature"].values
-                min_temp = np.floor(np.min(temp))
-                max_temp = np.ceil(np.max(temp))
+                temp = df["temperature"].values
 
                 T_bin_edges = np.array(settings.fixed_bins)
                 T_bin_edges = np.array([-np.inf, *T_bin_edges, np.inf])
-                
-                def _merge_bins(bin_edges, temp, min_bin_count):
-                    # if less than 20 values from df["temperature"] are in a bin, 
-                    # remove bin edge starting from edges and moving inwards
-                    def _eliminate_empty_bins(bin_edges, temp):
-                        valid_bin_edges = [-np.inf, ]
-                        for i in range(len(bin_edges) - 1):
-                            bin_count = ((temp >= bin_edges[i]) & (temp < bin_edges[i + 1])).sum()
-                            if bin_count > 0:
-                                valid_bin_edges.append(bin_edges[i + 1])
-                        valid_bin_edges[-1] = np.inf
-
-                        return np.array(valid_bin_edges)   
-                    
-                    bin_edges = _eliminate_empty_bins(bin_edges, temp)
-                    for i in range(int(np.ceil(len(bin_edges)/2)) - 1):
-                        if bin_edges[i+1] == bin_edges[-(i + 2)]:
-                            continue # only 1 bin edge left
-
-                        # left side
-                        bin_count = ((temp >= bin_edges[i]) & (temp < bin_edges[i+1])).sum()
-                        if bin_count < min_bin_count:
-                            bin_edges[i+1] = bin_edges[i]
-
-                        # right side
-                        bin_count = ((temp >= bin_edges[-(i + 2)]) & (temp < bin_edges[-(i + 1)])).sum()
-                        if bin_count < min_bin_count:
-                            bin_edges[-(i + 2)] = bin_edges[-(i + 1)]
-
-                    return np.unique(bin_edges)
 
                 if temp.size < settings.min_bin_count:
                     raise ValueError("Not enough data to form temperature bins")
@@ -763,7 +721,6 @@ class HourlyModel:
             df_temporal = df[self._temporal_cluster_cols].drop_duplicates()
             df_temporal = df_temporal.sort_values(self._temporal_cluster_cols)
             df_temporal_index = df_temporal.set_index(self._temporal_cluster_cols).index
-            available_combinations = df_temporal_index
 
             # reindex self.df_temporal_clusters to df_temporal_index
             df_temporal_clusters = self._df_temporal_clusters.reindex(df_temporal_index)
@@ -773,17 +730,18 @@ class HourlyModel:
                 df_temporal_clusters["temporal_cluster"].isna()
             ].index
             if not missing_combinations.empty:
-                if missing_combinations == available_combinations:
+                if missing_combinations == df_temporal_index:
                     raise ValueError(
                         f"Data does not have known temporal clusters of {self._temporal_cluster_cols}. Can't assign missing temporal clusters"
                     )
+
                 elif "observed" in df.columns and not df["observed"].isnull().all():
+                    # precompute temporal index membership for reuse
+                    temporal_idx = df.set_index(self._temporal_cluster_cols).index
+                    is_missing = temporal_idx.isin(missing_combinations)
+
                     # filter df to only include missing combinations
-                    df_missing = df[
-                        df.set_index(self._temporal_cluster_cols).index.isin(
-                            missing_combinations
-                        )
-                    ]
+                    df_missing = df[is_missing]
 
                     df_missing_grouped = (
                         df_missing.groupby(
@@ -809,11 +767,7 @@ class HourlyModel:
                         right_index=True,
                     )
 
-                    df_known = df[
-                        ~df.set_index(self._temporal_cluster_cols).index.isin(
-                            missing_combinations
-                        )
-                    ]
+                    df_known = df[~is_missing]
 
                     df_known_mean = (
                         df_known.groupby(self._temporal_cluster_cols + ["hour_of_day"])[
@@ -879,15 +833,11 @@ class HourlyModel:
         else:
             self._df_temporal_clusters = correct_missing_temporal_clusters(df)
 
-            # Get all unique temporal clusters from categorical features
-            temporal_cluster = []
-            for col in self._categorical_features:
-                if "temporal_cluster" in col:
-                    match = re.match(r'^temporal_cluster_(\d+)*', col)
-                    if match and int(match.group(1)) not in temporal_cluster:
-                        temporal_cluster.append(int(match.group(1)))
-
-            n_clusters = len(temporal_cluster)
+            # Count unique temporal cluster base columns (e.g. temporal_cluster_0, temporal_cluster_1)
+            n_clusters = sum(
+                1 for col in self._categorical_features
+                if re.match(r'^temporal_cluster_\d+$', col)
+            )
 
         # join df_temporal_clusters to df
         df = pd.merge(
@@ -904,8 +854,7 @@ class HourlyModel:
         )
         cluster_dummies.index = df.index
 
-        cluster_cat = [f"temporal_cluster_{i}" for i in range(n_clusters)]
-        self._categorical_features = cluster_cat
+        self._categorical_features = [f"temporal_cluster_{i}" for i in range(n_clusters)]
 
         df = pd.merge(
             df, cluster_dummies, how="left", left_index=True, right_index=True
@@ -921,39 +870,32 @@ class HourlyModel:
         # TODO: should either do upper or lower on all strs
         if self.settings.supplemental_time_series_columns is not None:
             for col in self.settings.supplemental_time_series_columns:
-                if (col in df.columns) and (col not in self._ts_features):
+                if col in df.columns and col not in self._ts_features:
                     self._ts_features.append(col)
 
         if self.settings.supplemental_categorical_columns is not None:
+            existing = set(self._ts_features) | set(self._categorical_features)
             for col in self.settings.supplemental_categorical_columns:
-                if (
-                    (col in df.columns)
-                    and (col not in self._ts_features)
-                    and (col not in self._categorical_features)
-                ):
+                if col in df.columns and col not in existing:
                     self._categorical_features.append(col)
+                    existing.add(col)
 
     def _sort_features(self, ts_features=None, cat_features=None):
-        features = {"ts": ts_features, "cat": cat_features}
+        def _sort_by_priority(features, priority_prefixes):
+            if features is None:
+                return None
+            sorted_cols = []
+            for prefix in priority_prefixes:
+                sorted_cols.extend(sorted(c for c in features if c.startswith(prefix)))
 
-        # sort features
-        for _type in ["ts", "cat"]:
-            feat = features[_type]
+            sorted_set = set(sorted_cols)
+            sorted_cols.extend(sorted(c for c in features if c not in sorted_set))
+            return sorted_cols
 
-            if feat is not None:
-                sorted_cols = []
-                for col in self._priority_cols[_type]:
-                    cat_cols = [c for c in feat if c.startswith(col)]
-                    sorted_cols.extend(sorted(cat_cols))
+        ts = _sort_by_priority(ts_features, self._priority_cols["ts"])
+        cat = _sort_by_priority(cat_features, self._priority_cols["cat"])
 
-                # get all columns in self._categorical_feature not in sorted_cat_cols
-                leftover_cols = [c for c in feat if c not in sorted_cols]
-                if leftover_cols:
-                    sorted_cols.extend(sorted(leftover_cols))
-
-                features[_type] = sorted_cols
-
-        return features["ts"], features["cat"]
+        return ts, cat
 
     # TODO rename to avoid confusion with data sufficiency
     def _daily_fitting_sufficiency(self, df):
@@ -961,12 +903,8 @@ class HourlyModel:
         min_hours = self.settings.min_daily_training_hours
 
         if min_hours > 0:
-            # find any rows with interpolated data
-            cols = [col for col in df.columns if col.startswith("interpolated_")]
-            df["interpolated"] = df[cols].any(axis=1)
-
-            # if row contains any null values, set interpolated to True
-            df["interpolated"] = df["interpolated"] | df.isnull().any(axis=1)
+            # find any rows with interpolated or missing data
+            df["interpolated"] = _get_interpolated_mask(df) | df.isnull().any(axis=1)
 
             # count number of non interpolated hours per day
             daily_hours = 24 - df.groupby("date")["interpolated"].sum()
@@ -1026,7 +964,7 @@ class HourlyModel:
                     )
                     # save k for each hour
                     k.append(params[2])
-                except:
+                except Exception:
                     pass
 
             k = np.abs(np.array(k))
@@ -1099,19 +1037,11 @@ class HourlyModel:
                 df[base_col].values, T_a * df[int_col].values + T_b, 0
             )
 
-            for pos_neg in ["pos", "neg"]:
-                # if first or last column, add additional column
-                # testing exp, previously squaring worked well
-
-                s = 1
-                if "neg" in pos_neg:
-                    s = -1
-
-                # set rate exponential
-                ts_col = f"{base_col}_{pos_neg}_exp_ts"
+            for label, sign in [("pos", 1), ("neg", -1)]:
+                ts_col = f"{base_col}_{label}_exp_ts"
 
                 col_dict[ts_col] = np.where(
-                    df[base_col].values, A * np.exp(s / k * col_dict[T_col]) - A, 0
+                    df[base_col].values, A * np.exp(sign / k * col_dict[T_col]) - A, 0
                 )
 
                 self._ts_feature_norm.append(ts_col)
@@ -1176,7 +1106,7 @@ class HourlyModel:
 
     def _get_feature_matrices(self, df, dst_indices):
         # get aggregated features with agg function
-        agg_dict = {f: lambda x: list(x) for f in self._ts_feature_norm}
+        agg_dict = {f: list for f in self._ts_feature_norm}
 
         def correct_dst(agg):
             """interpolate or average hours to account for DST. modifies in place"""
@@ -1188,24 +1118,23 @@ class HourlyModel:
                         interpolated = (
                             agg[date - 1][feature_idx][-1] + feature[hour]
                         ) / 2
+
                     else:
                         interpolated = (feature[hour - 1] + feature[hour]) / 2
+
                     feature.insert(hour, interpolated)
+
             for date, hour in mean:
                 for feature in agg[date]:
-                    mean = (feature[hour + 1] + feature.pop(hour)) / 2
-                    feature[hour] = mean
+                    avg = (feature[hour + 1] + feature.pop(hour)) / 2
+                    feature[hour] = avg
 
         df_grouped = df.groupby("date")
         agg_x = df_grouped.agg(agg_dict).values.tolist()
         correct_dst(agg_x)
 
         # get the features and target for each day
-        ts_feature = np.array(agg_x)
-
-        ts_feature = ts_feature.reshape(
-            ts_feature.shape[0], ts_feature.shape[1] * ts_feature.shape[2]
-        )
+        ts_feature = np.array(agg_x).reshape(len(agg_x), -1)
 
         # get the first categorical features for each day for each sample
         unique_dummies = (
@@ -1217,58 +1146,120 @@ class HourlyModel:
         if not self._is_fit:
             agg_y = (
                 df_grouped
-                .agg({"observed_norm": lambda x: list(x)})
+                .agg({"observed_norm": list})
                 .values.tolist()
             )
             correct_dst(agg_y)
             y = np.array(agg_y)
-            y = y.reshape(y.shape[0], y.shape[1] * y.shape[2])
+            y = y.reshape(y.shape[0], -1)
 
             fit_mask = df_grouped["include_date"].first().values
+
         else:
             y = None
             fit_mask = None
 
         return X, y, fit_mask
 
-    def _set_baseline_metrics(self, df_meter):
-        # get number of model parameters
+    def _set_baseline_metrics(self, df_meter, X_fit=None):
+        # unwrap adaptive model if needed
+        adaptive_weights = None
         if self.settings.base_model == _settings.BaseModel.ELASTICNET:
             if self.settings.adaptive_weights.enabled:
+                if hasattr(self._model, 'base_model'):
+                    adaptive_weights = getattr(self._model.base_model, 'adaptive_weights', None)
                 self._model = self._model.base_model
 
-            num_parameters = np.count_nonzero(self._model.coef_)
-
+            coef = self._model.coef_
         elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
-            num_parameters = np.count_nonzero(self._model.dual_coef_)
+            coef = self._model.dual_coef_
 
         # calculate baseline metrics on non-interpolated data
-        # TODO: change interpolated to imputed
-        cols = [col for col in df_meter.columns if col.startswith("interpolated_")]
-        interpolated = df_meter[cols].any(axis=1)
+        interpolated = _get_interpolated_mask(df_meter)
+        df_non_interp = df_meter.loc[~interpolated]
 
+        num_parameters = np.count_nonzero(coef)
         self.baseline_metrics = BaselineMetrics(
-            df=df_meter.loc[~interpolated], 
-            num_model_params=num_parameters
+            df=df_non_interp,
+            num_model_params=num_parameters + 1, # + 1 for intercept
         )
 
-        # calculate baseline metrics per hour-of-day on non-interpolated data
+        # calculate baseline metrics per hour-of-day with edf-based num_model_params
         self.baseline_hour_metrics = {}
+        is_kernel = self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE
+
+        # Compute lambda_2 for edf (only for ElasticNet/Ridge, not KernelRidge)
+        lambda_2 = self._compute_lambda_2() if not is_kernel else None
+
         for hour in range(24):
-            # get number of model parameters
-            if self.settings.base_model == _settings.BaseModel.ELASTICNET:
-                num_parameters = np.count_nonzero(self._model.coef_[hour]) 
+            hour_coef = coef[:, hour] if is_kernel else coef[hour]
+            hour_data = df_non_interp[df_non_interp.index.hour == hour]
 
-            elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
-                num_parameters = np.count_nonzero(self._model.dual_coef_[:,hour])   
+            if len(hour_data) < 3:
+                self.baseline_hour_metrics[hour] = None
+                continue
 
-            hour_mask = df_meter.index.hour == hour
-            hour_data = df_meter.loc[hour_mask & ~interpolated]
+            # Compute edf via SVD when X_fit is available and model is not KernelRidge
+            if X_fit is not None and not is_kernel and lambda_2 is not None:
+                edf_h = self._compute_hour_edf(
+                    X_fit, hour, hour_coef, lambda_2, adaptive_weights,
+                )
+                # Clamp so ddof >= 3 → stdtrit(ddof, perc) is finite and reasonable
+                n_h = len(hour_data)
+                edf_h = max(1, min(edf_h, n_h - 3))
+                num_params_h = max(1, round(edf_h))
+            else:
+                # Fallback: count_nonzero (KernelRidge or missing X_fit)
+                num_params_h = np.count_nonzero(hour_coef) + 1
 
             self.baseline_hour_metrics[hour] = BaselineMetrics(
-                df=hour_data, 
-                num_model_params=num_parameters
+                df=hour_data,
+                num_model_params=num_params_h,
             )
+
+    def _compute_lambda_2(self):
+        """Compute the L2 penalty parameter for the edf formula.
+
+        sklearn Ridge and ElasticNet use different loss scaling:
+          Ridge:      ||y - Xw||² + α||w||²           → λ₂ = α
+          ElasticNet: (1/(2n))||y - Xw||² + ...       → λ₂ = n·α·(1-ρ)
+        """
+        base = self._model
+        if isinstance(base, Ridge) and not isinstance(base, ElasticNet):
+            return base.alpha
+        else:
+            alpha = getattr(base, 'alpha', 0)
+            l1_ratio = getattr(base, 'l1_ratio', 0)
+            n = self.baseline_metrics.n
+            return n * alpha * (1 - l1_ratio)
+
+    def _compute_hour_edf(self, X_fit, hour, hour_coef, lambda_2, adaptive_weights):
+        """Compute effective degrees of freedom for hour h via SVD.
+
+        Uses the Zou-Hastie closed form: edf = Σ d²/(d² + λ₂) where d are
+        singular values of the (optionally weighted) design matrix restricted
+        to active columns at this hour. +1 for intercept.
+
+        X_fit is per-day (shape n_fit_days × n_features), shared across all hours.
+        Each hour uses the same X but different active columns from coef[hour].
+        """
+        active = np.nonzero(hour_coef)[0]
+        if len(active) == 0:
+            return 1  # intercept only
+
+        X_active = X_fit[:, active]
+        if hasattr(X_active, 'toarray'):
+            X_active = X_active.toarray()
+
+        # Apply per-hour adaptive weights (also daily-indexed)
+        if adaptive_weights is not None:
+            w_h = adaptive_weights[:, hour]
+            X_active = np.sqrt(w_h)[:, np.newaxis] * X_active
+
+        s = np.linalg.svd(X_active, compute_uv=False)
+        edf = float(np.sum(s**2 / (s**2 + lambda_2))) + 1  # +1 for intercept
+
+        return edf
 
     def _check_model_fit(self):
         cvrmse = self.baseline_metrics.cvrmse_adj
@@ -1277,20 +1268,11 @@ class HourlyModel:
         cvrmse_threshold = self.settings.cvrmse_threshold
         pnrmse_threshold = self.settings.pnrmse_threshold
 
-        def _model_fit_is_acceptable(cvrmse, pnrmse):
-            # sufficient is (0 <= cvrmse <= threshold) or (0 <= pnrmse <= threshold)
-            if cvrmse is not None:
-                if (0 <= cvrmse) and (cvrmse <= cvrmse_threshold):
-                    return True
-                
-            if pnrmse is not None:
-                # less than 0 is not possible, but just in case
-                if (0 <= pnrmse) and (pnrmse <= pnrmse_threshold):
-                    return True
+        # sufficient is (0 <= cvrmse <= threshold) or (0 <= pnrmse <= threshold)
+        cvrmse_ok = cvrmse is not None and 0 <= cvrmse <= cvrmse_threshold
+        pnrmse_ok = pnrmse is not None and 0 <= pnrmse <= pnrmse_threshold
 
-            return False
-
-        if not _model_fit_is_acceptable(cvrmse, pnrmse):
+        if not (cvrmse_ok or pnrmse_ok):
             model_fit_warning = self._model_warning(
                 qualified_name="eemeter.model_fit_metrics",
                 description="Model disqualified due to poor fit.",
@@ -1305,45 +1287,83 @@ class HourlyModel:
             self.disqualification.append(model_fit_warning)
 
     def _calculate_predicted_uncertianty(self, df_eval):
-        # initialize predicted_unc column with NaN
         df_eval["predicted_unc"] = np.nan
 
-        cols = [col for col in df_eval.columns if col.startswith("interpolated_")]
-        interpolated = df_eval[cols].any(axis=1)
+        if self._has_per_hour_uncertainty():
+            return self._calculate_uncertainty_per_hour(df_eval)
+        else:
+            return self._calculate_uncertainty_global_legacy(df_eval)
+
+    def _has_per_hour_uncertainty(self):
+        """True for models trained with per-hour edf-based uncertainty data.
+        False for models deserialized from old model_json that lack per-hour metrics.
+
+        DELETE this guard (and _calculate_uncertainty_global_legacy) once all
+        deployed model_json artifacts have been retrained."""
+        return (
+            self.baseline_hour_metrics is not None
+            and any(v is not None for v in self.baseline_hour_metrics.values())
+        )
+
+    def _calculate_uncertainty_per_hour(self, df_eval):
+        """Per-hour heteroscedastic uncertainty (A+B+C+E).
+
+        Each hour uses its own BaselineMetrics (with edf-based num_model_params)
+        fed into ReportingMetrics to compute per-point uncertainty via the full
+        ASHRAE-14 formula. The uncertainty_scale_factor is applied as a final
+        multiplicative correction for pipeline-stage bias not captured by edf.
+        """
+        interpolated = _get_interpolated_mask(df_eval)
+        usf = self.settings.uncertainty_scale_factor
+        confidence_level = 1 - self.settings.uncertainty_alpha
+
+        for hour in range(24):
+            mask = df_eval.index.hour == hour
+            if not mask.any():
+                continue
+
+            bm_h = self.baseline_hour_metrics.get(hour)
+            if bm_h is None:
+                continue
+
+            reporting_df = df_eval.loc[mask & ~interpolated]
+            if reporting_df.empty:
+                continue
+
+            reporting_h = ReportingMetrics(
+                baseline_metrics=bm_h,
+                reporting_df=reporting_df,
+                data_frequency="hourly",
+                confidence_level=confidence_level,
+                t_tail=2,
+            )
+
+            unc = reporting_h.predicted_data_point_unc
+            if unc is not None and np.isfinite(unc):
+                df_eval.loc[mask, "predicted_unc"] = usf * unc
+
+        return df_eval
+
+    def _calculate_uncertainty_global_legacy(self, df_eval):
+        """Global homoscedastic uncertainty. Legacy path for old model_json
+        that lack per-hour baseline metrics.
+
+        DELETE this method (and the _has_per_hour_uncertainty guard) once all
+        deployed model_json artifacts have been retrained."""
+        interpolated = _get_interpolated_mask(df_eval)
 
         if self.baseline_metrics is None:
             return df_eval
 
-        # calculate uncertainty using self.baseline_metrics
         reporting_metrics = ReportingMetrics(
             baseline_metrics=self.baseline_metrics,
             reporting_df=df_eval[~interpolated],
             data_frequency="hourly",
-            confidence_level=self.settings.uncertainty_alpha,
+            confidence_level=1 - self.settings.uncertainty_alpha,
             t_tail=2,
         )
 
         df_eval["predicted_unc"] = reporting_metrics.predicted_data_point_unc
-
-        # update uncertainties for each hour if available
-        # if self.baseline_hour_metrics is not None:
-        #     # calculate uncertainty using self.baseline_hour_metrics
-        #     for hour in range(24):
-        #         hour_mask = df_eval.index.hour == hour
-        #         hour_data = df_eval.loc[hour_mask & ~interpolated]
-
-        #         hour_reporting_metrics = ReportingMetrics(
-        #             baseline_metrics=self.baseline_hour_metrics[hour],
-        #             reporting_df=hour_data,
-        #             data_frequency="hourly",
-        #             confidence_level=self.settings.uncertainty_alpha,
-        #             t_tail=2,
-        #         )
-
-        #         data_point_unc = hour_reporting_metrics.predicted_data_point_unc
-
-        #         if data_point_unc is not None:
-        #             df_eval.loc[hour_data.index, "predicted_unc"] = data_point_unc
 
         return df_eval
 
@@ -1353,30 +1373,27 @@ class HourlyModel:
         Returns:
             Model parameters.
         """
-        feature_scaler = {}
-        if self.settings.scaling_method == _settings.ScalingChoice.STANDARD_SCALER:
-            for i, key in enumerate(self._ts_features):
-                feature_scaler[key] = [
-                    self._feature_scaler.mean_[i],
-                    self._feature_scaler.scale_[i],
-                ]
-
-            y_scaler = [self._y_scaler.mean_.squeeze(), self._y_scaler.scale_.squeeze()]
-
-        elif self.settings.scaling_method == _settings.ScalingChoice.ROBUST_SCALER:
-            for i, key in enumerate(self._ts_features):
-                feature_scaler[key] = [
-                    self._feature_scaler.center_[i],
-                    self._feature_scaler.scale_[i],
-                ]
-
-            y_scaler = [
-                self._y_scaler.center_.squeeze(),
-                self._y_scaler.scale_.squeeze(),
-            ]
+        loc_attr = "mean_" if self.settings.scaling_method == _settings.ScalingChoice.STANDARD_SCALER else "center_"
+        feature_loc = getattr(self._feature_scaler, loc_attr)
+        feature_scaler = {
+            key: [feature_loc[i], self._feature_scaler.scale_[i]]
+            for i, key in enumerate(self._ts_features)
+        }
+        y_scaler = [
+            getattr(self._y_scaler, loc_attr).squeeze(),
+            self._y_scaler.scale_.squeeze(),
+        ]
 
         # convert self._df_temporal_clusters to list of lists
         df_temporal_clusters = self._df_temporal_clusters.reset_index().values.tolist()
+
+        # Serialize per-hour baseline metrics (None for old models that lack them)
+        baseline_hour_metrics = None
+        if self.baseline_hour_metrics:
+            baseline_hour_metrics = {
+                str(k): v for k, v in self.baseline_hour_metrics.items()
+                if v is not None
+            }
 
         params = self._base_settings.SerializeModel(
             settings=self.settings,
@@ -1391,6 +1408,7 @@ class HourlyModel:
             catagorical_scaler=None,
             y_scaler=y_scaler,
             baseline_metrics=self.baseline_metrics,
+            baseline_hour_metrics=baseline_hour_metrics,
             info=self._base_settings.ModelInfo(
                 disqualification=self.disqualification,
                 warnings=self.warnings,
@@ -1400,8 +1418,7 @@ class HourlyModel:
             ),
         )
 
-        model_dict = params.model_dump()
-        return model_dict
+        return params.model_dump()
 
     def to_json(self) -> str:
         """Returns a JSON string of model parameters.
@@ -1453,19 +1470,13 @@ class HourlyModel:
 
         y_scaler_values = data.get("y_scaler")
 
-        if settings.scaling_method == _settings.ScalingChoice.STANDARD_SCALER:
-            model_cls._feature_scaler.mean_ = np.array(feature_scaler_loc)
-            model_cls._feature_scaler.scale_ = np.array(feature_scaler_scale)
+        loc_attr = "mean_" if settings.scaling_method == _settings.ScalingChoice.STANDARD_SCALER else "center_"
 
-            model_cls._y_scaler.mean_ = np.array(y_scaler_values[0])
-            model_cls._y_scaler.scale_ = np.array(y_scaler_values[1])
-
-        elif settings.scaling_method == _settings.ScalingChoice.ROBUST_SCALER:
-            model_cls._feature_scaler.center_ = np.array(feature_scaler_loc)
-            model_cls._feature_scaler.scale_ = np.array(feature_scaler_scale)
-
-            model_cls._y_scaler.center_ = np.array(y_scaler_values[0])
-            model_cls._y_scaler.scale_ = np.array(y_scaler_values[1])
+        setattr(model_cls._feature_scaler, loc_attr, np.array(feature_scaler_loc))
+        model_cls._feature_scaler.scale_ = np.array(feature_scaler_scale)
+        
+        setattr(model_cls._y_scaler, loc_attr, np.array(y_scaler_values[0]))
+        model_cls._y_scaler.scale_ = np.array(y_scaler_values[1])
 
         # set model
         model_cls._model.coef_ = np.array(data.get("coefficients"))
@@ -1477,6 +1488,16 @@ class HourlyModel:
         model_cls.baseline_metrics = BaselineMetricsFromDict(
             data.get("baseline_metrics")
         )
+
+        # Per-hour baseline metrics — absent in old model_json.
+        # DELETE this fallback once all model_json have been retrained.
+        model_cls.baseline_hour_metrics = None
+        raw_hour_metrics = data.get("baseline_hour_metrics")
+        if raw_hour_metrics is not None:
+            model_cls.baseline_hour_metrics = {
+                int(k): BaselineMetricsFromDict(v)
+                for k, v in raw_hour_metrics.items()
+            }
 
         info = model_cls._base_settings.ModelInfo(**data.get("info"))
         model_cls.warnings = info.warnings
@@ -1509,144 +1530,3 @@ class HourlyModel:
             df_eval: The baseline or reporting data object to plot.
         """
         raise NotImplementedError
-
-
-def _fit_exp_growth_decay(x, y, k_only=True, is_x_sorted=False):
-    # Courtsey: https://math.stackexchange.com/questions/1337601/fit-exponential-with-constant
-    #           https://www.scribd.com/doc/14674814/Regressions-et-equations-integrales
-    #           Jean Jacquelin
-
-    # fitting function is actual b*exp(c*x) + a
-
-    # sort x in order
-    x = np.array(x)
-    y = np.array(y)
-    n = len(x)
-
-    if not is_x_sorted:
-        sort_idx = np.argsort(x)
-        x = x[sort_idx]
-        y = y[sort_idx]
-
-    s = [0]
-    for i in range(1, len(x)):
-        s.append(s[i - 1] + 0.5 * (y[i] + y[i - 1]) * (x[i] - x[i - 1]))
-
-    s = np.array(s)
-
-    x_diff_sq = np.sum((x - x[0]) ** 2)
-    xs_diff = np.sum(s * (x - x[0]))
-    s_sq = np.sum(s**2)
-    xy_diff = np.sum((x - x[0]) * (y - y[0]))
-    ys_diff = np.sum(s * (y - y[0]))
-
-    A = np.array([[x_diff_sq, xs_diff], [xs_diff, s_sq]])
-    b = np.array([xy_diff, ys_diff])
-
-    _, c = np.linalg.solve(A, b)
-    with np.errstate(divide='ignore'):
-        k = 1 / c # ignore divide by zero, it will be filtered later
-
-    if k_only:
-        a, b = None, None
-    else:
-        theta_i = np.exp(c * x)
-
-        theta = np.sum(theta_i)
-        theta_sq = np.sum(theta_i**2)
-        y_sum = np.sum(y)
-        y_theta = np.sum(y * theta_i)
-
-        A = np.array([[n, theta], [theta, theta_sq]])
-        b = np.array([y_sum, y_theta])
-
-        a, b = np.linalg.solve(A, b)
-
-    return a, b, k
-
-
-def _get_dst_indices(df):
-    """
-    given a datetime-indexed dataframe,
-    return the indices which need to be interpolated and averaged
-    in order to ensure exact 24 hour slots
-    """
-    # TODO test on baselines that begin/end on DST change
-    counts = df.groupby(df.index.date).count()
-    interp = counts[counts["observed"] == 23]
-    mean = counts[counts["observed"] == 25]
-
-    interp_idx = []
-    for idx in interp.index:
-        month = df.loc[idx.isoformat()]
-        date_idx = counts.index.get_loc(idx)
-        missing_hour = set(range(24)) - set(month.index.hour)
-        if len(missing_hour) != 1:
-            raise ValueError("too many missing hours")
-        hour = missing_hour.pop()
-        interp_idx.append((date_idx, hour))
-
-    mean_idx = []
-    for idx in mean.index:
-        date_idx = counts.index.get_loc(idx)
-        month = df.loc[idx.isoformat()]
-        seen = set()
-        for i in month.index:
-            if i.hour in seen:
-                hour = i.hour
-                break
-            seen.add(i.hour)
-        mean_idx.append((date_idx, hour))
-
-    return interp_idx, mean_idx
-
-
-def _transform_dst(prediction, dst_indices):
-    interp, mean = dst_indices
-
-    START_END = 0
-    REMOVE = 1
-    INTERPOLATE = 2
-
-    # get concrete indices
-    remove_idx = [(REMOVE, date * 24 + hour) for date, hour in interp]
-    interp_idx = [(INTERPOLATE, date * 24 + hour + 1) for date, hour in mean]
-
-    # these values will be inserted for the 25th hour
-    interpolated_vals = []
-    for _, idx in interp_idx:
-        interpolated = (prediction[idx - 1] + prediction[idx]) / 2
-        interpolated_vals.append(interpolated)
-    interpolation = iter(interpolated_vals)
-
-    # sort "operations" by index (can't assume a strict back-and-forth ordering)
-    ops = sorted(remove_idx + interp_idx, key=lambda t: t[1])
-
-    # create fenceposts where slices end
-    pairs = list(zip([(START_END, 0)] + ops, ops + [(START_END, None)]))
-    slices = []
-    for start, end in pairs:
-        start_i = start[1]
-        end_i = end[1]
-        if start[0] == REMOVE:
-            start_i += 1
-        if start[0] == INTERPOLATE:
-            slices.append([next(interpolation)])
-        slices.append(prediction[slice(start_i, end_i)])
-    return np.concatenate(slices)
-
-    ## the block above is equivalent to:
-    # shift = 0
-    # for op in ops:
-    #     if op[0] == REMOVE:
-    #         # delete artificial DST hour
-    #         idx = op[1] + shift
-    #         prediction = np.delete(prediction, idx)
-    #         shift -= 1
-    #     if op[0] == INTERPOLATE:
-    #         # interpolate missing DST hour
-    #         idx = op[1] + shift
-    #         interp = (prediction[idx - 1] + prediction[idx]) / 2
-    #         prediction = np.insert(prediction, idx, interp)
-    #         shift += 1
-    # return prediction

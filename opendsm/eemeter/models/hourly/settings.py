@@ -440,6 +440,18 @@ class BaseHourlySettings(BaseSettings):
         description="Significance level used for uncertainty calculations",
     )
 
+    """Multiplicative scale factor for per-point uncertainty"""
+    uncertainty_scale_factor: float = pydantic.Field(
+        default=1.0,
+        ge=0.1,
+        description=(
+            "Multiplicative scale factor applied to per-point uncertainty. "
+            "Compensates for in-sample RMSE bias from pipeline stages not "
+            "captured by elastic-net edf (clustering, PCA, temperature binning). "
+            "Adjustable via post-deployment coverage calibration."
+        ),
+    )
+
     """seed for any random state assignment (ElasticNet, Clustering)"""
     seed: Optional[int] = pydantic.Field(
         default=None,
