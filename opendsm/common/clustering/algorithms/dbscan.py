@@ -18,25 +18,29 @@ import numpy as np
 
 from sklearn.cluster import DBSCAN
 
-from opendsm.common.clustering import settings as _settings
+from opendsm.common.clustering.metrics.labels import ClusteringResult
 
 
+def dbscan(data, settings):
+    """Clusters features using DBSCAN algorithm. Returns ClusteringResult."""
+    algo_settings = getattr(settings, settings.algorithm_selection.value)
 
-def dbscan(
-    data: np.ndarray,
-    settings: _settings.ClusteringSettings
-):
-    """
-    clusters features using DBSCAN algorithm
-    """
     algo = DBSCAN(
-        eps=settings.dbscan.epsilon, 
-        min_samples=settings.dbscan.min_samples, 
-        metric=settings.dbscan.distance_metric.value,
-        algorithm=settings.dbscan.nearest_neighbors_algorithm,
-        leaf_size=settings.dbscan.leaf_size,
-        p=settings.dbscan.minkowski_p,
+        eps=algo_settings.epsilon,
+        min_samples=algo_settings.min_samples,
+        metric=settings._metric_value,
+        algorithm=algo_settings.nearest_neighbors_algorithm,
+        leaf_size=algo_settings.leaf_size,
+        p=algo_settings.minkowski_p,
     )
     labels = algo.fit_predict(data)
 
-    return labels
+    lbl = ClusteringResult(
+        data=data,
+        score_settings=algo_settings.scoring,
+        seed=settings._seed,
+        min_cluster_size=settings.min_cluster_size,
+        small_cluster_mode=settings.small_cluster_mode,
+    )
+    lbl.add(0, labels)
+    return lbl

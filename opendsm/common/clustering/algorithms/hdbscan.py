@@ -18,46 +18,46 @@ import numpy as np
 
 from sklearn.cluster import HDBSCAN
 
-from opendsm.common.clustering import settings as _settings
+from opendsm.common.clustering.metrics.labels import ClusteringResult
 
 
+def hdbscan(data, settings):
+    """Clusters features using HDBSCAN algorithm. Returns ClusteringResult."""
+    algo_settings = getattr(settings, settings.algorithm_selection.value)
+    seed = settings._seed
 
-def hdbscan(
-    data: np.ndarray,
-    settings: _settings.ClusteringSettings
-):
-    """
-    clusters features using HDBSCAN algorithm
-    """
-    min_samples = settings.hdbscan.min_samples
-    if settings.hdbscan.min_samples == 1:
+    min_samples = algo_settings.min_samples
+    if algo_settings.min_samples == 1:
         min_samples = 2
 
     algo = HDBSCAN(
-        min_samples=settings.hdbscan.scoring_sample_count, 
+        min_samples=algo_settings.neighborhood_min_samples,
         min_cluster_size=min_samples,
-        allow_single_cluster=settings.hdbscan.allow_single_cluster,
-        max_cluster_size=settings.hdbscan.max_cluster_size,
-        metric=settings.hdbscan.distance_metric,
-        cluster_selection_epsilon=settings.hdbscan.cluster_selection_epsilon,
-        alpha=settings.hdbscan.robust_single_linkage_scaling,
-        algorithm=settings.hdbscan.nearest_neighbors_algorithm,
-        leaf_size=settings.hdbscan.leaf_size,
-        cluster_selection_method=settings.hdbscan.cluster_selection_method,
+        allow_single_cluster=algo_settings.allow_single_cluster,
+        max_cluster_size=algo_settings.max_cluster_size,
+        metric=settings._metric_value,
+        cluster_selection_epsilon=algo_settings.cluster_selection_epsilon,
+        alpha=algo_settings.robust_single_linkage_scaling,
+        algorithm=algo_settings.nearest_neighbors_algorithm,
+        leaf_size=algo_settings.leaf_size,
+        cluster_selection_method=algo_settings.cluster_selection_method,
+        copy=True,
     )
     labels = algo.fit_predict(data)
+    del algo
 
-    if settings.hdbscan.min_samples == 1:
-        # get count of -1 labels
+    if algo_settings.min_samples == 1:
         outlier_count = np.sum(labels == -1)
+        if outlier_count > 0:
+            labels[labels != -1] += outlier_count
+            labels[labels == -1] = np.arange(0, outlier_count)
 
-        if outlier_count == 0:
-            return labels
-
-        # add to all labels to make room for outliers
-        labels[labels != -1] += outlier_count
-
-        # make labels with -1 defined as arange(max_label+1, n_samples)
-        labels[labels == -1] = np.arange(0, outlier_count)
-
-    return labels
+    lbl = ClusteringResult(
+        data=data,
+        score_settings=algo_settings.scoring,
+        seed=seed,
+        min_cluster_size=settings.min_cluster_size,
+        small_cluster_mode=settings.small_cluster_mode,
+    )
+    lbl.add(0, labels)
+    return lbl

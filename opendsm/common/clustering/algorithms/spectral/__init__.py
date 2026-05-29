@@ -12,6 +12,9 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from opendsm.common.clustering.cluster import cluster_features, cluster_result
-from opendsm.common.clustering.settings import ClusteringSettings
-from opendsm.common.clustering.metrics.labels import ClusteringResult
+from opendsm.common.clustering.algorithms.spectral.spectral import (
+    spectral,
+    suggest_k_from_eigengap,
+    eigendecomp_cluster_count,
+)
+from opendsm.common.clustering.algorithms.spectral.spectral_divisive import spectral_divisive

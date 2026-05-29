@@ -36,7 +36,6 @@ class CG_Clustering(Comparison_Group_Algorithm):
         self.settings = settings
 
     def get_labels(self, comparison_pool_data):
-        self.comparison_pool_data = comparison_pool_data
         self.comparison_pool_loadshape = comparison_pool_data.loadshape
 
         # update cluster count
@@ -44,8 +43,8 @@ class CG_Clustering(Comparison_Group_Algorithm):
         algo_settings = getattr(self.settings, algo)
 
         n_cluster_min, n_cluster_max = _bounds.get_cluster_bounds(
-            data_size=len(self.comparison_pool_data.ids),
-            min_cluster_size=algo_settings.scoring.min_cluster_size,
+            data_size=len(comparison_pool_data.ids),
+            min_cluster_size=self.settings.min_cluster_size,
             num_cluster_bound_lower=algo_settings.n_cluster.lower,
             num_cluster_bound_upper=algo_settings.n_cluster.upper
         )
@@ -57,13 +56,13 @@ class CG_Clustering(Comparison_Group_Algorithm):
 
         # perform clustering
         labels = _cluster(
-            self.comparison_pool_loadshape.copy(), # copy is only necessary for plotting later
+            self.comparison_pool_loadshape,
             self.settings
         )
 
         self.clusters = pd.DataFrame(
-            {"cluster": labels}, 
-            index=self.comparison_pool_data.ids
+            {"cluster": labels},
+            index=comparison_pool_data.ids
         )
         self.clusters.index.name = "id"
 

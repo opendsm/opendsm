@@ -49,6 +49,7 @@ def plot(
     ax=None,
     include_scatter=True,
     model_color="tab:orange",
+    include_uncertainty=False,
 ):
     # sort meter_eval by temperature
     meter_eval = meter_eval.sort_values(by="temperature")
@@ -110,12 +111,18 @@ def plot(
             color = adjust_lightness(model_color, 1.0 - 0.25 * i) if n_splits > 1 else model_color
             meter_segment = meter_eval[meter_eval["model_split"] == split]
             name = f"{split}__{meter_segment['model_type'].iloc[0]}"
-            ax.plot(
-                meter_segment["temperature"],
-                meter_segment["predicted"],
-                color=color,
-                label=f"{name}",
-            )
+            T_seg = meter_segment["temperature"].values
+            pred_seg = meter_segment["predicted"].values
+            ax.plot(T_seg, pred_seg, color=color, label=f"{name}")
+
+            if include_uncertainty and "predicted_unc_lower" in meter_segment.columns:
+                lower = meter_segment["predicted_unc_lower"].values
+                upper = meter_segment["predicted_unc_upper"].values
+                if not np.all(np.isnan(lower)):
+                    ax.fill_between(
+                        T_seg, lower, upper,
+                        alpha=0.15, color=color,
+                    )
     else:
         ax.axhline(y=0, linestyle=(0, (5, 1)), linewidth=1.5, color=(0.4, 0.4, 0.4))
 

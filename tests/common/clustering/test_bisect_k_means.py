@@ -18,6 +18,19 @@ from sklearn.datasets import make_blobs
 
 from opendsm.common.clustering.algorithms.bisect_k_means import bisect_k_means
 from opendsm.common.clustering.settings import ClusteringSettings
+from opendsm.common.clustering.algorithms.settings import BisectingKMeansSettings
+
+from .conftest import make_clustering_settings
+
+
+def _bkm_cs(algo_settings=None, seed=42):
+    """Build ClusteringSettings for bisecting_kmeans tests."""
+    if algo_settings is None:
+        algo_settings = {}
+    elif hasattr(algo_settings, 'model_dump'):
+        algo_settings = algo_settings.model_dump(exclude_defaults=True)
+    return make_clustering_settings("bisecting_kmeans", seed=seed, bisecting_kmeans=algo_settings)
+
 
 
 def get_default_settings_dict():
@@ -28,257 +41,89 @@ def get_default_settings_dict():
     }
 
 
-@pytest.fixture
-def simple_2d_data():
-    """Create simple 2D synthetic data with clear clusters."""
-    np.random.seed(42)
-    # Three distinct clusters
-    cluster1 = np.random.randn(50, 10) + np.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-    cluster2 = np.random.randn(50, 10) + np.array([5, 5, 5, 5, 5, 5, 5, 5, 5, 5])
-    cluster3 = np.random.randn(50, 10) + np.array([10, 10, 10, 10, 10, 10, 10, 10, 10, 10])
-    return np.vstack([cluster1, cluster2, cluster3])
+def _make_bisect_settings(settings_dict: dict) -> BisectingKMeansSettings:
+    """Extract BisectingKMeansSettings from a ClusteringSettings-style dict."""
+    bk = settings_dict.get("bisecting_kmeans", {})
+    return BisectingKMeansSettings(**bk)
+
+
+# simple_2d_data fixture is provided by conftest.py
 
 
 @pytest.fixture
 def default_settings():
-    """Create default clustering settings."""
-    settings_dict = get_default_settings_dict()
-    return ClusteringSettings(**settings_dict)
+    """Create default bisecting k-means ClusteringSettings."""
+    return _bkm_cs()
 
 
 @pytest.fixture
 def custom_bisect_settings():
     """Create custom bisecting k-means settings."""
-    settings_dict = get_default_settings_dict()
-    settings_dict["bisecting_kmeans"] = {
-        "recluster_count": 2,
-        "internal_recluster_count": 3,
-        "n_cluster": {
+    return _bkm_cs(BisectingKMeansSettings(
+        recluster_count=2,
+        internal_recluster_count=3,
+        n_cluster={
             "lower": 2,
             "upper": 5
         }
-    }
-    return ClusteringSettings(**settings_dict)
+    ))
 
 
-class TestBasicFunctionality:
-    """Tests for basic bisect_k_means functionality."""
-
-    def test_simple_clustering(self, simple_2d_data, default_settings):
-        """Test basic clustering on simple synthetic data."""
-        labels = bisect_k_means(simple_2d_data, default_settings)
-
-        # Check output format
-        assert isinstance(labels, np.ndarray)
-        assert len(labels) == len(simple_2d_data)
-        assert labels.dtype in [np.int32, np.int64]
-
-        # Check that we have valid cluster labels
-        assert len(np.unique(labels)) > 0
-        assert np.all(labels >= 0)
-
-    def test_reproducibility(self, simple_2d_data, default_settings):
-        """Test that same seed produces same results."""
-        labels1 = bisect_k_means(simple_2d_data, default_settings)
-        labels2 = bisect_k_means(simple_2d_data, default_settings)
-
-        assert np.array_equal(labels1, labels2)
-
-    def test_different_seeds(self, simple_2d_data):
-        """Test that different seeds can produce different results."""
-        settings_dict1 = get_default_settings_dict()
-        settings_dict1["seed"] = 42
-        settings_dict2 = get_default_settings_dict()
-        settings_dict2["seed"] = 123
-        settings1 = ClusteringSettings(**settings_dict1)
-        settings2 = ClusteringSettings(**settings_dict2)
-
-        labels1 = bisect_k_means(simple_2d_data, settings1)
-        labels2 = bisect_k_means(simple_2d_data, settings2)
-
-        # Labels might be different (permutation), but both should be valid
-        assert len(np.unique(labels1)) > 0
-        assert len(np.unique(labels2)) > 0
-
-
-class TestClusterRangeConfiguration:
-    """Tests for different cluster range configurations."""
-
-    def test_single_cluster_specification(self, simple_2d_data):
-        """Test clustering with a single specified number of clusters."""
-        settings_dict = get_default_settings_dict()
-        settings_dict["bisecting_kmeans"] = {
-                "n_cluster": {"lower": 3, "upper": 3}
-        }
-        settings = ClusteringSettings(**settings_dict)
-
-        labels = bisect_k_means(simple_2d_data, settings)
-
-        # Should produce exactly 3 clusters
-        assert len(np.unique(labels)) == 3
-
-    def test_cluster_range(self, simple_2d_data, custom_bisect_settings):
-        """Test clustering with a range of cluster numbers."""
-        labels = bisect_k_means(simple_2d_data, custom_bisect_settings)
-
-        # Should produce between 2 and 5 clusters
-        n_clusters = len(np.unique(labels))
-        assert 2 <= n_clusters <= 5
-
-    def test_two_clusters(self, simple_2d_data):
-        """Test clustering into exactly 2 clusters."""
-        settings_dict = get_default_settings_dict()
-        settings_dict["bisecting_kmeans"] = {
-                "n_cluster": {"lower": 2, "upper": 2}
-        }
-        settings = ClusteringSettings(**settings_dict)
-
-        labels = bisect_k_means(simple_2d_data, settings)
-        assert len(np.unique(labels)) == 2
-
-    def test_many_clusters(self, simple_2d_data):
-        """Test clustering with many clusters."""
-        settings_dict = get_default_settings_dict()
-        settings_dict["bisecting_kmeans"] = {
-                "n_cluster": {"lower": 10, "upper": 10}
-        }
-        settings = ClusteringSettings(**settings_dict)
-
-        labels = bisect_k_means(simple_2d_data, settings)
-        assert len(np.unique(labels)) == 10
+# ---------------------------------------------------------------------------
+# Shared behaviour (valid labels, determinism, cluster range, data shapes,
+# edge cases, cluster quality) is tested in test_algorithms.py via
+# TestAlgorithmSharedBehavior parametrized over all algorithms.
+# ---------------------------------------------------------------------------
 
 
 class TestAlgorithmSettings:
     """Tests for different algorithm configuration settings."""
 
-    def test_lloyd_inner_algorithm(self, simple_2d_data):
-        """Test clustering with Lloyd inner algorithm."""
+    @pytest.mark.parametrize("inner_algorithm", ["lloyd", "elkan"])
+    def test_inner_algorithm(self, simple_2d_data, inner_algorithm):
+        """Test clustering with different inner algorithms."""
         settings_dict = get_default_settings_dict()
         settings_dict["bisecting_kmeans"] = {
-                "inner_algorithm": "lloyd",
+                "inner_algorithm": inner_algorithm,
                 "n_cluster": {"lower": 3, "upper": 3}
         }
-        settings = ClusteringSettings(**settings_dict)
+        settings = _make_bisect_settings(settings_dict)
 
-        labels = bisect_k_means(simple_2d_data, settings)
+        labels = bisect_k_means(simple_2d_data, _bkm_cs(settings, seed=42)).labels
         assert len(np.unique(labels)) == 3
 
-    def test_elkan_inner_algorithm(self, simple_2d_data):
-        """Test clustering with Elkan inner algorithm."""
+    @pytest.mark.parametrize("bisecting_strategy", ["largest_cluster", "biggest_inertia"])
+    def test_bisecting_strategy(self, simple_2d_data, bisecting_strategy):
+        """Test clustering with different bisecting strategies."""
         settings_dict = get_default_settings_dict()
         settings_dict["bisecting_kmeans"] = {
-                "inner_algorithm": "elkan",
+                "bisecting_strategy": bisecting_strategy,
                 "n_cluster": {"lower": 3, "upper": 3}
         }
-        settings = ClusteringSettings(**settings_dict)
+        settings = _make_bisect_settings(settings_dict)
 
-        labels = bisect_k_means(simple_2d_data, settings)
+        labels = bisect_k_means(simple_2d_data, _bkm_cs(settings, seed=42)).labels
         assert len(np.unique(labels)) == 3
 
-    def test_largest_cluster_strategy(self, simple_2d_data):
-        """Test clustering with largest cluster bisecting strategy."""
-        settings_dict = get_default_settings_dict()
-        settings_dict["bisecting_kmeans"] = {
-                "bisecting_strategy": "largest_cluster",
-                "n_cluster": {"lower": 3, "upper": 3}
-        }
-        settings = ClusteringSettings(**settings_dict)
-
-        labels = bisect_k_means(simple_2d_data, settings)
-        assert len(np.unique(labels)) == 3
-
-    def test_biggest_inertia_strategy(self, simple_2d_data):
-        """Test clustering with biggest inertia bisecting strategy."""
-        settings_dict = get_default_settings_dict()
-        settings_dict["bisecting_kmeans"] = {
-                "bisecting_strategy": "biggest_inertia",
-                "n_cluster": {"lower": 3, "upper": 3}
-        }
-        settings = ClusteringSettings(**settings_dict)
-
-        labels = bisect_k_means(simple_2d_data, settings)
-        assert len(np.unique(labels)) == 3
-
-    def test_recluster_count(self, simple_2d_data):
+    @pytest.mark.parametrize("recluster_count", [1, 3, 5])
+    def test_recluster_count(self, simple_2d_data, recluster_count):
         """Test that different recluster counts work correctly."""
-        for recluster_count in [1, 3, 5]:
-            settings_dict = get_default_settings_dict()
-            settings_dict["bisecting_kmeans"] = {
-                "recluster_count": recluster_count,
-                "n_cluster": {"lower": 3, "upper": 3}
-            }
-            settings = ClusteringSettings(**settings_dict)
-
-            labels = bisect_k_means(simple_2d_data, settings)
-            assert len(np.unique(labels)) == 3
-
-
-class TestDataShapes:
-    """Tests for different data shapes and sizes."""
-
-    def test_small_dataset(self):
-        """Test clustering on small dataset."""
-        np.random.seed(42)
-        data = np.random.randn(10, 5)
-
         settings_dict = get_default_settings_dict()
         settings_dict["bisecting_kmeans"] = {
-                "n_cluster": {"lower": 2, "upper": 2}
+            "recluster_count": recluster_count,
+            "n_cluster": {"lower": 3, "upper": 3}
         }
-        settings = ClusteringSettings(**settings_dict)
+        settings = _make_bisect_settings(settings_dict)
 
-        labels = bisect_k_means(data, settings)
-        assert len(labels) == 10
-        assert len(np.unique(labels)) == 2
-
-    def test_large_dataset(self):
-        """Test clustering on larger dataset."""
-        np.random.seed(42)
-        data = np.random.randn(1000, 20)
-
-        settings_dict = get_default_settings_dict()
-        settings_dict["bisecting_kmeans"] = {
-                "n_cluster": {"lower": 5, "upper": 5}
-        }
-        settings = ClusteringSettings(**settings_dict)
-
-        labels = bisect_k_means(data, settings)
-        assert len(labels) == 1000
-        assert len(np.unique(labels)) == 5
-
-    def test_high_dimensional_data(self):
-        """Test clustering on high-dimensional data."""
-        np.random.seed(42)
-        data = np.random.randn(100, 50)
-
-        settings_dict = get_default_settings_dict()
-        settings_dict["bisecting_kmeans"] = {
-                "n_cluster": {"lower": 3, "upper": 3}
-        }
-        settings = ClusteringSettings(**settings_dict)
-
-        labels = bisect_k_means(data, settings)
-        assert len(labels) == 100
-        assert len(np.unique(labels)) == 3
-
-    def test_low_dimensional_data(self):
-        """Test clustering on low-dimensional data."""
-        np.random.seed(42)
-        data = np.random.randn(100, 2)
-
-        settings_dict = get_default_settings_dict()
-        settings_dict["bisecting_kmeans"] = {
-                "n_cluster": {"lower": 3, "upper": 3}
-        }
-        settings = ClusteringSettings(**settings_dict)
-
-        labels = bisect_k_means(data, settings)
-        assert len(labels) == 100
+        labels = bisect_k_means(simple_2d_data, _bkm_cs(settings, seed=42)).labels
         assert len(np.unique(labels)) == 3
 
 
-class TestEdgeCases:
-    """Tests for edge cases and boundary conditions."""
+# TestDataShapes, TestEdgeCases, TestClusterQuality are now in
+# test_algorithms.py::TestAlgorithmSharedBehavior.
+
+class TestBisectKMeansEdgeCases:
+    """Bisecting k-means specific edge cases not covered by the shared suite."""
 
     def test_more_clusters_than_samples(self):
         """Test clustering with more clusters requested than samples available."""
@@ -289,154 +134,69 @@ class TestEdgeCases:
         settings_dict["bisecting_kmeans"] = {
                 "n_cluster": {"lower": 10, "upper": 10}
         }
-        settings = ClusteringSettings(**settings_dict)
+        settings = _make_bisect_settings(settings_dict)
 
         # Should raise ValueError due to insufficient samples
-        # min_cluster_size=2 (default), n_cluster_lower=10 requires > 20 samples
         with pytest.raises(ValueError, match="Insufficient samples for clustering"):
-            bisect_k_means(data, settings)
-
-    def test_uniform_data(self):
-        """Test clustering on uniform data (no clear clusters)."""
-        np.random.seed(42)
-        data = np.random.uniform(-1, 1, (100, 10))
-
-        settings_dict = get_default_settings_dict()
-        settings_dict["bisecting_kmeans"] = {
-                "n_cluster": {"lower": 3, "upper": 3}
-        }
-        settings = ClusteringSettings(**settings_dict)
-
-        labels = bisect_k_means(data, settings)
-        assert len(labels) == 100
-        # Should still produce valid clusters even if not meaningful
-        assert len(np.unique(labels)) > 0
-
-    def test_identical_samples(self):
-        """Test clustering when all samples are identical."""
-        data = np.ones((50, 10))
-
-        settings_dict = get_default_settings_dict()
-        settings_dict["bisecting_kmeans"] = {
-                "n_cluster": {"lower": 3, "upper": 3}
-        }
-        settings = ClusteringSettings(**settings_dict)
-
-        labels = bisect_k_means(data, settings)
-        assert len(labels) == 50
-        # All samples might end up in different clusters arbitrarily
-        assert len(np.unique(labels)) > 0
-
-    def test_negative_values(self):
-        """Test clustering with negative values."""
-        np.random.seed(42)
-        data = np.random.randn(100, 10) - 5  # Shift to negative
-
-        settings_dict = get_default_settings_dict()
-        settings_dict["bisecting_kmeans"] = {
-                "n_cluster": {"lower": 3, "upper": 3}
-        }
-        settings = ClusteringSettings(**settings_dict)
-
-        labels = bisect_k_means(data, settings)
-        assert len(labels) == 100
-        assert len(np.unique(labels)) == 3
-
-    def test_mixed_scale_features(self):
-        """Test clustering with features at different scales."""
-        np.random.seed(42)
-        # Create data with features at different scales
-        data = np.column_stack([
-            np.random.randn(100) * 0.01,  # Small scale
-            np.random.randn(100) * 1.0,   # Medium scale
-            np.random.randn(100) * 100.0  # Large scale
-        ])
-
-        settings_dict = get_default_settings_dict()
-        settings_dict["bisecting_kmeans"] = {
-                "n_cluster": {"lower": 2, "upper": 2}
-        }
-        settings = ClusteringSettings(**settings_dict)
-
-        labels = bisect_k_means(data, settings)
-        assert len(labels) == 100
-        assert len(np.unique(labels)) == 2
-
-
-class TestClusterQuality:
-    """Tests to verify cluster quality and separation."""
-
-    def test_well_separated_clusters(self):
-        """Test that well-separated clusters are correctly identified."""
-        np.random.seed(42)
-        # Create three very distinct clusters
-        cluster1 = np.random.randn(30, 5) + np.array([0, 0, 0, 0, 0])
-        cluster2 = np.random.randn(30, 5) + np.array([10, 10, 10, 10, 10])
-        cluster3 = np.random.randn(30, 5) + np.array([20, 20, 20, 20, 20])
-        data = np.vstack([cluster1, cluster2, cluster3])
-
-        settings_dict = get_default_settings_dict()
-        settings_dict["bisecting_kmeans"] = {
-                "n_cluster": {"lower": 3, "upper": 3}
-        }
-        settings = ClusteringSettings(**settings_dict)
-
-        labels = bisect_k_means(data, settings)
-
-        # Should identify 3 clusters
-        assert len(np.unique(labels)) == 3
-
-        # Check that samples from same original cluster tend to be together
-        # (This is a heuristic check - labels might be permuted)
-        cluster_counts = {}
-        for i in range(3):
-            original_cluster_labels = labels[i*30:(i+1)*30]
-            most_common = np.bincount(original_cluster_labels).argmax()
-            cluster_counts[i] = np.sum(original_cluster_labels == most_common)
-
-        # At least most samples from each cluster should be together
-        for count in cluster_counts.values():
-            assert count >= 20  # At least 2/3 of samples correctly clustered
+            bisect_k_means(data, _bkm_cs(settings, seed=42))
 
 
 class TestBaselineConsistency:
     """Tests to ensure algorithm output doesn't change across versions."""
 
     def test_expected_baseline_output(self):
-        """Bisecting k-means should produce a stable cluster-size distribution.
+        """Test that bisecting k-means produces expected baseline output.
 
-        Tests structural properties (number of clusters and their sizes), not
-        exact label values, because cluster label assignment is permutation-
-        sensitive across platforms while the size distribution is not.
+        This test ensures the algorithm produces consistent results across
+        different versions of the code. If this test fails, it indicates
+        a breaking change in the clustering algorithm.
         """
+        # Create deterministic test data with well-separated clusters
         data, _ = make_blobs(
             n_samples=40,
             n_features=10,
             centers=3,
             cluster_std=2.0,
-            random_state=42,
+            random_state=42
         )
 
+        # Configure settings for reproducible clustering
         settings_dict = get_default_settings_dict()
-        settings_dict["bisecting_kmeans"] = {
-            "n_cluster": {"lower": 2, "upper": 4},
-            "recluster_count": 2,
-            "internal_recluster_count": 3,
-            "inner_algorithm": "lloyd",
-            "bisecting_strategy": "largest_cluster",
-            "seed": 42,
-        }
-        settings = ClusteringSettings(**settings_dict)
+        algo_settings = BisectingKMeansSettings(
+            n_cluster={"lower": 2, "upper": 4},
+            recluster_count=2,
+            internal_recluster_count=3,
+            inner_algorithm="lloyd",
+            bisecting_strategy="largest_cluster",
+        )
 
-        labels = bisect_k_means(data, settings)
+        # Run clustering
+        labels = bisect_k_means(data, _bkm_cs(algo_settings, seed=42)).labels
 
-        # Structural assertion: 3 distinct non-empty clusters covering all 40 samples.
-        # Exact sizes are not asserted because k-means initialization order can
-        # differ across BLAS implementations (we saw [13, 13, 14] on Linux).
-        _, counts = np.unique(labels, return_counts=True)
-        assert len(counts) == 3, f"Expected 3 clusters, got {len(counts)}"
-        assert counts.sum() == 40
-        assert counts.min() >= 1, "No empty clusters"
+        # Expected baseline output - saved for version consistency
+        expected_labels = np.array([
+            0, 1, 0, 0, 0, 0, 1, 1, 0, 0,
+            1, 0, 1, 1, 0, 0, 0, 0, 0, 0,
+            1, 0, 0, 1, 0, 0, 0, 0, 0, 1,
+            0, 0, 0, 1, 0, 1, 1, 1, 0, 0
+        ])
+
+        # Verify exact match against baseline
+        np.testing.assert_array_equal(
+            labels,
+            expected_labels,
+            err_msg="Bisecting k-means output does not match saved baseline. "
+                    "This indicates a breaking change in the algorithm."
+        )
+
+        # Verify cluster properties
+        unique_labels, counts = np.unique(labels, return_counts=True)
+        expected_counts = {0: 27, 1: 13}
+
+        assert len(unique_labels) == 2
+        for label, count in zip(unique_labels, counts):
+            assert count == expected_counts[label], \
+                f"Cluster {label} has {count} samples, expected {expected_counts[label]}"
 
 
 if __name__ == '__main__':

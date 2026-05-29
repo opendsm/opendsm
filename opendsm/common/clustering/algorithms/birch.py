@@ -18,50 +18,33 @@ import numpy as np
 
 from sklearn.cluster import Birch
 
-from opendsm.common.clustering import (
-    scoring as _scoring,
-    settings as _settings,
-    voting as _voting,
-)
+from opendsm.common.clustering.metrics.labels import ClusteringResult
 
 
+def birch(data, settings):
+    """Clusters features using Birch algorithm. Returns ClusteringResult."""
+    algo_settings = getattr(settings, settings.algorithm_selection.value)
+    seed = settings._seed
 
-def birch(
-    data: np.ndarray,
-    settings: _settings.ClusteringSettings
-):
-    """
-    Clusters features using Birch algorithm
-    """
+    n_cluster_lower = algo_settings.n_cluster.lower
+    n_cluster_upper = algo_settings.n_cluster.upper
 
-    n_cluster_lower = settings.birch.n_cluster.lower
-    n_cluster_upper = settings.birch.n_cluster.upper
-    threshold = settings.birch.threshold
-    branching_factor = settings.birch.branching_factor
+    lbl = ClusteringResult(
+        data=data,
+        score_settings=algo_settings.scoring,
+        seed=seed,
+        n_cluster_lower=n_cluster_lower,
+        min_cluster_size=settings.min_cluster_size,
+        small_cluster_mode=settings.small_cluster_mode,
+    )
 
-    window_size = settings.birch.scoring.window_size
-
-    results = []
     for n_clusters in range(n_cluster_lower, n_cluster_upper + 1):
         algo = Birch(
             n_clusters=n_clusters,
-            threshold=threshold,
-            branching_factor=branching_factor,
+            threshold=algo_settings.threshold,
+            branching_factor=algo_settings.branching_factor,
         )
         labels = algo.fit_predict(data)
-        
-        # Calculate score for the clusters
-        label_res = _scoring.score_clusters(data, labels, settings)
-        
-        results.append(label_res)
+        lbl.add(n_clusters, labels)
 
-    df_votes = _voting.construct_voting_df(results)
-    winner_idx = _voting.shulze_voting(
-        df_votes, 
-        _scoring.score_council(settings), 
-        window_size
-    )
-    # get labels of winner from results
-    winner_labels = results[winner_idx].labels
-
-    return winner_labels
+    return lbl

@@ -12,6 +12,28 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from opendsm.common.clustering.cluster import cluster_features, cluster_result
-from opendsm.common.clustering.settings import ClusteringSettings
+from __future__ import annotations
+
+from typing import Any, Protocol
+
+import numpy as np
+
 from opendsm.common.clustering.metrics.labels import ClusteringResult
+
+
+class ClusterAlgorithm(Protocol):
+    """Protocol for all clustering algorithm functions.
+
+    Each algorithm receives the feature data and the full ClusteringSettings.
+    The algorithm extracts its own sub-settings, seed, min_cluster_size,
+    small_cluster_mode, etc. from the settings object.
+
+    Enforcing the return type here ensures a misimplemented algorithm
+    fails at import/type-check time rather than deep in the scoring pipeline.
+    """
+
+    def __call__(
+        self,
+        data: np.ndarray,
+        settings: Any,
+    ) -> ClusteringResult: ...

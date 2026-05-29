@@ -346,7 +346,38 @@ class BaseHourlySettings(BaseSettings):
 
     """settings for temporal clustering"""
     temporal_cluster: ClusteringSettings = pydantic.Field(
-        default_factory=ClusteringSettings,
+        default_factory=lambda: ClusteringSettings(
+            # Pin to original EE hourly defaults. Do not remove until hourly
+            # model is benchmarked against the new clustering defaults.
+            min_cluster_size=2,
+            small_cluster_mode="outlier",
+            algorithm_selection="spectral",
+            spectral={
+                "scoring": {
+                    "weights": {"calinski_harabasz_index": 1.0},
+                    "k_penalty": {"enabled": False},
+                },
+                "eigengap_weight": 0.0,
+            },
+            spectral_divisive={
+                "recluster_count": 0,
+                "scoring": {
+                    "weights": {"calinski_harabasz_index": 1.0},
+                    "k_penalty": {"enabled": False},
+                },
+            },
+            feature_transform={
+                "normalize": {"method": "standardize", "scope": "global"},
+                "wavelet": {
+                    "enabled": True,
+                    "pca_scope": "global",
+                    "pca_n_components": "mle",
+                    "variance_weighted": False,
+                },
+                "fpca": {"enabled": False},
+                "magnitude_features": {"features": []},
+            },
+        ),
     )
 
     """temporal cluster aggregation method"""
@@ -424,13 +455,9 @@ class BaseHourlySettings(BaseSettings):
 
         self.elasticnet._seed = self._seed
         self.temporal_cluster._seed = self._seed
-        # ClusteringSettings._check_seed propagates to its transforms when it
-        # runs, but it ran with a random seed before we override _seed here;
-        # re-propagate so wavelet / fpca match the hourly seed too.
-        for transform in (
-            self.temporal_cluster.wavelet_transform,
-            self.temporal_cluster.fpca_transform,
-        ):
+
+        feature_transform = self.temporal_cluster.feature_transform
+        for transform in (feature_transform.wavelet, feature_transform.fpca):
             if transform is not None:
                 transform._seed = self._seed
 
@@ -516,4 +543,5 @@ class SerializeModel(BaseSettings):
     coefficients: Optional[list[list[float]]] = None
     intercept: Optional[list[float]] = None
     baseline_metrics: Optional[BaselineMetrics] = None
+    baseline_hour_metrics: Optional[Dict[str, BaselineMetrics]] = None
     info: ModelInfo
