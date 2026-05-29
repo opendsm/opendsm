@@ -18,7 +18,7 @@ import numba
 import numpy as np
 from scipy.optimize import minimize_scalar
 
-from opendsm.common.stats.adaptive_loss_Z import ln_Z
+from opendsm.common.stats.adaptive_loss_Z import ln_Z, ln_Z_numba
 from opendsm.common.stats.outliers import (
     remove_outliers,
     _IQR_outlier,
@@ -451,6 +451,149 @@ def alpha_scaled(
     return alpha
 
 
+@numba.jit(nopython=True, error_model="numpy", cache=True)
+def _numba_penalized_loss(x_sq, obs_weights, alpha, alpha_min):
+    """Weighted penalized loss for a given alpha. Fully numba."""
+    n = len(x_sq)
+    penalty = ln_Z_numba(alpha, alpha_min)
+    total = 0.0
+    if alpha == 2.0:
+        for i in range(n):
+            total += obs_weights[i] * (0.5 * x_sq[i] + penalty)
+    elif alpha <= alpha_min:
+        for i in range(n):
+            total += obs_weights[i] * (1.0 - np.exp(-0.5 * x_sq[i]) + penalty)
+    else:
+        abs_a_m2 = np.abs(alpha - 2.0)
+        coeff = abs_a_m2 / alpha
+        exp = alpha / 2.0
+        for i in range(n):
+            total += obs_weights[i] * (coeff * ((x_sq[i] / abs_a_m2 + 1.0) ** exp - 1.0) + penalty)
+    return total
+
+
+@numba.jit(nopython=True, error_model="numpy", cache=True)
+def _numba_loss_weights(x_sq, alpha, alpha_min, min_weight):
+    """Generalized loss weights for a given alpha. Fully numba."""
+    n = len(x_sq)
+    w = np.empty(n)
+    if alpha == 2.0:
+        for i in range(n):
+            w[i] = 1.0
+    elif alpha == 0.0:
+        for i in range(n):
+            w[i] = 1.0 / (0.5 * x_sq[i] + 1.0) if x_sq[i] > 0 else 1.0
+    elif alpha <= alpha_min:
+        for i in range(n):
+            w[i] = np.exp(-0.5 * x_sq[i]) if x_sq[i] > 0 else 1.0
+    else:
+        exp = 0.5 * alpha - 1.0
+        abs_a_m2 = np.abs(alpha - 2.0)
+        for i in range(n):
+            w[i] = (x_sq[i] / abs_a_m2 + 1.0) ** exp if x_sq[i] > 0 else 1.0
+    if min_weight > 0.0:
+        scale = 1.0 - min_weight
+        for i in range(n):
+            w[i] = w[i] * scale + min_weight
+    return w
+
+
+@numba.jit(nopython=True, error_model="numpy", cache=True)
+def _numba_brent_alpha(x_sq: np.ndarray, obs_weights: np.ndarray, alpha_min: float = LOSS_ALPHA_MIN) -> float:
+    """Bounded Brent minimizer over alpha; mirrors scipy's _minimize_scalar_bounded.
+
+    Same algorithm and tolerances as
+    ``scipy.optimize.minimize_scalar(method='Bounded',
+    bounds=[-1e-5, 1+1e-5], options={'xatol': 1e-5})``.
+    The parabolic safeguard uses the second-to-last step (Brent's
+    Numerical Recipes form), so `rat` and `e` are tracked separately.
+    """
+    a = -1e-5
+    b = 1.0 + 1e-5
+    xatol = 1e-5
+    sqrt_eps = 1.4901161193847656e-08  # sqrt(2.220446049250313e-16)
+    golden_mean = 0.3819660112501051  # 0.5 * (3 - sqrt(5))
+    maxiter = 500
+
+    # Initial bracket midpoint via golden section
+    fulc = a + golden_mean * (b - a)
+    nfc = fulc
+    xf = fulc
+    rat = 0.0
+    e = 0.0
+    fx = _numba_penalized_loss(x_sq, obs_weights, alpha_scaled(xf), alpha_min)
+    fnfc = fx
+    ffulc = fx
+
+    xm = 0.5 * (a + b)
+    tol1 = sqrt_eps * abs(xf) + xatol / 3.0
+    tol2 = 2.0 * tol1
+
+    for _ in range(maxiter):
+        if abs(xf - xm) <= (tol2 - 0.5 * (b - a)):
+            break
+
+        do_golden = True
+        if abs(e) > tol1:
+            # Parabolic fit
+            r = (xf - nfc) * (fx - ffulc)
+            q = (xf - fulc) * (fx - fnfc)
+            p = (xf - fulc) * q - (xf - nfc) * r
+            q = 2.0 * (q - r)
+            if q > 0.0:
+                p = -p
+            q = abs(q)
+            # Step ordering: r holds the step from TWO iterations ago (the
+            # Brent safeguard reference); e advances to the most recent step.
+            r = e
+            e = rat
+
+            if abs(p) < abs(0.5 * q * r) and p > q * (a - xf) and p < q * (b - xf):
+                rat = p / q
+                x_new = xf + rat
+                if (x_new - a) < tol2 or (b - x_new) < tol2:
+                    si = 1.0 if (xm - xf) >= 0.0 else -1.0
+                    rat = tol1 * si
+                do_golden = False
+
+        if do_golden:
+            if xf >= xm:
+                e = a - xf
+            else:
+                e = b - xf
+            rat = golden_mean * e
+
+        si = 1.0 if rat >= 0.0 else -1.0
+        step = si * max(abs(rat), tol1)
+        x = xf + step
+        fu = _numba_penalized_loss(x_sq, obs_weights, alpha_scaled(x), alpha_min)
+
+        if fu <= fx:
+            if x >= xf:
+                a = xf
+            else:
+                b = xf
+            fulc = nfc; ffulc = fnfc
+            nfc = xf; fnfc = fx
+            xf = x; fx = fu
+        else:
+            if x < xf:
+                a = x
+            else:
+                b = x
+            if fu <= fnfc or nfc == xf:
+                fulc = nfc; ffulc = fnfc
+                nfc = x; fnfc = fu
+            elif fu <= ffulc or fulc == xf or fulc == nfc:
+                fulc = x; ffulc = fu
+
+        xm = 0.5 * (a + b)
+        tol1 = sqrt_eps * abs(xf) + xatol / 3.0
+        tol2 = 2.0 * tol1
+
+    return alpha_scaled(xf)
+
+
 def adaptive_loss_fcn(
     x: np.ndarray,
     mu: float = 0.0,
@@ -472,8 +615,7 @@ def adaptive_loss_fcn(
         replace_nonfinite: Replace non-finite values with max finite value
         obs_weights: Optional per-observation weights for the loss sum.
             When provided, the loss becomes sum(obs_weights * penalized_loss)
-            instead of sum(penalized_loss).  Used by kernel_adaptive_weights
-            to localize alpha estimation.
+            instead of sum(penalized_loss).
 
     Returns:
         Tuple of (total loss value, alpha parameter used)
@@ -493,15 +635,15 @@ def adaptive_loss_fcn(
         return loss.sum()
 
     if alpha == "adaptive":
-        # Optimize alpha parameter over scaled space
-        res = minimize_scalar(
-            lambda s: _loss_for_alpha(alpha_scaled(s)),
-            bounds=[-1e-5, 1 + 1e-5],
-            method="Bounded",
-            options={"xatol": 1e-5},
-        )
-        loss_alpha = alpha_scaled(res.x)
-        loss_fcn_val = res.fun
+        # Fully numba Brent optimization — single Python→numba call
+        # eliminates per-iteration dispatch overhead.
+        x_sq = x ** 2
+        if obs_weights is not None:
+            w = obs_weights
+        else:
+            w = np.full(len(x), 1.0 / len(x))
+        loss_alpha = _numba_brent_alpha(x_sq, w, LOSS_ALPHA_MIN)
+        loss_fcn_val = _loss_for_alpha(loss_alpha)
     else:
         loss_alpha = alpha
         loss_fcn_val = _loss_for_alpha(alpha)
@@ -552,44 +694,6 @@ def adaptive_weights(
         )
 
     return generalized_loss_weights(x_normalized, alpha=alpha, min_weight=min_weight), C, alpha
-
-
-def _fast_weighted_alpha(r_normalized, obs_weights, n_candidates=20):
-    """Fast weighted alpha optimization via inlined grid search.
-
-    Avoids the overhead of repeated numba-jitted ``penalized_loss_fcn`` calls
-    by inlining the generalized loss computation.  ~7x faster than
-    ``adaptive_loss_fcn`` with ``minimize_scalar`` for typical array sizes.
-
-    Args:
-        r_normalized: Scale-normalized residuals.
-        obs_weights: Per-observation kernel weights (sum to 1).
-        n_candidates: Number of alpha candidates to evaluate.
-
-    Returns:
-        Optimal alpha value.
-    """
-    alpha_grid_s = np.linspace(0, 1, n_candidates)
-    alpha_grid = np.array([alpha_scaled(s) for s in alpha_grid_s])
-
-    x_sq = r_normalized ** 2
-    best_loss = np.inf
-    best_alpha = 2.0
-
-    for a in alpha_grid:
-        if a == 2.0:
-            loss_arr = 0.5 * x_sq
-        elif a <= LOSS_ALPHA_MIN:
-            loss_arr = 1.0 - np.exp(-0.5 * x_sq)
-        else:
-            abs_a_m2 = np.abs(a - 2.0)
-            loss_arr = abs_a_m2 / a * ((x_sq / abs_a_m2 + 1.0) ** (a / 2.0) - 1.0)
-        total = (obs_weights * (loss_arr + ln_Z(a, LOSS_ALPHA_MIN))).sum()
-        if total < best_loss:
-            best_loss = total
-            best_alpha = a
-
-    return best_alpha
 
 
 class KernelWeightCache:
@@ -724,12 +828,14 @@ class KernelWeightCache:
         M_alpha = self.M_alpha
         eval_alpha = np.empty(M_alpha)
 
+        r_sq_all = r_normalized_all ** 2
+
         for i in range(M_alpha):
             w = self.alpha_kernels[i]
             if w is None:
                 eval_alpha[i] = 2.0
                 continue
-            eval_alpha[i] = _fast_weighted_alpha(r_normalized_all, w)
+            eval_alpha[i] = _numba_brent_alpha(r_sq_all, w, LOSS_ALPHA_MIN)
 
         # Interpolate alpha, clamp
         alpha_interp = np.clip(
@@ -737,59 +843,19 @@ class KernelWeightCache:
             LOSS_ALPHA_MIN, 2.0,
         )
 
-        # --- Per-observation weights (vectorized by alpha bucket) ---
+        # --- Per-observation weights via numba (by alpha bucket) ---
         weights = np.ones(N, dtype=float)
         alpha_rounded = np.round(alpha_interp, 2)
         for alpha_val in np.unique(alpha_rounded):
             mask = alpha_rounded == alpha_val
-            weights[mask] = generalized_loss_weights(
-                r_normalized_all[mask], alpha=float(alpha_val),
-                min_weight=min_weight,
+            weights[mask] = _numba_loss_weights(
+                r_sq_all[mask], float(alpha_val), LOSS_ALPHA_MIN, min_weight,
             )
 
         median_alpha = float(np.median(eval_alpha))
         if return_local_scale:
             return weights, median_alpha, C_interp
         return weights, median_alpha
-
-
-def kernel_adaptive_weights(
-    x: np.ndarray,
-    residuals: np.ndarray,
-    zone_knot_count: int = 10,
-    min_knot_spacing_pct: float = 0.025,
-    n_eff_min: int = 15,
-    min_weight: float = 0.0,
-    return_local_scale: bool = False,
-    _cache: Optional["KernelWeightCache"] = None,
-) -> Tuple[np.ndarray, float] | Tuple[np.ndarray, float, np.ndarray]:
-    """Kernel-weighted adaptive weights with bandwidth tied to model resolution.
-
-    Computes per-observation adaptive weights where both the scale (C) and
-    shape (alpha) of the generalized loss function are estimated locally via
-    Gaussian kernel weighting.
-
-    When called repeatedly on the same temperature array (e.g., across
-    adaptive iterations), pass a ``KernelWeightCache`` via ``_cache`` to
-    avoid recomputing bandwidth, evaluation grids, and kernel matrices.
-
-    Args:
-        x: Temperature values, sorted ascending (typically standardized).
-        residuals: Model residuals corresponding to x (same length).
-        zone_knot_count: Maximum interior knots per zone.
-        min_knot_spacing_pct: Minimum knot spacing as fraction of data range.
-        n_eff_min: Minimum effective neighbors per evaluation point.
-        min_weight: Minimum weight value.
-        return_local_scale: If True, return per-observation local scale (C)
-            as a third element.
-        _cache: Pre-computed kernel geometry.  If None, created internally.
-
-    Returns:
-        Tuple of (weights, median_alpha) or (weights, median_alpha, C_local).
-    """
-    if _cache is None:
-        _cache = KernelWeightCache(x, zone_knot_count, min_knot_spacing_pct, n_eff_min)
-    return _cache.compute_weights(residuals, min_weight=min_weight, return_local_scale=return_local_scale)
 
 
 # Pre-compile all Numba JIT functions at import time to eliminate first-call

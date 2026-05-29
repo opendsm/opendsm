@@ -12,6 +12,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+import numba
 import numpy as np
 from scipy.interpolate import BSpline
 
@@ -223,20 +224,86 @@ ln_Z_inf = 2.1653591123321405
 
 
 def ln_Z(alpha, alpha_min=-100):
+    """Approximate log-partition function via B-spline lookup.
+
+    Parameters
+    ----------
+    alpha : float
+        Shape parameter.
+    alpha_min : float
+        Minimum alpha; values at or below return the asymptotic limit.
+
+    Returns
+    -------
+    float
+        Log-partition function value.
     """
-    Function to fit a spline onto the data points. Since some points may have higher changes in their local neighborhood,
-    we need to fit more points in that region via the spline. The spline is fit on the data points for alpha >= alpha_min.
-
-    Parameters:
-    alpha (float): The alpha value for which the spline of Z is to be calculated.
-    alpha_min (float, optional): The minimum value of alpha. Defaults to -100.
-
-    Returns:
-    float: The spline fit on Z for the given alpha. If alpha is less than or equal to alpha_min,
-    the function returns the value at infinity, i.e. 11.2.
-    """
-
     if alpha <= alpha_min:
         return ln_Z_inf
 
     return ln_Z_fit(alpha)
+
+
+# Extract B-spline knots, coefficients, and degree for numba evaluation.
+_LN_Z_T = TCK[0]
+_LN_Z_C = TCK[1]
+_LN_Z_K = TCK[2]
+
+
+@numba.jit(nopython=True, cache=True)
+def _de_boor(t, c, k, x):
+    """Evaluate B-spline at scalar x using De Boor's algorithm.
+
+    Parameters
+    ----------
+    t : ndarray — knot vector
+    c : ndarray — coefficients
+    k : int — degree
+    x : float — evaluation point (must be within [t[k], t[n]])
+    """
+    n = len(t) - k - 1
+
+    # Find knot span: t[s] <= x < t[s+1]
+    s = k
+    for i in range(k, n):
+        if t[i + 1] > x:
+            s = i
+            break
+    else:
+        s = n - 1
+
+    # De Boor recursion
+    d = np.empty(k + 1)
+    for j in range(k + 1):
+        d[j] = c[s - k + j]
+
+    # De Boor recurrence: α = (x - t[i+j-p]) / (t[i+j-r+1] - t[i+j-p])
+    # where i is the knot span, p the degree, r the level. With
+    # left = i + j - p (= s - k + j) and right = i + j - r + 1
+    # (= left + k - r + 1), denom is t[right] - t[left] (NOT
+    # t[right + 1] — that off-by-one reaches one knot too far).
+    for r in range(1, k + 1):
+        for j in range(k, r - 1, -1):
+            left = s - k + j
+            right = left + k - r + 1
+            denom = t[right] - t[left]
+            if denom == 0.0:
+                alpha = 0.0
+            else:
+                alpha = (x - t[left]) / denom
+            d[j] = (1.0 - alpha) * d[j - 1] + alpha * d[j]
+
+    return d[k]
+
+
+@numba.jit(nopython=True, cache=True)
+def ln_Z_numba(alpha, alpha_min=-100.0):
+    """Numba-compatible ln_Z via De Boor B-spline evaluation."""
+    if alpha <= alpha_min:
+        return 2.1653591123321405  # ln_Z_inf
+    # Clamp to knot range
+    lo = _LN_Z_T[_LN_Z_K]
+    hi = _LN_Z_T[len(_LN_Z_T) - _LN_Z_K - 1]
+    x = min(max(alpha, lo), hi - 1e-10)
+    
+    return _de_boor(_LN_Z_T, _LN_Z_C, _LN_Z_K, x)
