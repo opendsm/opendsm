@@ -47,13 +47,11 @@ def _get_cluster_ls(df_cp_ls: pd.DataFrame, cluster_df: pd.DataFrame, agg_type: 
 
 
 def fit_to_clusters(
-    t_ls, 
-    cp_ls, 
-    x0, 
-    settings_dict,
+    t_ls,
+    cp_ls,
+    x0,
+    settings: _settings.CG_Clustering_Settings,
 ):
-    # instantiate settings from settings_dict
-    settings = _settings.CG_Clustering_Settings(**settings_dict)
     match_settings = settings.treatment_match
 
     _min_pct_cluster = match_settings.percent_cluster_minimum
@@ -162,23 +160,28 @@ def _match_treatment_to_cluster(
     # filter to valid rows
     t_ls = t_ls[idx_valid, :]
 
-    # Get percent from each cluster
-    distances = scipy.spatial.distance.cdist(t_ls, cp_ls, metric="euclidean")  # type: ignore
-    distances_norm = (np.min(distances, axis=1) / distances.T).T
+    # Get percent from each cluster — use float32 to halve memory,
+    # following the IMM pattern (these are initial weights for the
+    # optimizer, so float32 precision is more than sufficient).
+    distances = scipy.spatial.distance.cdist(t_ls, cp_ls, metric="euclidean").astype(np.float32)  # type: ignore
+
+    # Compute normalized inverse-distance weights in-place to avoid
+    # intermediate array copies.
+    min_dists = np.min(distances, axis=1, keepdims=True)
     # change this number (20) to alter weights, larger centralizes the weight, smaller spreads them out
-    distances_norm = (distances_norm**20)  
-    distances_norm = (distances_norm.T / np.sum(distances_norm, axis=1)).T
+    np.divide(min_dists, distances, out=distances, where=distances != 0)
+    distances[distances == 0] = 1.0  # exact match gets full weight
+    np.power(distances, 20, out=distances)
+    row_sums = np.sum(distances, axis=1, keepdims=True)
+    np.divide(distances, row_sums, out=distances)
+    distances_norm = distances
 
-    coeffs = []
-    for n, t_id in enumerate(df_ls_t.index):
-        t_id_ls = t_ls[n, :]
-        x0 = distances_norm[n, :]
+    n_valid = t_ls.shape[0]
+    n_clusters = cp_ls.shape[0]
+    coeffs = np.empty((n_valid, n_clusters), dtype=np.float64)
 
-        coeffs_n = fit_to_clusters(t_id_ls, cp_ls, x0, settings.model_dump())
-
-        coeffs.append(coeffs_n)
-
-    coeffs = np.vstack(coeffs)
+    for n in range(n_valid):
+        coeffs[n, :] = fit_to_clusters(t_ls[n, :], cp_ls, distances_norm[n, :], settings)
 
     # only update rows
     df_t_coeffs.loc[idx_invalid, :] = np.nan
@@ -213,11 +216,11 @@ def match_treatment_to_clusters(
     )
 
     # normalize treatment loadshape
-    df_ls_t_norm = df_ls_t.copy()
-    df_ls_t_norm[:] = _transform.normalize(
-        data=df_ls_t_norm.to_numpy(),
+    normalized_data = _transform.normalize(
+        data=df_ls_t.to_numpy(),
         settings=settings.normalize,
     )
+    df_ls_t_norm = pd.DataFrame(normalized_data, index=df_ls_t.index, columns=df_ls_t.columns)
 
     # fit treatment to clusters
     df_t_coeffs = _match_treatment_to_cluster(
