@@ -168,13 +168,20 @@ class _HourlyData:
         if pv_start is not None:
             self.pv_start = pd.to_datetime(pv_start).date()
 
-        # Initialize settings
+        # Initialize settings (using private attribute for immutability)
         if settings is None:
-            self.settings = HourlyDataSettings()
+            self._settings = HourlyDataSettings()
         elif isinstance(settings, dict):
-            self.settings = HourlyDataSettings(**settings)
+            self._settings = HourlyDataSettings(**settings)
+        elif isinstance(settings, HourlyDataSettings):
+            self._settings = settings
+        else:
+            raise TypeError(
+                f"settings must be None, dict, or HourlyDataSettings instance, "
+                f"got {type(settings).__name__}"
+            )
 
-        self.settings.is_electricity_data = is_electricity_data
+        self._settings.is_electricity_data = is_electricity_data
 
         # TODO not sure why we're keeping this copy
         self._kwargs = copy.deepcopy(kwargs)
@@ -197,6 +204,11 @@ class _HourlyData:
             return None
         else:
             return self._df.copy()
+
+    @property
+    def settings(self):
+        """Get the settings. This is read-only after initialization."""
+        return self._settings
 
     def log_warnings(self):
         """
@@ -317,14 +329,17 @@ class _HourlyData:
                 )
             )
         self.tz = df.index.tz
-        self.settings.time_zone = self.tz
+        self._settings.time_zone = self.tz
 
         # prevent later issues when merging on generated datetimes, which default to ns precision
         # there is almost certainly a smoother way to accomplish this conversion, but this works
         if df.index.dtype.unit != "ns":
             utc_index = df.index.tz_convert("UTC")
-            ns_index = utc_index.astype("datetime64[ns, UTC]")
-            df.index = ns_index.tz_convert(self.tz)
+            # Remove timezone, convert precision, then re-add timezone
+            naive_index = utc_index.tz_localize(None)
+            ns_index = naive_index.astype("datetime64[ns]")
+            ns_index_utc = ns_index.tz_localize("UTC")
+            df.index = ns_index_utc.tz_convert(self.tz)
 
         # Convert electricity data having 0 meter values to NaNs
         if self.is_electricity_data:
@@ -365,10 +380,10 @@ class HourlyBaselineData(_HourlyData):
     def _check_data_sufficiency(self):
         data = _create_sufficiency_df(self.df)
         hsc = HourlySufficiencyCriteria(
-            data=data, 
+            data=data,
             is_electricity_data=self.is_electricity_data,
             is_reporting_data=False,
-            settings=self.settings.sufficiency,
+            settings=self._settings.sufficiency,
         )
         hsc.check_sufficiency_baseline()
         disqualification = hsc.disqualification
@@ -417,10 +432,10 @@ class HourlyReportingData(_HourlyData):
     def _check_data_sufficiency(self):
         data = _create_sufficiency_df(self.df)
         hsc = HourlySufficiencyCriteria(
-            data=data, 
+            data=data,
             is_electricity_data=self.is_electricity_data,
             is_reporting_data=True,
-            settings=self.settings.sufficiency,
+            settings=self._settings.sufficiency,
         )
         hsc.check_sufficiency_reporting()
         disqualification = hsc.disqualification
