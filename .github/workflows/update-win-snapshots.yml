@@ -1,0 +1,36 @@
+name: Update Windows snapshots
+
+# Manual one-shot to regenerate Windows-specific regression snapshots
+# (the *_win.json files pinned by tests where DailyModel's nlopt SBPLX
+# optimizer lands on a different local minimum on win32). Trigger from
+# the Actions tab, download the artifact, and commit the *_win.json
+# files to the branch.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  update-snapshots:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package + test deps
+        run: |
+          pip install -e .[dev]
+          pip install syrupy
+      - name: Regenerate snapshots
+        run: pytest tests/ -m regression --snapshot-update
+      - name: Upload regenerated snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-regression-snapshots
+          path: |
+            tests/eemeter/daily_model/__snapshots__/
+            tests/eemeter/hourly_model/__snapshots__/
+            tests/__snapshots__/test_derivatives/
+            tests/__snapshots__/test_caltrack_hourly_regression/

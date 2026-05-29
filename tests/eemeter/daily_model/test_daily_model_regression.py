@@ -24,13 +24,9 @@ from regression_metrics import regression_block
 
 # DailyModel's nlopt SBPLX optimizer lands at a different local minimum on
 # Windows. Aggregate sum/mean stay within ~0.05%, but per-bin residual means
-# diverge by tens of percent because the residual distribution shifts under
-# the different fit. Skip the cell-level regression on Windows rather than
-# carry per-platform snapshots.
-_WIN_DAILY_DIVERGES = pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="DailyModel SBPLX optimizer converges to a different local minimum on Windows",
-)
+# diverge by tens of percent. Pin a Windows-specific snapshot so each platform
+# keeps full cell-level regression coverage against itself.
+SNAP_SUFFIX = "_win" if sys.platform == "win32" else ""
 
 
 @pytest.fixture(scope="session")
@@ -52,7 +48,6 @@ def daily_model_fit(daily_baseline_data):
     return DailyModel().fit(daily_baseline_data, ignore_disqualification=True)
 
 
-@_WIN_DAILY_DIVERGES
 @pytest.mark.slow
 @pytest.mark.regression
 def test_daily_baseline_predict_regression(
@@ -61,10 +56,11 @@ def test_daily_baseline_predict_regression(
     """Fit on baseline -> predict on same data. Catches any change to fit + predict."""
     result = daily_model_fit.predict(daily_baseline_data)
 
-    assert regression_block(result, freq="daily") == snapshot(name="regression")
+    assert regression_block(result, freq="daily") == snapshot(
+        name=f"regression{SNAP_SUFFIX}"
+    )
 
 
-@_WIN_DAILY_DIVERGES
 @pytest.mark.slow
 @pytest.mark.regression
 def test_daily_reporting_predict_regression(
@@ -73,4 +69,6 @@ def test_daily_reporting_predict_regression(
     """Fit on baseline -> predict on reporting. Catches any change that affects out-of-sample predict."""
     result = daily_model_fit.predict(daily_reporting_data)
 
-    assert regression_block(result, freq="daily") == snapshot(name="regression")
+    assert regression_block(result, freq="daily") == snapshot(
+        name=f"regression{SNAP_SUFFIX}"
+    )

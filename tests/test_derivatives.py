@@ -18,14 +18,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-# DailyModel-derived tests (metered/modeled_savings_*_daily) skip on Windows
-# because the SBPLX optimizer converges to a different local minimum there;
-# aggregate sum/mean stay within ~0.05% but per-bin residual means diverge
-# by tens of percent. Cross-platform regression coverage stays on Linux/macOS.
-_WIN_DAILY_DIVERGES = pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="DailyModel SBPLX optimizer converges to a different local minimum on Windows",
-)
+# DailyModel-derived tests (metered/modeled_savings_*_daily) pin a Windows-
+# specific snapshot because the SBPLX optimizer converges to a different
+# local minimum there; aggregate sum/mean stay within ~0.05% but per-bin
+# residual means diverge by tens of percent.
+SNAP_SUFFIX = "_win" if sys.platform == "win32" else ""
 
 from opendsm.eemeter.models.hourly_caltrack.design_matrices import (
     create_caltrack_billing_design_matrix,
@@ -96,7 +93,6 @@ def reporting_temperature_data():
     return pd.Series(np.arange(30.0, 90.0), index=index).asfreq("h").ffill()
 
 
-@_WIN_DAILY_DIVERGES
 @pytest.mark.regression
 def test_metered_savings_cdd_hdd_daily(
     baseline_model_daily,
@@ -109,7 +105,9 @@ def test_metered_savings_cdd_hdd_daily(
     )
     results = baseline_model_daily.predict(reporting_data)
 
-    assert regression_block(results, freq="daily") == snapshot(name="regression")
+    assert regression_block(results, freq="daily") == snapshot(
+        name=f"regression{SNAP_SUFFIX}"
+    )
 
 
 @pytest.fixture(scope="session")
@@ -283,7 +281,6 @@ def test_metered_savings_cdd_hdd_billing_reporting_data_wrong_timestamp(
         )
 
 
-@_WIN_DAILY_DIVERGES
 @pytest.mark.regression
 def test_modeled_savings_cdd_hdd_daily(
     baseline_model_daily,
@@ -305,7 +302,9 @@ def test_modeled_savings_cdd_hdd_daily(
         index=baseline_model_result.index,
     )
 
-    assert regression_block(modeled_savings_df, freq="daily") == snapshot(name="regression")
+    assert regression_block(modeled_savings_df, freq="daily") == snapshot(
+        name=f"regression{SNAP_SUFFIX}"
+    )
 
 
 # TODO move to dataclass testing
