@@ -12,144 +12,212 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+"""Bi-symmetric logarithmic (bisymlog) transform.
+
+The bisymlog transform is: sign(x) · log_b(|x/C| + 1)
+where C controls the linear-to-log crossover and b is the base.
+"""
+
 import numpy as np
+import numba
 
 from scipy.optimize import minimize_scalar
 from scipy.stats import skew
-from statsmodels.stats.stattools import robust_skewness as robust_skew
 
-from opendsm.common.stats.distribution_transform.standardize import robust_standardize
+from opendsm.common.stats.distribution_transform.mu_sigma import robust_mu_sigma
+from opendsm.common.stats.distribution_transform._base import TransformBase
 from opendsm.common.stats.outliers import IQR_outlier
-
-from opendsm.common.utils import (
-    OoM,
-    RoundToSigFigs,
-)
+from opendsm.common.utils import OoM
 
 
-C_base = 1/np.log(10)
+# ---------------------------------------------------------------------------
+# Numba kernels
+# ---------------------------------------------------------------------------
 
-class Bisymlog:
-    def __init__(self, C=C_base, heuristic_scaling_factor=0.5, base=10, rescale_quantile=None):
-        self.C = C
-        self._heuristic_scaling_factor = heuristic_scaling_factor
-        self._base = base
+@numba.jit(nopython=True, error_model="numpy", cache=True)
+def _bisymlog_forward(x, C, log_base_inv):
+    """Vectorized bisymlog forward: sign(x) · log10(|x/C| + 1) / log10(base)."""
+    out = np.empty_like(x)
+    for i in range(len(x)):
+        xi = x[i]
+        if xi >= 0:
+            out[i] = np.log10(xi / C + 1.0) * log_base_inv
+        else:
+            out[i] = -np.log10(-xi / C + 1.0) * log_base_inv
+    return out
+
+
+@numba.jit(nopython=True, error_model="numpy", cache=True)
+def _bisymlog_inverse(y, C, base):
+    """Vectorized bisymlog inverse: sign(y) · C · (base^|y| - 1)."""
+    out = np.empty_like(y)
+    for i in range(len(y)):
+        yi = y[i]
+        if yi >= 0:
+            out[i] = C * (base ** yi - 1.0)
+        else:
+            out[i] = -C * (base ** (-yi) - 1.0)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Class
+# ---------------------------------------------------------------------------
+
+class Bisymlog(TransformBase):
+    """Per-dimension bi-symmetric logarithmic transform with invertibility.
+
+    Fits the C parameter per feature (by minimising skewness when
+    ``robust=True``, or heuristically from data range when ``robust=False``).
+
+    Parameters
+    ----------
+    robust : bool, default True
+    base : int or float, default 10
+    heuristic_scaling_factor : float, default 0.5
+        Controls the linear-to-log crossover for heuristic C.
+    rescale_quantile : float or None, default None
+        If set, rescale transformed data to preserve inter-quantile range.
+    min_variance : float, default 1e-10
+    min_samples : int, default 3
+    """
+
+    _HYPERPARAM_KEYS = (
+        "robust", "base", "heuristic_scaling_factor",
+        "rescale_quantile", "min_variance", "min_samples",
+    )
+
+    def __init__(
+        self,
+        robust=True,
+        base=10,
+        heuristic_scaling_factor=0.5,
+        rescale_quantile=None,
+        min_variance=1e-10,
+        min_samples=3,
+    ):
+        super().__init__(min_variance=min_variance, min_samples=min_samples)
+        self.robust = robust
+        self.base = base
+        self.heuristic_scaling_factor = heuristic_scaling_factor
         self.rescale_quantile = rescale_quantile
-        self.inv_rescale_fcn = None
+        self._log_base_inv = 1.0 / np.log10(base)
 
-        self.scaling_factor_bnds = [-1.0, 6.0] # Hardcoded, but not necessary to do so
+        if rescale_quantile is not None and (rescale_quantile <= 0 or rescale_quantile >= 0.5):
+            raise ValueError("rescale_quantile must be in (0, 0.5)")
 
-        if rescale_quantile is not None and (rescale_quantile < 0.0 or rescale_quantile > 0.5):
-            raise ValueError("Bisymlog 'rescale_quantile' must be 0 < x < 0.5")
+    # -- C estimation --------------------------------------------------------
 
-    def set_C_heuristically(self, y, scaling_factor=None): # scaling factor: 0 looks loglike, 1 linear like
-        if scaling_factor is None:
-            scaling_factor = self._heuristic_scaling_factor
+    @staticmethod
+    def _heuristic_C(x, scaling_factor=0.5):
+        """Estimate C from the data range (fast, non-robust)."""
+        min_x, max_x = x.min(), x.max()
+        if min_x == max_x:
+            return None
+
+        if np.sign(max_x) != np.sign(min_x):
+            parts = [x[x >= 0], x[x <= 0]]
+            C = 0.0
+            for part in parts:
+                r = np.abs(part.max() - part.min())
+                if r > C:
+                    C = r
+                    max_x = part.max()
         else:
-            self._heuristic_scaling_factor = scaling_factor
+            C = np.abs(max_x - min_x)
 
-        min_y = y.min()
-        max_y = y.max()
+        s_fcn = lambda v: np.power(10, np.power(v, 2))
+        s_range = s_fcn(np.array([0.0, 1.0]))
+        sf = s_fcn(scaling_factor)
+        s_bnds = np.array([-1.0, 6.0])
+        s = (sf - s_range[0]) / np.diff(s_range) * np.diff(s_bnds) + s_bnds[0]
+        C *= 10 ** (OoM(max_x) + float(s[0]))
+        return float(np.asarray(C).flat[0])
 
-        if min_y == max_y:
-            self.C = None
-            return 1/np.log(1000)
+    def _robust_C(self, x):
+        """Fit C by minimising skewness of the transformed data."""
+        log_base_inv = self._log_base_inv
 
-        elif np.sign(max_y) != np.sign(min_y): # if zero is within total range, find largest pos or neg range
-            processed_data = [y[y >= 0], y[y <= 0]]
-            C = 0
-            for data in processed_data:
-                range = np.abs(data.max() - data.min())
-                if range > C:
-                    C = range
-                    max_y = data.max()
+        def obj(log_C):
+            C = 10 ** log_C
+            xt = _bisymlog_forward(x, C, log_base_inv)
+            mu, sigma = robust_mu_sigma(
+                xt, "adaptive_weighted",
+                use_mean=False, rel_err=1e-4, abs_err=1e-4,
+            )
+            xt = (xt - mu) / sigma
+            bounds = IQR_outlier(xt, sigma_threshold=3, quantile=0.05)
+            xt = xt[(bounds[0] < xt) & (xt < bounds[1])]
+            return np.abs(skew(xt))
 
+        res = minimize_scalar(obj, bounds=(-14, 6), method="bounded")
+        return 10 ** res.x
+
+    # -- TransformBase hooks -------------------------------------------------
+
+    def _init_params(self, D):
+        self.C_ = np.ones(D)
+        self.rescale_slope_ = np.ones(D)
+        self.rescale_offset_ = np.zeros(D)
+
+    def _fit_dim(self, d, col_f, fm, X, return_transformed, out):
+        if self.robust:
+            C = self._robust_C(col_f)
         else:
-            C = np.abs(max_y-min_y)
+            C = self._heuristic_C(col_f, self.heuristic_scaling_factor)
 
-        s_fcn = lambda x: np.power(10, np.power(x, 2))
-        s_fcn_range = s_fcn([0, 1])
-        scaling_factor = s_fcn(self._heuristic_scaling_factor)
+        if C is None or C <= 0:
+            self.skip_dims_[d] = True
+            return
 
-        s_bnds = self.scaling_factor_bnds
+        self.C_[d] = C
+        transformed = _bisymlog_forward(col_f, C, self._log_base_inv)
 
-        s = (scaling_factor - s_fcn_range[0])/np.diff(s_fcn_range)*np.diff(s_bnds) + s_bnds[0]
-
-        C *= 10**(OoM(max_y) + s[0])
-        # TODO: round or not?
-        # C = RoundToSigFigs(C, 1)    # round to 1 significant figure
-
-        self.C = C
-
-        return C
-
-    def transform(self, y):
-        if self.C is None:
-            self.C = self.set_C_heuristically(y)
-
-        if self.C is None:
-            return y
-
-        else:
-            idx = np.isfinite(y)   # only perform transformation on finite values
-            res = np.empty_like(y)
-            res[~idx] = np.nan
-
-            if self.rescale_quantile is None:
-                res[idx] = np.sign(y[idx])*np.log10(np.abs(y[idx]/self.C) + 1)/np.log10(self._base)
-
+        if self.rescale_quantile is not None:
+            pq = np.quantile(col_f, [self.rescale_quantile, 1 - self.rescale_quantile])
+            cq = np.quantile(transformed, [self.rescale_quantile, 1 - self.rescale_quantile])
+            denom = np.diff(cq)
+            if abs(denom) > 1e-15:
+                slope = float(np.diff(pq) / denom)
+                offset = float(pq[0] - cq[0] * slope)
             else:
-                # get prior quantiles for rescaling
-                pq = np.quantile(y[idx], [self.rescale_quantile, 1 - self.rescale_quantile])
+                slope, offset = 1.0, 0.0
+            self.rescale_slope_[d] = slope
+            self.rescale_offset_[d] = offset
+            if return_transformed:
+                out[fm, d] = transformed * slope + offset
+        elif return_transformed:
+            out[fm, d] = transformed
 
-                res[idx] = np.sign(y[idx])*np.log10(np.abs(y[idx]/self.C) + 1)/np.log10(self._base)
+    def _transform_dim(self, v, d):
+        out = _bisymlog_forward(v, self.C_[d], self._log_base_inv)
+        if self.rescale_quantile is not None:
+            out = out * self.rescale_slope_[d] + self.rescale_offset_[d]
+        return out
 
-                # get current quantiles for rescaling and set rescaling functions
-                cq = np.quantile(res[idx], [self.rescale_quantile, 1 - self.rescale_quantile])
-                rescale_fcn = lambda x: (x - cq[0])/np.diff(cq)*np.diff(pq) + pq[0]
-                self.inv_rescale_fcn = lambda x: (x - pq[0])/np.diff(pq)*np.diff(cq) + cq[0]
+    def _inverse_transform_dim(self, v, d):
+        if self.rescale_quantile is not None:
+            v = (v - self.rescale_offset_[d]) / self.rescale_slope_[d]
+        return _bisymlog_inverse(v, self.C_[d], self.base)
 
-                # rescale to prior quantiles
-                res[idx] = rescale_fcn(res[idx])
+    def _serialise_params(self):
+        return {
+            "C": self.C_.tolist(),
+            "rescale_slope": self.rescale_slope_.tolist(),
+            "rescale_offset": self.rescale_offset_.tolist(),
+        }
 
-            return res
+    def _deserialise_params(self, d):
+        self.C_ = np.array(d["C"])
+        self.rescale_slope_ = np.array(d["rescale_slope"])
+        self.rescale_offset_ = np.array(d["rescale_offset"])
 
-    def invTransform(self, y):
-        if self.C is None:
-            raise Exception('C is unspecified in Bisymlog')
-
-        idx = np.isfinite(y)   # only perform transformation on finite values
-
-        if self.inv_rescale_fcn is not None:
-            y[idx] = self.inv_rescale_fcn(y[idx])
-
-        res = np.empty_like(y)
-        res[~idx] = np.nan
-        res[idx] = np.sign(y[idx])*self.C*(np.power(self._base, np.abs(y[idx])) - 1)
-
-        return res
-
-
-def bisymlog(x, rescale_quantile=None):
-    def obj_fcn(X):
-        C = 10**X
-
-        xt = Bisymlog(C=C, rescale_quantile=rescale_quantile).transform(x)
-        xt = robust_standardize(xt, robust_type="adaptive_weighted", use_mean=False, rel_err=1E-4, abs_err=1E-4)
-
-        xt_outliers = IQR_outlier(xt, sigma_threshold=3, quantile=0.05)
-        xt = xt[(xt_outliers[0] < xt) & (xt < xt_outliers[1])]
-
-        abs_skew = np.abs(skew(xt))
-
-        return abs_skew
-
-    bnds = [-14, 6]
-
-    res = minimize_scalar(obj_fcn, bounds=bnds, method='bounded')
-    C = 10**res.x
-
-    xt = Bisymlog(C=C, rescale_quantile=rescale_quantile).transform(x)
-    xt = robust_standardize(xt, robust_type="adaptive_weighted", use_mean=False, rel_err=1E-4, abs_err=1E-4)
-
-    return xt
+    def _serialise_hyperparams(self):
+        hp = super()._serialise_hyperparams()
+        hp.update({
+            "robust": self.robust,
+            "base": self.base,
+            "heuristic_scaling_factor": self.heuristic_scaling_factor,
+            "rescale_quantile": self.rescale_quantile,
+        })
+        return hp

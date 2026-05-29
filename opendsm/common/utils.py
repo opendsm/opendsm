@@ -184,9 +184,7 @@ def safe_divide(num, den, min_denominator=1e-3, return_all=True):
 
 
 def OoM(x, method="round"):
-    if not isinstance(x, np.ndarray):
-        x = np.array(x)
-
+    x = np.atleast_1d(np.asarray(x))
     return OoM_numba(x, method=method)
 
 
@@ -204,10 +202,11 @@ def OoM_numba(x, method="round"):
                   "exact" - return the exact OoM without rounding
 
     Returns:
-    x_OoM (numpy array): The array of the same shape as 'x' containing the OoM of each element in 'x'.
+    x_OoM (numpy array): A float64 array, same shape as 'x', containing the OoM
+    of each element. Float output so "exact" is not truncated for integer input.
     """
 
-    x_OoM = np.empty_like(x)
+    x_OoM = np.empty(x.shape, dtype=np.float64)
     for i, xi in enumerate(x):
         if xi == 0.0:
             x_OoM[i] = 1.0

@@ -26,19 +26,19 @@ from opendsm.common.stats.basic import (
 
 def adaptive_weighted_mu_sigma(x, use_mean=False, rel_err=1E-4, abs_err=1E-4):
     mu = np.median(x)
-    sigma = median_absolute_deviation(x, mu=mu)
+    sigma = median_absolute_deviation(x, median=mu)
 
     for n in range(10):
         mu_prior = copy(mu)
         sigma_prior = copy(sigma)
-        weight = adaptive_weights(x, mu=mu_prior, sigma=sigma_prior)[0]
+        weight = adaptive_weights(x)[0]
         if use_mean:
             mu = np.sum(weight*x)/np.sum(weight)
             sigma = np.sum(weight*(x - mu)**2)/np.sum(weight)
 
         else:
-            mu = weighted_quantile(x, 0.5, weights=weight)
-            sigma = median_absolute_deviation(x, mu=mu, weights=weight)
+            mu = float(np.asarray(weighted_quantile(x, 0.5, weights=weight)).flat[0])
+            sigma = median_absolute_deviation(x, median=mu, weights=weight)
 
         max_abs_err = np.max(np.abs([(mu - mu_prior), (sigma - sigma_prior)]))
         max_rel_err = np.max(np.abs([(mu - mu_prior)/mu_prior, (sigma - sigma_prior)/sigma_prior]))
@@ -54,7 +54,7 @@ def adaptive_weighted_mu_sigma(x, use_mean=False, rel_err=1E-4, abs_err=1E-4):
 
 def ransac_mu_sigma(x, n_iter=100, n_sample=100, seed=None):
     mu = np.median(x)
-    sigma = median_absolute_deviation(x, mu=mu)
+    sigma = median_absolute_deviation(x, median=mu)
 
     for _ in range(n_iter):
         np.random.seed(seed)
@@ -62,7 +62,7 @@ def ransac_mu_sigma(x, n_iter=100, n_sample=100, seed=None):
         x_sample = x[idx]
 
         mu_sample = np.median(x_sample)
-        sigma_sample = median_absolute_deviation(x_sample, mu=mu_sample)
+        sigma_sample = median_absolute_deviation(x_sample, median=mu_sample)
 
         if sigma_sample < sigma:
             mu = mu_sample
@@ -82,7 +82,7 @@ def robust_mu_sigma(x, robust_type="huber_m_estimate", **kwargs):
     elif robust_type == "huber_m_estimate":
         try:
             if "maxiter" not in kwargs:
-                kwargs["maxiter"] = 50
+                kwargs["maxiter"] = 30
 
             # raise RuntimeWarning to error
             with np.errstate(all='raise'):
