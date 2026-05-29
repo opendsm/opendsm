@@ -25,90 +25,98 @@ from typing import Optional, Union
 from opendsm.common.base_settings import MutableBaseSettings
 
 
-# TODO: use this in future for all columns
+
 class ColumnSufficiencySettings(MutableBaseSettings):
-    min_pct_hourly_coverage: float = pydantic.Field(
-        default=0.5,
+    min_pct_hourly_coverage: Optional[float] = pydantic.Field(
+        default=None,
         gt=0,
         le=1,
         description="Minimum percentage of hourly coverage.",
     )
     
-    min_pct_daily_coverage: float = pydantic.Field(
-        default=0.9,
+    min_pct_daily_coverage: Optional[float] = pydantic.Field(
+        default=None,
         gt=0,
         le=1,
         description="Minimum percentage of daily coverage.",
     )
     
-    min_pct_monthly_coverage: float = pydantic.Field(
-        default=0.9,
+    min_pct_monthly_coverage: Optional[float] = pydantic.Field(
+        default=None,
         gt=0,
         le=1,
         description="Minimum percentage of monthly coverage.",
     )
 
-    min_pct_period_coverage: float = pydantic.Field(
-        default=0.9,
+    min_pct_period_coverage: Optional[float] = pydantic.Field(
+        default=None,
         gt=0,
         le=1,
         description="Minimum percentage of period coverage.",
     )
 
+    min_pct_unique_values: Optional[float] = pydantic.Field(
+        default=None,
+        gt=0,
+        le=1,
+        description="Minimum percentage of unique values compared to total values.",
+    )
+
 
 class TemperatureSufficiencySettings(ColumnSufficiencySettings):
-    pass
+    def __init__(self, **kwargs):
+        # Define settings with defaults for GHI-specific fields
+        settings = {
+            'min_pct_hourly_coverage': 0.5,
+            'min_pct_daily_coverage': 0.9,
+            'min_pct_monthly_coverage': 0.9,
+            'min_pct_period_coverage': 0.9,
+            'min_pct_unique_values': None,
+        }
+        settings.update(kwargs)
+        super().__init__(**settings)
 
 
-class GhiSufficiencySettings(MutableBaseSettings):
-    min_pct_monthly_coverage: float = pydantic.Field(
-        default=0.9,
-        gt=0,
-        le=1,
-        description="Minimum percentage of monthly coverage.",
-    )
+class GhiSufficiencySettings(ColumnSufficiencySettings):
+    def __init__(self, **kwargs):
+        # Define settings with defaults for GHI-specific fields
+        settings = {
+            'min_pct_hourly_coverage': None,
+            'min_pct_daily_coverage': None,
+            'min_pct_monthly_coverage': 0.9,
+            'min_pct_period_coverage': None,
+            'min_pct_unique_values': None,
+        }
+        settings.update(kwargs)
+        super().__init__(**settings)
 
 
-class ObservedSufficiencySettings(MutableBaseSettings):
-    min_pct_hourly_coverage: float = pydantic.Field(
-        default=0.5,
-        gt=0,
-        le=1,
-        description="Minimum percentage of hourly coverage.",
-    )
-    
-    min_pct_daily_coverage: float = pydantic.Field(
-        default=0.9,
-        gt=0,
-        le=1,
-        description="Minimum percentage of daily coverage.",
-    )
-    
-    min_pct_monthly_coverage: float = pydantic.Field(
-        default=0.9,
-        gt=0,
-        le=1,
-        description="Minimum percentage of monthly coverage.",
-    )
-
-    min_pct_unique_values: float = pydantic.Field(
-        default=0.10,
-        gt=0,
-        le=1,
-        description=(
-            "Minimum ratio of unique observed values to non-null observed count. "
-            "Models cannot learn from constant or near-constant load."
-        ),
-    )
+class ObservedSufficiencySettings(ColumnSufficiencySettings):
+    def __init__(self, **kwargs):
+        # Define settings with defaults for Observed-specific fields
+        settings = {
+            'min_pct_hourly_coverage': 0.5,
+            'min_pct_daily_coverage': 0.9,
+            'min_pct_monthly_coverage': 0.9,
+            'min_pct_period_coverage': None,
+            'min_pct_unique_values': 0.10,
+        }
+        settings.update(kwargs)
+        super().__init__(**settings)
 
 
-class JointSufficiencySettings(MutableBaseSettings):
-    min_pct_daily_coverage: float = pydantic.Field(
-        default=0.9,
-        gt=0,
-        le=1,
-        description="Minimum percentage of daily coverage.",
-    )
+class JointSufficiencySettings(ColumnSufficiencySettings):
+    def __init__(self, **kwargs):
+        # Define settings with defaults for Joint-specific fields
+        settings = {
+            'min_pct_hourly_coverage': None,
+            'min_pct_daily_coverage': 0.9,
+            'min_pct_monthly_coverage': None,
+            'min_pct_period_coverage': None,
+            'min_pct_unique_values': None,
+        }
+        settings.update(kwargs)
+        super().__init__(**settings)
 
 
 class BaseSufficiencySettings(MutableBaseSettings):
@@ -154,7 +162,8 @@ class BaseSufficiencySettings(MutableBaseSettings):
     @classmethod
     def convert_float_to_int(cls, v):
         if isinstance(v, float) and v.is_integer():
-            return int(v)
+            v = int(v)
+
         return v
 
     @pydantic.model_validator(mode="after")
@@ -198,7 +207,8 @@ class BillingDataSufficiencySettings(BaseSufficiencySettings):
     @classmethod
     def convert_float_to_int(cls, v):
         if isinstance(v, float) and v.is_integer():
-            return int(v)
+            v = int(v)
+
         return v
 
     
@@ -213,7 +223,8 @@ class HourlyTemperatureSufficiencySettings(TemperatureSufficiencySettings):
     @classmethod
     def convert_float_to_int(cls, v):
         if isinstance(v, float) and v.is_integer():
-            return int(v)
+            v = int(v)
+
         return v
 
 class HourlyDataSufficiencySettings(BaseSufficiencySettings):

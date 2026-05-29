@@ -898,8 +898,8 @@ def test_daily_baseline_insufficient_unique_observed_disqualifies():
         if "insufficient_unique_observed_values" in d.qualified_name
     ]
     assert len(insufficient) == 1
-    assert insufficient[0].data["n_unique"] <= 20
-    assert insufficient[0].data["pct_unique"] < 0.10
+    assert insufficient[0].data["n_unique_values"] <= 20
+    assert insufficient[0].data["unique_percentage"] < 10.0
 
 
 def test_daily_baseline_sufficient_unique_observed_passes():
