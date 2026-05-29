@@ -220,6 +220,38 @@ class SufficiencyCriteria(BaseSettings):
                 )
             )
     
+    def _check_unique_values(self, col: Literal["observed"]):
+        if self.is_reporting_data:
+            return
+
+        min_pct = self.settings.observed.min_pct_unique_values
+        if min_pct is None:
+            return
+
+        observed = self.data.observed.dropna()
+        if observed.empty:
+            return
+
+        pct_unique = observed.nunique() / len(observed)
+
+        if pct_unique < min_pct:
+            self.disqualification.append(
+                EEMeterWarning(
+                    qualified_name=(
+                        f"eemeter.sufficiency_criteria.insufficient_unique_{col}_values"
+                    ),
+                    description=(
+                        f"Fewer than {min_pct * 100:.0f}% of {col} values are unique; "
+                        "data is too constant for the model to learn."
+                    ),
+                    data={
+                        "pct_unique": pct_unique,
+                        "n_unique": int(observed.nunique()),
+                        "n_non_null": int(len(observed)),
+                    },
+                )
+            )
+
     def _check_valid_days_percentage(self, col: Literal["temperature", "ghi", "observed", "joint"]):
         if self.is_reporting_data and col == "observed":
             return
@@ -440,6 +472,8 @@ class DailySufficiencyCriteria(SufficiencyCriteria):
     def check_sufficiency_baseline(self):
         super().check_sufficiency_baseline()
 
+        self._check_unique_values(col="observed")
+
         # self._check_n_days_boundary_gap("start")
         # self._check_n_days_boundary_gap("end")
         # TODO : Maybe make these checks static? To work with the current data class
@@ -614,7 +648,9 @@ class HourlySufficiencyCriteria(SufficiencyCriteria):
 
     def check_sufficiency_baseline(self):
         super().check_sufficiency_baseline()
-        
+
+        self._check_unique_values(col="observed")
+
         # TODO : add caltrack check number on top of each method
         # self._check_n_days_boundary_gap("start")
         # self._check_n_days_boundary_gap("end")

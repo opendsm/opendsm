@@ -4,6 +4,7 @@ Changelog
 Development
 -----------
 
+* Sufficiency: new `ObservedSufficiencySettings.min_pct_unique_values` (default 0.10) and matching `SufficiencyCriteria._check_unique_values`, applied in daily and hourly baseline checks. Models trained on near-constant observed data (<10% unique values) are now disqualified with a `eemeter.sufficiency_criteria.insufficient_unique_observed_values` warning.
 * `generalized_loss_weights`: weight negative and positive residuals symmetrically by magnitude (previously only positive residuals were downweighted)
 * `adaptive_loss`: kernel-localized adaptive weighting (`kernel_adaptive_weights`, `KernelWeightCache`, `_fast_weighted_alpha`) so scale and shape of the generalized loss vary smoothly across the temperature axis; optional `obs_weights` for `adaptive_loss_fcn`
 * `ellipsoid_test`: improved split filter; daily-model optimizer no longer errors when `initial_step` is `None`
