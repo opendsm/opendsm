@@ -11,14 +11,13 @@ from typing import Any, Iterator
 
 from syrupy.extensions.json import JSONSnapshotExtension
 
-FLOAT_ATOL = 1e-7
-# 5e-6 is the empirical floor: it covers the BLAS-FMA drift observed between
-# Linux (OpenBLAS) and macOS (Apple Accelerate) on the hourly model regression
-# path, where the deepest stack (ElasticNet coordinate descent + KMeans inertia
-# + wavelet PCA SVD) accumulates ~2e-6 of platform-ordering noise per
-# prediction. 1e-6 was tight enough on Linux alone but failed cross-platform.
-# 5e-6 keeps the snapshots informative for genuine algorithmic regressions
-# (which shift outputs by >>1e-5 relative) while accommodating the floor.
+# 2e-6 absolute floor covers bin-mean residuals near zero where rtol can't
+# rescue them: cells whose residual mean is ~0.01-0.15 see ~5e-7 to ~1.3e-6
+# absolute drift between Linux OpenBLAS and macOS Accelerate from ElasticNet
+# coordinate descent + KMeans inertia + wavelet PCA SVD ordering. For values
+# where |x| > 0.4, rtol governs and snapshots remain informative for genuine
+# algorithmic regressions (which shift outputs by >> 1e-5 relative).
+FLOAT_ATOL = 2e-6
 FLOAT_RTOL = 5e-6
 
 
