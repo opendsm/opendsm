@@ -246,7 +246,6 @@ def schulze_voting(
     candidate_k_values: list[int] | None = None,
     k_penalty_strength: float = 1.0,
     k_penalty_rate: float = 1.0,
-    occam_confidence_floor: float = 0.0,
 ) -> int | tuple:
     """Schulze voting over a raw score matrix.
 
@@ -349,35 +348,6 @@ def schulze_voting(
         confidence = float((w_score - r_score) / denom) if denom > 0 else 0.0
     else:
         confidence = 1.0 if n_cand <= 1 else 0.0
-
-    # Occam tiebreaker for close votes.  When the Schulze winner's pairwise
-    # confidence against the runner-up falls below ``occam_confidence_floor``
-    # (calibrated at 0.15 ~ 5th percentile of confidence over 72 representative
-    # spectral scenarios), aggregate scores are statistically indistinguishable
-    # from a random k selection.  In that regime we widen the "tied" set to
-    # every candidate whose pairwise confidence against the current winner is
-    # also below the floor, and break the tie by preferring the smallest k
-    # (parsimony / BIC-MDL logic).  Default 0.0 disables the tiebreaker; opt
-    # in per algorithm.
-    if (
-        occam_confidence_floor > 0.0
-        and candidate_k_values is not None
-        and n_cand > 1
-        and confidence < occam_confidence_floor
-        and candidate_wins[winner_idx] > 0
-    ):
-        w_score = candidate_wins[winner_idx]
-        tied_idxs = [winner_idx]
-        for i in range(n_cand):
-            if i == winner_idx:
-                continue
-            c_score = candidate_wins[i]
-            denom_i = w_score + c_score
-            pair_conf = (w_score - c_score) / denom_i if denom_i > 0 else 1.0
-            if pair_conf < occam_confidence_floor:
-                tied_idxs.append(i)
-        if len(tied_idxs) > 1:
-            winner_idx = min(tied_idxs, key=lambda i: candidate_k_values[i])
 
     if not return_preference_df:
         return winner_idx, confidence

@@ -156,7 +156,6 @@ def select_best_across_k(
     candidate_k_values: list[int] | None = None,
     k_penalty_strength: float = 1.0,
     k_penalty_rate: float = 1.0,
-    occam_confidence_floor: float = 0.0,
 ) -> tuple[int, float]:
     """Schulze vote over a flat list of candidates.
 
@@ -194,5 +193,4 @@ def select_best_across_k(
         candidate_k_values=candidate_k_values,
         k_penalty_strength=k_penalty_strength,
         k_penalty_rate=k_penalty_rate,
-        occam_confidence_floor=occam_confidence_floor,
     )

@@ -81,10 +81,6 @@ class LabelStore(ArbitraryPydanticModel):
     )
     _eigengap_scores: dict[int, float] | None = pydantic.PrivateAttr(default=None)
     _eigengap_weight: float = pydantic.PrivateAttr(default=0.0)
-    # Occam tiebreaker floor for Schulze close-vote resolution.  Default 0
-    # disables the rule.  Algorithms that opt in (spectral_divisive) set it
-    # explicitly on the result.  See voting.schulze_voting for the calibration.
-    _occam_confidence_floor: float = pydantic.PrivateAttr(default=0.0)
     _unscored_merged: dict[int, list[np.ndarray]] = pydantic.PrivateAttr(
         default_factory=dict,
     )
@@ -429,7 +425,6 @@ class ClusteringResult(LabelStore):
             candidate_k_values=candidate_k_values,
             k_penalty_strength=k_pen.strength if k_pen.enabled else 0.0,
             k_penalty_rate=k_pen.rate,
-            occam_confidence_floor=self._occam_confidence_floor,
         )
 
         self.__dict__["_cache_selection_confidence"] = confidence
