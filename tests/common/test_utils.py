@@ -12,7 +12,6 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 import numpy as np
-import numba
 import pytest
 
 from opendsm.common.utils import (
@@ -65,14 +64,11 @@ def test_np_clip():
 
 
 def test_OoM():
-    # Test case 1: Test with a scalar input - should give an error as the declaration must have an array input
-    x = 5000
-    with pytest.raises(Exception) as e:
-        OoM(x)
-    assert e.type in [
-        numba.core.errors.TypingError,
-        TypeError,
-    ]  # will depend whether using JIT
+    # Scalar inputs are wrapped via np.atleast_1d; return a 1-element array.
+    # 5000 = 5 * 10^3 -> log10 ~ 3.7 -> rounds to 4 under method="round"
+    assert np.array_equal(OoM(5000), np.array([4]))
+    assert np.array_equal(OoM(101, method="floor"), np.array([2]))
+    assert np.array_equal(OoM(99, method="ceil"), np.array([2]))
 
     # Test case 2: Test with an array input
     x = np.array([100, 1000, 10000, 100000])
