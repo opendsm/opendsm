@@ -12,17 +12,9 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-import sys
-
 import numpy as np
 import pandas as pd
 import pytest
-
-# DailyModel-derived tests (metered_savings_*_daily, modeled_savings_*_daily)
-# pin output values that diverge on Windows because nonlinear (SBPLX) optimizer
-# convergence is platform-specific. Linux + macOS match the default snapshot;
-# Windows pins its own with a _win suffix.
-SNAP_SUFFIX = "_win" if sys.platform == "win32" else ""
 
 from opendsm.eemeter.models.hourly_caltrack.design_matrices import (
     create_caltrack_billing_design_matrix,
@@ -46,6 +38,8 @@ from opendsm.eemeter.models.billing.data import (
     BillingBaselineData,
     BillingReportingData,
 )
+
+from regression_metrics import regression_block
 
 
 @pytest.fixture(scope="session")
@@ -102,13 +96,8 @@ def test_metered_savings_cdd_hdd_daily(
         reporting_meter_data_daily, reporting_temperature_data, is_electricity_data=True
     )
     results = baseline_model_daily.predict(reporting_data)
-    metered_savings = results["predicted"] - results["observed"]
 
-    assert round(float(metered_savings.sum()), 4) == snapshot(
-        name=f"metered_savings_sum{SNAP_SUFFIX}"
-    )
-    if sys.platform != "win32":
-        assert metered_savings.values.tolist() == snapshot(name="metered_savings_values")
+    assert regression_block(results, freq="daily") == snapshot(name="regression")
 
 
 @pytest.fixture(scope="session")
@@ -150,13 +139,8 @@ def test_metered_savings_cdd_hdd_billing(
         is_electricity_data=True,
     )
     results = baseline_model_billing.predict(reporting_data)
-    metered_savings_series = results["predicted"] - results["observed"]
-    assert round(float(metered_savings_series.sum()), 4) == snapshot(
-        name="metered_savings_sum"
-    )
-    assert metered_savings_series.values.tolist() == snapshot(
-        name="metered_savings_values"
-    )
+
+    assert regression_block(results, freq="daily") == snapshot(name="regression")
 
 
 @pytest.mark.regression
@@ -184,8 +168,8 @@ def test_metered_savings_cdd_hdd_billing_no_reporting_data(
         "model_split",
         "model_type",
     ]
-    assert round(float(results.predicted.sum()), 4) == snapshot(name="predicted_sum")
-    assert results.predicted.values.tolist() == snapshot(name="predicted_values")
+
+    assert regression_block(results, freq="daily") == snapshot(name="regression")
 
 
 @pytest.mark.regression
@@ -195,12 +179,6 @@ def test_metered_savings_cdd_hdd_billing_single_record_reporting_data(
     reporting_temperature_data,
     snapshot,
 ):
-    # results, error_bands = metered_savings(
-    #     baseline_model_billing,
-    #     reporting_meter_data_billing[:1],
-    #     reporting_temperature_data,
-    #     billing_data=True,
-    # )
     results = baseline_model_billing.predict(
         BillingReportingData.from_series(
             reporting_meter_data_billing[:1],
@@ -220,8 +198,8 @@ def test_metered_savings_cdd_hdd_billing_single_record_reporting_data(
         "model_split",
         "model_type",
     ]
-    assert round(float(results.predicted.sum()), 4) == snapshot(name="predicted_sum")
-    assert results.predicted.values.tolist() == snapshot(name="predicted_values")
+
+    assert regression_block(results, freq="daily") == snapshot(name="regression")
 
 
 @pytest.fixture(scope="session")
@@ -251,12 +229,6 @@ def test_metered_savings_cdd_hdd_billing_single_record_baseline_data(
     reporting_temperature_data,
     snapshot,
 ):
-    # results, error_bands = metered_savings(
-    #     baseline_model_billing_single_record_baseline_data,
-    #     reporting_meter_data_billing,
-    #     reporting_temperature_data,
-    #     billing_data=True,
-    # )
     results = baseline_model_billing_single_record_baseline_data.predict(
         BillingReportingData.from_series(
             reporting_meter_data_billing,
@@ -278,13 +250,7 @@ def test_metered_savings_cdd_hdd_billing_single_record_baseline_data(
         "model_split",
         "model_type",
     ]
-    metered_savings_series = results.predicted - results.observed
-    assert round(float(metered_savings_series.sum()), 4) == snapshot(
-        name="metered_savings_sum"
-    )
-    assert metered_savings_series.values.tolist() == snapshot(
-        name="metered_savings_values"
-    )
+    assert regression_block(results, freq="daily") == snapshot(name="regression")
 
 
 @pytest.fixture
@@ -318,14 +284,15 @@ def test_modeled_savings_cdd_hdd_daily(
     )
     baseline_model_result = baseline_model_daily.predict(reporting_data)
     reporting_model_result = reporting_model_daily.predict(reporting_data)
-    modeled_savings = (
-        baseline_model_result["predicted"] - reporting_model_result["predicted"]
+    modeled_savings_df = pd.DataFrame(
+        {
+            "predicted": baseline_model_result["predicted"] - reporting_model_result["predicted"],
+            "temperature": baseline_model_result["temperature"],
+        },
+        index=baseline_model_result.index,
     )
-    assert round(float(modeled_savings.sum()), 4) == snapshot(
-        name=f"modeled_savings_sum{SNAP_SUFFIX}"
-    )
-    if sys.platform != "win32":
-        assert modeled_savings.values.tolist() == snapshot(name="modeled_savings_values")
+
+    assert regression_block(modeled_savings_df, freq="daily") == snapshot(name="regression")
 
 
 # TODO move to dataclass testing
@@ -406,12 +373,15 @@ def test_metered_savings_cdd_hdd_hourly(
         "counterfactual_usage",
         "metered_savings",
     ]
-    assert round(float(results.metered_savings.sum()), 4) == snapshot(
-        name="metered_savings_sum"
+    df = pd.DataFrame(
+        {
+            "observed": results["reporting_observed"],
+            "predicted": results["counterfactual_usage"],
+            "temperature": reporting_temperature_data.reindex(results.index),
+        }
     )
-    assert results.metered_savings.values.tolist() == snapshot(
-        name="metered_savings_values"
-    )
+
+    assert regression_block(df, freq="hourly") == snapshot(name="regression")
     assert error_bands is None
 
 
@@ -435,12 +405,14 @@ def test_modeled_savings_cdd_hdd_hourly(
         "modeled_reporting_usage",
         "modeled_savings",
     ]
-    assert round(float(results.modeled_savings.sum()), 4) == snapshot(
-        name="modeled_savings_sum"
+    df = pd.DataFrame(
+        {
+            "predicted": results["modeled_savings"],
+            "temperature": reporting_temperature_data.reindex(results.index),
+        }
     )
-    assert results.modeled_savings.values.tolist() == snapshot(
-        name="modeled_savings_values"
-    )
+
+    assert regression_block(df, freq="hourly") == snapshot(name="regression")
     assert error_bands is None
 
 
@@ -485,8 +457,8 @@ def test_modeled_savings_cdd_hdd_billing(
         "model_split",
         "model_type",
     ]
-    assert round(float(results.predicted.sum()), 4) == snapshot(name="predicted_sum")
-    assert results.predicted.values.tolist() == snapshot(name="predicted_values")
+
+    assert regression_block(results, freq="daily") == snapshot(name="regression")
 
 
 @pytest.fixture
@@ -535,13 +507,6 @@ def test_metered_savings_model_single_record(
     reporting_temperature_data,
     snapshot,
 ):
-    # results, error_bands = metered_savings(
-    #     baseline_model_billing_single_record,
-    #     reporting_meter_data_billing,
-    #     reporting_temperature_data,
-    #     billing_data=True,
-    # )
-
     results = baseline_model_billing_single_record.predict(
         BillingReportingData.from_series(
             reporting_meter_data_billing,
@@ -563,13 +528,8 @@ def test_metered_savings_model_single_record(
         "model_split",
         "model_type",
     ]
-    metered_savings_series = results.predicted - results.observed
-    assert round(float(metered_savings_series.sum()), 4) == snapshot(
-        name="metered_savings_sum"
-    )
-    assert metered_savings_series.values.tolist() == snapshot(
-        name="metered_savings_values"
-    )
+
+    assert regression_block(results, freq="daily") == snapshot(name="regression")
 
 
 @pytest.fixture(scope="session")

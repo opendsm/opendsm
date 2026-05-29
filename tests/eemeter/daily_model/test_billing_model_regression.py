@@ -21,6 +21,8 @@ from opendsm.eemeter.models.billing.data import (
     BillingReportingData,
 )
 
+from regression_metrics import regression_block
+
 
 @pytest.fixture(scope="session")
 def billing_baseline_data(comstock_monthly):
@@ -41,26 +43,14 @@ def billing_model_fit(billing_baseline_data):
     return BillingModel().fit(billing_baseline_data, ignore_disqualification=True)
 
 
-def _summary(series):
-    return {
-        "sum": float(series.sum()),
-        "mean": float(series.mean()),
-        "std": float(series.std()),
-        "min": float(series.min()),
-        "max": float(series.max()),
-        "n": int(series.shape[0]),
-    }
-
-
 @pytest.mark.slow
 @pytest.mark.regression
 def test_billing_baseline_predict_regression(
     billing_model_fit, billing_baseline_data, snapshot
 ):
-    results = billing_model_fit.predict(billing_baseline_data)
+    result = billing_model_fit.predict(billing_baseline_data)
 
-    assert _summary(results["predicted"]) == snapshot(name="predicted_summary")
-    assert results["predicted"].values.tolist() == snapshot(name="predicted_values")
+    assert regression_block(result, freq="daily") == snapshot(name="regression")
 
 
 @pytest.mark.slow
@@ -68,7 +58,6 @@ def test_billing_baseline_predict_regression(
 def test_billing_reporting_predict_regression(
     billing_model_fit, billing_reporting_data, snapshot
 ):
-    results = billing_model_fit.predict(billing_reporting_data)
+    result = billing_model_fit.predict(billing_reporting_data)
 
-    assert _summary(results["predicted"]) == snapshot(name="predicted_summary")
-    assert results["predicted"].values.tolist() == snapshot(name="predicted_values")
+    assert regression_block(result, freq="daily") == snapshot(name="regression")

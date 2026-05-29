@@ -13,6 +13,7 @@
 #  limitations under the License.
 """Regression tests pinning the caltrack hourly fit & predict outputs."""
 
+import pandas as pd
 import pytest
 
 from opendsm.eemeter.common.features import (
@@ -25,6 +26,8 @@ from opendsm.eemeter.models.hourly_caltrack.design_matrices import (
 )
 from opendsm.eemeter.models.hourly_caltrack.model import fit_caltrack_hourly_model
 from opendsm.eemeter.models.hourly_caltrack.segmentation import segment_time_series
+
+from regression_metrics import regression_block
 
 
 @pytest.fixture(scope="session")
@@ -54,17 +57,6 @@ def caltrack_hourly_baseline_model(caltrack_baseline_preliminary):
     )
 
 
-def _summary(series):
-    return {
-        "sum": float(series.sum()),
-        "mean": float(series.mean()),
-        "std": float(series.std()),
-        "min": float(series.min()),
-        "max": float(series.max()),
-        "n": int(series.shape[0]),
-    }
-
-
 @pytest.mark.slow
 @pytest.mark.regression
 def test_caltrack_hourly_baseline_predict_regression(
@@ -75,5 +67,13 @@ def test_caltrack_hourly_baseline_predict_regression(
         preliminary.index, preliminary["temperature_mean"]
     ).result["predicted_usage"]
 
-    assert _summary(predicted) == snapshot(name="predicted_summary")
-    assert predicted.values.tolist() == snapshot(name="predicted_values")
+    df = pd.DataFrame(
+        {
+            "observed": preliminary["meter_value"],
+            "predicted": predicted,
+            "temperature": preliminary["temperature_mean"],
+        },
+        index=preliminary.index,
+    )
+
+    assert regression_block(df, freq="hourly") == snapshot(name="regression")
