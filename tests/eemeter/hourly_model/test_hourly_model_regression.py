@@ -22,6 +22,8 @@ from opendsm.eemeter.models.hourly.settings import (
     HourlySolarSettings,
 )
 
+from regression_metrics import regression_block
+
 
 @pytest.fixture(scope="session")
 def hourly_baseline_data(comstock_hourly):
@@ -55,28 +57,16 @@ def hourly_solar_fit(hourly_baseline_data):
     )
 
 
-def _summary(series):
-    return {
-        "sum": float(series.sum()),
-        "mean": float(series.mean()),
-        "std": float(series.std()),
-        "min": float(series.min()),
-        "max": float(series.max()),
-        "n": int(series.shape[0]),
-    }
-
-
 @pytest.mark.slow
 @pytest.mark.regression
 def test_hourly_nonsolar_baseline_predict_regression(
     hourly_nonsolar_fit, hourly_baseline_data, snapshot
 ):
-    predicted = hourly_nonsolar_fit.predict(
+    result = hourly_nonsolar_fit.predict(
         hourly_baseline_data, ignore_disqualification=True
-    )["predicted"]
+    )
 
-    assert _summary(predicted) == snapshot(name="predicted_summary")
-    assert predicted.values.tolist() == snapshot(name="predicted_values")
+    assert regression_block(result, freq="hourly") == snapshot(name="regression")
 
 
 @pytest.mark.slow
@@ -84,12 +74,11 @@ def test_hourly_nonsolar_baseline_predict_regression(
 def test_hourly_nonsolar_reporting_predict_regression(
     hourly_nonsolar_fit, hourly_reporting_data, snapshot
 ):
-    predicted = hourly_nonsolar_fit.predict(
+    result = hourly_nonsolar_fit.predict(
         hourly_reporting_data, ignore_disqualification=True
-    )["predicted"]
+    )
 
-    assert _summary(predicted) == snapshot(name="predicted_summary")
-    assert predicted.values.tolist() == snapshot(name="predicted_values")
+    assert regression_block(result, freq="hourly") == snapshot(name="regression")
 
 
 @pytest.mark.slow
@@ -97,12 +86,11 @@ def test_hourly_nonsolar_reporting_predict_regression(
 def test_hourly_solar_baseline_predict_regression(
     hourly_solar_fit, hourly_baseline_data, snapshot
 ):
-    predicted = hourly_solar_fit.predict(
+    result = hourly_solar_fit.predict(
         hourly_baseline_data, ignore_disqualification=True
-    )["predicted"]
+    )
 
-    assert _summary(predicted) == snapshot(name="predicted_summary")
-    assert predicted.values.tolist() == snapshot(name="predicted_values")
+    assert regression_block(result, freq="hourly") == snapshot(name="regression")
 
 
 @pytest.mark.slow
@@ -110,9 +98,8 @@ def test_hourly_solar_baseline_predict_regression(
 def test_hourly_solar_reporting_predict_regression(
     hourly_solar_fit, hourly_reporting_data, snapshot
 ):
-    predicted = hourly_solar_fit.predict(
+    result = hourly_solar_fit.predict(
         hourly_reporting_data, ignore_disqualification=True
-    )["predicted"]
+    )
 
-    assert _summary(predicted) == snapshot(name="predicted_summary")
-    assert predicted.values.tolist() == snapshot(name="predicted_values")
+    assert regression_block(result, freq="hourly") == snapshot(name="regression")

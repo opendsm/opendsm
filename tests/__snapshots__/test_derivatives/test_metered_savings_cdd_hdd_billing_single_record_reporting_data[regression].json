@@ -1,0 +1,14 @@
+{
+  "n_finite_predicted": 0,
+  "predicted": {
+    "max": NaN,
+    "mean": NaN,
+    "min": NaN,
+    "p01": NaN,
+    "p50": NaN,
+    "p99": NaN,
+    "std": NaN,
+    "sum": 0.0
+  },
+  "time_bins": {}
+}

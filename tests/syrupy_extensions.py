@@ -11,15 +11,17 @@ from typing import Any, Iterator
 
 from syrupy.extensions.json import JSONSnapshotExtension
 
-FLOAT_ATOL = 1e-7
-# 5e-6 is the empirical floor: it covers the BLAS-FMA drift observed between
-# Linux (OpenBLAS) and macOS (Apple Accelerate) on the hourly model regression
-# path, where the deepest stack (ElasticNet coordinate descent + KMeans inertia
-# + wavelet PCA SVD) accumulates ~2e-6 of platform-ordering noise per
-# prediction. 1e-6 was tight enough on Linux alone but failed cross-platform.
-# 5e-6 keeps the snapshots informative for genuine algorithmic regressions
-# (which shift outputs by >>1e-5 relative) while accommodating the floor.
-FLOAT_RTOL = 5e-6
+# 5e-6 atol covers bin-mean residuals near zero where rtol can't help; 1e-5
+# rtol covers the ~5-7e-6 relative drift observed on larger-magnitude bin
+# means and stds across (a) Linux OpenBLAS vs macOS Accelerate and (b)
+# numpy/sklearn version differences between py3.10/3.11/3.12 under tox.
+# Bin residuals have smaller magnitudes than the underlying predictions,
+# so their relative noise floor is higher than per-element prediction noise.
+# Snapshots remain informative for genuine algorithmic regressions (which
+# shift outputs by >> 1e-4 relative; PR 5's clustering reorg shifted
+# per-hour spread by 3-12%, four orders of magnitude above this floor).
+FLOAT_ATOL = 5e-6
+FLOAT_RTOL = 1e-5
 
 
 class TolerantJSONSnapshotExtension(JSONSnapshotExtension):
