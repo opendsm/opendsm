@@ -62,7 +62,7 @@ def ransac_mu_sigma(x, n_iter=100, n_sample=100, seed=None):
         x_sample = x[idx]
 
         mu_sample = np.median(x_sample)
-        sigma_sample = median_absolute_deviation(x_sample, mu=mu_sample)
+        sigma_sample = median_absolute_deviation(x_sample, median=mu_sample)
 
         if sigma_sample < sigma:
             mu = mu_sample

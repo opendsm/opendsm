@@ -341,11 +341,18 @@ class BoxCox(PowerTransformMixin, TransformBase):
             out[fm, d] = (raw_bc - mu_post) / sigma_post
 
     def _transform_dim(self, v, d):
-        col_std = np.exp(
-            (np.log(v) - self.pre_mu_[d]) / self.pre_sigma_[d]
-        )
+        # Box-Cox is defined only for positive values. Non-positive entries can
+        # appear at transform time even when the fitted dim was strictly
+        # positive; ignore them by mapping to nan so the base class's finite
+        # masking drops them, rather than propagating log(<=0) -> -inf/nan.
+        out = np.full(v.shape, np.nan)
+        pos = v > 0
+        vp = v[pos]
+        col_std = np.exp((np.log(vp) - self.pre_mu_[d]) / self.pre_sigma_[d])
         bc_vals = bc_transform(col_std, self.lambdas_[d])
-        return (bc_vals - self.post_mu_[d]) / self.post_sigma_[d]
+        out[pos] = (bc_vals - self.post_mu_[d]) / self.post_sigma_[d]
+
+        return out
 
     def _inverse_transform_dim(self, v, d):
         col_f = v * self.post_sigma_[d] + self.post_mu_[d]

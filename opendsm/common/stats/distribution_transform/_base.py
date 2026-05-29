@@ -167,10 +167,10 @@ class TransformBase(ABC):
 
                 try:
                     self._fit_dim(d, col_f, fm, X, return_transformed, out)
-                except Exception:
+                except Exception as e:
                     warnings.warn(
-                        f"{type(self).__name__}: fitting failed for dim {d}; "
-                        f"passing through.",
+                        f"{type(self).__name__}: fitting failed for dim {d} "
+                        f"({type(e).__name__}: {e}); passing through.",
                         RuntimeWarning, stacklevel=4,
                     )
                     self.skip_dims_[d] = True
