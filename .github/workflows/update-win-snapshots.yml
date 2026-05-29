@@ -1,20 +1,36 @@
 name: Update Windows snapshots
 
-# One-shot bootstrap for the Windows-specific regression snapshots (the
-# *_win.json files pinned by tests where DailyModel's nlopt SBPLX optimizer
-# lands at a different local minimum on win32). Mirrors tox.ini's [testenv]
-# setup (single-thread BLAS, syrupy>=5,<6) so the snapshots match what the
-# main Test workflow's tox run would produce, then runs pytest with
-# --snapshot-update and uploads the result as an artifact for committing.
+# Regenerates and commits Windows-specific regression snapshots (the
+# *_win.json files pinned by tests where DailyModel's nlopt SBPLX
+# optimizer lands at a different local minimum on win32). Runs on PRs
+# that touch the daily-model / regression-test paths, or on demand.
+#
+# The Windows job runs pytest --snapshot-update and uploads the
+# regenerated *_win.json files as an artifact. A follow-up Linux job
+# downloads the artifact, copies the files into the tests/ tree, and
+# commits + pushes the diff back to the PR branch. Subsequent runs see
+# no diff and skip the commit.
 
 on:
   workflow_dispatch:
+  # Until this workflow lands on master, workflow_dispatch is unavailable
+  # in the UI; the push trigger covers the PR branch. After merge, the
+  # pull_request trigger handles future PRs that touch daily-model paths.
   push:
     branches:
       - feature/snapshot-rework
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'tests/regression_metrics.py'
+      - 'tests/syrupy_extensions.py'
+      - 'tests/eemeter/daily_model/test_daily_model_regression.py'
+      - 'tests/test_derivatives.py'
+      - 'opendsm/eemeter/models/daily/**'
+      - 'opendsm/eemeter/models/billing/**'
 
 jobs:
-  update-snapshots:
+  regenerate:
     runs-on: windows-latest
     env:
       OMP_NUM_THREADS: 1
@@ -33,25 +49,61 @@ jobs:
           pip install -e .
           pip install pytest pytest-cov pytest-xdist "syrupy>=5,<6"
       - name: Regenerate snapshots
-        # Allow non-zero exit; --snapshot-update returns failure when new
-        # snapshots are created or existing ones differ, but writes them
-        # anyway. We want the resulting files regardless.
+        # --snapshot-update returns non-zero when snapshots change; we
+        # want the resulting files regardless.
         continue-on-error: true
         run: pytest tests/ -m regression --snapshot-update
-      - name: Upload regenerated snapshots
+      - name: Upload Windows snapshot artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: windows-regression-snapshots
           path: |
-            tests/eemeter/daily_model/__snapshots__/
-            tests/eemeter/hourly_model/__snapshots__/
-            tests/__snapshots__/test_derivatives/
-            tests/__snapshots__/test_caltrack_hourly_regression/
-      - name: Upload pytest log on failure
-        if: always()
-        uses: actions/upload-artifact@v4
+            tests/eemeter/daily_model/__snapshots__/**/*_win.json
+            tests/__snapshots__/test_derivatives/**/*_win.json
+          if-no-files-found: warn
+
+  commit:
+    needs: regenerate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
         with:
-          name: windows-snapshot-pytest-log
-          path: |
-            *.log
+          ref: ${{ github.head_ref || github.ref_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download Windows snapshot artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-regression-snapshots
+          path: artifact-staging
+        continue-on-error: true
+      - name: Move _win snapshots into the tests tree
+        run: |
+          set -e
+          if [ ! -d artifact-staging ]; then
+            echo "No artifact directory; nothing to commit."
+            exit 0
+          fi
+          # Artifact preserves the relative path under tests/. Copy each
+          # *_win.json into tests/<same relative path>.
+          find artifact-staging -name "*_win.json" -print | while read -r src; do
+            rel="${src#artifact-staging/}"
+            mkdir -p "tests/$(dirname "$rel")"
+            cp "$src" "tests/$rel"
+          done
+          rm -rf artifact-staging
+      - name: Commit and push _win changes
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Only the _win.json files. Anything else is incidental.
+          git add 'tests/**/*_win.json' || true
+          if git diff --cached --quiet; then
+            echo "No _win snapshot changes to commit."
+            exit 0
+          fi
+          git commit -s -m "ci: update Windows regression snapshots"
+          git push
