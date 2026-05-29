@@ -11,14 +11,17 @@ from typing import Any, Iterator
 
 from syrupy.extensions.json import JSONSnapshotExtension
 
-# 2e-6 absolute floor covers bin-mean residuals near zero where rtol can't
-# rescue them: cells whose residual mean is ~0.01-0.15 see ~5e-7 to ~1.3e-6
-# absolute drift between Linux OpenBLAS and macOS Accelerate from ElasticNet
-# coordinate descent + KMeans inertia + wavelet PCA SVD ordering. For values
-# where |x| > 0.4, rtol governs and snapshots remain informative for genuine
-# algorithmic regressions (which shift outputs by >> 1e-5 relative).
-FLOAT_ATOL = 2e-6
-FLOAT_RTOL = 5e-6
+# 5e-6 atol covers bin-mean residuals near zero where rtol can't help; 1e-5
+# rtol covers the ~5-7e-6 relative drift observed on larger-magnitude bin
+# means and stds across (a) Linux OpenBLAS vs macOS Accelerate and (b)
+# numpy/sklearn version differences between py3.10/3.11/3.12 under tox.
+# Bin residuals have smaller magnitudes than the underlying predictions,
+# so their relative noise floor is higher than per-element prediction noise.
+# Snapshots remain informative for genuine algorithmic regressions (which
+# shift outputs by >> 1e-4 relative; PR 5's clustering reorg shifted
+# per-hour spread by 3-12%, four orders of magnitude above this floor).
+FLOAT_ATOL = 5e-6
+FLOAT_RTOL = 1e-5
 
 
 class TolerantJSONSnapshotExtension(JSONSnapshotExtension):
