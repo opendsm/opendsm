@@ -1143,7 +1143,12 @@ class BaselineMetrics(ArbitraryPydanticModel):
         float
             Pearson correlation coefficient.
         """
-        return pearsonr(self._df["observed"].values, self._df["predicted"].values)[0]
+        observed = self._df["observed"].values
+        predicted = self._df["predicted"].values
+        if np.array_equal(observed, predicted):
+            return 1.0
+
+        return pearsonr(observed, predicted)[0]
 
     @computed_field_cached_property()
     def pi(self) -> float:
@@ -1532,8 +1537,12 @@ def acf(
 
     if ac_type == AutocorrelationMethod.MOVING_STATS.value:
         # mean and std are computed in a rolling window
-        corr = [1.0 if l == 0 else np.corrcoef(x[l:], x[:-l])[0][1] for l in lags]
-        corr = np.array(corr)
+        corr = np.empty(len(lags), dtype=float)
+        for idx, l in enumerate(lags):
+            if l == 0 or np.array_equal(x[l:], x[:-l]):
+                corr[idx] = 1.0
+            else:
+                corr[idx] = np.corrcoef(x[l:], x[:-l])[0][1]
 
     elif "stationary" in ac_type:
         # mean and std are computed over the entire series

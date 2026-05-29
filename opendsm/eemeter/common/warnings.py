@@ -13,7 +13,7 @@
 #  limitations under the License.
 
 import logging
-from typing import Union
+from typing import Optional, Union
 import pydantic
 
 __all__ = ("EEMeterWarning",)
@@ -28,14 +28,14 @@ class EEMeterWarning(pydantic.BaseModel):
         Qualified name, e.g., `'eemeter.method_abc.missing_data'`.
     description : :any:`str`
         Prose describing the nature of the warning.
-    data : :any:`dict`
+    data : :any:`dict` or :any:`list`, optional
         Data that reproducibly shows why the warning was issued. Data should
-        be JSON serializable.
+        be JSON serializable. Defaults to None.
     """
 
     qualified_name: str
     description: str
-    data: Union[dict, list]
+    data: Optional[Union[dict, list]] = None
 
     def __repr__(self):
         return "EEMeterWarning(qualified_name={})".format(self.qualified_name)
