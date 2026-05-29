@@ -1,16 +1,14 @@
 name: Update Windows snapshots
 
-# Manual one-shot to regenerate Windows-specific regression snapshots
-# (the *_win.json files pinned by tests where DailyModel's nlopt SBPLX
-# optimizer lands on a different local minimum on win32). Trigger from
-# the Actions tab, download the artifact, and commit the *_win.json
-# files to the branch.
+# One-shot bootstrap for the Windows-specific regression snapshots (the
+# *_win.json files pinned by tests where DailyModel's nlopt SBPLX optimizer
+# lands at a different local minimum on win32). Mirrors tox.ini's [testenv]
+# setup (single-thread BLAS, syrupy>=5,<6) so the snapshots match what the
+# main Test workflow's tox run would produce, then runs pytest with
+# --snapshot-update and uploads the result as an artifact for committing.
 
 on:
   workflow_dispatch:
-  # Also triggered on push to this branch so the bootstrap can run without
-  # the workflow file having to land on master first (workflow_dispatch in
-  # the UI requires the file on the default branch).
   push:
     branches:
       - feature/snapshot-rework
@@ -18,17 +16,27 @@ on:
 jobs:
   update-snapshots:
     runs-on: windows-latest
+    env:
+      OMP_NUM_THREADS: 1
+      MKL_NUM_THREADS: 1
+      OPENBLAS_NUM_THREADS: 1
+      NUMEXPR_NUM_THREADS: 1
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install package + test deps
+      - name: Install package + test deps (mirrors tox.ini)
         run: |
-          pip install -e .[dev]
-          pip install syrupy
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pytest pytest-cov pytest-xdist "syrupy>=5,<6"
       - name: Regenerate snapshots
+        # Allow non-zero exit; --snapshot-update returns failure when new
+        # snapshots are created or existing ones differ, but writes them
+        # anyway. We want the resulting files regardless.
+        continue-on-error: true
         run: pytest tests/ -m regression --snapshot-update
       - name: Upload regenerated snapshots
         if: always()
@@ -40,3 +48,10 @@ jobs:
             tests/eemeter/hourly_model/__snapshots__/
             tests/__snapshots__/test_derivatives/
             tests/__snapshots__/test_caltrack_hourly_regression/
+      - name: Upload pytest log on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-snapshot-pytest-log
+          path: |
+            *.log
