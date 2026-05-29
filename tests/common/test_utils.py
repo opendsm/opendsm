@@ -88,11 +88,13 @@ def test_OoM():
     expected = np.array([2, 3, 4, 5])
     assert np.allclose(result, expected)
 
-    # Test case 5: Test with an exact rounding method
+    # Test case 5: "exact" returns the unrounded log10, including for integer
+    # input (output is float64, so it is not truncated to whole numbers).
     x = np.array([101, 1001, 10001, 100001])
     result = OoM(x, method="exact")
-    expected = np.array([2, 3, 4, 5])
+    expected = np.log10(x)
     assert np.allclose(result, expected)
+    assert not np.allclose(result, np.array([2, 3, 4, 5]))
 
     # Test case 6: Test with a non-integer input
     x = [1234.5678]
