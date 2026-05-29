@@ -8,6 +8,12 @@ name: Update Windows snapshots
 
 on:
   workflow_dispatch:
+  # Also triggered on push to this branch so the bootstrap can run without
+  # the workflow file having to land on master first (workflow_dispatch in
+  # the UI requires the file on the default branch).
+  push:
+    branches:
+      - feature/snapshot-rework
 
 jobs:
   update-snapshots:
