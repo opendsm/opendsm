@@ -12,9 +12,16 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from __future__ import annotations
+# Vendored from sklearn.cluster._bisect_k_means
+# Upstream: https://github.com/scikit-learn/scikit-learn/blob/main/sklearn/cluster/_bisect_k_means.py
+#
+# Modifications from upstream:
+#   - saves intermediate cluster labels at each bisection step (labels_full property)
+#   - forces single-threaded execution (_n_threads = 1) for deterministic results
+#
+# To update: re-copy the upstream BisectingKMeans.fit(), re-apply the two changes above.
 
-from copy import deepcopy as copy
+from __future__ import annotations
 
 import numpy as np
 import scipy.sparse as sp
@@ -163,7 +170,7 @@ class BisectingKMeans(_sklearn_BisectingKMeans):
             for j, cluster_node in enumerate(self._bisecting_tree.iter_leaves()):
                 labels[cluster_node.indices] = j  # type: ignore
 
-            self.labels_full[i + 2] = copy(labels)
+            self.labels_full[i + 2] = labels.copy()
 
         # Aggregate final labels and centers from the bisecting tree
         self.labels_ = np.full(X.shape[0], -1, dtype=np.int32)

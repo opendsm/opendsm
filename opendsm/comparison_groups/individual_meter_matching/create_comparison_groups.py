@@ -69,28 +69,31 @@ class Individual_Meter_Matching(Comparison_Group_Algorithm):
     
 
     def get_comparison_group(self, treatment_data, comparison_pool_data, weights=None):
-        self.treatment_data = treatment_data
-        self.comparison_pool_data = comparison_pool_data
-
-        self.treatment_ids = treatment_data.ids
-        self.treatment_loadshape = treatment_data.loadshape
-        self.comparison_pool_loadshape = comparison_pool_data.loadshape
-        self.ls_weights = self._validate_ls_weights(weights)
+        treatment_ids = treatment_data.ids
+        treatment_loadshape = treatment_data.loadshape
+        comparison_pool_loadshape = comparison_pool_data.loadshape
+        ls_weights = self._validate_ls_weights(weights)
 
         # Get clusters
         distance_matching = DistanceMatching(self.settings)
         df_raw = distance_matching.get_comparison_group(
-            self.treatment_loadshape, 
-            self.comparison_pool_loadshape, 
-            weights=self.ls_weights
+            treatment_loadshape,
+            comparison_pool_loadshape,
+            weights=ls_weights,
         )
 
         clusters = self._create_clusters_df(df_raw)
 
         # Create treatment_weights
-        treatment_weights = self._create_treatment_weights_df(self.treatment_ids)
+        treatment_weights = self._create_treatment_weights_df(treatment_ids)
 
-        # Assign dfs to self
+        # Retain only references needed by base class methods.
+        # comparison_pool_data is intentionally NOT stored — only the
+        # loadshape slice is kept to avoid pinning the full Data object.
+        self.treatment_data = treatment_data
+        self.treatment_ids = treatment_ids
+        self.treatment_loadshape = treatment_loadshape
+        self.comparison_pool_loadshape = comparison_pool_loadshape
         self.clusters = clusters
         self.treatment_weights = treatment_weights
 

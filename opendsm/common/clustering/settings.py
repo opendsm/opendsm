@@ -1,736 +1,259 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+#  Copyright 2014-2025 OpenDSM contributors
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#      http://www.apache.org/licenses/LICENSE-2.0
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+
 from __future__ import annotations
 
 import numpy as np
-
 import pydantic
 
-from enum import Enum
-from typing import Optional, Literal, Union
-
-import pywt
+from typing import Any
 
 from opendsm.common.base_settings import BaseSettings
-
-
-class NormalizeChoice(str, Enum):
-    MIN_MAX_QUANTILE = "min_max_quantile"
-    STANDARDIZE = "standardize"
-    MED_MAD = "med_mad"
-
-
-class NormalizeSettings(BaseSettings):
-    """normalization method for data"""
-    method: Optional[NormalizeChoice] = pydantic.Field(
-        default=NormalizeChoice.STANDARDIZE,
-    )
-
-    pre_transform: bool = pydantic.Field(
-        default=True,
-    )
-
-    post_transform: bool = pydantic.Field(
-        default=True,
-    )
-
-    quantile: Optional[float] = pydantic.Field(
-        default=None,
-        gt=0.0,
-        lt=0.5,
-    )
-
-    axis: Optional[int] = pydantic.Field(
-        default=None,
-    )
-
-    @pydantic.model_validator(mode="after")
-    def _check_quantile(self):
-        if self.method == NormalizeChoice.MIN_MAX_QUANTILE:
-            if self.quantile is None:
-                raise ValueError(
-                    "'quantile' must be specified when 'method' is 'min_max_quantile'"
-                )
-        else:
-            if self.quantile is not None:
-                raise ValueError(
-                    "'quantile' should only be specified when 'method' is 'min_max_quantile'"
-                )
-
-        return self
-
-    @pydantic.model_validator(mode="after")
-    def _check_enable(self):
-        if self.method is None:
-            if self.pre_transform or self.post_transform:
-                raise ValueError(
-                    "'method' cannot be None if 'pre_transform' or 'post_transform' is True"
-                )
-        else:
-            if not (self.pre_transform or self.post_transform):
-                raise ValueError(
-                    "'pre_transform' or 'post_transform' must be True if 'method' is specified"
-                )
-
-        return self
-
-
-class TransformChoice(str, Enum):
-    FPCA = "fpca"
-    WAVELET = "wavelet"
-    
-
-class fPCATransformSettings(BaseSettings):
-    """explained variance ratio for fPCA clustering"""
-    min_var_ratio: float = pydantic.Field(
-        default=0.97,
-        ge=0.5,
-        le=1.0,
-    )
-
-
-class PCASelection(str, Enum):
-    PCA = "pca"
-    KERNEL_PCA = "kernel_pca"
-
-
-class WaveletSelection(str, Enum):
-    BIOR1_1 = "bior1.1"
-    COIF6 = "coif6"
-    COIF17 = "coif17"    # Best error/speed mix
-    DB1 = "db1"          # Best error metrics
-    DB16 = "db16"
-    DB26 = "db26"
-    DB29 = "db29"
-    HAAR = "haar"
-    RBIO1_1 = "rbio1.1"
-    SYM11 = "sym11"
-
-
-class WaveletTransformSettings(BaseSettings):
-    """wavelet decomposition level"""
-    wavelet_n_levels: Optional[int] = pydantic.Field(
-        default=None,
-        ge=1,
-    )
-
-    """wavelet choice for wavelet decomposition"""
-    wavelet_name: WaveletSelection = pydantic.Field(
-        default=WaveletSelection.DB1,
-    )
-
-    """signal extension mode for wavelet decomposition"""
-    wavelet_mode: str = pydantic.Field(
-        default="smooth",
-    )
-
-    """PCA method"""
-    pca_method: PCASelection = pydantic.Field(
-        default=PCASelection.PCA,
-    )
-
-    """minimum variance ratio for PCA clustering"""
-    pca_min_variance_ratio_explained: Optional[float] = pydantic.Field(
-        default=None,
-    )
-
-    """number of components to keep for PCA clustering"""
-    pca_n_components: Optional[Union[int, Literal["mle"]]] = pydantic.Field(
-        default="mle",
-    )
-
-    """add scale to features"""
-    include_scale_feature: bool = pydantic.Field(
-        default=True,
-    )
-
-    """seed for random state assignment"""
-    seed: Optional[int] = pydantic.Field(
-        default=None,
-        ge=0,
-    )
-
-    _seed: Optional[int] = pydantic.PrivateAttr(
-        default=None
-    )
-
-    @pydantic.model_validator(mode="after")
-    def _check_seed(self):
-        if self.seed is None and self._seed is None:
-            self._seed = np.random.randint(0, 2**32 - 1, dtype=np.int64)
-        else:
-            self._seed = self.seed
-
-        return self
-
-    @pydantic.model_validator(mode="after")
-    def _check_wavelet(self):
-        all_wavelets = pywt.wavelist(kind="discrete")
-        if self.wavelet_name not in all_wavelets:
-            raise ValueError(
-                f"'wavelet_name' must be a valid wavelet in PyWavelets: \n{all_wavelets}"
-            )
-
-        all_modes = pywt.Modes.modes
-        if self.wavelet_mode not in all_modes:
-            raise ValueError(
-                f"'wavelet_mode' must be a valid mode in PyWavelets: \n{all_modes}"
-            )
-
-        return self
-
-    @pydantic.model_validator(mode="after")
-    def _check_pca_settings(self):
-        if self.pca_n_components is None and self.pca_min_variance_ratio_explained is None:
-            raise ValueError(
-                "Must specify either 'pca_min_variance_ratio_explained' or 'pca_n_components'"
-            )
-
-        if self.pca_n_components is not None:
-            if self.pca_min_variance_ratio_explained is not None:
-                raise ValueError(
-                    "Cannot specify both 'pca_min_variance_ratio_explained' and 'pca_n_components'"
-                )
-            
-            if isinstance(self.pca_n_components, int):
-                if self.pca_n_components < 1:
-                    raise ValueError(
-                        "'pca_n_components' must be >= 1"
-                    )
-
-            if (self.pca_n_components == "mle") and (self.pca_method == PCASelection.KERNEL_PCA):
-                raise ValueError(
-                    "Cannot use 'mle' with 'kernel_pca'"
-                )
-
-        if self.pca_min_variance_ratio_explained is not None:
-            if not 0.5 <= self.pca_min_variance_ratio_explained <= 1:
-                raise ValueError(
-                    "'pca_min_variance_ratio_explained' must be between 0.5 and 1"
-                )
-            
-        return self
-
-class DistanceMetric(str, Enum):
-    """
-    what distance method to use
-    """
-    EUCLIDEAN = "euclidean"
-    SEUCLIDEAN = "seuclidean"
-    MANHATTAN = "manhattan"
-    COSINE = "cosine"
-
-class ScoreSettings(BaseSettings):
-    """minimum cluster size"""
-    min_cluster_size: int = pydantic.Field(
-        default=2,
-        ge=2, # 
-    )
-
-    """maximum number of non-outlier clusters"""
-    max_non_outlier_cluster_count: int = pydantic.Field(
-        default=200,
-        ge=1,
-    )
-
-    """scoring methods"""
-    calinski_harabasz_weight: float = pydantic.Field(
-        default=1.0,
-        ge=0,
-    )
-
-    davies_bouldin_weight: float = pydantic.Field(
-        default=0.0,
-        ge=0,
-    )
-
-    density_based_clustering_validation_weight: float = pydantic.Field(
-        default=0.0,
-        ge=0,
-    )
-
-    dunn_weight: float = pydantic.Field(
-        default=0.0,
-        ge=0,
-    )
-
-    silhouette_weight: float = pydantic.Field(
-        default=0.0,
-        ge=0,
-    )
-
-    silhouette_median_weight: float = pydantic.Field(
-        default=0.0,
-        ge=0,
-    )
-
-    xie_beni_weight: float = pydantic.Field(
-        default=0.0,
-        ge=0,
-    )
-
-    window_size: float = pydantic.Field(
-        default=0,
-        ge=0,
-    )
-
-    """distance metric for clustering"""
-    distance_metric: DistanceMetric = pydantic.Field(
-        default=DistanceMetric.EUCLIDEAN,
-    )
-
-    @pydantic.model_validator(mode="after")
-    def _check_weights(self):
-        weights = [
-            self.calinski_harabasz_weight,
-            self.davies_bouldin_weight,
-            self.density_based_clustering_validation_weight,
-            self.dunn_weight,
-            self.silhouette_weight,
-            self.silhouette_median_weight,
-            self.xie_beni_weight,
-        ]
-
-        if not any(w > 0 for w in weights):
-            raise ValueError("At least one scoring weight must be greater than 0")
-        
-        return self
-
-
-class ClusterRangeSettings(BaseSettings):
-    """lower bound for number of clusters"""
-    lower: int = pydantic.Field(
-        default=2,
-        ge=2,
-    )
-
-    """upper bound for number of clusters"""
-    upper: int = pydantic.Field(
-        default=24,
-        ge=2,
-    )
-
-    @pydantic.model_validator(mode="after")
-    def _check_n_cluster_range(self):
-        if self.lower > self.upper:
-            raise ValueError(
-                "'n_cluster_lower' must be <= 'n_cluster_upper'"
-            )
-
-        return self
-
-
-class BiKmeansInnerAlgorithms(str, Enum):
-    ELKAN = "elkan"
-    LLOYD = "lloyd"
-
-
-class BiKmeansBisectingStrategies(str, Enum):
-    BIGGEST_INERTIA = "biggest_inertia"
-    LARGEST_CLUSTER = "largest_cluster"
-
-
-class BisectingKMeansSettings(BaseSettings):
-    """number of times to recluster"""
-    recluster_count: int = pydantic.Field(
-        default=3,
-        ge=1,
-    )
-
-    """number of times to recluster internally"""
-    internal_recluster_count: int = pydantic.Field(
-        default=5,
-        ge=1,
-    )
-
-    """Inner KMeans algorithm used in bisection"""
-    inner_algorithm: BiKmeansInnerAlgorithms = pydantic.Field(
-        default=BiKmeansInnerAlgorithms.ELKAN,
-    )
-
-    """Bisection strategy"""
-    bisecting_strategy: BiKmeansBisectingStrategies = pydantic.Field(
-        default=BiKmeansBisectingStrategies.LARGEST_CLUSTER,
-    )
-
-    n_cluster: ClusterRangeSettings = pydantic.Field(
-        default_factory=ClusterRangeSettings
-    )
-
-    scoring: ScoreSettings = pydantic.Field(
-        default_factory=ScoreSettings
-    )
-
-    
-class BirchSettings(BaseSettings):
-    """radius of the subcluster to merge a new sample in"""
-    threshold: float = pydantic.Field(
-        default=0.5,
-        ge=0,
-    )
-
-    """maximum number of CF subclusters in each node"""
-    branching_factor: int = pydantic.Field(
-        default=50,
-        ge=1,
-    )
-
-    n_cluster: ClusterRangeSettings = pydantic.Field(
-        default_factory=ClusterRangeSettings
-    )
-
-    scoring: ScoreSettings = pydantic.Field(
-        default_factory=ScoreSettings
-    )
-
-
-class DbscanDistanceAlgorithm(str, Enum):
-    AUTO = "auto"
-    BRUTE = "brute"
-    KD_TREE = "kd_tree"
-    BALL_TREE = "ball_tree"
-
-class DBSCANSettings(BaseSettings):
-    """maximum distance between two samples for one to be considered as in the neighborhood of the other"""
-    epsilon: float = pydantic.Field(
-        default=0.5,
-        gt=0,
-    )
-
-    """minimum number of samples in a neighborhood for a point to be considered as a cluster"""
-    min_samples: int = pydantic.Field(
-        default=1, # sklearn default is 5
-        ge=1,
-    )
-
-    """distance metric for calculating distance between samples"""
-    distance_metric: DistanceMetric = pydantic.Field(
-        default=DistanceMetric.EUCLIDEAN,
-    )
-
-    """distance algorithm to use for nearest neighbors"""
-    nearest_neighbors_algorithm: DbscanDistanceAlgorithm = pydantic.Field(
-        default=DbscanDistanceAlgorithm.AUTO,
-    )
-
-    """leaf size for KDTree or BallTree"""
-    leaf_size: Optional[int] = pydantic.Field(
-        default=30,
-    )
-
-    """Minkowski p-norm distance power"""
-    minkowski_p: float = pydantic.Field(
-        default=2,
-        ge=1,
-    )
-
-
-class HdbscanClusterSelectionMethod(str, Enum):
-    LEAF = "leaf"
-    EXCESS_OF_MASS = "eom"
-
-
-class HDBSCANSettings(BaseSettings):
-    """allow single cluster"""
-    allow_single_cluster: bool = pydantic.Field(
-        default=True,
-    )
-
-    """maximum cluster count"""
-    max_cluster_size: Optional[int] = pydantic.Field(
-        default=None,
-    )
-
-    """minimum number of samples in a group for it to be considered as a cluster"""
-    min_samples: int = pydantic.Field(
-        default=1,
-        ge=1,
-    )
-
-    """distance metric for calculating distance between samples"""
-    distance_metric: DistanceMetric = pydantic.Field(
-        default=DistanceMetric.EUCLIDEAN,
-    )
-
-    """samples to calculate distance between neighbors"""
-    scoring_sample_count: Optional[int] = pydantic.Field(
-        default=None,
-    )
-
-    """clusters below this distance threshold will be merged"""
-    cluster_selection_epsilon: float = pydantic.Field(
-        default=0.0,
-        ge=0,
-    )
-
-    """distance scaling factor for robust single linkage"""
-    robust_single_linkage_scaling: float = pydantic.Field(
-        default=1.0,
-        gt=0,
-    )
-
-    """distance algorithm to use"""
-    nearest_neighbors_algorithm: DbscanDistanceAlgorithm = pydantic.Field(
-        default=DbscanDistanceAlgorithm.AUTO,
-    )
-
-    """leaf size for KDTree or BallTree"""
-    leaf_size: Optional[int] = pydantic.Field(
-        default=40,
-    )
-
-    """cluster selection method"""
-    cluster_selection_method: HdbscanClusterSelectionMethod = pydantic.Field(
-        default=HdbscanClusterSelectionMethod.EXCESS_OF_MASS,
-    )
-
-
-class SpectralEigenSolver(str, Enum):
-    ARPACK = "arpack"
-    LOBPCG = "lobpcg"
-    # AMG = "amg" # disabled due to additional installation requirements
-
-class AffinityMatrixOptions(str, Enum):
-    # Some of these are currently disabled. Can be added later after debugging
-    NEAREST_NEIGHBORS = "nearest_neighbors"
-    RBF = "rbf"
-    # ADDITIVE_CHI2 = "additive_chi2"
-    CHI2 = "chi2"
-    # LINEAR = "linear"
-    # POLY = "poly"
-    # POLYNOMIAL = "polynomial"
-    LAPLACIAN = "laplacian"
-    # SIGMOID = "sigmoid"
-    # COSINE = "cosine"
-
-class SpectralAssignLabels(str, Enum):
-    KMEANS = "kmeans"
-    DISCRETIZE = "discretize"
-    CLUSTER_QR = "cluster_qr"
-    
-class SpectralSettings(BaseSettings):
-    """number of times to recluster"""
-    recluster_count: int = pydantic.Field(
-        default=0,
-        ge=0,
-    )
-
-    """eigen solver to use"""
-    eigen_solver: Optional[SpectralEigenSolver] = pydantic.Field(
-        default=SpectralEigenSolver.ARPACK,
-    )
-
-    """number of eigenvectors to use, defaults to n_clusters"""
-    n_components: Optional[int] = pydantic.Field(
-        default=None,
-    )
-
-    """affinity matrix algorithm to use"""
-    affinity: AffinityMatrixOptions = pydantic.Field(
-        default=AffinityMatrixOptions.RBF,
-    )
-
-    """number of nearest neighbors to use for nearest neighbors kernel"""
-    nearest_neighbors: int = pydantic.Field(
-        default=5,
-        ge=1,
-    )
-
-    """gamma for RBF, polynomial, sigmoid, laplacian, and chi2 kernels"""
-    gamma: float = pydantic.Field(
-        default=1.05,
-        gt=0,
-    )
-
-    """stopping criterion for eigen decomposition"""
-    eigen_tol: Union[float, Literal["auto"]] = pydantic.Field(
-        default="auto",
-    )
-
-    """label assignment method"""
-    assign_labels: SpectralAssignLabels = pydantic.Field(
-        default=SpectralAssignLabels.CLUSTER_QR,
-    )
-
-    n_cluster: ClusterRangeSettings = pydantic.Field(
-        default_factory=ClusterRangeSettings
-    )
-
-    scoring: ScoreSettings = pydantic.Field(
-        default_factory=ScoreSettings
-    )
-
-    @pydantic.model_validator(mode="after")
-    def _check_eigen_tol(self):
-        if self.eigen_tol != "auto":
-            if self.eigen_tol < 0:
-                raise ValueError(
-                    "'eigen_tol' must be >= 0"
-                )
-
-        return self
-
-
-class SortMethod(str, Enum):
-    SIZE = "size"
-    PEAK = "peak"
-    # VARIANCE = "variance"
-
-
-class AggregateMethod(str, Enum):
-    MEAN = "mean"
-    MEDIAN = "median"
-
-
-class ClusterSortSettings(BaseSettings):
-    """enable cluster sorting"""
-    enable: bool = pydantic.Field(
-        default=True,
-    )
-
-    """sort method"""
-    method: SortMethod = pydantic.Field(
-        default=SortMethod.PEAK,
-    )
-
-    """aggregate method"""
-    aggregation: AggregateMethod = pydantic.Field(
-        default=AggregateMethod.MEAN
-    )
-
-    """sort order"""
-    reverse: bool = pydantic.Field(
-        default=False,
-    )
-
-
-class ClusterAlgorithms(str, Enum):
-    BISECTING_KMEANS = "bisecting_kmeans"
-    BIRCH = "birch"
-    DBSCAN = "dbscan"
-    HDBSCAN = "hdbscan"
-    SPECTRAL = "spectral"
+from opendsm.common.stats.basic import MAD_k
+
+from .transform.normalize_settings import (
+    NormalizeChoice,
+    NormalizeScope,
+    NormalizeSettings,
+)
+from .transform.settings import (
+    fPCATransformSettings,
+    MagnitudeFeature,
+    WaveletSelection,
+    WaveletTransformSettings,
+    FeatureTransformSettings,
+)
+from .metrics.settings import (
+    DistanceMetric,
+    SmallClusterMode,
+    _DEFAULT_SCORE_WEIGHTS,
+    ClusterRangeSettings,
+    ScoreSettings,
+)
+from .algorithms.settings import (
+    BiKmeansInnerAlgorithms,
+    BiKmeansBisectingStrategies,
+    BisectingKMeansSettings,
+    BisectingKMediansSettings,
+    KMediansSettings,
+    BirchSettings,
+    DbscanDistanceAlgorithm,
+    DBSCANSettings,
+    HdbscanClusterSelectionMethod,
+    HDBSCANSettings,
+    SpectralEigenSolver,
+    AffinityMatrixOptions,
+    SpectralAssignLabels,
+    SpectralSettings,
+    SortMethod,
+    AggregateMethod,
+    ClusterSortSettings,
+    ClusterAlgorithms,
+)
 
 
 class ClusteringSettings(BaseSettings):
-    """pretransform data rescale settings"""
-    normalize: NormalizeSettings = pydantic.Field(
-        default_factory=NormalizeSettings
+    distance_metric: DistanceMetric = pydantic.Field(
+        default=DistanceMetric.EUCLIDEAN,
+        description="Distance metric for all clustering algorithms and scoring indices. "
+                    "Algorithms use sqeuclidean internally for argmin when metric is euclidean "
+                    "(monotonic optimization). Non-Euclidean metrics (manhattan, cosine) use "
+                    "the exact metric throughout.",
     )
 
-    """transform method"""
-    transform_selection: Optional[TransformChoice] = pydantic.Field(
-        default=TransformChoice.WAVELET,
+    min_cluster_size: int = pydantic.Field(
+        default=1,
+        ge=1,
+        description="Minimum number of points a cluster must have to be kept.",
     )
 
-    """fPCA transform settings"""
-    fpca_transform: Optional[fPCATransformSettings] = pydantic.Field(
-        default_factory=fPCATransformSettings
+    small_cluster_mode: SmallClusterMode = pydantic.Field(
+        default=SmallClusterMode.KEEP,
+        description="How to handle clusters smaller than min_cluster_size. "
+                    "OUTLIER: relabel as -1 and exclude from scoring — suitable for "
+                    "centroid-based and spectral algorithms. "
+                    "KEEP: skip the merge step entirely and preserve pre-existing -1 noise labels — "
+                    "recommended for density-based algorithms (HDBSCAN, DBSCAN) where -1 has "
+                    "genuine noise semantics and algorithm-produced singletons are valid clusters. "
+                    "ABSORB: reassign small-cluster points to the nearest large-cluster centroid. "
+                    "See SmallClusterMode for full semantics.",
     )
 
-    """wavelet transform settings"""
-    wavelet_transform: Optional[WaveletTransformSettings] = pydantic.Field(
-        default_factory=WaveletTransformSettings
+    feature_transform: FeatureTransformSettings = pydantic.Field(
+        default_factory=FeatureTransformSettings,
+        description="Feature preprocessing and transformation pipeline",
     )
 
-    """clustering choice"""
     algorithm_selection: ClusterAlgorithms = pydantic.Field(
-        default=ClusterAlgorithms.SPECTRAL,
+        default=ClusterAlgorithms.KMEDIANS,
+        description="clustering choice",
     )
 
-    """BisectingKMeans settings"""
-    bisecting_kmeans: Optional[BisectingKMeansSettings] = pydantic.Field(
+    kmedians: KMediansSettings | None = pydantic.Field(
+        default_factory=KMediansSettings,
+        description="Direct KMedians settings (default algorithm)",
+    )
+
+    bisecting_kmedians: BisectingKMediansSettings | None = pydantic.Field(
+        default_factory=BisectingKMediansSettings,
+        description="Bisecting KMedians settings (legacy)",
+    )
+
+    bisecting_kmeans: BisectingKMeansSettings | None = pydantic.Field(
         default_factory=BisectingKMeansSettings,
+        description="BisectingKMeans settings",
     )
 
-    """Birch settings"""
-    birch: Optional[BirchSettings] = pydantic.Field(
+    birch: BirchSettings | None = pydantic.Field(
         default_factory=BirchSettings,
+        description="Birch settings",
     )
 
-    """DBSCAN settings"""
-    dbscan: Optional[DBSCANSettings] = pydantic.Field(
+    dbscan: DBSCANSettings | None = pydantic.Field(
         default_factory=DBSCANSettings,
+        description="DBSCAN settings",
     )
 
-    """HDBSCAN settings"""
-    hdbscan: Optional[HDBSCANSettings] = pydantic.Field(
+    hdbscan: HDBSCANSettings | None = pydantic.Field(
         default_factory=HDBSCANSettings,
+        description="HDBSCAN settings",
     )
 
-    """Spectral settings"""
-    spectral: Optional[SpectralSettings] = pydantic.Field(
+    spectral: SpectralSettings | None = pydantic.Field(
         default_factory=SpectralSettings,
+        description="Spectral settings",
     )
 
-    """sort clusters """
+    spectral_divisive: SpectralSettings | None = pydantic.Field(
+        default_factory=SpectralSettings,
+        description="Spectral divisive (recursive Fiedler bisection) settings",
+    )
+
+    outlier_removal_sigma: float | None = pydantic.Field(
+        default=3.0,
+        gt=0,
+        description=(
+            "Post-council outlier removal threshold in Gaussian sigma units. "
+            "After the scoring council selects the best k, points whose "
+            "deviation from their cluster median exceeds this many sigma "
+            "(estimated robustly via MAD × 1.4826) along any principal "
+            "component are flagged as outliers and handled according to "
+            "the algorithm's small_cluster_mode: KEEP preserves them in a "
+            "new cluster (renumbered), OUTLIER relabels as -1, ABSORB "
+            "reassigns to the nearest non-outlier cluster centroid. "
+            "Default 3.0σ (0.27% of a Gaussian tail). "
+            "5.0σ is more conservative (0.00006%). "
+            "None disables outlier removal. "
+            "Only applied to clusters with >= 5 members."
+        ),
+    )
+
     cluster_sort: ClusterSortSettings = pydantic.Field(
         default_factory=ClusterSortSettings,
+        description="sort clusters",
     )
 
-    """seed for random state assignment"""
-    seed: Optional[int] = pydantic.Field(
+    seed: int | None = pydantic.Field(
         default=None,
         ge=0,
+        description="seed for random state assignment",
     )
 
-    _seed: Optional[int] = pydantic.PrivateAttr(
+    _seed: int | None = pydantic.PrivateAttr(
         default=None
     )
 
+    _outlier_mad_threshold: float | None = pydantic.PrivateAttr(
+        default=None
+    )
+
+    @property
+    def _argmin_metric(self) -> str:
+        """Fast metric for argmin operations (assignment step).
+
+        For Euclidean, sqeuclidean gives the same argmin but avoids sqrt.
+        For all other metrics, use the exact metric.
+        """
+        if self.distance_metric in (
+            DistanceMetric.EUCLIDEAN,
+            DistanceMetric.SQUARED_EUCLIDEAN,
+        ):
+            return "sqeuclidean"
+        return self.distance_metric.value
+
+    @property
+    def _metric_value(self) -> str:
+        """The distance metric as a plain string for scipy/sklearn."""
+        return self.distance_metric.value
+
+    @pydantic.model_validator(mode="before")
+    @classmethod
+    def _null_unselected(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        selected_algo = data.get("algorithm_selection", ClusterAlgorithms.KMEDIANS)
+        if isinstance(selected_algo, str):
+            try:
+                selected_algo = ClusterAlgorithms(selected_algo)
+            except ValueError:
+                pass
+        for algo in ClusterAlgorithms:
+            if algo != selected_algo:
+                data[algo.value] = None
+        return data
+
     @pydantic.model_validator(mode="after")
-    def _check_seed(self):
+    def _init_seed(self):
         if self.seed is None and self._seed is None:
             self._seed = np.random.randint(0, 2**32 - 1, dtype=np.int64)
         else:
             self._seed = self.seed
 
-        for transform in [self.wavelet_transform, self.fpca_transform]:
+        for transform in [self.feature_transform.wavelet, self.feature_transform.fpca]:
             if transform is not None:
                 transform._seed = self._seed
 
-
         return self
 
     @pydantic.model_validator(mode="after")
-    def _remove_unselected_algorithms(self):
-        self.model_config["frozen"] = False
-
-        algo_dict = {
-            ClusterAlgorithms.BISECTING_KMEANS: self.bisecting_kmeans,
-            ClusterAlgorithms.BIRCH: self.birch,
-            ClusterAlgorithms.DBSCAN: self.dbscan,
-            ClusterAlgorithms.HDBSCAN: self.hdbscan,
-            ClusterAlgorithms.SPECTRAL: self.spectral,
-        }
-
-        for k in algo_dict.keys():
-            if k != self.algorithm_selection:
-                setattr(self, k, None)
-
-        self.model_config["frozen"] = True
-
+    def _init_outlier_threshold(self):
+        if self.outlier_removal_sigma is not None:
+            self._outlier_mad_threshold = self.outlier_removal_sigma / MAD_k
+        else:
+            self._outlier_mad_threshold = None
         return self
 
     @pydantic.model_validator(mode="after")
-    def _remove_unselected_transform(self):
-        self.model_config["frozen"] = False
-
-        transform_dict = {
-            TransformChoice.WAVELET: self.wavelet_transform,
-            TransformChoice.FPCA: self.fpca_transform,
-        }
-
-        for k in transform_dict.keys():
-            if k != self.transform_selection:
-                setattr(self, f"{k.value}_transform", None)
-
-        self.model_config["frozen"] = True
-
+    def _check_cluster_size_mode(self):
+        # min_cluster_size and small_cluster_mode are logically coupled:
+        #   min_cluster_size=1  ↔  KEEP  (nothing is "small", nothing to merge)
+        #   min_cluster_size≥2  ↔  OUTLIER or ABSORB  (merge small clusters)
+        if self.min_cluster_size < 2 and self.small_cluster_mode != SmallClusterMode.KEEP:
+            raise ValueError(
+                f"min_cluster_size={self.min_cluster_size} requires "
+                f"small_cluster_mode='keep'. With '{self.small_cluster_mode.value}' "
+                f"mode, there are no clusters below the threshold to act on."
+            )
+        if self.min_cluster_size >= 2 and self.small_cluster_mode == SmallClusterMode.KEEP:
+            raise ValueError(
+                f"small_cluster_mode='keep' requires min_cluster_size=1. "
+                f"KEEP preserves all clusters regardless of size, making "
+                f"min_cluster_size={self.min_cluster_size} contradictory."
+            )
         return self
 
 
 if __name__ == "__main__":
     settings = ClusteringSettings()
-
     print(settings)
-
-    print(settings._algorithm)

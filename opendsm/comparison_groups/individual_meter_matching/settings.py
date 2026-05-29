@@ -31,48 +31,54 @@ class SelectionMethod(str, Enum):
 class Settings(BaseSettings):
     """Settings for individual meter matching"""
 
-    """distance metric to determine best comparison pool matches"""
     distance_metric: _const.DistanceMetric = pydantic.Field(
-        default=_const.DistanceMetric.EUCLIDEAN, 
+        default=_const.DistanceMetric.EUCLIDEAN,
+        description="Distance metric to determine best comparison pool matches",
         validate_default=True,
     )
 
-    """selection method for comparison group matching"""
     selection_method: SelectionMethod = pydantic.Field(
-        default=SelectionMethod.MINIMIZE_METER_DISTANCE, 
+        default=SelectionMethod.MINIMIZE_METER_DISTANCE,
+        description="Selection method for comparison group matching",
         validate_default=True,
     )
 
-    """number of comparison pool matches to each treatment meter"""
     n_matches_per_treatment: int = pydantic.Field(
-        default=4, 
-        ge=1, 
-        validate_default=True,
-    )
-    
-    """number of treatments to be calculated per chunk to prevent memory issues"""
-    n_treatments_per_chunk: int = pydantic.Field(
-        default=10000, 
-        ge=1, 
-        validate_default=True,
-    )
-    
-    """allow duplicate matches in comparison group"""
-    allow_duplicate_matches: bool = pydantic.Field(
-        default=False, 
-        validate_default=True,
-    )
-    
-    """The maximum distance that a comparison group match can have with a given
-       treatment meter. These meters are filtered out after all matching has completed."""
-    max_distance_threshold: Optional[float] = pydantic.Field(
-        default=None, 
+        default=4,
+        ge=1,
+        description="Number of comparison pool matches to each treatment meter",
         validate_default=True,
     )
 
-    """Check if valid settings for treatment meter match loss"""
+    n_pool_meters_per_chunk: int = pydantic.Field(
+        default=10000,
+        ge=1,
+        description="Number of pool meters per chunk during distance calculation to prevent memory issues",
+        validate_default=True,
+    )
+
+    allow_duplicate_matches: bool = pydantic.Field(
+        default=False,
+        description="Allow duplicate matches in comparison group",
+        validate_default=True,
+    )
+
+    max_distance_threshold: Optional[float] = pydantic.Field(
+        default=None,
+        description="Maximum distance that a comparison group match can have with a treatment meter. Filters after matching.",
+        validate_default=True,
+    )
+
+    candidate_multiplier: Optional[int] = pydantic.Field(
+        default=10,
+        ge=2,
+        description="Multiplier applied to (n_treatment * n_matches_per_treatment) to determine candidate pool size for centroid pre-filtering. Set to None to disable pre-filtering.",
+        validate_default=True,
+    )
+
     @pydantic.model_validator(mode="after")
     def _check_allow_duplicates(self):
+        """Validate that if allow_duplicate_matches is True, selection_method is MINIMIZE_METER_DISTANCE."""
         if self.allow_duplicate_matches:
             if self.selection_method != SelectionMethod.MINIMIZE_METER_DISTANCE:
                 distance = SelectionMethod.MINIMIZE_METER_DISTANCE.value

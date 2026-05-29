@@ -100,17 +100,23 @@ class ClusteringSettings(BaseSettings):
 
 def CG_Clustering_Settings(**kwargs) -> _CG_Clustering_Settings:
     default_dict = {
-        "normalize": {
-            "method": _settings.NormalizeChoice.MIN_MAX_QUANTILE,
-            "quantile": 0.1,
-            "pre_transform": True,
-            "post_transform": False,
-            "axis": 1,
+        "feature_transform": {
+            "normalize": {
+                "method": _settings.NormalizeChoice.MIN_MAX_QUANTILE,
+                "quantile": 0.1,
+                "enabled": True,
+                "winsorize_threshold": None,  # Preserve old behavior: pre-normalize only, no post-winsorization
+            },
+            "fpca": {
+                "enabled": True,
+                "min_var_ratio": 0.97,
+            },
+            "wavelet": {
+                "enabled": False,
+            },
         },
-        "transform_selection": _settings.TransformChoice.FPCA,
-        "fpca_transform": {
-            "min_var_ratio": 0.97,
-        },
+        "min_cluster_size": 15,
+        "small_cluster_mode": "outlier",
         "algorithm_selection": _settings.ClusterAlgorithms.BISECTING_KMEANS,
         "bisecting_kmeans": {
             "recluster_count": 3,
@@ -122,16 +128,10 @@ def CG_Clustering_Settings(**kwargs) -> _CG_Clustering_Settings:
                 "upper": 1500,
             },
             "scoring": {
-                "min_cluster_size": 15,
                 "max_non_outlier_cluster_count": 200,
-                "calinski_harabasz_weight": 1.0,
-                "davies_bouldin_weight": 0.0,
-                "density_based_clustering_validation_weight": 0.0,
-                "dunn_weight": 0.0,
-                "silhouette_weight": 0.0,
-                "silhouette_median_weight": 0.0,
-                "xie_beni_weight": 0.0,
+                "weights": {"calinski_harabasz_index": 1.0},
                 "distance_metric": _settings.DistanceMetric.EUCLIDEAN,
+                "k_penalty": {"enabled": False},
             },
         },
         "cluster_sort": {

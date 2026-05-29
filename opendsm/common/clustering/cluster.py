@@ -17,228 +17,158 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from scipy.signal import find_peaks
-from scipy.spatial.distance import cdist
-
 from opendsm.common.clustering import (
     settings as _settings,
     transform as _transform,
 )
 
-from opendsm.common.clustering.algorithms import (
-    _bisecting_kmeans_clustering,
-    _birch_clustering,
-    _dbscan_clustering,
-    _hdbscan_clustering,
-    _spectral_clustering,
-)
+from opendsm.common.clustering.algorithms.bisect_k_means import bisect_k_means as _bisecting_kmeans_clustering
+from opendsm.common.clustering.algorithms.bisect_k_medians import bisect_k_medians as _bisecting_kmedians_clustering
+from opendsm.common.clustering.algorithms.k_medians import kmedians as _kmedians_clustering
+from opendsm.common.clustering.algorithms.birch import birch as _birch_clustering
+from opendsm.common.clustering.algorithms.dbscan import dbscan as _dbscan_clustering
+from opendsm.common.clustering.algorithms.hdbscan import hdbscan as _hdbscan_clustering
+from opendsm.common.clustering.algorithms.spectral import spectral as _spectral_clustering
+from opendsm.common.clustering.algorithms.spectral import spectral_divisive as _spectral_divisive_clustering
+from opendsm.common.clustering.metrics.labels import ClusteringResult
+from opendsm.common.clustering.metrics.label_ops import remove_outliers_mad
+from opendsm.common.clustering.metrics.settings import SmallClusterMode
 
 
-
-def _cluster_merge(
-    cluster_labels: np.ndarray,
-    data: np.ndarray,
-    settings: _settings.ClusteringSettings,
-    W: float = 0.5,
-):
-    
-    # get unique labels
-    unique_labels = np.unique(cluster_labels)
-
-    # get the distance between all rows in data
-    distances = cdist(data, data)
-
-    intra_cluster_similarity = np.zeros(len(unique_labels))
-    inter_cluster_similarity = np.zeros((len(unique_labels), len(unique_labels)))
-    for i in range(len(unique_labels)):
-        idx_i = np.where(cluster_labels == unique_labels[i])[0]
-        for j in range(len(unique_labels)):
-            idx_j = np.where(cluster_labels == unique_labels[j])[0]
-
-            if i == j:
-                intra_cluster_similarity[i] = np.mean(distances[idx_i, :][:, idx_i])
-                inter_cluster_similarity[i, j] = 0
-                continue
-            elif i < j:
-                continue
-
-            inter_cluster_similarity[i, j] = np.sum(distances[idx_i, :][:, idx_j])
-            inter_cluster_similarity[j, i] = np.nan
-
-    # if there are only two clusters, merge them if the similarity is less than W
-    if unique_labels.shape[0] == 2:
-        cluster_similarity = inter_cluster_similarity[0, 1]
-        mean_similarity = np.mean(distances[distances != 0])
-
-        ratio = cluster_similarity / mean_similarity
-
-        if ratio < W:
-            return np.zeros(len(cluster_labels))
-        
-        return cluster_labels
-
-    # inter_cluster_similarity's upper triangle is NaN by construction; nanmean
-    # excludes those so the threshold reflects actual inter-cluster distances.
-    mean_similarity = np.nanmean(inter_cluster_similarity)
-
-    for i in reversed(range(len(unique_labels))):
-        for j in reversed(range(len(unique_labels))):
-            if i == j:
-                continue
-
-            ratio = inter_cluster_similarity[i, j] / mean_similarity
-
-            if ratio < W:
-                cluster_labels[cluster_labels == unique_labels[j]] = unique_labels[i]
-
-    return cluster_labels
-
-
-def cluster_reorder(
-    data: pd.DataFrame, 
+def _build_label_remap(
     cluster_labels: np.ndarray,
     settings: _settings.ClusteringSettings,
-):
+) -> dict:
     sort_method = settings.cluster_sort.method
-    agg_type = settings.cluster_sort.aggregation
     reverse = settings.cluster_sort.reverse
 
-    # assign labels to data
-    df = data.copy()
-    df["label"] = cluster_labels
-     # exclude label -1 (outliers) from reordering
-    df = df[df['label'] >= 0]
-
-    # calculate n_clusters after filtering out outliers
-    uniq_labels = df['label'].unique()
+    non_outlier_mask = cluster_labels >= 0
+    non_outlier_labels = cluster_labels[non_outlier_mask]
+    uniq_labels, counts = np.unique(non_outlier_labels, return_counts=True)
     n_clusters = len(uniq_labels)
 
     if sort_method == "size":
-        # sort clusters by count
-        cluster_size = df['label'].value_counts()
-        cluster_size = cluster_size.sort_values()
-
-        features = cluster_size
+        order = np.argsort(counts)
+        features_index = uniq_labels[order]
 
     elif sort_method == "peak":
-        # TODO: This is a work in progress
+        raise NotImplementedError("'peak' sort method is not yet implemented")
 
-        # group by cluster and aggregate
-        df_cluster = df.groupby('label').agg(agg_type)
-
-        # subtract each cluster's median from the cluster's median
-        df_cluster_norm = df_cluster.sub(df_cluster.agg(agg_type, axis=1), axis=0)
-        cluster_max = df_cluster_norm.abs().max().max()
-        df_cluster_norm = df_cluster_norm/cluster_max
-
-        # define threshold for peak and valley
-        threshold = np.quantile(abs(df_cluster.values), 0.75)
-
-        # find peaks and valleys
-        peak = {}
-        valley = {}
-        norm = {}
-        for i in range(n_clusters):
-            cluster_normal = df_cluster.iloc[i]
-            norm[i] = cluster_normal.agg(agg_type)
-            df_cluster_norm = cluster_normal - norm[i]
-            thresh = threshold - norm[i]
-
-            peak[i] = find_peaks(df_cluster_norm.values, height=thresh, width=1)[0]
-            valley[i] = find_peaks(-df_cluster_norm.values, height=thresh, width=1)[0]
-
-            if len(peak[i]) == 0:
-                peak[i] = None
-            else:
-                peak[i] = peak[i][0]
-
-            if len(valley[i]) == 0:
-                valley[i] = None
-            else:
-                valley[i] = valley[i][0]
-        
-        # create df with peak and valley
-        features = pd.DataFrame({'peak': peak, 'valley': valley, "norm": norm})
-
-        features = features.sort_values(by=["peak", "valley", "norm"], na_position='first')
-
-    # create dictionary to remap cluster numbers to features order
-    cluster_map = {i: i for i in cluster_labels}
-
-    if not reverse:
-        cluster_map.update({features.index[i]: i for i in range(n_clusters)})
     else:
-        # Reverse the mapping: smallest feature gets highest index, largest gets lowest
-        cluster_map.update({features.index[i]: n_clusters - 1 - i for i in range(n_clusters)})
+        raise ValueError(f"Unsupported sort method: {sort_method!r}")
+
+    cluster_map = {-1: -1}
+    if not reverse:
+        cluster_map.update({features_index[i]: i for i in range(n_clusters)})
+    else:
+        cluster_map.update({features_index[i]: n_clusters - 1 - i for i in range(n_clusters)})
 
     return cluster_map
+
+
+from opendsm.common.clustering.algorithms.protocol import ClusterAlgorithm
+_ALGORITHM_DISPATCH: dict[_settings.ClusterAlgorithms, ClusterAlgorithm] = {
+    _settings.ClusterAlgorithms.KMEDIANS: _kmedians_clustering,
+    _settings.ClusterAlgorithms.BISECTING_KMEDIANS: _bisecting_kmedians_clustering,
+    _settings.ClusterAlgorithms.BISECTING_KMEANS: _bisecting_kmeans_clustering,
+    _settings.ClusterAlgorithms.BIRCH: _birch_clustering,
+    _settings.ClusterAlgorithms.DBSCAN: _dbscan_clustering,
+    _settings.ClusterAlgorithms.HDBSCAN: _hdbscan_clustering,
+    _settings.ClusterAlgorithms.SPECTRAL: _spectral_clustering,
+    _settings.ClusterAlgorithms.SPECTRAL_DIVISIVE: _spectral_divisive_clustering,
+}
+
+
+def _k_range_algo_settings(settings: _settings.ClusteringSettings):
+    """Return the active algorithm's settings object, or None for density-based algorithms."""
+    if settings.algorithm_selection in (_settings.ClusterAlgorithms.DBSCAN, _settings.ClusterAlgorithms.HDBSCAN):
+        return None
+    return getattr(settings, settings.algorithm_selection.value)
+
+
+def _cap_cluster_range(
+    settings: _settings.ClusteringSettings,
+    data: np.ndarray,
+) -> _settings.ClusteringSettings:
+    """Cap the upper cluster count when the dataset is too small to support it."""
+    algo_settings = _k_range_algo_settings(settings)
+    if algo_settings is None:
+        return settings
+
+    algo = settings.algorithm_selection.value
+    data_count = len(data)
+    min_cluster_size = settings.min_cluster_size
+    new_upper = data_count // min_cluster_size
+
+    if new_upper >= algo_settings.n_cluster.upper:
+        return settings
+
+    new_n_cluster = algo_settings.n_cluster.model_copy(update={"upper": new_upper})
+    new_algo_settings = algo_settings.model_copy(update={"n_cluster": new_n_cluster})
+    return settings.model_copy(update={algo: new_algo_settings})
 
 
 def _cluster_features(
     data: np.ndarray,
     settings: _settings.ClusteringSettings,
-) -> np.ndarray:
+) -> ClusteringResult:
+    """Extract algorithm-specific settings and call the selected algorithm."""
+    settings = _cap_cluster_range(settings, data)
+    cluster_fcn = _ALGORITHM_DISPATCH[settings.algorithm_selection]
+    return cluster_fcn(data, settings)
 
-    # adjust upper cluster count if necessary
-    if settings.algorithm_selection not in ["dbscan", "hdbscan"]:
-        algo = f"{settings.algorithm_selection.value}"
-        algo_settings = getattr(settings, algo)
 
-        data_count = len(data)
-        cluster_count = algo_settings.n_cluster.upper
-        min_cluster_size = algo_settings.scoring.min_cluster_size
-        min_required_data = min_cluster_size * cluster_count
+def _run_pipeline(
+    df: pd.DataFrame,
+    settings: _settings.ClusteringSettings,
+) -> tuple[ClusteringResult | None, np.ndarray]:
+    """Shared preprocessing pipeline. Returns (result, cluster_labels)."""
+    data = df.to_numpy(dtype=np.float32, na_value=np.nan)
 
-        if data_count < min_required_data:
-            settings_dict = settings.model_dump()
-            settings_dict[algo]["n_cluster"]["upper"] = data_count // min_cluster_size
-            settings = _settings.ClusteringSettings(**settings_dict)
-    
-    # cluster the pca features
-    if settings.algorithm_selection == "bisecting_kmeans":
-        cluster_fcn = _bisecting_kmeans_clustering
-    elif settings.algorithm_selection == "birch":
-        cluster_fcn = _birch_clustering
-    elif settings.algorithm_selection == "dbscan":
-        cluster_fcn = _dbscan_clustering
-    elif settings.algorithm_selection == "hdbscan":
-        cluster_fcn = _hdbscan_clustering
-    elif settings.algorithm_selection == "spectral":
-        cluster_fcn = _spectral_clustering
-    else:
-        raise ValueError(f"Unknown clustering algorithm: {settings.algorithm_selection}")
-    
-    cluster_labels = cluster_fcn(data, settings)
+    algo_settings = _k_range_algo_settings(settings)
+    if algo_settings is not None:
+        if algo_settings.n_cluster.lower >= len(data):
+            return None, np.arange(len(data))
 
-    return cluster_labels
+    transform_result = _transform.transform_features(data, settings)
+    data = transform_result.data
+    if data.dtype != np.float32:
+        data = data.astype(np.float32)
+
+    result = _cluster_features(data, settings)
+    # Null tests use original (unnormalized) data — no normalization
+    # artifacts, no variance cap distortion. Detects whether the raw
+    # data has genuine cluster structure.
+    result.__dict__["_null_test_data"] = transform_result.null_test_data
+    cluster_labels = result.labels
+
+    # Post-council MAD-based outlier removal
+    if settings._outlier_mad_threshold is not None and result.k > 0:
+        cluster_labels = remove_outliers_mad(
+            data, cluster_labels, settings._outlier_mad_threshold,
+            small_cluster_mode=settings.small_cluster_mode,
+        )
+
+    if settings.cluster_sort.enable:
+        cluster_remap_dict = _build_label_remap(cluster_labels, settings)
+        cluster_labels = np.vectorize(cluster_remap_dict.__getitem__)(cluster_labels)
+
+    return result, cluster_labels
 
 
 def cluster_features(
     df: pd.DataFrame,
     settings: _settings.ClusteringSettings,
-):
-    # convert data to numpy array
-    data = df.to_numpy()
-    
-    # bypass clustering if cluster count is >= data
-    if settings.algorithm_selection not in ["dbscan", "hdbscan"]:
-        algo = f"{settings.algorithm_selection.value}"
-        algo_settings = getattr(settings, algo)
-        if algo_settings.n_cluster.lower >= len(data):
-            return np.arange(len(data))
-
-    data = _transform.transform_features(data, settings)
-
-    cluster_labels = _cluster_features(data, settings)
-
-    skip_merge = True
-    if not skip_merge and np.unique(cluster_labels).shape[0] == 2:
-        cluster_labels = _cluster_merge(cluster_labels, data, settings)
-
-    if settings.cluster_sort.enable:
-        cluster_remap_dict = cluster_reorder(df, cluster_labels, settings)
-
-        # remap cluster labels using cluster_remap_dict
-        cluster_labels = np.vectorize(cluster_remap_dict.get)(cluster_labels)
-
+) -> np.ndarray:
+    """Cluster features and return the best cluster label array."""
+    _, cluster_labels = _run_pipeline(df, settings)
     return cluster_labels
+
+
+def cluster_result(
+    df: pd.DataFrame,
+    settings: _settings.ClusteringSettings,
+) -> ClusteringResult | None:
+    """Cluster features and return the full ClusteringResult with metrics."""
+    result, _ = _run_pipeline(df, settings)
+    return result
