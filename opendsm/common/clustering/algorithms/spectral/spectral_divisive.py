@@ -664,8 +664,15 @@ def spectral_divisive(data, settings):
     k_st_base = algo_settings.local_scale_neighbors
     eigengap_weight = algo_settings.eigengap_weight
 
+    # Occam tiebreaker for close votes — calibrated to the 5th percentile of
+    # Schulze confidence across 72 representative spectral scenarios (3-cluster
+    # blobs, 5-cluster blobs, uniform-noise controls).  Scoped to
+    # spectral_divisive only; other algorithms keep raw Schulze resolution.
+    _OCCAM_FLOOR = 0.15
+
     if recluster_count == 0:
         lbl, lambda2_by_k = _spectral_divisive_single(data, settings, seed, k_st_base)
+        lbl._occam_confidence_floor = _OCCAM_FLOOR
         if eigengap_weight > 0 and lambda2_by_k:
             scores = _lambda2_eigengap_scores(
                 lambda2_by_k,
@@ -702,6 +709,7 @@ def spectral_divisive(data, settings):
         min_cluster_size=settings.min_cluster_size,
         small_cluster_mode=settings.small_cluster_mode,
     )
+    lbl._occam_confidence_floor = _OCCAM_FLOOR
     for k in sorted(all_by_k):
         for lm in all_by_k[k]:
             lbl._add_scored(k, lm)

@@ -347,6 +347,13 @@ class TestNystromEmbedding:
                           cluster_std=0.5, random_state=42)
         return X.astype(np.float32)
 
+    @pytest.fixture
+    def well_separated_data_with_labels(self):
+        """Three well-separated clusters, 200 points, plus ground-truth labels."""
+        X, y = make_blobs(n_samples=200, centers=3, n_features=10,
+                          cluster_std=0.5, random_state=42)
+        return X.astype(np.float32), y
+
     def test_embedding_shape(self, well_separated_data):
         """Nystrom embedding returns (n, n_components) array."""
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
@@ -369,17 +376,38 @@ class TestNystromEmbedding:
         norms = np.linalg.norm(embedding, axis=1)
         np.testing.assert_allclose(norms, 1.0, atol=1e-6)
 
-    def test_embedding_regression_values(self, well_separated_data):
-        """Regression: first row matches known values from seed=42."""
+    def test_embedding_preserves_cluster_structure(self, well_separated_data_with_labels):
+        """The embedding maps same-cluster points more similarly than different-
+        cluster points.
+
+        Replaces a hardcoded-component regression check that couldn't survive
+        cross-BLAS eigenvector sign and ordering ambiguity (eigenvectors are
+        defined only up to sign; degenerate eigenvalues can reorder freely).
+        Within/between mean cosine on ~13k pairs averages out sign and ordering
+        noise, capturing the cluster-discrimination property the embedding is
+        built to provide.  Thresholds calibrated to observed seed=42 values
+        (within=0.40, between=-0.20, separation=0.60) with generous margin.
+        """
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
             _nystrom_embedding,
         )
-        embedding = _nystrom_embedding(
-            well_separated_data, k_st=7, m=100, n_components=5, seed=42
+        X, y = well_separated_data_with_labels
+        embedding = _nystrom_embedding(X, k_st=7, m=100, n_components=5, seed=42)
+
+        cosine = embedding @ embedding.T  # rows are unit-norm
+        same = y[:, None] == y[None, :]
+        upper = np.triu(np.ones_like(same, dtype=bool), k=1)
+        within_mean = float(cosine[same & upper].mean())
+        between_mean = float(cosine[~same & upper].mean())
+        assert within_mean > 0.25, (
+            f"within-cluster cosine similarity too low: {within_mean:.3f}"
         )
-        np.testing.assert_allclose(
-            embedding[0, :3], [-0.274742, -0.0, 0.707526], atol=1e-4,
-            err_msg="Nystrom embedding regression values changed",
+        assert between_mean < 0.05, (
+            f"between-cluster cosine similarity too high: {between_mean:.3f}"
+        )
+        assert within_mean - between_mean > 0.4, (
+            f"cluster separation too small: "
+            f"within={within_mean:.3f}, between={between_mean:.3f}"
         )
 
     def test_nystrom_produces_valid_labels(self, well_separated_data):
