@@ -730,7 +730,7 @@ class HourlyModel:
                 df_temporal_clusters["temporal_cluster"].isna()
             ].index
             if not missing_combinations.empty:
-                if missing_combinations == df_temporal_index:
+                if missing_combinations.equals(df_temporal_index):
                     raise ValueError(
                         f"Data does not have known temporal clusters of {self._temporal_cluster_cols}. Can't assign missing temporal clusters"
                     )
