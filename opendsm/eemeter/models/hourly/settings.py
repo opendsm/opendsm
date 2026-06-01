@@ -26,7 +26,7 @@ import pywt
 
 from opendsm.common.base_settings import BaseSettings
 from opendsm.common.clustering.settings import ClusteringSettings
-from opendsm.common.metrics import BaselineMetrics
+from opendsm.common.metrics import HourlyBaselineMetrics
 from opendsm.common.const import CAlgoChoice
 
 from opendsm.eemeter.common.warnings import EEMeterWarning
@@ -445,10 +445,9 @@ class BaseHourlySettings(BaseSettings):
         default=1.0,
         ge=0.1,
         description=(
-            "Multiplicative scale factor applied to per-point uncertainty. "
-            "Compensates for in-sample RMSE bias from pipeline stages not "
-            "captured by elastic-net edf (clustering, PCA, temperature binning). "
-            "Adjustable via post-deployment coverage calibration."
+            "Multiplicative scale factor applied to the per-hour empirical "
+            "prediction band. Default 1.0; set from out-of-sample coverage "
+            "calibration to correct any residual miscoverage."
         ),
     )
 
@@ -554,6 +553,5 @@ class SerializeModel(BaseSettings):
     y_scaler: Optional[list[float]] = None
     coefficients: Optional[list[list[float]]] = None
     intercept: Optional[list[float]] = None
-    baseline_metrics: Optional[BaselineMetrics] = None
-    baseline_hour_metrics: Optional[Dict[str, BaselineMetrics]] = None
+    baseline_metrics: Optional[HourlyBaselineMetrics] = None
     info: ModelInfo

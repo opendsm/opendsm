@@ -58,7 +58,7 @@ from opendsm.eemeter.common.exceptions import (
 )
 from opendsm.eemeter.common.warnings import EEMeterWarning
 from opendsm.common.clustering.cluster import cluster_features
-from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict, ReportingMetrics
+from opendsm.common.metrics import HourlyBaselineMetrics, BaselineMetricsFromDict
 from opendsm import __version__
 
 
@@ -231,6 +231,9 @@ def _transform_dst(prediction, dst_indices):
     return np.concatenate(slices)
 
 
+_RESIDUAL_VIF_MAX_LAG = 48
+
+
 class HourlyModel:
     """
     A class to fit a model to the input meter data.
@@ -302,7 +305,6 @@ class HourlyModel:
 
         self._is_fit = False
         self.baseline_metrics = None
-        self.baseline_hour_metrics = None
 
         self.warnings = []
         self.disqualification = []
@@ -463,7 +465,7 @@ class HourlyModel:
         # get model prediction of baseline
         df_meter = self._predict(meter_data, X=X)
 
-        self._set_baseline_metrics(df_meter, X_fit=X_fit)
+        self._set_baseline_metrics(df_meter)
 
         return self
 
@@ -1161,13 +1163,10 @@ class HourlyModel:
 
         return X, y, fit_mask
 
-    def _set_baseline_metrics(self, df_meter, X_fit=None):
+    def _set_baseline_metrics(self, df_meter):
         # unwrap adaptive model if needed
-        adaptive_weights = None
         if self.settings.base_model == _settings.BaseModel.ELASTICNET:
             if self.settings.adaptive_weights.enabled:
-                if hasattr(self._model, 'base_model'):
-                    adaptive_weights = getattr(self._model.base_model, 'adaptive_weights', None)
                 self._model = self._model.base_model
 
             coef = self._model.coef_
@@ -1179,91 +1178,12 @@ class HourlyModel:
         df_non_interp = df_meter.loc[~interpolated]
 
         num_parameters = np.count_nonzero(coef)
-        self.baseline_metrics = BaselineMetrics(
+        self.baseline_metrics = HourlyBaselineMetrics(
             df=df_non_interp,
             num_model_params=num_parameters + 1, # + 1 for intercept
+            uncertainty_alpha=self.settings.uncertainty_alpha,
+            residual_vif_max_lag=_RESIDUAL_VIF_MAX_LAG,
         )
-
-        # calculate baseline metrics per hour-of-day with edf-based num_model_params
-        self.baseline_hour_metrics = {}
-        is_kernel = self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE
-
-        # Compute lambda_2 for edf (only for ElasticNet/Ridge, not KernelRidge)
-        lambda_2 = None
-        if not is_kernel and X_fit is not None:
-            lambda_2 = self._compute_lambda_2(X_fit.shape[0])
-
-        for hour in range(24):
-            hour_coef = coef[:, hour] if is_kernel else coef[hour]
-            hour_data = df_non_interp[df_non_interp.index.hour == hour]
-
-            if len(hour_data) < 3:
-                self.baseline_hour_metrics[hour] = None
-                continue
-
-            # Compute edf via SVD when X_fit is available and model is not KernelRidge
-            if X_fit is not None and not is_kernel and lambda_2 is not None:
-                edf_h = self._compute_hour_edf(
-                    X_fit, hour, hour_coef, lambda_2, adaptive_weights,
-                )
-                # Clamp so ddof >= 3 → stdtrit(ddof, perc) is finite and reasonable
-                n_h = len(hour_data)
-                edf_h = max(1, min(edf_h, n_h - 3))
-                num_params_h = max(1, round(edf_h))
-            else:
-                # Fallback: count_nonzero (KernelRidge or missing X_fit)
-                num_params_h = np.count_nonzero(hour_coef) + 1
-
-            self.baseline_hour_metrics[hour] = BaselineMetrics(
-                df=hour_data,
-                num_model_params=num_params_h,
-            )
-
-    def _compute_lambda_2(self, n_samples):
-        """Compute the L2 penalty parameter for the edf formula.
-
-        sklearn Ridge and ElasticNet use different loss scaling:
-          Ridge:      ||y - Xw||² + α||w||²               → λ₂ = α
-          ElasticNet: (1/(2·n_samples))||y - Xw||² + ...  → λ₂ = n_samples·α·(1-ρ)
-
-        n_samples is the elastic-net fit-sample count (fit days), matching the
-        rows of the design matrix whose singular values enter the edf sum.
-        """
-        base = self._model
-        if isinstance(base, Ridge) and not isinstance(base, ElasticNet):
-            return base.alpha
-        else:
-            alpha = getattr(base, 'alpha', 0)
-            l1_ratio = getattr(base, 'l1_ratio', 0)
-            return n_samples * alpha * (1 - l1_ratio)
-
-    def _compute_hour_edf(self, X_fit, hour, hour_coef, lambda_2, adaptive_weights):
-        """Compute effective degrees of freedom for hour h via SVD.
-
-        Uses the Zou-Hastie closed form: edf = Σ d²/(d² + λ₂) where d are
-        singular values of the (optionally weighted) design matrix restricted
-        to active columns at this hour. +1 for intercept.
-
-        X_fit is per-day (shape n_fit_days × n_features), shared across all hours.
-        Each hour uses the same X but different active columns from coef[hour].
-        """
-        active = np.nonzero(hour_coef)[0]
-        if len(active) == 0:
-            return 1  # intercept only
-
-        X_active = X_fit[:, active]
-        if hasattr(X_active, 'toarray'):
-            X_active = X_active.toarray()
-
-        # Apply per-hour adaptive weights (also daily-indexed)
-        if adaptive_weights is not None:
-            w_h = adaptive_weights[:, hour]
-            X_active = np.sqrt(w_h)[:, np.newaxis] * X_active
-
-        s = np.linalg.svd(X_active, compute_uv=False)
-        edf = float(np.sum(s**2 / (s**2 + lambda_2))) + 1  # +1 for intercept
-
-        return edf
 
     def _check_model_fit(self):
         cvrmse = self.baseline_metrics.cvrmse_adj
@@ -1291,87 +1211,26 @@ class HourlyModel:
             self.disqualification.append(model_fit_warning)
 
     def _calculate_predicted_uncertianty(self, df_eval):
-        df_eval["predicted_unc"] = np.nan
-
-        # Legacy model_json lack baseline_hour_metrics and take the global
-        # fallback; all current models use the per-hour path. See the
-        # COMPAT[legacy-hourly-model-json] block below.
-        if self._has_per_hour_uncertainty():
-            return self._calculate_uncertainty_per_hour(df_eval)
-
-        return self._calculate_uncertainty_global_legacy(df_eval)
-
-    def _calculate_uncertainty_per_hour(self, df_eval):
-        """Per-hour heteroscedastic uncertainty (A+B+C+E).
-
-        Each hour uses its own BaselineMetrics (with edf-based num_model_params)
-        fed into ReportingMetrics to compute per-point uncertainty via the full
-        ASHRAE-14 formula. The uncertainty_scale_factor is applied as a final
-        multiplicative correction for pipeline-stage bias not captured by edf.
+        """Per-point band: the baseline per-hour empirical |residual| quantile,
+        inflated by sqrt(residual_vif) so a quadrature aggregation of the
+        per-point bands is a valid aggregate band under cross-hour residual
+        correlation, and scaled by uncertainty_scale_factor (post-validation
+        calibration knob).
         """
-        interpolated = _get_interpolated_mask(df_eval)
-        usf = self.settings.uncertainty_scale_factor
-        confidence_level = 1 - self.settings.uncertainty_alpha
+        hour_band = None
+        if self.baseline_metrics is not None:
+            hour_band = self.baseline_metrics.hour_uncertainty
 
-        for hour in range(24):
-            mask = df_eval.index.hour == hour
-            if not mask.any():
-                continue
-
-            bm_h = self.baseline_hour_metrics.get(hour)
-            if bm_h is None:
-                continue
-
-            reporting_df = df_eval.loc[mask & ~interpolated]
-            if reporting_df.empty:
-                continue
-
-            reporting_h = ReportingMetrics(
-                baseline_metrics=bm_h,
-                reporting_df=reporting_df,
-                data_frequency="hourly",
-                confidence_level=confidence_level,
-                t_tail=2,
-            )
-
-            unc = reporting_h.predicted_data_point_unc
-            if unc is not None and np.isfinite(unc):
-                df_eval.loc[mask, "predicted_unc"] = usf * unc
-
-        return df_eval
-
-    # ----------------------------------------------------------------------
-    # COMPAT[legacy-hourly-model-json]
-    # Serves model_json serialized without baseline_hour_metrics (no per-hour
-    # uncertainty). Current fits always populate baseline_hour_metrics, so this
-    # is reached only by those older artifacts. Once they are retired, delete
-    # this block (both methods), the fallback call in
-    # _calculate_predicted_uncertianty, and the baseline_hour_metrics=None
-    # default in from_dict.
-    # ----------------------------------------------------------------------
-    def _has_per_hour_uncertainty(self):
-        """False only for legacy model_json that lack per-hour metrics."""
-        return (
-            self.baseline_hour_metrics is not None
-            and any(v is not None for v in self.baseline_hour_metrics.values())
-        )
-
-    def _calculate_uncertainty_global_legacy(self, df_eval):
-        """Global homoscedastic uncertainty for legacy model_json."""
-        interpolated = _get_interpolated_mask(df_eval)
-
-        if self.baseline_metrics is None:
+        if hour_band is None:
+            df_eval["predicted_unc"] = np.nan
             return df_eval
 
-        reporting_metrics = ReportingMetrics(
-            baseline_metrics=self.baseline_metrics,
-            reporting_df=df_eval[~interpolated],
-            data_frequency="hourly",
-            confidence_level=1 - self.settings.uncertainty_alpha,
-            t_tail=2,
+        hour_band = np.asarray(hour_band)
+        usf = self.settings.uncertainty_scale_factor
+        vif_scale = np.sqrt(self.baseline_metrics.residual_vif)
+        df_eval["predicted_unc"] = (
+            usf * vif_scale * hour_band[df_eval.index.hour.values]
         )
-
-        df_eval["predicted_unc"] = reporting_metrics.predicted_data_point_unc
 
         return df_eval
 
@@ -1395,14 +1254,6 @@ class HourlyModel:
         # convert self._df_temporal_clusters to list of lists
         df_temporal_clusters = self._df_temporal_clusters.reset_index().values.tolist()
 
-        # Serialize per-hour baseline metrics (None for old models that lack them)
-        baseline_hour_metrics = None
-        if self.baseline_hour_metrics:
-            baseline_hour_metrics = {
-                str(k): v for k, v in self.baseline_hour_metrics.items()
-                if v is not None
-            }
-
         params = self._base_settings.SerializeModel(
             settings=self.settings,
             temporal_clusters=df_temporal_clusters,
@@ -1416,7 +1267,6 @@ class HourlyModel:
             catagorical_scaler=None,
             y_scaler=y_scaler,
             baseline_metrics=self.baseline_metrics,
-            baseline_hour_metrics=baseline_hour_metrics,
             info=self._base_settings.ModelInfo(
                 disqualification=self.disqualification,
                 warnings=self.warnings,
@@ -1492,21 +1342,10 @@ class HourlyModel:
 
         model_cls._is_fit = True
 
-        # set baseline metrics
+        # set baseline metrics (carries hour_uncertainty + residual_vif)
         model_cls.baseline_metrics = BaselineMetricsFromDict(
             data.get("baseline_metrics")
         )
-
-        # COMPAT[legacy-hourly-model-json]: the None default leaves legacy
-        # model_json (no baseline_hour_metrics) on the global uncertainty path;
-        # current artifacts always carry it. Drop the default with that block.
-        model_cls.baseline_hour_metrics = None
-        raw_hour_metrics = data.get("baseline_hour_metrics")
-        if raw_hour_metrics is not None:
-            model_cls.baseline_hour_metrics = {
-                int(k): BaselineMetricsFromDict(v)
-                for k, v in raw_hour_metrics.items()
-            }
 
         info = model_cls._base_settings.ModelInfo(**data.get("info"))
         model_cls.warnings = info.warnings

@@ -219,6 +219,9 @@ def A_n(x: np.ndarray, n: float) -> float:
     """
     return np.mean(x <= n)
 
+_MIN_HOUR_UNC_SAMPLES = 10
+
+
 class BaselineMetrics(ArbitraryPydanticModel):
     """Comprehensive baseline model evaluation metrics.
 
@@ -353,6 +356,15 @@ class BaselineMetrics(ArbitraryPydanticModel):
         description="Number of parameters in the baseline model",
     )
 
+    residual_vif_max_lag: int = pydantic.Field(
+        default=0,
+        ge=0,
+        description=(
+            "Lag truncation for the residual variance inflation factor; "
+            "0 disables it (residual_vif is 1.0)"
+        ),
+    )
+
     @cached_property
     def _df(self) -> pd.DataFrame:
         """Prepare and validate the input dataframe.
@@ -466,6 +478,38 @@ class BaselineMetrics(ArbitraryPydanticModel):
             _ddof_autocorr = 1
 
         return _ddof_autocorr
+
+    @computed_field_cached_property()
+    def residual_vif(self) -> float:
+        """Cross-observation variance inflation factor for the residual sum.
+
+        Positively autocorrelated residuals make the variance of a multi-point
+        residual sum exceed the sum of per-point variances, so a quadrature
+        (root-sum-square) aggregation of per-point bands is too narrow.
+        VIF = 1 + 2 Σ_{k=1..L} ρ_k from the chronological residual
+        autocorrelation (L = residual_vif_max_lag); scaling a per-point band by
+        sqrt(VIF) makes its quadrature sum a valid aggregate band. Returns 1.0
+        when residual_vif_max_lag is 0. Consecutive present rows are treated as
+        adjacent (non-finite rows are already dropped).
+        """
+        if self.residual_vif_max_lag <= 0:
+            return 1.0
+
+        x = self._df["residuals"].sort_index().values
+        xc = x - np.mean(x)
+        g0 = np.mean(xc * xc)
+
+        if not np.isfinite(g0) or g0 == 0:
+            return 1.0
+
+        rho_sum = 0.0
+        for k in range(1, self.residual_vif_max_lag + 1):
+            gamma_k = np.mean(xc[:-k] * xc[k:])
+            rho_sum += gamma_k / g0
+
+        vif = 1.0 + 2.0 * rho_sum
+
+        return float(max(vif, 1.0))
 
     @computed_field_cached_property()
     def observed(self) -> ColumnMetrics:
@@ -1214,7 +1258,51 @@ class BaselineMetrics(ArbitraryPydanticModel):
         den = self.observed.variance
 
         return 1 - safe_divide(num, den, _MIN_DENOMINATOR)
-    
+
+
+class HourlyBaselineMetrics(BaselineMetrics):
+    """BaselineMetrics with a per-hour-of-day empirical prediction band.
+
+    The shared BaselineMetrics stays frequency-agnostic; the hour-of-day band
+    lives here because it is meaningful only for sub-daily data.
+    """
+
+    uncertainty_alpha: Optional[float] = pydantic.Field(
+        default=None,
+        description=(
+            "Significance level for the per-hour-of-day empirical prediction "
+            "band; None disables it (hour_uncertainty is None)"
+        ),
+    )
+
+    @computed_field_cached_property()
+    def hour_uncertainty(self) -> Optional[list[float]]:
+        """Per-hour-of-day empirical prediction band.
+
+        For each hour of day, the empirical (1 - uncertainty_alpha) quantile of
+        |residual| over baseline points at that hour: a distribution-free,
+        heteroscedastic band that follows the per-stratum residual scatter and
+        tail shape. Hours with fewer than _MIN_HOUR_UNC_SAMPLES points fall back
+        to the pooled quantile. Returns None when uncertainty_alpha is not set.
+        """
+        if self.uncertainty_alpha is None:
+            return None
+
+        abs_resid = np.abs(self._df["residuals"].values)
+        hours = self._df.index.hour.values
+        confidence_level = 1 - self.uncertainty_alpha
+
+        pooled = float(np.quantile(abs_resid, confidence_level)) if abs_resid.size else 0.0
+
+        band = np.full(24, pooled)
+        for hour in range(24):
+            r_h = abs_resid[hours == hour]
+
+            if r_h.size >= _MIN_HOUR_UNC_SAMPLES:
+                band[hour] = float(np.quantile(r_h, confidence_level))
+
+        return band.tolist()
+
 
 def BaselineMetricsFromDict(input_dict: dict) -> BaselineMetrics:
     """Construct a BaselineMetrics instance from a dictionary.
@@ -1466,23 +1554,6 @@ class ReportingMetrics(pydantic.BaseModel):
         """
         return safe_divide(self.total_savings_uncertainty, self.savings, _MIN_DENOMINATOR)
 
-    @computed_field_cached_property()
-    def predicted_data_point_unc(self) -> Optional[float]:
-        """Calculate uncertainty per predicted data point.
-
-        Normalizes total savings uncertainty by the square root of the number
-        of reporting period observations.
-
-        Returns
-        -------
-        Optional[float]
-            Per-point uncertainty, or None if total uncertainty cannot be calculated.
-        """
-        if self.total_savings_uncertainty is None:
-            return None
-
-        return self.total_savings_uncertainty / np.sqrt(self.n)
-    
 
 class AutocorrelationMethod(Enum):
     """Methods for computing autocorrelation function.
