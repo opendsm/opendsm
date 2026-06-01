@@ -26,33 +26,33 @@ from opendsm.common.stats.basic import (
 def test_t_stat():
     # Test case 1: Test with a two-tailed test
     alpha = 0.05
-    n = 10
+    dof = 9
     tail = 2
-    result = t_stat(alpha, n, tail)
+    result = t_stat(alpha, dof, tail)
     expected = 2.262
     assert np.isclose(result, expected, rtol=1e-3)
 
     # Test case 2: Test with a one-tailed test
     alpha = 0.05
-    n = 10
+    dof = 9
     tail = 1
-    result = t_stat(alpha, n, tail)
+    result = t_stat(alpha, dof, tail)
     expected = 1.833
     assert np.isclose(result, expected, rtol=1e-3)
 
-    # Test case 3: Test with a larger sample size
+    # Test case 3: Test with larger degrees of freedom
     alpha = 0.01
-    n = 100
+    dof = 99
     tail = 2
-    result = t_stat(alpha, n, tail)
+    result = t_stat(alpha, dof, tail)
     expected = 2.626
     assert np.isclose(result, expected, rtol=1e-3)
 
     # Test case 4: Test with a custom alpha value
     alpha = 0.10
-    n = 10
+    dof = 9
     tail = 2
-    result = t_stat(alpha, n, tail)
+    result = t_stat(alpha, dof, tail)
     expected = 1.833
     assert np.isclose(result, expected, rtol=1e-3)
 
