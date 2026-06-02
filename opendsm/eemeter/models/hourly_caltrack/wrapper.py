@@ -185,7 +185,7 @@ class HourlyModel:
 
                 reporting_usage = np.sum(df_res.loc[idx]["observed"])
                 m = len(idx)
-                t = t_stat(self.alpha, m, tail=2)
+                t = t_stat(self.alpha, m - 1, tail=2)
 
                 # ASHRAE 14
                 total_unc = (

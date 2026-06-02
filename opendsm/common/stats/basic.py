@@ -37,12 +37,12 @@ from opendsm.common.utils import to_np_array
 MAD_k = 1 / (erfinv(2 * 0.75 - 1) * np.sqrt(2))
 
 
-def t_stat(alpha: float, n: int, tail: Union[int, str] = 2) -> float:
-    """Calculate the t-statistic for hypothesis testing.
+def t_stat(alpha: float, dof: float, tail: Union[int, str] = 2) -> float:
+    """Calculate the t-statistic for a given number of degrees of freedom.
 
     Args:
         alpha: Significance level
-        n: Sample size
+        dof: Degrees of freedom
         tail: Type of tail test - 1/"one" for one-tailed, 2/"two" for two-tailed
 
     Returns:
@@ -51,7 +51,6 @@ def t_stat(alpha: float, n: int, tail: Union[int, str] = 2) -> float:
     Raises:
         ValueError: If tail parameter is invalid
     """
-    degrees_of_freedom = n - 1
     if (tail == "one") or (tail == 1):
         perc = np.asarray(1 - alpha)
     elif (tail == "two") or (tail == 2):
@@ -59,7 +58,7 @@ def t_stat(alpha: float, n: int, tail: Union[int, str] = 2) -> float:
     else:
         raise ValueError(f"Invalid tail parameter: {tail}. Must be 1/'one' or 2/'two'")
 
-    return stdtrit(degrees_of_freedom, perc)
+    return stdtrit(dof, perc)
 
 
 def z_stat(alpha: float, tail: Union[int, str] = 2) -> float:
@@ -102,9 +101,9 @@ def unc_factor(
         ValueError: If interval type is invalid
     """
     if interval == "CI":
-        return t_stat(alpha, n) / np.sqrt(n)
+        return t_stat(alpha, n - 1) / np.sqrt(n)
     elif interval == "PI":
-        return t_stat(alpha, n) * (1 + 1 / np.sqrt(n))
+        return t_stat(alpha, n - 1) * (1 + 1 / np.sqrt(n))
     else:
         raise ValueError(f"Invalid interval: {interval}. Must be 'CI' or 'PI'")
 
