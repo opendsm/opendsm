@@ -489,7 +489,8 @@ class Data:
         excluded_ids = []
         if len(ids) > max_size:
             # randomly select ids to remove
-            excluded_ids = np.random.choice(ids, len(ids) - max_size, replace=False)
+            rng = np.random.RandomState(self._settings.seed)
+            excluded_ids = rng.choice(ids, len(ids) - max_size, replace=False)
 
             # add excluded ids to excluded_ids dataframe
             excluded_ids_df = pd.DataFrame({"id": excluded_ids})

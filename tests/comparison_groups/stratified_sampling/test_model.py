@@ -21,6 +21,33 @@ from opendsm.comparison_groups.stratified_sampling.model import StratifiedSampli
 from opendsm.comparison_groups.stratified_sampling.bins import ModelSamplingException
 
 
+def test_perturb_does_not_mutate_global_rng():
+    """Regression: _perturb must seed a local RNG, not the global numpy RNG.
+    Seeding the global state leaked the seed to every other consumer in the process."""
+    model = StratifiedSampling()
+    model.add_column("col1")
+    df = pd.DataFrame({"col1": [0.0, 0.0, 0.0, 1.0, 1.0]})
+
+    np.random.seed(12345)
+    state_before = np.random.get_state()[1]
+    model._perturb(df, random_seed=1)
+    state_after = np.random.get_state()[1]
+
+    assert np.array_equal(state_before, state_after)
+
+
+def test_perturb_with_seed_is_reproducible():
+    """A provided seed makes perturbation reproducible across calls."""
+    model = StratifiedSampling()
+    model.add_column("col1")
+    df = pd.DataFrame({"col1": [0.0, 0.0, 0.0, 1.0, 1.0]})
+
+    out1 = model._perturb(df, random_seed=7)
+    out2 = model._perturb(df, random_seed=7)
+
+    pd.testing.assert_frame_equal(out1, out2)
+
+
 def test_stratified_sampling_fit_and_sample():
     stratified_sampling_obj = StratifiedSampling()
     df_treatment = pd.DataFrame([{"id": f"id_{x}", "col1": x} for x in range(0, 10)])

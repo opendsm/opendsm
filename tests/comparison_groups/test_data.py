@@ -53,3 +53,26 @@ def test_time_series_ingestion_hourly(_comstock_hourly_all):
     assert data.loadshape.shape[1] == 24
     assert set(data.loadshape.index).issubset(set(ids))
     assert np.isfinite(data.loadshape.to_numpy()).all()
+
+
+def test_pool_trim_reproducible_with_seed(_comstock_hourly_all):
+    """Regression: comparison-pool trimming is reproducible when a seed is set.
+    It previously used an unseeded global np.random.choice."""
+    time_series, _ = _treatment_time_series(_comstock_hourly_all, n_ids=8)
+
+    def _build():
+        settings = Data_Settings(
+            agg_type=_const.AggType.MEAN,
+            loadshape_type=_const.LoadshapeType.OBSERVED,
+            time_period=_const.TimePeriod.HOUR,
+            max_pool_size=4,
+            seed=7,
+        )
+
+        return Data(time_series_df=time_series, settings=settings)
+
+    data1 = _build()
+    data2 = _build()
+
+    assert len(data1.loadshape) == 4
+    assert sorted(data1.loadshape.index) == sorted(data2.loadshape.index)
