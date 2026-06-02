@@ -12,6 +12,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+import logging
 import os
 import random
 
@@ -474,3 +475,78 @@ def test_get_comparison_group_duplicated_flag():
     )
     assert len(cg) == 3
     assert cg["duplicated"].any()
+
+
+def test_no_duplicates_greedy_fills_all_treatments():
+    """Regression: no treatment is silently dropped when its nearest-candidate
+    block is exhausted by earlier assignments. Every treatment must be filled
+    via the full-pool fallback while the pool lasts.
+
+    All treatments and a 'close' pool block sit near 0, so every treatment's
+    candidate block is the same close meters. The first treatments consume them;
+    the rest must fall back to the 'far' pool rather than be dropped."""
+    rng = np.random.default_rng(0)
+    n_treatment = 20
+    n_match = 2
+
+    treatment = pd.DataFrame(
+        {"id": [f"t_{i}" for i in range(n_treatment)], "month_1": rng.normal(0, 0.01, n_treatment)}
+    ).set_index("id")
+    close = rng.normal(0, 0.01, 20)
+    far = rng.normal(100, 0.01, 980)
+    pool = pd.DataFrame(
+        {"id": [f"c_{i}" for i in range(1000)], "month_1": np.concatenate([close, far])}
+    ).set_index("id")
+
+    settings = Settings(
+        selection_method="minimize_meter_distance",
+        n_matches_per_treatment=n_match,
+        allow_duplicate_matches=False,
+        candidate_multiplier=None,  # isolate the matching logic from the prefilter
+    )
+    cg = DistanceMatching(settings=settings).get_comparison_group(treatment, pool)
+
+    assert cg["treatment"].nunique() == n_treatment
+    assert len(cg) == n_treatment * n_match
+    assert not cg["duplicated"].any()
+
+
+def test_prefilter_keeps_neighbors_for_multimodal_treatments():
+    """Regression: the per-treatment kNN prefilter preserves the true nearest
+    neighbours of treatments in different regions. A single-centroid prefilter
+    would keep the meters near the mean (~50) and drop each cluster's real
+    matches; per-treatment kNN keeps both, so matches stay within-cluster."""
+    treatment = pd.DataFrame(
+        {"id": ["a0", "a1", "b0", "b1"], "month_1": [0.0, 0.0, 100.0, 100.0]}
+    ).set_index("id")
+    pool_vals = [0.0] * 10 + [100.0] * 10 + [50.0] * 80  # decoys cluster at the centroid
+    pool = pd.DataFrame(
+        {"id": [f"c_{i}" for i in range(len(pool_vals))], "month_1": pool_vals}
+    ).set_index("id")
+
+    settings = Settings(
+        selection_method="minimize_meter_distance",
+        n_matches_per_treatment=1,
+        allow_duplicate_matches=False,
+        candidate_multiplier=2,  # n_treatment*k = 8 < pool of 100, so prefilter activates
+    )
+    cg = DistanceMatching(settings=settings).get_comparison_group(treatment, pool)
+
+    assert (cg["distance"] < 1.0).all()
+
+
+def test_n_match_reduction_warns(caplog):
+    """A pool too small to supply unique matches reduces n_match and warns."""
+    treatment = generate_group(4, make_random=True)
+    pool = generate_group(6, make_random=True, id_prefix="c")
+    settings = Settings(
+        selection_method="minimize_meter_distance",
+        n_matches_per_treatment=4,
+        allow_duplicate_matches=False,
+        candidate_multiplier=None,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        DistanceMatching(settings=settings).get_comparison_group(treatment, pool)
+
+    assert any("Reduced matches per treatment" in r.message for r in caplog.records)

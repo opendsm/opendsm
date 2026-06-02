@@ -12,12 +12,13 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+import logging
+
 import numpy as np
 import pandas as pd
 
 from scipy import sparse
 from scipy.spatial.distance import cdist
-from scipy.optimize import linear_sum_assignment
 
 from qpsolvers import solve_ls
 
@@ -25,6 +26,9 @@ from opendsm.comparison_groups.individual_meter_matching import highs_settings a
 from opendsm.comparison_groups.individual_meter_matching.settings import Settings
 
 __all__ = ("DistanceMatching",)
+
+
+logger = logging.getLogger(__name__)
 
 
 def _iter_chunks(lst, n):
@@ -69,30 +73,63 @@ def _distances(ls_t, ls_cp, weights=None, dist_metric="euclidean", n_meters_per_
     return np.hstack(dist)
 
 
-def _prefilter_pool(ls_t, ls_cp, n_candidates):
-    """Return indices of the *n_candidates* pool meters closest to the treatment centroid.
+def _prefilter_pool(ls_t, ls_cp, per_treatment_k, n_meters_per_chunk, dist_metric, weights=None):
+    """Union of each treatment's *per_treatment_k* nearest pool meters.
 
-    Uses a cheap L2 norm from the treatment centroid to each pool meter to
-    reduce the effective pool size before the expensive pairwise distance
-    computation.
+    Each treatment contributes its own nearest pool meters; their union forms
+    the candidate set. Unlike a single global centroid, this preserves the true
+    neighbours of treatments lying in different regions of load-shape space.
+    The pool is processed in chunks with a running per-treatment top-k so peak
+    memory stays bounded by one chunk's treatment x chunk distance matrix.
 
     Parameters
     ----------
     ls_t : pd.DataFrame, shape (n_treatment, n_features)
     ls_cp : pd.DataFrame, shape (n_pool, n_features)
-    n_candidates : int
-        Number of pool meters to keep.
+    per_treatment_k : int
+        Number of nearest pool meters kept per treatment before the union.
+    n_meters_per_chunk : int
+        Pool meters per chunk, bounding peak memory.
+    dist_metric : str
+        Distance metric accepted by ``scipy.spatial.distance.cdist``.
+    weights : array-like, optional
+        Per-feature weights applied before distance calculation.
 
     Returns
     -------
     np.ndarray
         Sorted indices into *ls_cp* for the kept candidates.
     """
-    centroid = ls_t.values.mean(axis=0)
-    pool_dists = np.linalg.norm(ls_cp.values - centroid, axis=1)
-    candidate_idx = np.argpartition(pool_dists, n_candidates)[:n_candidates]
-    candidate_idx.sort()
-    
+    t = ls_t.values
+    if weights is not None:
+        t = t * weights
+
+    n_treatment = t.shape[0]
+    n_pool = ls_cp.shape[0]
+    k = min(per_treatment_k, n_pool)
+
+    best_dist = np.full((n_treatment, k), np.inf, dtype=np.float32)
+    best_idx = np.full((n_treatment, k), -1, dtype=np.int64)
+
+    start = 0
+    for chunk in _iter_chunks(ls_cp.values, n_meters_per_chunk):
+        if weights is not None:
+            chunk = chunk * weights
+
+        chunk_dist = cdist(t, chunk, metric=dist_metric).astype(np.float32)
+        chunk_idx = np.broadcast_to(np.arange(start, start + len(chunk)), chunk_dist.shape)
+
+        # merge running top-k with this chunk, keep the k nearest per treatment
+        merged_dist = np.concatenate([best_dist, chunk_dist], axis=1)
+        merged_idx = np.concatenate([best_idx, chunk_idx], axis=1)
+        keep = np.argpartition(merged_dist, k - 1, axis=1)[:, :k]
+        best_dist = np.take_along_axis(merged_dist, keep, axis=1)
+        best_idx = np.take_along_axis(merged_idx, keep, axis=1)
+        start += len(chunk)
+
+    candidate_idx = np.unique(best_idx)
+    candidate_idx = candidate_idx[candidate_idx >= 0]
+
     return candidate_idx
 
 
@@ -176,8 +213,8 @@ class DistanceMatching:
         A dataframe representing comparison pool meters, indexed by id, with each column being a data point in a usage pattern.
     weights: list | 1D np.array
         A list of floats (must be of length of the treatment group columns) to scale the usage patterns in order to ensure that certain components of usage have higher weights towards matching than others.
-    n_treatments_per_chunk: int
-        Due to local memory limitations, treatment meters can be chunked so that the cdist calculation can happen in memory. 10,000 meters appear to be sufficient for most memory constraints.
+    n_pool_meters_per_chunk: int
+        Comparison pool meters are chunked so the cdist calculation fits in memory. 10,000 meters appear to be sufficient for most memory constraints.
     """
 
     def __init__(
@@ -227,18 +264,14 @@ class DistanceMatching:
         # kth=n_match is valid here because n_match < distances.shape[1].
         return np.argpartition(distances, n_match, axis=1)[:, :n_match]
 
-    def _closest_idx_block_hungarian(self, distances, n_match):
-        """No-duplicate matching via block-diagonal Hungarian algorithm.
+    def _closest_idx_no_duplicates_greedy(self, distances, n_match):
+        """Greedy nearest-first no-duplicate matching.
 
-        Instead of expanding the full distance matrix by n_match and running
-        one giant linear_sum_assignment, each treatment is paired with its
-        top (n_match * candidate_k) nearest pool candidates.  A per-treatment-
-        block Hungarian assignment is run on this much smaller sub-matrix, and
-        a global exclusion set prevents any pool meter from being assigned
-        twice.
-
-        Falls back to greedy assignment for any treatment whose block could
-        not fill all n_match slots (due to prior exclusions).
+        Treatments are processed closest-first (by their minimum distance) and
+        each is assigned its n_match nearest pool meters not already taken. A
+        cheap top-candidate block is searched first; if it is exhausted by
+        earlier assignments the search falls back to the full pool, nearest
+        first, so every treatment is filled while the pool lasts.
 
         Parameters
         ----------
@@ -248,13 +281,13 @@ class DistanceMatching:
         Returns
         -------
         list[list[int]]
-            For each treatment, a list of n_match pool indices.
+            For each treatment, up to n_match pool indices (fewer only if the
+            pool is exhausted across all treatments).
         """
         n_treatment, n_pool = distances.shape
-        # Number of candidates to consider per treatment for the sub-problem.
+        # cheap candidate block per treatment to avoid a full row sort in the common case
         candidate_k = min(n_match * 10, n_pool)
 
-        # Pre-compute top candidate_k indices per treatment row.
         if candidate_k < n_pool:
             top_k_idx = np.argpartition(distances, candidate_k, axis=1)[:, :candidate_k]
         else:
@@ -263,41 +296,31 @@ class DistanceMatching:
         assigned = set()
         cg_idx = [[] for _ in range(n_treatment)]
 
-        # Process treatments in order of their minimum distance (closest first
-        # gets priority, improving overall quality).
+        # closest-first priority improves overall match quality
         treatment_order = np.argsort(distances.min(axis=1))
 
         for t_idx in treatment_order:
-            candidates = top_k_idx[t_idx]
-            # Remove already-assigned pool meters.
-            available = np.array([c for c in candidates if c not in assigned])
+            row = distances[t_idx]
 
-            if len(available) == 0:
-                continue
+            # nearest available within the cheap candidate block
+            block = top_k_idx[t_idx]
+            block_sorted = block[np.argsort(row[block])]
+            selected = [int(c) for c in block_sorted if c not in assigned][:n_match]
 
-            needed = n_match
-            if len(available) >= needed:
-                # Build a small cost matrix and run Hungarian on it.
-                cost = distances[t_idx][available]
-                if needed < len(available):
-                    # Narrow to the closest `needed` candidates for speed.
-                    keep = np.argpartition(cost, needed)[:needed]
-                    available = available[keep]
-                    cost = cost[keep]
+            # block exhausted by prior assignments: fall back to the full pool
+            if len(selected) < n_match:
+                taken = assigned.union(selected)
+                for cp in np.argsort(row):
+                    cp = int(cp)
+                    if cp in taken:
+                        continue
 
-                # For a single-row assignment (n_match slots from len(available)
-                # candidates), repeat the row so linear_sum_assignment can pick
-                # n_match distinct columns.
-                cost_block = np.tile(cost, (needed, 1))
-                _, col_sel = linear_sum_assignment(cost_block)
-                selected = available[col_sel]
-            else:
-                # Not enough available — take whatever is left.
-                selected = available
+                    selected.append(cp)
+                    if len(selected) == n_match:
+                        break
 
-            for cp in selected:
-                assigned.add(cp)
-            cg_idx[t_idx] = selected.tolist()
+            assigned.update(selected)
+            cg_idx[t_idx] = selected
 
         return cg_idx
 
@@ -321,6 +344,7 @@ class DistanceMatching:
         n_treatment = ls_t.shape[0]
         n_pool = ls_cp.shape[0]
 
+        requested_n_match = n_match
         n_match = min(n_match, n_pool // n_treatment)
 
         if n_match == 0:
@@ -329,8 +353,15 @@ class DistanceMatching:
                 f"{n_treatment} treatment meters without duplicates"
             )
 
+        if n_match < requested_n_match:
+            logger.warning(
+                "Reduced matches per treatment from %d to %d: a pool of %d cannot supply "
+                "%d unique matches for %d treatments.",
+                requested_n_match, n_match, n_pool, requested_n_match, n_treatment,
+            )
+
         if selection_method == "minimize_meter_distance":
-            cg_idx = self._closest_idx_block_hungarian(distances, n_match)
+            cg_idx = self._closest_idx_no_duplicates_greedy(distances, n_match)
 
         elif selection_method == "minimize_loadshape_distance":
             coef_sum = n_match * len(ls_t)
@@ -362,16 +393,16 @@ class DistanceMatching:
         n_meters_per_chunk = self.settings.n_pool_meters_per_chunk
         candidate_multiplier = self.settings.candidate_multiplier
 
-        # --- Optimization #5: pre-filter pool by centroid distance -----------
+        # pre-filter the pool to the union of each treatment's nearest candidates
         n_treatment = ls_t.shape[0]
         n_pool = ls_cp.shape[0]
-        prefilter_map = None  # maps filtered index → original index
 
         if candidate_multiplier is not None:
-            n_candidates = n_treatment * n_match * candidate_multiplier
-            if n_candidates < n_pool:
-                candidate_idx = _prefilter_pool(ls_t, ls_cp, n_candidates)
-                prefilter_map = candidate_idx
+            per_treatment_k = n_match * candidate_multiplier
+            if n_treatment * per_treatment_k < n_pool:
+                candidate_idx = _prefilter_pool(
+                    ls_t, ls_cp, per_treatment_k, n_meters_per_chunk, self.dist_metric, weights
+                )
                 ls_cp = ls_cp.iloc[candidate_idx]
 
         # --- Optimization #1: chunk treatments, process end-to-end -----------
