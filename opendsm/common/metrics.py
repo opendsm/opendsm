@@ -486,11 +486,16 @@ class BaselineMetrics(ArbitraryPydanticModel):
         Positively autocorrelated residuals make the variance of a multi-point
         residual sum exceed the sum of per-point variances, so a quadrature
         (root-sum-square) aggregation of per-point bands is too narrow.
-        VIF = 1 + 2 Σ_{k=1..L} ρ_k from the chronological residual
-        autocorrelation (L = residual_vif_max_lag); scaling a per-point band by
-        sqrt(VIF) makes its quadrature sum a valid aggregate band. Returns 1.0
-        when residual_vif_max_lag is 0. Consecutive present rows are treated as
-        adjacent (non-finite rows are already dropped).
+        VIF = 1 + 2 Σ_{k=1..L} ρ_k (L = residual_vif_max_lag) from the
+        chronological residual autocorrelation; scaling a per-point band by
+        sqrt(VIF) inflates the quadrature sum toward the true aggregate variance.
+
+        LIMITATION: a single fixed scalar only approximates the aggregate
+        inflation. The true inflation grows with the aggregation window (the
+        residual sum is not short-memory), so tuned toward daily/weekly it
+        undershoots longer windows. Returns 1.0 when residual_vif_max_lag is 0;
+        consecutive present rows are treated as adjacent (non-finite rows are
+        already dropped).
         """
         if self.residual_vif_max_lag <= 0:
             return 1.0
