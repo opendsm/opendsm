@@ -13,12 +13,16 @@
 #  limitations under the License.
 
 from .data import DailyBaselineData, DailyReportingData
+from .fitting import fit_segment
 from .model import DailyPSplineModel
 from .settings import DailyPSplineSettings
+from .spline import PSpline
 
 __all__ = (
     "DailyBaselineData",
     "DailyReportingData",
     "DailyPSplineModel",
     "DailyPSplineSettings",
+    "PSpline",
+    "fit_segment",
 )

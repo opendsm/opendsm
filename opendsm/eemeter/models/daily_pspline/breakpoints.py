@@ -2,6 +2,13 @@
 
 Breakpoints delineate the HDD (heating), TIDD (temperature-independent),
 and CDD (cooling) zones of the energy-temperature curve.
+
+The objective combines weighted RMSE with a TIDD residual trend penalty
+that resolves bp ambiguity in flat-loss regions.  The penalty uses
+Spearman rank correlation (robust to outliers and nonlinear trends)
+between temperature and weighted residuals in the TIDD zone, scaled
+by the fraction of data in TIDD so the penalty vanishes naturally as
+TIDD shrinks or collapses.
 """
 
 from __future__ import annotations
@@ -9,6 +16,7 @@ from __future__ import annotations
 from typing import Optional
 
 import numpy as np
+from scipy.stats import spearmanr
 
 from opendsm.eemeter.models.daily.utilities.opt_settings import OptimizationSettings
 from opendsm.eemeter.models.daily.optimize import NLoptOptimizer
@@ -33,11 +41,26 @@ def optimize_breakpoints(
     allow_hdd: bool,
     allow_cdd: bool,
     algorithm: str = "nlopt_direct",
+    lambda_trend: float = 1.0,
 ) -> tuple[np.ndarray, PSplineSolver]:
     """Optimize breakpoint positions via NLopt global/local search.
 
-    Breakpoints are parameterized as normalized cumulative fractions
-    of the data range, ensuring bp[0] <= bp[1] by construction.
+    The objective is::
+
+        loss = WRMSE + lambda_trend * (n_tidd / N) * rho_tidd^2
+
+    where ``rho_tidd`` is the Spearman rank correlation between
+    temperature and weighted residuals in the TIDD zone.  This breaks
+    the RMSE degeneracy by penalizing bp placements that absorb
+    trending data into the flat TIDD zone.
+
+    Parameters
+    ----------
+    lambda_trend : float
+        Weight of the TIDD residual trend penalty relative to WRMSE.
+        Expressed as a fraction of the loss, so lambda_trend=1.0 means
+        a perfect TIDD trend (rho=1) in a full-data TIDD zone doubles
+        the loss.
 
     Returns
     -------
@@ -56,6 +79,10 @@ def optimize_breakpoints(
     ridge_a = (1 - reg_pct_lasso) * reg_alpha
     x_bnds = np.array([x_min, x_max])
     has_reg = reg_alpha != 0
+
+    # Precompute weight arrays for the trend penalty
+    w_pos = weights > 0 if weights is not None else np.ones(N, dtype=bool)
+    sum_w_pos = float(np.sum(w_pos))
 
     def _X_to_bp(X):
         bp0 = X[0] * x_range + x_min
@@ -80,7 +107,6 @@ def optimize_breakpoints(
         to_full = lambda X: np.array([0.0, X[0]])
         x0_opt, bnds_opt = x0_full[1:], bnds_full[1:]
     else:
-        # Both zones disabled — no optimization needed
         bp = np.array([x_min, x_max])
         final_knots = knots_obj.get_internal_knots(bp=bp, n_knots=zone_knot_count, n_min=n_min)
         solver = PSplineSolver(x, y, pad_knots(final_knots, degree), degree, weights, lambda_smoothing, bc_type, kappa)
@@ -94,8 +120,28 @@ def optimize_breakpoints(
         coefs, _, _ = psp.solve(trial_bp, weights, kappa, inner_maxiter)
 
         resid = psp.B @ coefs - y
-        loss = np.sum(resid ** 2) / N
+        if weights is not None:
+            w_sq = np.square(weights)
+            loss = np.dot(w_sq, resid ** 2) / np.sum(w_sq)
+        else:
+            loss = np.sum(resid ** 2) / N
         wrmse = np.sqrt(loss)
+
+        # TIDD residual trend penalty: Spearman rank correlation on
+        # weighted residuals.  Uses only positive-weight points (zero-
+        # weight outliers excluded).  Scales by n_tidd / N so penalty
+        # vanishes as TIDD shrinks or collapses.
+        if lambda_trend > 0:
+            tidd_mask = w_pos & (x >= trial_bp[0]) & (x <= trial_bp[1])
+            n_tidd = int(np.sum(tidd_mask))
+            if n_tidd >= n_min:
+                x_tidd = x[tidd_mask]
+                r_tidd = resid[tidd_mask]
+                if weights is not None:
+                    r_tidd = r_tidd * weights[tidd_mask]
+                rho = spearmanr(x_tidd, r_tidd).statistic
+                if np.isfinite(rho):
+                    loss += lambda_trend * (n_tidd / sum_w_pos) * rho ** 2 * loss
 
         if has_reg:
             penalty = trial_bp - x_bnds
