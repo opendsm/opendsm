@@ -8,9 +8,9 @@ from opendsm.common.stats.adaptive_loss import adaptive_weights
 
 
 # Number of iterative-reweighting passes for the robust smoothing spline.
-# 3 passes are sufficient to suppress outlier-driven curvature artifacts
-# without adding meaningful latency (~1-2 ms total for typical data).
-_ROBUST_SPLINE_ITERATIONS = 3
+# 1 pass is sufficient for Yeh curvature-based knot placement, which is
+# insensitive to minor outlier contamination.
+_ROBUST_SPLINE_ITERATIONS = 1
 
 
 class Knots:

@@ -5,10 +5,11 @@ hard constraint (κ=1e9) from fitting, treating monotonicity as a
 Bayesian prior rather than a hard constraint.  This gives meaningful
 model variance that widens at data-sparse edges.
 
-Noise scale is a global empirical quantile of |residuals|, calibrated
-for target coverage without distributional assumptions.  Heteroscedastic
-σ(T) is deferred to the planned YJ transform, which will stabilize
-variance and make a global σ correct by construction.
+Noise quantiles are estimated via robust Yeo-Johnson transform on the
+residuals.  In transformed space the residuals are approximately normal,
+so symmetric z·σ intervals are correct; back-transforming produces
+asymmetric intervals that are wider upward (usage spikes) and tighter
+downward — matching the physical reality of energy data.
 
 Bartlett VIF for temporal autocorrelation is applied to the model
 variance component (curve uncertainty), not to the noise component
@@ -18,6 +19,9 @@ References
 ----------
 Ruppert, D., Wand, M. P. & Carroll, R. J. (2003). *Semiparametric
     Regression*. Cambridge University Press.  (Soft-penalty covariance.)
+
+Raymaekers, J. & Rousseeuw, P. J. (2021). Transforming variables to
+    central normality. *Machine Learning* 110, 2375–2415.
 """
 
 from __future__ import annotations
@@ -25,6 +29,8 @@ from __future__ import annotations
 import numpy as np
 from scipy.interpolate import BSpline
 from scipy.stats import t as t_dist
+
+from opendsm.common.stats.distribution_transform import YeoJohnson
 
 
 
@@ -67,20 +73,22 @@ class UncertaintyEstimator:
         degree: int,
         x_mean: float,
         x_std: float,
-        sigma_local_T: np.ndarray,
-        sigma_local: np.ndarray,
         vif: float,
         dof: int,
+        yj: YeoJohnson,
+        sigma_scale_T: np.ndarray,
+        sigma_scale: np.ndarray,
     ):
         self._sandwich_cov = sandwich_cov
         self._knots_std = knots_std
         self._degree = degree
         self._x_mean = x_mean
         self._x_std = x_std
-        self._sigma_local_T = sigma_local_T
-        self._sigma_local = sigma_local
         self._vif = vif
         self._dof = max(1, dof)
+        self._yj = yj
+        self._sigma_scale_T = sigma_scale_T
+        self._sigma_scale = sigma_scale
 
     def to_dict(self) -> dict:
         return {
@@ -89,10 +97,11 @@ class UncertaintyEstimator:
             "degree": self._degree,
             "x_mean": self._x_mean,
             "x_std": self._x_std,
-            "sigma_local_T": self._sigma_local_T.tolist(),
-            "sigma_local": self._sigma_local.tolist(),
             "vif": self._vif,
             "dof": self._dof,
+            "yj": self._yj.to_dict(),
+            "sigma_scale_T": self._sigma_scale_T.tolist(),
+            "sigma_scale": self._sigma_scale.tolist(),
         }
 
     @classmethod
@@ -103,28 +112,41 @@ class UncertaintyEstimator:
             degree=data["degree"],
             x_mean=data["x_mean"],
             x_std=data["x_std"],
-            sigma_local_T=np.array(data["sigma_local_T"]),
-            sigma_local=np.array(data["sigma_local"]),
             vif=data["vif"],
             dof=data["dof"],
+            yj=YeoJohnson.from_dict(data["yj"]),
+            sigma_scale_T=np.array(data["sigma_scale_T"]),
+            sigma_scale=np.array(data["sigma_scale"]),
         )
 
     def __call__(
         self,
         x: np.ndarray,
+        predicted: np.ndarray,
         include_autocorr: bool = True,
         alpha: float = 0.1,
-    ) -> np.ndarray:
-        """Prediction interval half-width at each temperature.
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Asymmetric prediction interval bounds via YJ back-transform.
+
+        In YJ-transformed residual space, the interval is symmetric:
+        [μ_t - z·σ_total, μ_t + z·σ_total].  Back-transforming produces
+        asymmetric bounds in original space.
 
         Parameters
         ----------
         x : ndarray
             Temperatures at which to evaluate uncertainty.
+        predicted : ndarray
+            Predicted values at each temperature.
         include_autocorr : bool
-            Whether to apply Bartlett VIF to the noise term.
+            Whether to apply Bartlett VIF to model variance.
         alpha : float
             Significance level (e.g. 0.1 for 90% PI).
+
+        Returns
+        -------
+        lower, upper : ndarray, ndarray
+            Lower and upper prediction interval bounds.
         """
         x = np.asarray(x, dtype=float)
 
@@ -135,17 +157,28 @@ class UncertaintyEstimator:
         ).toarray()
         model_var = np.sum((B @ self._sandwich_cov) * B, axis=1)
 
-        # Noise: interpolated local σ²(T) with log-linear tail extrapolation
-        sigma_sq = _interpolate_sigma_sq(x, self._sigma_local_T, self._sigma_local)
-
         # VIF inflates model variance (autocorrelation means less info about
-        # the curve), not noise variance (a new observation's deviation from
-        # the true curve is independent of training autocorrelation).
+        # the curve), not noise variance.
         vif = self._vif if include_autocorr else 1.0
-        total_var = vif * model_var + sigma_sq
+        model_std = np.sqrt(np.maximum(vif * model_var, 0.0))
 
         t_crit = t_dist.ppf(1 - alpha / 2, df=self._dof)
-        return t_crit * np.sqrt(np.maximum(total_var, 0.0))
+
+        # Noise shape from YJ (asymmetric, global).
+        # The interval is centered at YJ(0) — a residual of zero (perfect
+        # prediction) — not at the origin of transformed space.
+        center = self._yj.transform(np.array([[0.0]]))[0, 0]
+        noise_lower = self._yj.inverse_transform(np.array([[center - t_crit]]))[0, 0]
+        noise_upper = self._yj.inverse_transform(np.array([[center + t_crit]]))[0, 0]
+
+        # Noise scale from smoothing spline (heteroscedastic)
+        scale = np.interp(x, self._sigma_scale_T, self._sigma_scale)
+
+        # Total: prediction + scaled noise + model uncertainty
+        lower = predicted + scale * noise_lower - t_crit * model_std
+        upper = predicted + scale * noise_upper + t_crit * model_std
+
+        return lower, upper
 
 
 # ------------------------------------------------------------------
@@ -202,17 +235,38 @@ def build_uncertainty_estimator(
     # Scale to original y-space
     sandwich_cov_orig = sandwich_cov * (y_std ** 2)
 
-    # --- Global noise scale ---
-    # Empirical quantile of |residuals| calibrated to the target coverage.
-    # No distributional assumption — directly reflects the residual tail
-    # behavior.  Divided by t_crit since the caller multiplies by it.
-    # Heteroscedastic σ(T) is deferred to the YJ transform, which will
-    # stabilize variance and make a global σ correct by construction.
-    alpha = settings.uncertainty_alpha
-    t_crit_cal = t_dist.ppf(1 - alpha / 2, df=max(n - ddof, 1))
-    q_global = np.percentile(np.abs(residuals), 100 * (1 - alpha / 2))
-    sigma_global = q_global / t_crit_cal
-    sigma_local = np.full(n, max(sigma_global, 1e-10))
+    # --- Noise shape via YJ transform ---
+    # Fit robust Yeo-Johnson on residuals to normalize them.  The class
+    # post-standardizes so the output is approximately N(0, 1).  Symmetric
+    # ±z intervals in transformed space back-transform to asymmetric
+    # intervals in original space (wider upward for right-skewed data).
+    yj = YeoJohnson()
+    yj.fit(residuals.reshape(-1, 1))
+
+    # Clamp λ to [-0.5, 1.0].  Outside this range the transform is too
+    # aggressive — very negative λ compresses the positive tail so
+    # heavily that the inverse becomes non-monotone in the standardized
+    # domain.  λ=1 is identity; λ=0 is log(1+x); λ<0 is strong
+    # compression.  The range [-0.5, 1.0] captures meaningful asymmetry
+    # without numerical instability.
+    lam = yj.lambdas_[0]
+    lam_clamped = float(np.clip(lam, -0.5, 1.0))
+    if lam_clamped != lam:
+        yj.lambdas_ = np.array([lam_clamped])
+        # Re-fit post-standardization with clamped lambda
+        from opendsm.common.stats.distribution_transform.yeo_johnson import yj_transform
+        d = yj.to_dict()
+        x_pre = (residuals - d["pre_mu"][0]) / d["pre_sigma"][0]
+        rt = yj_transform(x_pre, lam_clamped)
+        yj.post_mu_ = np.array([float(np.median(rt))])
+        yj.post_sigma_ = np.array([float(np.std(rt))])
+
+    # --- Noise scale via smoothing spline on |residuals| ---
+    # The YJ provides the shape (asymmetry); the scale spline provides
+    # the heteroscedasticity (noise level varies with temperature).
+    # We store the ratio σ_local/σ_global so the YJ-derived noise bounds
+    # get scaled up/down by local noise level.
+    sigma_scale = _fit_sigma_scale(x, residuals)
 
     # --- Bartlett VIF for residual autocorrelation ---
     if time_sort is not None:
@@ -228,10 +282,11 @@ def build_uncertainty_estimator(
         degree=solver.k,
         x_mean=x_mean,
         x_std=x_std,
-        sigma_local_T=x,
-        sigma_local=sigma_local,
         vif=vif,
         dof=n - ddof,
+        yj=yj,
+        sigma_scale_T=x,
+        sigma_scale=sigma_scale,
     )
 
 
@@ -239,39 +294,43 @@ def build_uncertainty_estimator(
 # Utilities
 # ------------------------------------------------------------------
 
-def _interpolate_sigma_sq(
-    x_new: np.ndarray,
-    x_train: np.ndarray,
-    sigma_train: np.ndarray,
+def _fit_sigma_scale(
+    x: np.ndarray,
+    residuals: np.ndarray,
 ) -> np.ndarray:
-    """Interpolate local σ² with log-linear tail extrapolation.
+    """Relative noise scale σ(T)/σ_global via smoothing spline on |r|.
 
-    Within training range: linear interpolation of σ².
-    Beyond training range: log-linear extrapolation using slope from
-    the last 10 training points (clamped to non-negative growth).
+    Returns the ratio at each training temperature. A value > 1 means
+    noisier than average; < 1 means quieter.  The smoothing spline
+    captures the broad heteroscedastic trend without chasing individual
+    residuals.  The ratio is clipped to [0.5, 2.0] to prevent extreme
+    scaling at sparse edges.
     """
-    sigma_sq_train = sigma_train ** 2
-    sigma_sq = np.interp(x_new, x_train, sigma_sq_train)
+    from scipy.interpolate import UnivariateSpline
 
-    n_tail = min(10, len(x_train) // 3)
-    if n_tail < 2:
-        return sigma_sq
+    abs_r = np.abs(residuals)
+    sigma_global = np.median(abs_r) * 1.4826
+    if sigma_global < 1e-10:
+        return np.ones_like(x)
 
-    lo_mask = x_new < x_train[0]
-    if np.any(lo_mask):
-        log_s = np.log(np.maximum(sigma_sq_train[:n_tail], 1e-20))
-        slope = min(np.polyfit(x_train[:n_tail], log_s, 1)[0], 0.0)
-        log_extrap = np.log(max(sigma_sq_train[0], 1e-20)) + slope * (x_new[lo_mask] - x_train[0])
-        sigma_sq[lo_mask] = np.exp(log_extrap)
+    sort_idx = np.argsort(x)
+    x_sorted = x[sort_idx]
+    abs_r_sorted = abs_r[sort_idx]
 
-    hi_mask = x_new > x_train[-1]
-    if np.any(hi_mask):
-        log_s = np.log(np.maximum(sigma_sq_train[-n_tail:], 1e-20))
-        slope = max(np.polyfit(x_train[-n_tail:], log_s, 1)[0], 0.0)
-        log_extrap = np.log(max(sigma_sq_train[-1], 1e-20)) + slope * (x_new[hi_mask] - x_train[-1])
-        sigma_sq[hi_mask] = np.exp(log_extrap)
+    n = len(x)
+    try:
+        # Heavy smoothing: s = 2 * n * var(|r|) produces a very gentle
+        # trend with few effective knots, preventing sharp transitions.
+        spl = UnivariateSpline(
+            x_sorted, abs_r_sorted,
+            k=3, s=2 * n * np.var(abs_r_sorted),
+        )
+        sigma_local = np.maximum(spl(x), 1e-10) * np.sqrt(np.pi / 2)
+        scale = sigma_local / sigma_global
+    except Exception:
+        return np.ones_like(x)
 
-    return sigma_sq
+    return np.clip(scale, 0.5, 2.0)
 
 
 def _compute_acf_K(residuals: np.ndarray, max_K: int = 14) -> int:

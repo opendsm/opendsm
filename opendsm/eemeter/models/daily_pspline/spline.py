@@ -278,19 +278,27 @@ class PSpline:
     def prediction_uncertainty(
         self,
         x: np.ndarray,
+        predicted: np.ndarray | None = None,
         include_autocorr: bool | None = None,
         alpha: float | None = None,
-    ) -> np.ndarray:
-        """Prediction interval half-width at each temperature.
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Asymmetric prediction interval bounds.
 
         Parameters
         ----------
         x : ndarray
             Temperatures.
+        predicted : ndarray or None
+            Predicted values. If None, computed from self.predict(x).
         include_autocorr : bool or None
             Whether to apply Bartlett VIF. Defaults to config value.
         alpha : float or None
             Significance level. Defaults to config value.
+
+        Returns
+        -------
+        lower, upper : ndarray, ndarray
+            Lower and upper prediction interval bounds.
         """
         if self.uncertainty is None:
             raise RuntimeError(
@@ -300,7 +308,12 @@ class PSpline:
             include_autocorr = self.config.get("include_autocorr", True)
         if alpha is None:
             alpha = self.config.get("uncertainty_alpha", 0.1)
-        return self.uncertainty(x, include_autocorr=include_autocorr, alpha=alpha)
+        if predicted is None:
+            predicted = self.predict(x)
+        return self.uncertainty(
+            x, predicted=predicted,
+            include_autocorr=include_autocorr, alpha=alpha,
+        )
 
     def derivative(self, nu: int = 1) -> PSpline:
         """Return the nu-th derivative, respecting extrapolation.

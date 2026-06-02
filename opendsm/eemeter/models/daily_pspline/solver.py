@@ -158,17 +158,25 @@ class PSplineSolver:
         weights: Optional[np.ndarray],
         kappa: float,
         maxiter: int,
+        residuals: Optional[np.ndarray] = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Fit coefficients for given breakpoints.
 
         Applies TIDD upweighting, computes zone assignments, then runs
         the iterative monotonicity-constrained solve.
 
+        Parameters
+        ----------
+        residuals : array, optional
+            Residuals from a prior fit, used to estimate per-zone
+            variance for TIDD upweighting.  On the first call, pass
+            None to fall back on raw-y MAD.
+
         Returns (coefs, V, LHS) where V is the converged active-set
         diagonal and LHS is the final penalized Gram matrix.
         """
         if bp[1] - bp[0] > 0:
-            eff_w = self._tidd_weights(weights, bp)
+            eff_w = self._tidd_weights(weights, bp, residuals=residuals)
         else:
             eff_w = weights
 
@@ -199,12 +207,61 @@ class PSplineSolver:
         self,
         weights: Optional[np.ndarray],
         bp: np.ndarray,
-        factor: float = 50.0,
+        residuals: Optional[np.ndarray] = None,
     ) -> np.ndarray:
-        """Upweight TIDD-zone observations to enforce flatness."""
+        """Upweight TIDD observations to equalize standard errors across zones.
+
+        The standard error of a zone's level estimate is
+        ``sigma_zone / sqrt(N_zone)``.  Equalizing SEs across zones
+        gives each zone influence proportional to its estimation
+        precision.  The factor is::
+
+            factor = sqrt((sigma_adj / sigma_tidd)^2 * (N_adj / N_tidd))
+
+        Per-zone sigma is estimated from residuals when available
+        (after the first fit iteration), falling back to MAD of raw y
+        on the initial call.  Using residuals is more accurate because
+        raw y variance in the CDD/HDD zones includes the slope signal,
+        overstating the noise.
+        """
         tidd_mask = (self.x > bp[0]) & (self.x < bp[1])
-        if not np.any(tidd_mask):
+        n_tidd = int(np.sum(tidd_mask))
+        if n_tidd < 2:
             return weights
+
+        hdd_mask = self.x <= bp[0]
+        cdd_mask = self.x >= bp[1]
+        n_hdd = int(np.sum(hdd_mask))
+        n_cdd = int(np.sum(cdd_mask))
+
+        # Choose the data source for variance estimation
+        vals = residuals if residuals is not None else self.y
+
+        _MAD_K = 1.4826
+        v_tidd = vals[tidd_mask]
+        mad_tidd = np.median(np.abs(v_tidd - np.median(v_tidd))) * _MAD_K
+        mad_tidd = max(mad_tidd, 1e-10)
+
+        # Use the largest adjacent zone for comparison
+        if n_hdd >= n_cdd and n_hdd >= 2:
+            v_adj = vals[hdd_mask]
+            n_adj = n_hdd
+        elif n_cdd >= 2:
+            v_adj = vals[cdd_mask]
+            n_adj = n_cdd
+        else:
+            return weights
+
+        mad_adj = np.median(np.abs(v_adj - np.median(v_adj))) * _MAD_K
+        mad_adj = max(mad_adj, 1e-10)
+
+        variance_ratio = (mad_adj / mad_tidd) ** 2
+        size_ratio = n_adj / n_tidd
+        factor = np.sqrt(variance_ratio * size_ratio)
+
+        if factor <= 1.0:
+            return weights
+
         w = np.ones_like(self.x) if weights is None else weights.copy()
         w[tidd_mask] *= factor
         return w
@@ -280,6 +337,12 @@ class PSplineSolver:
                 "Max iteration reached. The results are not reliable.",
                 MaxIterationWarning,
             )
+
+        # Enforce exact TIDD flatness: average coefficients in the TIDD
+        # zone so derivatives are structurally zero.  The penalty-based
+        # solve gets close (~1e-4) but not exact.
+        if has_tidd:
+            coefs = _enforce_tidd_flat(coefs, tidd_idx, D1)
 
         return coefs, V, lhs_buf.copy()
 
@@ -409,6 +472,31 @@ def _difference_matrices(
         D3.flags.writeable = False
 
     return D1, D2, D3
+
+
+def _enforce_tidd_flat(
+    coefs: np.ndarray,
+    tidd_idx: np.ndarray,
+    D1: np.ndarray,
+) -> np.ndarray:
+    """Set TIDD-zone derivatives to exactly zero by averaging coefficients.
+
+    Each D1 row i connects coefficients i and i+1.  For TIDD rows, we
+    replace the linked coefficients with their mean so the first
+    difference is structurally zero.
+    """
+    coefs = coefs.copy()
+    # Collect all coefficient indices touched by TIDD derivative rows
+    tidd_coef_idx = set()
+    for i in tidd_idx:
+        # D1 row i links coefs i and i+1 (for standard first-difference)
+        tidd_coef_idx.add(i)
+        tidd_coef_idx.add(i + 1)
+    tidd_coef_idx = sorted(tidd_coef_idx)
+    if len(tidd_coef_idx) > 0:
+        mean_val = np.mean(coefs[tidd_coef_idx])
+        coefs[tidd_coef_idx] = mean_val
+    return coefs
 
 
 def _safe_solve(A: np.ndarray, b: np.ndarray) -> np.ndarray:

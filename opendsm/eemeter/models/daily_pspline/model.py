@@ -275,7 +275,8 @@ class DailyPSplineModel:
     def _predict(self, df: pd.DataFrame) -> pd.DataFrame:
         df_out = df.copy()
         df_out["predicted"] = np.nan
-        df_out["predicted_unc"] = np.nan
+        df_out["predicted_unc_lower"] = np.nan
+        df_out["predicted_unc_upper"] = np.nan
         df_out["heating_load"] = 0.0
         df_out["cooling_load"] = 0.0
         df_out["model_split"] = None
@@ -288,7 +289,9 @@ class DailyPSplineModel:
             df_out.loc[seg.index, "predicted"] = pred
 
             if spl.uncertainty is not None:
-                df_out.loc[seg.index, "predicted_unc"] = spl.prediction_uncertainty(T)
+                lower, upper = spl.prediction_uncertainty(T, predicted=pred)
+                df_out.loc[seg.index, "predicted_unc_lower"] = lower
+                df_out.loc[seg.index, "predicted_unc_upper"] = upper
 
             # Load decomposition uses fitted BPs
             baseload = _baseload(spl)

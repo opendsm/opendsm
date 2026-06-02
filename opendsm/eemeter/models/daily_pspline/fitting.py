@@ -168,6 +168,20 @@ def _fit_degree(
     kappa = s.kappa_penalty
     reg_alpha = s.regularization_alpha
 
+    # Two-pass outlier weight seeding:
+    #
+    # Pass 1 (pre-spline): zero out unambiguous outliers using raw y_s.
+    # Points > 10 sigma (MAD-scaled) from median are extreme regardless of
+    # temperature (e.g., meter outages reading 0 amid 9+ kWh data). Zeroing
+    # them before the knots spline prevents the spline from tracking them.
+    median_y = np.median(y_s)
+    sigma_y = median_absolute_deviation(y_s, median=median_y)
+    if sigma_y > 1e-10:
+        extreme_mask = np.abs(y_s - median_y) > 10.0 * sigma_y
+        if np.any(extreme_mask):
+            weights = weights.copy()
+            weights[extreme_mask] = 0.0
+
     knots_obj = Knots(
         x_s, y_s, w=weights,
         spline_interp_count=1000, spline_lambda=10,
@@ -177,17 +191,24 @@ def _fit_degree(
         lightweight=False,
     )
 
-    # Seed initial weights from the knots smoothing-spline residuals.
-    # The spline accounts for temperature dependence, so its residuals
-    # are a legitimate basis for outlier detection — unlike raw y which
-    # would misidentify extreme-temperature inliers as outliers.
+    # Pass 2 (post-spline): zero out points with large residuals from
+    # the knots smoothing spline. The spline accounts for temperature
+    # dependence, so its residuals correctly identify outliers without
+    # misidentifying extreme-temperature inliers.
     spl_resid = y_s - knots_obj.spl(x_s)
-    mad_r = np.median(np.abs(spl_resid - np.median(spl_resid)))
-    if mad_r > 1e-10:
-        outlier_mask = np.abs(spl_resid - np.median(spl_resid)) > 3.0 * 1.4826 * mad_r
+    median_r = np.median(spl_resid)
+    sigma_r = median_absolute_deviation(spl_resid, median=median_r)
+    if sigma_r > 1e-10:
+        outlier_mask = np.abs(spl_resid - median_r) > 3.0 * sigma_r
         if np.any(outlier_mask):
-            weights = weights.copy()
-            weights[outlier_mask] *= 0.01
+            if not np.any(weights != 1.0):
+                weights = weights.copy()
+            weights[outlier_mask] = 0.0
+
+    # Store initial weights (after outlier seeding) as fixed baseline
+    # for IRLS reweighting.  Each adaptive iteration replaces (not
+    # compounds) the adaptive component: weights = initial * a_weights.
+    initial_weights = weights.copy()
 
     B_cache: dict = {}
     prior_wrmse = np.inf
@@ -287,9 +308,13 @@ def _fit_degree(
         # Kernel adaptive weights
         if weight_iters > 0:
             a_weights, median_alpha = kernel_cache.compute_weights(residuals)
-            weights = _rescale_to_range(
-                (weights * a_weights) if weights is not None else a_weights,
-            )
+            # Recompute weights fresh each iteration (standard IRLS):
+            # initial seeded weights × adaptive weights from current
+            # residuals.  No compounding — each round's a_weights are
+            # derived from residuals that already reflect the prior fit.
+            # Initial weights capture pre-fit outlier structure (fixed
+            # scale); a_weights capture iteration-specific corrections.
+            weights = initial_weights * a_weights * 10.0
             weight_iters -= 1
 
             if median_alpha == 2.0:
@@ -515,15 +540,19 @@ def _clipped_mad(values: np.ndarray, clip_val: float = 1e-6) -> float:
     return 1.0 if scale < clip_val else float(scale)
 
 
-def _rescale_to_range(
-    values: np.ndarray,
-    new_min: float = 1.0,
-    new_max: float = 100.0,
-) -> np.ndarray:
-    """Min-max rescale to [new_min, new_max]."""
-    values = np.asarray(values)
-    old_min, old_max = np.min(values), np.max(values)
-    if old_max == old_min:
-        return np.full_like(values, new_min, dtype=float)
-    scale = (new_max - new_min) / (old_max - old_min)
-    return new_min + scale * (values - old_min)
+def _normalize_weights(values: np.ndarray) -> np.ndarray:
+    """Normalize so the median positive value maps to 1.0.
+
+    Preserves relative ordering and zero weights.  Used to normalize
+    adaptive weights before combining with initial (seeded) weights,
+    following standard IRLS practice of fresh recomputation each
+    iteration rather than compounding.
+    """
+    values = np.asarray(values, dtype=float)
+    positive = values > 0
+    if not np.any(positive):
+        return np.ones_like(values, dtype=float)
+    median_pos = np.median(values[positive])
+    if median_pos < 1e-10:
+        return np.ones_like(values, dtype=float)
+    return values / median_pos
