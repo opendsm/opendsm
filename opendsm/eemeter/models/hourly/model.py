@@ -730,7 +730,7 @@ class HourlyModel:
                 df_temporal_clusters["temporal_cluster"].isna()
             ].index
             if not missing_combinations.empty:
-                if missing_combinations == df_temporal_index:
+                if missing_combinations.equals(df_temporal_index):
                     raise ValueError(
                         f"Data does not have known temporal clusters of {self._temporal_cluster_cols}. Can't assign missing temporal clusters"
                     )
@@ -1189,7 +1189,9 @@ class HourlyModel:
         is_kernel = self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE
 
         # Compute lambda_2 for edf (only for ElasticNet/Ridge, not KernelRidge)
-        lambda_2 = self._compute_lambda_2() if not is_kernel else None
+        lambda_2 = None
+        if not is_kernel and X_fit is not None:
+            lambda_2 = self._compute_lambda_2(X_fit.shape[0])
 
         for hour in range(24):
             hour_coef = coef[:, hour] if is_kernel else coef[hour]
@@ -1217,12 +1219,15 @@ class HourlyModel:
                 num_model_params=num_params_h,
             )
 
-    def _compute_lambda_2(self):
+    def _compute_lambda_2(self, n_samples):
         """Compute the L2 penalty parameter for the edf formula.
 
         sklearn Ridge and ElasticNet use different loss scaling:
-          Ridge:      ||y - Xw||² + α||w||²           → λ₂ = α
-          ElasticNet: (1/(2n))||y - Xw||² + ...       → λ₂ = n·α·(1-ρ)
+          Ridge:      ||y - Xw||² + α||w||²               → λ₂ = α
+          ElasticNet: (1/(2·n_samples))||y - Xw||² + ...  → λ₂ = n_samples·α·(1-ρ)
+
+        n_samples is the elastic-net fit-sample count (fit days), matching the
+        rows of the design matrix whose singular values enter the edf sum.
         """
         base = self._model
         if isinstance(base, Ridge) and not isinstance(base, ElasticNet):
@@ -1230,8 +1235,7 @@ class HourlyModel:
         else:
             alpha = getattr(base, 'alpha', 0)
             l1_ratio = getattr(base, 'l1_ratio', 0)
-            n = self.baseline_metrics.n
-            return n * alpha * (1 - l1_ratio)
+            return n_samples * alpha * (1 - l1_ratio)
 
     def _compute_hour_edf(self, X_fit, hour, hour_coef, lambda_2, adaptive_weights):
         """Compute effective degrees of freedom for hour h via SVD.
@@ -1289,21 +1293,13 @@ class HourlyModel:
     def _calculate_predicted_uncertianty(self, df_eval):
         df_eval["predicted_unc"] = np.nan
 
+        # Legacy model_json lack baseline_hour_metrics and take the global
+        # fallback; all current models use the per-hour path. See the
+        # COMPAT[legacy-hourly-model-json] block below.
         if self._has_per_hour_uncertainty():
             return self._calculate_uncertainty_per_hour(df_eval)
-        else:
-            return self._calculate_uncertainty_global_legacy(df_eval)
 
-    def _has_per_hour_uncertainty(self):
-        """True for models trained with per-hour edf-based uncertainty data.
-        False for models deserialized from old model_json that lack per-hour metrics.
-
-        DELETE this guard (and _calculate_uncertainty_global_legacy) once all
-        deployed model_json artifacts have been retrained."""
-        return (
-            self.baseline_hour_metrics is not None
-            and any(v is not None for v in self.baseline_hour_metrics.values())
-        )
+        return self._calculate_uncertainty_global_legacy(df_eval)
 
     def _calculate_uncertainty_per_hour(self, df_eval):
         """Per-hour heteroscedastic uncertainty (A+B+C+E).
@@ -1344,12 +1340,24 @@ class HourlyModel:
 
         return df_eval
 
-    def _calculate_uncertainty_global_legacy(self, df_eval):
-        """Global homoscedastic uncertainty. Legacy path for old model_json
-        that lack per-hour baseline metrics.
+    # ----------------------------------------------------------------------
+    # COMPAT[legacy-hourly-model-json]
+    # Serves model_json serialized without baseline_hour_metrics (no per-hour
+    # uncertainty). Current fits always populate baseline_hour_metrics, so this
+    # is reached only by those older artifacts. Once they are retired, delete
+    # this block (both methods), the fallback call in
+    # _calculate_predicted_uncertianty, and the baseline_hour_metrics=None
+    # default in from_dict.
+    # ----------------------------------------------------------------------
+    def _has_per_hour_uncertainty(self):
+        """False only for legacy model_json that lack per-hour metrics."""
+        return (
+            self.baseline_hour_metrics is not None
+            and any(v is not None for v in self.baseline_hour_metrics.values())
+        )
 
-        DELETE this method (and the _has_per_hour_uncertainty guard) once all
-        deployed model_json artifacts have been retrained."""
+    def _calculate_uncertainty_global_legacy(self, df_eval):
+        """Global homoscedastic uncertainty for legacy model_json."""
         interpolated = _get_interpolated_mask(df_eval)
 
         if self.baseline_metrics is None:
@@ -1489,8 +1497,9 @@ class HourlyModel:
             data.get("baseline_metrics")
         )
 
-        # Per-hour baseline metrics — absent in old model_json.
-        # DELETE this fallback once all model_json have been retrained.
+        # COMPAT[legacy-hourly-model-json]: the None default leaves legacy
+        # model_json (no baseline_hour_metrics) on the global uncertainty path;
+        # current artifacts always carry it. Drop the default with that block.
         model_cls.baseline_hour_metrics = None
         raw_hour_metrics = data.get("baseline_hour_metrics")
         if raw_hour_metrics is not None:
