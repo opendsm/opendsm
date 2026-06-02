@@ -394,7 +394,7 @@ class Data:
         base_df = base_df.drop(columns="index", axis=1, errors="ignore")
 
         # Check columns missing in time_series_df
-        df_type = self._settings.LOADSHAPE_TYPE
+        df_type = self._settings.loadshape_type
         expected_columns = ["id", "datetime"]
         if (df_type == "error") and ("error" in base_df.columns):
             expected_columns.append("error")
@@ -430,9 +430,9 @@ class Data:
         min_time_diff_per_id = base_df.groupby("id")["time_diff"].min() / np.timedelta64(1, 'm')
 
         # Get the ids that have a higher minimum granularity than defined
-        if self._settings.TIME_PERIOD != 'month':
+        if self._settings.time_period != 'month':
             invalid_ids = min_time_diff_per_id[
-                min_time_diff_per_id > _const.min_granularity_per_time_period[self._settings.TIME_PERIOD]
+                min_time_diff_per_id > _const.min_granularity_per_time_period[self._settings.time_period]
             ].index.tolist()
 
         else:

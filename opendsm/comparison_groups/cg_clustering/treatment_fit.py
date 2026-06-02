@@ -50,7 +50,7 @@ def fit_to_clusters(
     t_ls,
     cp_ls,
     x0,
-    settings: _settings.CG_Clustering_Settings,
+    settings: _settings._CG_Clustering_Settings,
 ):
     match_settings = settings.treatment_match
 
@@ -128,9 +128,9 @@ class ClusterTreatmentMatchError(Exception):
 
 
 def _match_treatment_to_cluster(
-    df_ls_t: pd.DataFrame, 
-    df_ls_cluster: pd.Series, 
-    settings: _settings.Settings
+    df_ls_t: pd.DataFrame,
+    df_ls_cluster: pd.Series,
+    settings: _settings._CG_Clustering_Settings
 ):
     # Create null dataframe
     coeffs = np.empty((df_ls_t.shape[0], df_ls_cluster.shape[0]))
@@ -212,13 +212,13 @@ def match_treatment_to_clusters(
 
     df_ls_cluster_agg[:] = _transform.normalize(
         data=df_ls_cluster_agg.to_numpy(),
-        settings=settings.normalize,
+        settings=settings.feature_transform.normalize,
     )
 
     # normalize treatment loadshape
     normalized_data = _transform.normalize(
         data=df_ls_t.to_numpy(),
-        settings=settings.normalize,
+        settings=settings.feature_transform.normalize,
     )
     df_ls_t_norm = pd.DataFrame(normalized_data, index=df_ls_t.index, columns=df_ls_t.columns)
 

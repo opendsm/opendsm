@@ -102,9 +102,13 @@ class Stratified_Sampling(Comparison_Group_Algorithm):
         cp_features = comparison_pool_data.features
         cp_features = cp_features.reset_index().rename(columns={"id": "meter_id"})
 
+        self.treatment_ids = t_ids
+        self.treatment_loadshape = treatment_data.loadshape
+        self.comparison_pool_loadshape = comparison_pool_data.loadshape
+
         if settings.equivalence_method is None:
             self.model.fit_and_sample(
-                t_features, 
+                t_features,
                 cp_features,
                 n_samples_approx=settings.n_samples_approx,
                 relax_n_samples_approx_constraint=settings.relax_n_samples_approx_constraint,
@@ -113,9 +117,6 @@ class Stratified_Sampling(Comparison_Group_Algorithm):
                 random_seed=settings.seed,
             )
         else:
-            self.treatment_ids = t_ids
-            self.treatment_loadshape = treatment_data.loadshape
-            self.comparison_pool_loadshape = comparison_pool_data.loadshape
             t_loadshape = self.treatment_loadshape
             cp_loadshape = self.comparison_pool_loadshape
 
