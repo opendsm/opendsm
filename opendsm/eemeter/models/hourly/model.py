@@ -1189,7 +1189,9 @@ class HourlyModel:
         is_kernel = self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE
 
         # Compute lambda_2 for edf (only for ElasticNet/Ridge, not KernelRidge)
-        lambda_2 = self._compute_lambda_2() if not is_kernel else None
+        lambda_2 = None
+        if not is_kernel and X_fit is not None:
+            lambda_2 = self._compute_lambda_2(X_fit.shape[0])
 
         for hour in range(24):
             hour_coef = coef[:, hour] if is_kernel else coef[hour]
@@ -1217,12 +1219,15 @@ class HourlyModel:
                 num_model_params=num_params_h,
             )
 
-    def _compute_lambda_2(self):
+    def _compute_lambda_2(self, n_samples):
         """Compute the L2 penalty parameter for the edf formula.
 
         sklearn Ridge and ElasticNet use different loss scaling:
-          Ridge:      ||y - Xw||² + α||w||²           → λ₂ = α
-          ElasticNet: (1/(2n))||y - Xw||² + ...       → λ₂ = n·α·(1-ρ)
+          Ridge:      ||y - Xw||² + α||w||²               → λ₂ = α
+          ElasticNet: (1/(2·n_samples))||y - Xw||² + ...  → λ₂ = n_samples·α·(1-ρ)
+
+        n_samples is the elastic-net fit-sample count (fit days), matching the
+        rows of the design matrix whose singular values enter the edf sum.
         """
         base = self._model
         if isinstance(base, Ridge) and not isinstance(base, ElasticNet):
@@ -1230,8 +1235,7 @@ class HourlyModel:
         else:
             alpha = getattr(base, 'alpha', 0)
             l1_ratio = getattr(base, 'l1_ratio', 0)
-            n = self.baseline_metrics.n
-            return n * alpha * (1 - l1_ratio)
+            return n_samples * alpha * (1 - l1_ratio)
 
     def _compute_hour_edf(self, X_fit, hour, hour_coef, lambda_2, adaptive_weights):
         """Compute effective degrees of freedom for hour h via SVD.
