@@ -1293,21 +1293,13 @@ class HourlyModel:
     def _calculate_predicted_uncertianty(self, df_eval):
         df_eval["predicted_unc"] = np.nan
 
+        # Legacy model_json lack baseline_hour_metrics and take the global
+        # fallback; all current models use the per-hour path. See the
+        # COMPAT[legacy-hourly-model-json] block below.
         if self._has_per_hour_uncertainty():
             return self._calculate_uncertainty_per_hour(df_eval)
-        else:
-            return self._calculate_uncertainty_global_legacy(df_eval)
 
-    def _has_per_hour_uncertainty(self):
-        """True for models trained with per-hour edf-based uncertainty data.
-        False for models deserialized from old model_json that lack per-hour metrics.
-
-        DELETE this guard (and _calculate_uncertainty_global_legacy) once all
-        deployed model_json artifacts have been retrained."""
-        return (
-            self.baseline_hour_metrics is not None
-            and any(v is not None for v in self.baseline_hour_metrics.values())
-        )
+        return self._calculate_uncertainty_global_legacy(df_eval)
 
     def _calculate_uncertainty_per_hour(self, df_eval):
         """Per-hour heteroscedastic uncertainty (A+B+C+E).
@@ -1348,12 +1340,24 @@ class HourlyModel:
 
         return df_eval
 
-    def _calculate_uncertainty_global_legacy(self, df_eval):
-        """Global homoscedastic uncertainty. Legacy path for old model_json
-        that lack per-hour baseline metrics.
+    # ----------------------------------------------------------------------
+    # COMPAT[legacy-hourly-model-json]
+    # Serves model_json serialized without baseline_hour_metrics (no per-hour
+    # uncertainty). Current fits always populate baseline_hour_metrics, so this
+    # is reached only by those older artifacts. Once they are retired, delete
+    # this block (both methods), the fallback call in
+    # _calculate_predicted_uncertianty, and the baseline_hour_metrics=None
+    # default in from_dict.
+    # ----------------------------------------------------------------------
+    def _has_per_hour_uncertainty(self):
+        """False only for legacy model_json that lack per-hour metrics."""
+        return (
+            self.baseline_hour_metrics is not None
+            and any(v is not None for v in self.baseline_hour_metrics.values())
+        )
 
-        DELETE this method (and the _has_per_hour_uncertainty guard) once all
-        deployed model_json artifacts have been retrained."""
+    def _calculate_uncertainty_global_legacy(self, df_eval):
+        """Global homoscedastic uncertainty for legacy model_json."""
         interpolated = _get_interpolated_mask(df_eval)
 
         if self.baseline_metrics is None:
@@ -1493,8 +1497,9 @@ class HourlyModel:
             data.get("baseline_metrics")
         )
 
-        # Per-hour baseline metrics — absent in old model_json.
-        # DELETE this fallback once all model_json have been retrained.
+        # COMPAT[legacy-hourly-model-json]: the None default leaves legacy
+        # model_json (no baseline_hour_metrics) on the global uncertainty path;
+        # current artifacts always carry it. Drop the default with that block.
         model_cls.baseline_hour_metrics = None
         raw_hour_metrics = data.get("baseline_hour_metrics")
         if raw_hour_metrics is not None:
