@@ -46,6 +46,19 @@ def cg_loadshape_data(_comstock_hourly_all):
     return treatment_data, comparison_pool_data
 
 
+@pytest.fixture(scope="session")
+def cg_clustering_data(_comstock_hourly_all):
+    """(treatment_data, comparison_pool_data) with a comparison pool large enough
+    to cluster at the default min_cluster_size of 15."""
+    df_baseline, _ = _comstock_hourly_all
+    ids = sorted(df_baseline.index.get_level_values("id").unique())
+
+    treatment_data = _hour_loadshape_data(df_baseline, ids[:8])
+    comparison_pool_data = _hour_loadshape_data(df_baseline, ids[8:98])
+
+    return treatment_data, comparison_pool_data
+
+
 @pytest.fixture
 def col_name():
     return 'col1'
