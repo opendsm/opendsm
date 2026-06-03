@@ -126,6 +126,8 @@ fail_under = 87
 
 [tool.ruff]
 line-length = 100
+# scratch/archived dev code, not held to lint standards
+extend-exclude = ["opendsm/comparison_groups/savings/dev"]
 
 [tool.ruff.lint]
 select = [
@@ -141,3 +143,7 @@ ignore = [
   "E501",  # line too long — math expressions may exceed 100
   "E741",  # ambiguous variable name — common in math code
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# re-exports in package __init__ files are intentional public API
+"__init__.py" = ["F401", "F403"]
