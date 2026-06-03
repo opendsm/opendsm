@@ -15,7 +15,7 @@
 import copy
 import itertools
 import logging
-import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 import pandas as pd
 import numpy as np
 from . import equivalence
@@ -380,10 +380,13 @@ class StratifiedSamplingBinSelector:
         ]
 
         if plot:
-            fig, ax = plt.subplots()
+            fig = Figure()
+            ax = fig.subplots()
             for wm in wrong_models:
-                plt.plot(self.equiv_samples_avg[wm], alpha=0.1, color="b")
+                ax.plot(self.equiv_samples_avg[wm], alpha=0.1, color="b")
             equiv_df[[self.bins_selected_str, "treatment", "comparison pool"]].plot(
                 color=["k", "r", "k"], style=["-", "-", "."], ax=ax
             )
-            plt.legend(loc="center left", bbox_to_anchor=(1.0, 0.5))
+            ax.legend(loc="center left", bbox_to_anchor=(1.0, 0.5))
+
+            return fig

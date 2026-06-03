@@ -14,7 +14,8 @@
 
 from itertools import combinations
 
-import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+from matplotlib.patches import Rectangle
 import numpy as np
 import pandas as pd
 
@@ -68,7 +69,8 @@ class DiagnosticPlotter:
         )
         
         variables = list(df_quantile["variable"].unique())
-        fig, axes = plt.subplots(len(variables), 1, figsize=(6, 3 * len(variables)), squeeze=False)
+        fig = Figure(figsize=(6, 3 * len(variables)))
+        axes = fig.subplots(len(variables), 1, squeeze=False)
 
         for ax, variable in zip(axes[:, 0], variables):
             var_df = df_quantile[df_quantile["variable"] == variable]
@@ -95,7 +97,6 @@ class DiagnosticPlotter:
                 )
 
         fig.tight_layout()
-        plt.close(fig)
 
         return fig
 
@@ -122,7 +123,8 @@ class DiagnosticPlotter:
         df_rects = df_rects[~df_rects["bin"].isin(outlier_bins)]
 
         populations = list(df["population"].unique())
-        fig, axes = plt.subplots(1, len(populations), figsize=(12, 5), squeeze=False)
+        fig = Figure(figsize=(12, 5))
+        axes = fig.subplots(1, len(populations), squeeze=False)
 
         for ax, population in zip(axes[0], populations):
             pop_df = df[df["population"] == population]
@@ -132,7 +134,7 @@ class DiagnosticPlotter:
             ax.set_ylabel(col_y)
             for _, rect in df_rects.iterrows():
                 ax.add_patch(
-                    plt.Rectangle(
+                    Rectangle(
                         (rect["x_min"], rect["y_min"]),
                         rect["x_max"] - rect["x_min"],
                         rect["y_max"] - rect["y_min"],
@@ -141,7 +143,6 @@ class DiagnosticPlotter:
                 )
 
         fig.tight_layout()
-        plt.close(fig)
 
         return fig
 
@@ -158,7 +159,8 @@ class DiagnosticPlotter:
         df_rects = df_rects[~df_rects["bin"].isin(outlier_bins)]
 
         populations = list(df["population"].unique())
-        fig, axes = plt.subplots(1, len(populations), figsize=(12, 5), squeeze=False)
+        fig = Figure(figsize=(12, 5))
+        axes = fig.subplots(1, len(populations), squeeze=False)
 
         for ax, population in zip(axes[0], populations):
             pop_df = df[df["population"] == population]
@@ -170,7 +172,6 @@ class DiagnosticPlotter:
                 ax.axvline(rect["x_max"], color="black", linewidth=0.2)
 
         fig.tight_layout()
-        plt.close(fig)
 
         return fig
 
