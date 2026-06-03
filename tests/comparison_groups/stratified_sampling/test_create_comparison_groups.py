@@ -75,9 +75,19 @@ def test_diagnostics_ratio_is_float(stratified_feature_loadshape_data):
     sampler = Stratified_Sampling(_settings())
     sampler.get_comparison_group(treatment_data, comparison_pool_data)
 
-    ratio = sampler.diagnostics().n_sampled_to_n_treatment_ratio()
+    ratio = sampler.n_sampled_to_n_treatment_ratio()
 
     assert isinstance(ratio, (float, np.floating))
+
+
+def test_diagnostics_exposed_as_methods_on_the_class(stratified_feature_loadshape_data):
+    """Diagnostics (plots and tables) are methods on the comparison-group class."""
+    treatment_data, comparison_pool_data = stratified_feature_loadshape_data
+    sampler = Stratified_Sampling(_settings())
+    sampler.get_comparison_group(treatment_data, comparison_pool_data)
+
+    assert not sampler.count_bins().empty
+    assert len(sampler.histogram()) >= 1
 
 
 def test_seed_makes_sampling_reproducible(stratified_feature_loadshape_data):

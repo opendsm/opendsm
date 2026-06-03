@@ -37,7 +37,7 @@ class Stratified_Sampling(Comparison_Group_Algorithm):
         self.sampler = None
         self.bin_selector = None
         self.df_raw = None
-        self._diagnostics = None
+        self._diagnostics_obj = None
 
     def get_comparison_group(self, treatment_data, comparison_pool_data):
         self.treatment_data = treatment_data
@@ -146,11 +146,48 @@ class Stratified_Sampling(Comparison_Group_Algorithm):
 
         return treatment_weights
 
-    def diagnostics(self):
+    # diagnostics: plots and equivalence tables over the sampled comparison group
+
+    def scatter(self, cols=None):
+        figures = self._diagnostics().scatter(cols)
+
+        return figures
+
+    def histogram(self, cols=None):
+        figures = self._diagnostics().histogram(cols)
+
+        return figures
+
+    def quantile_equivalence(self, cols=None):
+        figure = self._diagnostics().quantile_equivalence(cols)
+
+        return figure
+
+    def equivalence(self, cols=None):
+        table = self._diagnostics().equivalence(cols)
+
+        return table
+
+    def equivalence_passed(self, cols=None):
+        passed = self._diagnostics().equivalence_passed(cols)
+
+        return passed
+
+    def count_bins(self):
+        counts = self._diagnostics().count_bins()
+
+        return counts
+
+    def n_sampled_to_n_treatment_ratio(self):
+        ratio = self._diagnostics().n_sampled_to_n_treatment_ratio()
+
+        return ratio
+
+    def _diagnostics(self):
         if self.df_raw is None:
-            raise RuntimeError("Must run get_comparison_group() before calling diagnostics()")
+            raise RuntimeError("Must run get_comparison_group() before requesting diagnostics")
 
-        if self._diagnostics is None:
-            self._diagnostics = StratifiedSamplingDiagnostics(model=self.sampler)
+        if self._diagnostics_obj is None:
+            self._diagnostics_obj = StratifiedSamplingDiagnostics(model=self.sampler)
 
-        return self._diagnostics
+        return self._diagnostics_obj
