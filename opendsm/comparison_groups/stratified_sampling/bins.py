@@ -228,7 +228,7 @@ def sample_bins(
     skip_outliers=True,
     relax_n_samples_approx_constraint=False,
 ):
-    if not counts:
+    if counts is None:
         counts = binned_data_treatment.count_bins(skip_outliers=True)
         counts["n_target"] = np.floor(counts["n_pct"] * n_samples_approx).astype(int)
 

@@ -21,6 +21,24 @@ from opendsm.comparison_groups.stratified_sampling.equivalence import *
 
 
 
+def test_ids_to_index_maps_subset_to_pool_positions():
+    index = ids_to_index(["b", "d"], ["a", "b", "c", "d"])
+
+    assert list(index) == [1, 3]
+
+
+def test_ids_to_index_missing_subset_id_raises():
+    with pytest.raises(ValueError):
+        ids_to_index(["z"], ["a", "b", "c"])
+
+
+def test_ids_to_index_duplicate_pool_ids_raise():
+    """Regression: duplicate pool ids expanded the merge and silently misaligned
+    the returned indexes; they must now fail loudly."""
+    with pytest.raises(ValueError):
+        ids_to_index(["a"], ["a", "a", "b"])
+
+
 def test_chisquare_dist_zero_denominator_is_finite():
     """A bin where both quantile means are zero must contribute 0, not NaN
     (the term 0/0 previously propagated NaN into bin selection)."""
