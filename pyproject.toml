@@ -16,13 +16,15 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
 ]
 
 dependencies = [
   "fdasrsf>=2.4.1",
   # "fdasrsf>=2.4.1,<=2.5.2", # library broken on higher versions. Issue tracked here https://github.com/jdtuck/fdasrsf_python/issues/41
   # "mkl-devel",  # needed for fdasrsf to work: https://github.com/jdtuck/fdasrsf_python/issues/41
-  "nlopt",
+  "nlopt>=2.10",  # first release with cp313 / cp314 wheels
   "numba",
   "numpy>=1.24.4",
   "pandas>=1.1.0,<3.0.0",

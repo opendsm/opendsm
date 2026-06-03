@@ -18,10 +18,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.11", "3.12"]
-        # All default GitHub-hosted macOS runners are Apple Silicon (ARM);
-        # Intel Mac coverage would require paid large-runner variants.
-        os: [ubuntu-latest, windows-latest, macos-14, macos-latest]
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        # nlopt and fdasrsf publish wheels only for linux-x86_64, macOS-arm64,
+        # and win-amd64; one runner per OS covers exactly those architectures.
+        # ARM-Linux and Intel-Mac are omitted because those two deps ship no
+        # wheels there (a source build would just reproduce #578). Snapshot
+        # tolerances absorb cross-platform BLAS/FMA drift, so floating -latest
+        # images are fine and no second macOS-version runner is needed.
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -34,3 +38,18 @@ jobs:
         run: pip install tox
       - name: Run tox
         run: tox -e ${{ matrix.python }}
+
+  # Fan-in over the build matrix so branch protection can require a single
+  # context instead of every (python, os) combination. needs.build.result is
+  # 'success' only if every matrix combination passed.
+  build-all:
+    name: build (all)
+    if: always()
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all matrix jobs passed
+        if: needs.build.result != 'success'
+        run: |
+          echo "build matrix result: ${{ needs.build.result }}"
+          exit 1
