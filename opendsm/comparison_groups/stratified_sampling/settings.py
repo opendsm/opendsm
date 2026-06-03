@@ -76,7 +76,7 @@ class DSS_StratificationColumnSettings(StratificationColumnSettings):
 
 class Settings(BaseSettings):
     """
-    min_n_sampled_to_n_treatment_ratio: int
+    min_n_sampled_to_n_treatment_ratio: float
         TODO: FILL THIS OUT
     seed: int | None
         Seed for the random number generator; None draws fresh entropy each run
@@ -105,7 +105,7 @@ class StratifiedSamplingSettings(Settings):
         minimum number of treatment samples that must exist in a given bin for 
         it to be considered a non-outlier bin (only applicable if there are 
         cols with fixed_width=True)
-    min_n_sampled_to_n_treatment_ratio: int
+    min_n_sampled_to_n_treatment_ratio: float
     relax_n_samples_approx_constraint: bool
         If True, treats n_samples_approx as an upper bound, but gets as many comparison group
         meters as available up to n_samples_approx. if false, it raises an exception
@@ -178,7 +178,7 @@ class DistanceStratifiedSamplingSettings(Settings):
         Minimum number of treatment samples that must exist in a given bin for 
         it to be considered a non-outlier bin (only applicable if there are 
         cols with fixed_width=True)
-    min_n_sampled_to_n_treatment_ratio: int
+    min_n_sampled_to_n_treatment_ratio: float
     relax_n_samples_approx_constraint: bool
         If True, treats n_samples_approx as an upper bound, but gets as many comparison group
         meters as available up to n_samples_approx. If False, it raises an exception

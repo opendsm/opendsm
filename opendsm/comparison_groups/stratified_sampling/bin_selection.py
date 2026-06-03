@@ -106,7 +106,7 @@ class StratifiedSamplingBinSelector(object):
             Minimum number of treatment samples that must exist in a given bin for
             it to be considered a non-outlier bin (only applicable if there are
             cols with fixed_width=True)
-        min_n_sampled_to_n_treatment_ratio: int
+        min_n_sampled_to_n_treatment_ratio: float
             Minimum number samples that must exist in each bin per treatment datapoint in that bin.
         min_n_bins: int
             Minimum number of bins to use in stratified sampling.
