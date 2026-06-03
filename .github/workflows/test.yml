@@ -39,6 +39,22 @@ jobs:
       - name: Run tox
         run: tox -e ${{ matrix.python }}
 
+  # Standalone style gate — independent of the test matrix and build (all).
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Check formatting
+        run: ruff format --check .
+      - name: Lint
+        run: ruff check .
+
   # Fan-in over the build matrix so branch protection can require a single
   # context instead of every (python, os) combination. needs.build.result is
   # 'success' only if every matrix combination passed.

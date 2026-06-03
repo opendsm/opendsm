@@ -44,12 +44,12 @@ ann = [
   "hnswlib>=0.7.0",
 ]
 dev = [
-  "black",
   "coverage",
   "pytest",
   "pytest-cov>=7.0.0",
   "pytest-profiling",
   "pytest-xdist",
+  "ruff",
   "syrupy>=5,<6",
   "tox",
   "twine",
@@ -123,3 +123,21 @@ exclude_lines = [
 # Conservative floor for `tox -e coverage` (full suite, JIT off). Raise it as
 # test coverage is added. The full suite measures 87.37% JIT-off.
 fail_under = 87
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+  "E",        # pycodestyle errors
+  "F",        # pyflakes
+  "W",        # pycodestyle warnings
+  "PLC0415",  # imports not at top level
+]
+ignore = [
+  "E301",  # expected 1 blank line before class member
+  "E302",  # expected 2 blank lines — 3 are used after imports
+  "E303",  # too many blank lines — extra spacing around blocks is intentional
+  "E501",  # line too long — math expressions may exceed 100
+  "E741",  # ambiguous variable name — common in math code
+]

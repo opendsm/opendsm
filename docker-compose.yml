@@ -21,8 +21,14 @@ services:
     volumes:
       - .:/app
 
-  blacken:
+  format:
     image: opendsm
-    entrypoint: black .
+    entrypoint: ruff format .
+    volumes:
+      - .:/app
+
+  lint:
+    image: opendsm
+    entrypoint: ruff check .
     volumes:
       - .:/app

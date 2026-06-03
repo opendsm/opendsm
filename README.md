@@ -3,7 +3,7 @@
 [![PyPI Version](https://img.shields.io/pypi/v/opendsm.svg)](https://pypi.python.org/pypi/opendsm)
 [![Supported Versions](https://img.shields.io/pypi/pyversions/opendsm.svg)](https://github.com/opendsm/opendsm)
 [![License](https://img.shields.io/github/license/opendsm/opendsm.svg)](https://github.com/opendsm/opendsm)
-[![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/ambv/black)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
 ---------------
 

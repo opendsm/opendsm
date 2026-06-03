@@ -4,8 +4,8 @@ Contributing
 Guidelines
 ----------
 
-* Make sure you follow PEP 008 style guide conventions. You can check PEP 008
-  compliance with the included script: `docker-compose run --rm blacken`
+* Format and lint with ruff before submitting: `docker-compose run --rm format`
+  applies formatting, `docker-compose run --rm lint` reports remaining issues
 * Commit messages should start with a capital letter ("Updated models", not "updated models").
 * Write new tests and run old tests! Make sure that % test coverage does not decrease.
 * Contributions are reviewed by a maintainer before acceptance. To facilitate
