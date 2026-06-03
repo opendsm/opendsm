@@ -16,8 +16,31 @@ import pytest
 
 import numpy as np
 import pandas as pd
+from matplotlib.figure import Figure
 
 from opendsm.comparison_groups.stratified_sampling.model import StratifiedSampling
+
+
+@pytest.fixture
+def diagnostics_obj_2d():
+    """Two-column diagnostics so scatter (which needs column pairs) is exercised."""
+    rng = np.random.default_rng(0)
+    df_treatment = pd.DataFrame(
+        {"id": [f"t{i}" for i in range(60)], "c1": rng.uniform(0, 100, 60), "c2": rng.uniform(0, 100, 60)}
+    )
+    df_pool = pd.DataFrame(
+        {"id": [f"p{i}" for i in range(600)], "c1": rng.uniform(0, 100, 600), "c2": rng.uniform(0, 100, 600)}
+    )
+    model = StratifiedSampling()
+    model.add_column("c1", n_bins=3)
+    model.add_column("c2", n_bins=3)
+    model.fit_and_sample(
+        df_treatment, df_pool, n_samples_approx=100, random_seed=1,
+        min_n_sampled_to_n_treatment_ratio=0, relax_n_samples_approx_constraint=True,
+    )
+    diagnostics = model.diagnostics()
+
+    return diagnostics
 
 
 @pytest.fixture
@@ -47,10 +70,24 @@ def test_equivalence_passed_returns_bool(diagnostics_obj):
     assert isinstance(passed, (bool, np.bool_))
 
 
-def test_histogram_builds_a_plot_per_column(diagnostics_obj):
+def test_histogram_builds_matplotlib_figure_per_column(diagnostics_obj):
     plots = diagnostics_obj.histogram()
 
     assert len(plots) >= 1
+    assert all(isinstance(plot, Figure) for plot in plots)
+
+
+def test_scatter_builds_matplotlib_figure_per_column_pair(diagnostics_obj_2d):
+    plots = diagnostics_obj_2d.scatter()
+
+    assert len(plots) == 1  # a single (c1, c2) pair
+    assert isinstance(plots[0], Figure)
+
+
+def test_quantile_equivalence_builds_matplotlib_figure(diagnostics_obj):
+    figure = diagnostics_obj.quantile_equivalence()
+
+    assert isinstance(figure, Figure)
 
 
 def test_n_sampled_to_n_treatment_ratio_is_not_floored(diagnostics_obj):
