@@ -4,6 +4,10 @@ Changelog
 Development
 -----------
 
+* `comparison_groups` test suite: coverage across the package — `Data` ingestion (time-series and features-only), the `Comparison_Group_Algorithm` base, the public `CG_Clustering` / `Individual_Meter_Matching` / `Stratified_Sampling` / `random_sampling` flows, cluster bounds, `savings` correction-cap and settings validators and diagnostics, and equivalence / bin-count edge cases. Per-subpackage test directories made packages to avoid duplicate-basename collisions.
+* `comparison_groups/stratified_sampling`: modernized to match the rest of the package — single linear settings-driven `get_comparison_group` orchestration; standardize on the shared `id` column (was `meter_id`); fold the module-level constants into settings; expose diagnostics as methods on `Stratified_Sampling`; render diagnostic plots with matplotlib instead of plotnine; delete the dead `param_selection` / `const` modules and modernize class declarations. Output is pinned identical by new snapshot regression tests over the sampled comparison group.
+* `clustering`: use skfda `FourierBasis` (was the deprecated `Fourier`); suppress the invalid-log warning in the cluster-bound fallback.
+* `comparison_groups`: correct `min_n_sampled_to_n_treatment_ratio` docstrings to float; harden `ids_to_index` against duplicate ids and guard an empty bin count; validate non-positive `n_meters` in `random_sampling`.
 * Bug fix (`comparison_groups`): `cg_clustering.treatment_fit` read the removed `settings.normalize`; now reads `settings.feature_transform.normalize`.
 * Bug fix (`comparison_groups/common`): `Data` loadshape-type / time-period reads use the lowercase attributes (`loadshape_type`, `time_period`); the standalone hour period is keyed `TimePeriod.HOUR` in `time_period_row_counts` / `min_granularity_per_time_period` (was the mismatched `'hourly'` → `KeyError`); a features-only `Data` no longer crashes when `loadshape_df` is `None`.
 * `comparison_groups`: comparison-pool trimming uses a local seedable `np.random.RandomState(settings.seed)` instead of the unseeded global; adds `Data_Settings.seed` (default `None`).
