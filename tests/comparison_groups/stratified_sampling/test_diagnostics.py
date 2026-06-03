@@ -14,6 +14,7 @@
 
 import pytest
 
+import numpy as np
 import pandas as pd
 
 from opendsm.comparison_groups.stratified_sampling.model import StratifiedSampling
@@ -32,3 +33,11 @@ def diagnostics_obj(df_treatment, df_pool, col_name):
 def test_equivalence(diagnostics_obj):
     equivalence = diagnostics_obj.equivalence()
     assert equivalence["ks_ok"].all() == True and equivalence["t_ok"].all() == True
+
+
+def test_n_sampled_to_n_treatment_ratio_is_not_floored(diagnostics_obj):
+    """Regression: the ratio must stay a float. Flooring it to int broke
+    comparisons against fractional thresholds (e.g. the DSS 0.25 default)."""
+    ratio = diagnostics_obj.n_sampled_to_n_treatment_ratio()
+
+    assert isinstance(ratio, (float, np.floating))

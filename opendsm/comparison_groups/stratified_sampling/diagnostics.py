@@ -395,9 +395,7 @@ class StratifiedSamplingDiagnostics(DiagnosticPlotter):
         bin_df = self.count_bins()
         if bin_df.empty:
             return 0
-        else:
-            return (
-                (bin_df["n_sampled"] / bin_df[f"n_{self.treatment_label}"])
-                .min()
-                .astype(int)
-            )
+
+        ratio = (bin_df["n_sampled"] / bin_df[f"n_{self.treatment_label}"]).min()
+
+        return ratio

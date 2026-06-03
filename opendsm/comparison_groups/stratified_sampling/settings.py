@@ -49,11 +49,21 @@ class StratificationColumnSettings(BaseSettings):
 
     """whether to use fixed width bins or fixed proportion bins"""
     is_fixed_width: bool = pydantic.Field(
-        default=False, 
+        default=False,
     )
 
     """column requires equivalence when auto-binning"""
     auto_bin_equivalence: Literal[False] = False
+
+    @pydantic.model_validator(mode="after")
+    def _check_value_bounds(self):
+        if self.min_value_allowed > self.max_value_allowed:
+            raise ValueError(
+                f"min_value_allowed ({self.min_value_allowed}) must be <= "
+                f"max_value_allowed ({self.max_value_allowed})"
+            )
+
+        return self
 
 
 class DSS_StratificationColumnSettings(StratificationColumnSettings):

@@ -19,6 +19,15 @@ import pandas as pd
 
 from opendsm.comparison_groups.stratified_sampling.model import StratifiedSampling, BinnedData
 from opendsm.comparison_groups.stratified_sampling.bins import ModelSamplingException
+from opendsm.comparison_groups.stratified_sampling.settings import StratificationColumnSettings
+
+
+def test_stratification_column_rejects_inverted_bounds():
+    """min_value_allowed must not exceed max_value_allowed."""
+    with pytest.raises(ValueError):
+        StratificationColumnSettings(
+            column_name="usage", min_value_allowed=6000, max_value_allowed=3000
+        )
 
 
 def test_perturb_does_not_mutate_global_rng():
