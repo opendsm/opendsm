@@ -67,7 +67,7 @@ class StratifiedSamplingBinSelector:
 
         Example usage:
 
-            m = StratifiedSamplingModel()
+            m = StratifiedSampler()
             m.add_column('annual_usage', min_value=0, max_value=20000)
             m.add_column('summer_usage', min_value=0, max_value=1000)
             s = StratifiedSamplingBinSelector(m, df_treatment, df_pool,
@@ -78,7 +78,7 @@ class StratifiedSamplingBinSelector:
 
         Attributes
         ==========
-        model: eemeter.gridmeter.StratifiedSamplingModel
+        model: eemeter.gridmeter.StratifiedSampler
             Model with stratification columns added.
         df_treatment: pandas.DataFrame
             dataframe to use for constructing the stratified sampling bins.

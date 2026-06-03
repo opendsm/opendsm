@@ -178,7 +178,7 @@ class DiagnosticPlotter:
 class StratifiedSamplingDiagnostics(DiagnosticPlotter):
     """
     Construct plots and tables summarizing results of stratified sampling.
-    Operates on a StratifiedSamplingModel.  Plots will show treatment,
+    Operates on a StratifiedSampler.  Plots will show treatment,
     pool, and comparison group meters on the same axes to allow for easy comparisons.
     If fitting failed, plots will be available with treatment and pool meters only.
 
@@ -203,7 +203,7 @@ class StratifiedSamplingDiagnostics(DiagnosticPlotter):
     ==========
 
     model:
-        A StratifiedSamplingModel, after fit() or fit_and_sample() have been run.
+        A StratifiedSampler, after fit() or fit_and_sample() have been run.
 
     """
 

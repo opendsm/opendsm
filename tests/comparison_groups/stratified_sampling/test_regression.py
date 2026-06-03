@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from opendsm.comparison_groups.stratified_sampling.model import StratifiedSamplingModel
+from opendsm.comparison_groups.stratified_sampling.sampling import StratifiedSampler
 from opendsm.comparison_groups.stratified_sampling.create_comparison_groups import Stratified_Sampling
 from opendsm.comparison_groups.stratified_sampling.settings import (
     DistanceStratifiedSamplingSettings,
@@ -47,7 +47,7 @@ def _engine_summary(model):
 
 
 def test_engine_single_column_snapshot(df_treatment, df_pool, col_name, snapshot):
-    model = StratifiedSamplingModel()
+    model = StratifiedSampler()
     model.add_column(col_name, n_bins=4)
     model.fit_and_sample(df_treatment, df_pool, n_samples_approx=len(df_treatment), random_seed=1)
 
@@ -62,7 +62,7 @@ def test_engine_multi_column_snapshot(snapshot):
     df_pool = pd.DataFrame(
         {"id": [f"p{i}" for i in range(600)], "c1": rng.uniform(0, 100, 600), "c2": rng.uniform(0, 100, 600)}
     )
-    model = StratifiedSamplingModel()
+    model = StratifiedSampler()
     model.add_column("c1", n_bins=3)
     model.add_column("c2", n_bins=3)
     model.fit_and_sample(
