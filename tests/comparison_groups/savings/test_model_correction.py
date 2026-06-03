@@ -128,6 +128,129 @@ def test_model_correction_uncertainty_finite_when_model_equals_observed():
     assert np.isfinite(mTrc_unc)
 
 
+@pytest.mark.parametrize(
+    "algorithm",
+    [CorrectionAlgorithm.ODID, CorrectionAlgorithm.PCTDID, CorrectionAlgorithm.ABSPCTDID],
+)
+def test_uncertainty_finite_for_each_algorithm(algorithm):
+    """Each scale_var branch (ODID constant, PCT/ABSPCT ratio) stays finite."""
+    cg_label = np.array([0, 0, 0, 1, 1, 1])
+    mCGr_unc = np.full(OCGR.shape, 2.0)
+
+    _, mTrc_unc, _ = model_correction(
+        OTR, MTR, OCGR, MCGR,
+        None, 5.0, None, mCGr_unc, None,
+        cg_label, T_WEIGHT, _settings(algorithm=algorithm),
+    )
+
+    assert np.isfinite(mTrc_unc)
+
+
+def test_rejects_non_finite_mtr():
+    cg_label = np.array([0, 0, 0, 1, 1, 1])
+    with pytest.raises(ValueError):
+        model_correction(
+            OTR, np.nan, OCGR, MCGR, None, None, None, None, None,
+            cg_label, T_WEIGHT, _settings(),
+        )
+
+
+def test_rejects_comparison_group_shorter_than_five():
+    short = np.array([1.0, 2.0, 3.0])
+    with pytest.raises(ValueError):
+        model_correction(
+            OTR, MTR, short, short, None, None, None, None, None,
+            np.array([0, 0, 0]), np.array([1.0]), _settings(),
+        )
+
+
+def test_rejects_mismatched_cg_lengths():
+    cg_label = np.array([0, 0, 0, 1, 1, 1])
+    with pytest.raises(ValueError):
+        model_correction(
+            OTR, MTR, OCGR, MCGR[:5], None, None, None, None, None,
+            cg_label, T_WEIGHT, _settings(),
+        )
+
+
+def test_rejects_t_weight_length_mismatch():
+    cg_label = np.array([0, 0, 0, 1, 1, 1])  # two clusters
+    with pytest.raises(ValueError):
+        model_correction(
+            OTR, MTR, OCGR, MCGR, None, None, None, None, None,
+            cg_label, np.array([1.0]), _settings(),  # only one weight
+        )
+
+
+def test_uncertainty_with_observed_uncertainty_and_correlation():
+    """Exercises the covariance branch (oCGr_unc != 0) of the uncertainty math."""
+    cg_label = np.array([0, 0, 0, 1, 1, 1])
+    oCGr_unc = np.full(OCGR.shape, 1.5)
+    mCGr_unc = np.full(OCGR.shape, 2.0)
+    CGr_corr = np.full(OCGR.shape, 0.5)
+
+    mTrc, mTrc_unc, _ = model_correction(
+        OTR, MTR, OCGR, MCGR,
+        None, 5.0, oCGr_unc, mCGr_unc, CGr_corr,
+        cg_label, T_WEIGHT, _settings(),
+    )
+
+    assert np.isfinite(mTrc)
+    assert np.isfinite(mTrc_unc)
+
+
+def test_outlier_rejection_path_runs():
+    """A cluster with an outlier comparison meter runs the rejection path."""
+    cg_label = np.array([0, 0, 0, 0, 0, 1, 1, 1, 1, 1])
+    oCGr = np.array([95.0, 98.0, 102.0, 90.0, 500.0, 105.0, 100.0, 103.0, 99.0, 101.0])
+    mCGr = np.full(10, 100.0)
+    t_weight = np.array([0.5, 0.5])
+
+    mTrc, _, _ = model_correction(
+        OTR, MTR, oCGr, mCGr,
+        None, None, None, None, None,
+        cg_label, t_weight, _settings(outlier_rejection={"enabled": True}),
+    )
+
+    assert np.isfinite(mTrc)
+
+
+def test_global_cap_bounds_correction():
+    """A tight global cap bounds the correction to |mTr| * value."""
+    cg_label = np.array([0, 0, 0, 1, 1, 1])
+    cap_value = 0.01
+    settings = _settings(
+        correction_cap={"enabled": True, "type": "global", "value": cap_value, "solar_threshold": None}
+    )
+
+    mTrc, _, _ = model_correction(
+        OTR, MTR, OCGR, MCGR,
+        None, None, None, None, None,
+        cg_label, T_WEIGHT, settings,
+    )
+
+    assert abs(mTrc - MTR) <= abs(MTR) * cap_value + 1e-9
+
+
+def test_solar_cap_bounds_low_model_meters():
+    """Solar cap clips corrections for sub-threshold (low-model) meters."""
+    cg_label = np.array([0, 0, 0, 1, 1, 1])
+    oCGr = np.full(6, 0.05)
+    mCGr = np.full(6, 0.1)  # below the default solar threshold of 1/3
+    cap_value = 0.01
+    settings = _settings(
+        correction_cap={"enabled": True, "type": "solar", "value": cap_value}
+    )
+
+    mTrc, _, _ = model_correction(
+        OTR, MTR, oCGr, mCGr,
+        None, None, None, None, None,
+        cg_label, T_WEIGHT, settings,
+    )
+
+    assert abs(mTrc - MTR) <= abs(MTR) * cap_value + 1e-9
+
+
 def test_model_correction_zero_model_cluster_weights_finite():
     """Regression: a cluster whose model magnitudes are all zero yields a
     zero-sum weight normalization. With MODEL weighting it must fall back to a

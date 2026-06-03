@@ -17,7 +17,7 @@ from __future__ import annotations
 import numpy as np
 
 from skfda.representation.grid import FDataGrid as _FDataGrid
-from skfda.representation.basis import Fourier as _Fourier
+from skfda.representation.basis import FourierBasis as _FourierBasis
 from skfda.preprocessing.dim_reduction import FPCA as _FPCA
 
 from sklearn.decomposition import PCA
@@ -69,8 +69,8 @@ def _fpca_explained_variance(
     """
     n_basis = n_max + 4
     fd = _FDataGrid(grid_points=x, data_matrix=y)
-    basis_fd = fd.to_basis(_Fourier(n_basis=n_basis))
-    fpca = _FPCA(n_components=n_max, components_basis=_Fourier(n_basis=n_basis))
+    basis_fd = fd.to_basis(_FourierBasis(n_basis=n_basis))
+    fpca = _FPCA(n_components=n_max, components_basis=_FourierBasis(n_basis=n_basis))
     fpca.fit(basis_fd)
     return np.asarray(fpca.explained_variance_ratio_)
 
@@ -79,8 +79,8 @@ def _fpca_transform_with_n(x: np.ndarray, y: np.ndarray, n: int) -> np.ndarray:
     """Fit FPCA with exactly n components and return the transformed features."""
     n_basis = n + 4
     fd = _FDataGrid(grid_points=x, data_matrix=y)
-    basis_fd = fd.to_basis(_Fourier(n_basis=n_basis))
-    fpca = _FPCA(n_components=n, components_basis=_Fourier(n_basis=n_basis))
+    basis_fd = fd.to_basis(_FourierBasis(n_basis=n_basis))
+    fpca = _FPCA(n_components=n, components_basis=_FourierBasis(n_basis=n_basis))
     fpca.fit(basis_fd)
     return fpca.transform(basis_fd)
 

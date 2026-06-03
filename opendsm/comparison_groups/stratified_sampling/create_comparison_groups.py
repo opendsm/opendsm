@@ -20,12 +20,12 @@ import pandas as pd
 
 from opendsm.comparison_groups.common.base_comparison_group import Comparison_Group_Algorithm
 
-from opendsm.comparison_groups.stratified_sampling.model import StratifiedSampling
-from opendsm.comparison_groups.stratified_sampling.bins import ModelSamplingException
+from opendsm.comparison_groups.stratified_sampling.sampling import StratifiedSampler
 from opendsm.comparison_groups.stratified_sampling.diagnostics import StratifiedSamplingDiagnostics
 from opendsm.comparison_groups.stratified_sampling.bin_selection import StratifiedSamplingBinSelector
 
 from opendsm.comparison_groups.stratified_sampling.settings import Settings
+
 
 
 class Stratified_Sampling(Comparison_Group_Algorithm):
@@ -34,25 +34,101 @@ class Stratified_Sampling(Comparison_Group_Algorithm):
             settings = Settings()
 
         self.settings = settings
+        self.sampler = None
+        self.bin_selector = None
         self.df_raw = None
+        self._diagnostics_obj = None
 
-        self.model = StratifiedSampling()
-        self.model_bin_selector = None
+    def get_comparison_group(self, treatment_data, comparison_pool_data):
+        self.treatment_data = treatment_data
+        self.comparison_pool_data = comparison_pool_data
+        self.treatment_ids = treatment_data.ids
+        self.treatment_loadshape = treatment_data.loadshape
+        self.comparison_pool_loadshape = comparison_pool_data.loadshape
 
-        for settings in self.settings.stratification_column:
-            self.model.add_column(
-                settings.column_name,
-                n_bins=settings.n_bins,
-                min_value_allowed=settings.min_value_allowed,
-                max_value_allowed=settings.max_value_allowed,
-                fixed_width=settings.is_fixed_width,
-                auto_bin_require_equivalence=settings.auto_bin_equivalence,
+        treatment_features = self._stratification_features(treatment_data)
+        pool_features = self._stratification_features(comparison_pool_data)
+
+        self.sampler = self._build_sampler()
+        if self.settings.equivalence_method is None:
+            self._sample_fixed_bins(treatment_features, pool_features)
+        else:
+            self._select_bins_by_equivalence(treatment_features, pool_features)
+
+        clusters, treatment_weights = self._assemble_comparison_group()
+
+        return clusters, treatment_weights
+
+    def _stratification_features(self, data):
+        """Stratification feature frame with the id column the sampler bins on."""
+        features = data.features.reset_index()
+
+        return features
+
+    def _build_sampler(self):
+        """A sampler with one stratification column per settings entry."""
+        sampler = StratifiedSampler()
+        for column in self.settings.stratification_column:
+            sampler.add_column(
+                column.column_name,
+                n_bins=column.n_bins,
+                min_value_allowed=column.min_value_allowed,
+                max_value_allowed=column.max_value_allowed,
+                fixed_width=column.is_fixed_width,
+                auto_bin_require_equivalence=column.auto_bin_equivalence,
             )
 
-        self._diagnostics = None
+        return sampler
 
+    def _sample_fixed_bins(self, treatment_features, pool_features):
+        """Fixed-bin path: bin counts come from settings, no equivalence search."""
+        self.sampler.fit_and_sample(
+            treatment_features,
+            pool_features,
+            n_samples_approx=self.settings.n_samples_approx,
+            relax_n_samples_approx_constraint=self.settings.relax_n_samples_approx_constraint,
+            min_n_treatment_per_bin=self.settings.min_n_treatment_per_bin,
+            min_n_sampled_to_n_treatment_ratio=self.settings.min_n_sampled_to_n_treatment_ratio,
+            random_seed=self.settings.seed,
+        )
 
-    def _create_clusters_df(self, ids):
+    def _select_bins_by_equivalence(self, treatment_features, pool_features):
+        """Distance-stratified path: search bin counts that maximize load-shape equivalence."""
+        equivalence_features = pd.concat([self.treatment_loadshape, self.comparison_pool_loadshape])
+        equivalence_features.index.name = "id"
+
+        self.bin_selector = StratifiedSamplingBinSelector(
+            self.sampler,
+            treatment_features,
+            pool_features,
+            equivalence_feature_ids=equivalence_features.index,
+            equivalence_feature_matrix=equivalence_features,
+            df_id_col="id",
+            equivalence_method=self.settings.equivalence_method,
+            equivalence_quantile_size=self.settings.equivalence_quantile,
+            n_samples_approx=self.settings.n_samples_approx,
+            relax_n_samples_approx_constraint=self.settings.relax_n_samples_approx_constraint,
+            min_n_bins=self.settings.min_n_bins,
+            max_n_bins=self.settings.max_n_bins,
+            min_n_treatment_per_bin=self.settings.min_n_treatment_per_bin,
+            min_n_sampled_to_n_treatment_ratio=self.settings.min_n_sampled_to_n_treatment_ratio,
+            random_seed=self.settings.seed,
+        )
+
+    def _assemble_comparison_group(self):
+        """Map the sampled non-outlier meters into the (clusters, treatment_weights) contract."""
+        self.df_raw = self.sampler.data_sample.df
+        sampled = self.df_raw[self.df_raw["_outlier_bin"] == False]
+
+        clusters = self._clusters_df(sampled["id"].unique())
+        treatment_weights = self._treatment_weights_df(self.treatment_ids)
+
+        self.clusters = clusters
+        self.treatment_weights = treatment_weights
+
+        return clusters, treatment_weights
+
+    def _clusters_df(self, ids):
         clusters = pd.DataFrame(ids, columns=["id"])
         clusters["cluster"] = 0
         clusters["weight"] = 1.0
@@ -62,97 +138,56 @@ class Stratified_Sampling(Comparison_Group_Algorithm):
 
         return clusters
 
-
-    def _create_treatment_weights_df(self, ids):
+    def _treatment_weights_df(self, ids):
         coeffs = np.ones(len(ids))
 
         treatment_weights = pd.DataFrame(coeffs, index=ids, columns=["pct_cluster_0"])
         treatment_weights.index.name = "id"
 
         return treatment_weights
-    
-    def _create_output_dfs(self, t_ids):
-        self.df_raw = self.model.data_sample.df
 
-        # Create comparison group
-        df_cg = self.df_raw[self.df_raw["_outlier_bin"] == False]
-        clusters = self._create_clusters_df(df_cg["meter_id"].unique())
+    # diagnostics: plots and equivalence tables over the sampled comparison group
 
-        # Create treatment_weights
-        
-        treatment_weights = self._create_treatment_weights_df(t_ids)
+    def scatter(self, cols=None):
+        figures = self._diagnostics().scatter(cols)
 
-        # Assign dfs to self
-        self.clusters = clusters
-        self.treatment_weights = treatment_weights
+        return figures
 
-        return clusters, treatment_weights
+    def histogram(self, cols=None):
+        figures = self._diagnostics().histogram(cols)
 
+        return figures
 
-    def get_comparison_group(self, treatment_data, comparison_pool_data):
-        settings = self.settings
+    def quantile_equivalence(self, cols=None):
+        figure = self._diagnostics().quantile_equivalence(cols)
 
-        self.treatment_data = treatment_data
-        self.comparison_pool_data = comparison_pool_data
+        return figure
 
-        t_ids = treatment_data.ids
-        t_features = treatment_data.features
-        t_features = t_features.reset_index().rename(columns={"id": "meter_id"})
+    def equivalence(self, cols=None):
+        table = self._diagnostics().equivalence(cols)
 
-        cp_features = comparison_pool_data.features
-        cp_features = cp_features.reset_index().rename(columns={"id": "meter_id"})
+        return table
 
-        self.treatment_ids = t_ids
-        self.treatment_loadshape = treatment_data.loadshape
-        self.comparison_pool_loadshape = comparison_pool_data.loadshape
+    def equivalence_passed(self, cols=None):
+        passed = self._diagnostics().equivalence_passed(cols)
 
-        if settings.equivalence_method is None:
-            self.model.fit_and_sample(
-                t_features,
-                cp_features,
-                n_samples_approx=settings.n_samples_approx,
-                relax_n_samples_approx_constraint=settings.relax_n_samples_approx_constraint,
-                min_n_treatment_per_bin=settings.min_n_treatment_per_bin,
-                min_n_sampled_to_n_treatment_ratio=settings.min_n_sampled_to_n_treatment_ratio,
-                random_seed=settings.seed,
-            )
-        else:
-            t_loadshape = self.treatment_loadshape
-            cp_loadshape = self.comparison_pool_loadshape
+        return passed
 
-            df_equiv = pd.concat([t_loadshape, cp_loadshape])
-            df_equiv.index.name = "meter_id"
+    def count_bins(self):
+        counts = self._diagnostics().count_bins()
 
-            self.model_bin_selector = StratifiedSamplingBinSelector(
-                self.model,
-                t_features, 
-                cp_features,
-                equivalence_feature_ids=df_equiv.index,
-                equivalence_feature_matrix=df_equiv,
-                df_id_col="meter_id",
-                equivalence_method=settings.equivalence_method,
-                equivalence_quantile_size=settings.equivalence_quantile,
-                
-                n_samples_approx=settings.n_samples_approx,
-                relax_n_samples_approx_constraint=settings.relax_n_samples_approx_constraint,
+        return counts
 
-                min_n_bins=settings.min_n_bins,
-                max_n_bins=settings.max_n_bins,
-                min_n_treatment_per_bin=settings.min_n_treatment_per_bin,
-                min_n_sampled_to_n_treatment_ratio=settings.min_n_sampled_to_n_treatment_ratio,
-                random_seed=settings.seed,
-            )
+    def n_sampled_to_n_treatment_ratio(self):
+        ratio = self._diagnostics().n_sampled_to_n_treatment_ratio()
 
-        clusters, treatment_weights = self._create_output_dfs(t_ids)
+        return ratio
 
-        return clusters, treatment_weights
-
-
-    def diagnostics(self):
+    def _diagnostics(self):
         if self.df_raw is None:
-            raise RuntimeError("Must run get_comparison_group() before calling diagnostics()")
-        
-        if self._diagnostics is None:
-            self._diagnostics = StratifiedSamplingDiagnostics(model=self.model)
-        
-        return self._diagnostics
+            raise RuntimeError("Must run get_comparison_group() before requesting diagnostics")
+
+        if self._diagnostics_obj is None:
+            self._diagnostics_obj = StratifiedSamplingDiagnostics(model=self.sampler)
+
+        return self._diagnostics_obj

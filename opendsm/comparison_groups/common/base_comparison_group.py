@@ -15,8 +15,8 @@
 import pandas as pd
 import numpy as np
 
-import matplotlib as mpl
-import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+from matplotlib.ticker import AutoMinorLocator
 
 
 class Comparison_Group_Algorithm:
@@ -112,21 +112,19 @@ class Comparison_Group_Algorithm:
         t_max = ls.T.index[-1]
 
         # plot ls
-        fig = plt.figure(figsize=(14, 4), dpi=300)
+        fig = Figure(figsize=(14, 4), dpi=300)
         ax = fig.subplots()
 
         for col in ls.T.columns:
             ax.plot(ls.T.index, ls.T[col], label=col)
 
         if (t_max - t_min) % 24 and (t_max - t_min) > 24:
-            ax.xaxis.set_minor_locator(mpl.ticker.AutoMinorLocator(4))
+            ax.xaxis.set_minor_locator(AutoMinorLocator(4))
             ax.set_xticks(np.arange(t_min, t_max, 24))
 
         ax.set_xlim([t_min, t_max])
         ax.set_xlabel('Time')
         ax.set_ylabel('Loadshape')
         ax.legend()
-
-        plt.close(fig) # prevent displaying immediately
 
         return fig

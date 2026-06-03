@@ -24,6 +24,10 @@ def ids_to_index(subset_ids, all_ids):
     df_1 = pd.DataFrame({'a': subset_ids}).reset_index()
     df_2 = pd.DataFrame({'a': all_ids}).reset_index().rename(columns={'index': 'x'})
 
+    # duplicate pool ids would expand the merge and silently misalign indexes
+    if df_2['a'].duplicated().any():
+        raise ValueError("`all_ids` must be unique")
+
     df_out = df_1.merge(df_2)
     diff = len(df_1) - len(df_out)
     if diff > 0:

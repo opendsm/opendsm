@@ -14,7 +14,7 @@
 
 import pytest
 
-from opendsm.comparison_groups.stratified_sampling.model import StratifiedSampling, BinnedData
+from opendsm.comparison_groups.stratified_sampling.sampling import StratifiedSampler, BinnedData
 from opendsm.comparison_groups.stratified_sampling.bin_selection import StratifiedSamplingBinSelector
 from opendsm.comparison_groups.stratified_sampling.bins import ModelSamplingException
 
@@ -23,7 +23,7 @@ from opendsm.comparison_groups.stratified_sampling.bins import ModelSamplingExce
 def test_stratified_sampling_fit_and_sample_records_equivalence(
     df_treatment, df_pool,  col_name, equivalence_feature_ids, equivalence_feature_matrix
 ):
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSampler()
     df_pool["col2"] = df_pool[col_name]
     df_treatment["col2"] = df_treatment[col_name]
     stratified_sampling_obj.add_column(col_name)
@@ -47,7 +47,7 @@ def test_stratified_sampling_fit_and_sample_records_equivalence(
 def test_stratified_sampling_fit_and_sample_records_equivalence_too_many_bins(
     df_treatment, df_pool,  col_name, equivalence_feature_ids, equivalence_feature_matrix
 ):
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSampler()
 
     stratified_sampling_obj.add_column(col_name)
     ## attempting to estimate both n_bins and n_samples
@@ -75,7 +75,7 @@ def test_stratified_sampling_fit_and_sample_records_equivalence_idempotent_check
     df_pool["col2"] = df_pool[col_name] * 2
     df_pool["col3"] = df_pool[col_name] * 3
 
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSampler()
     stratified_sampling_obj.add_column(col_name)
     stratified_sampling_obj.add_column("col2")
     stratified_sampling_obj.add_column("col3")
@@ -92,7 +92,7 @@ def test_stratified_sampling_fit_and_sample_records_equivalence_idempotent_check
     )
     sample1 = stratified_sampling_obj.data_sample.df.index.values
 
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSampler()
     stratified_sampling_obj.add_column(col_name)
     stratified_sampling_obj.add_column("col2")
     stratified_sampling_obj.add_column("col3")
@@ -119,7 +119,7 @@ def test_stratified_sampling_fit_and_sample_records_equivalence_euclidean_idempo
     df_pool["col2"] = df_pool[col_name] * 2
     df_pool["col3"] = df_pool[col_name] * 3
 
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSampler()
     stratified_sampling_obj.add_column(col_name)
     stratified_sampling_obj.add_column("col2")
     stratified_sampling_obj.add_column("col3")
@@ -137,7 +137,7 @@ def test_stratified_sampling_fit_and_sample_records_equivalence_euclidean_idempo
     )
     sample1 = stratified_sampling_obj.data_sample.df.index.values
 
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSampler()
     stratified_sampling_obj.add_column(col_name)
     stratified_sampling_obj.add_column("col2")
     stratified_sampling_obj.add_column("col3")
@@ -164,7 +164,7 @@ def test_stratified_sampling_fit_and_sample_records_equivalence_euclidean_idempo
     df_pool["col2"] = df_pool[col_name] * 2
     df_pool["col3"] = df_pool[col_name] * 3
 
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSampler()
     stratified_sampling_obj.add_column(col_name)
     stratified_sampling_obj.add_column("col2")
     stratified_sampling_obj.add_column("col3")
@@ -181,7 +181,7 @@ def test_stratified_sampling_fit_and_sample_records_equivalence_euclidean_idempo
     )
     sample1 = stratified_sampling_obj.data_sample.df.index.values
 
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSampler()
     stratified_sampling_obj.add_column(col_name)
     stratified_sampling_obj.add_column("col2")
     stratified_sampling_obj.add_column("col3")
@@ -208,7 +208,7 @@ def test_plot_records_based_equiv_average(
     df_pool["col2"] = df_pool[col_name] * 2
     df_pool["col3"] = df_pool[col_name] * 3
 
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSampler()
     stratified_sampling_obj.add_column(col_name)
     stratified_sampling_obj.add_column("col2")
     stratified_sampling_obj.add_column("col3")
@@ -236,7 +236,7 @@ def test_plot_records_based_equiv_average_chisquare(
     df_pool["col2"] = df_pool[col_name] * 2
     df_pool["col3"] = df_pool[col_name] * 3
 
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSampler()
     stratified_sampling_obj.add_column(col_name)
     stratified_sampling_obj.add_column("col2")
     stratified_sampling_obj.add_column("col3")

@@ -64,22 +64,24 @@ def _get_num_cluster_max(
     n_set = 1000
     n_max_set = 250
 
-    k = (n_set - n_min) * (
-        np.log(
-            (
-                ((n_max_set - min_clusters) / (2 * max_clusters - min_clusters) + 0.5)
+    # The log argument turns non-positive when num_cluster_bound_upper < n_max_set,
+    # making k non-finite; suppress the expected invalid-log warning and fall back
+    # to a flat cap below.
+    with np.errstate(invalid="ignore", divide="ignore"):
+        k = (n_set - n_min) * (
+            np.log(
+                (
+                    ((n_max_set - min_clusters) / (2 * max_clusters - min_clusters) + 0.5)
+                    ** -1
+                    - 1
+                )
                 ** -1
-                - 1
             )
-            ** -1
-        )
-    ) ** -1
+        ) ** -1
 
     if not np.isfinite(k):
-        """
-        TODO: Figure out better way to handle this.
-        Currently occurs when num_cluster_bound_upper is less than n_max_set
-        """
+        # the sigmoid cannot reach n_max_set when the upper bound is below it;
+        # cap at the requested upper bound (or the data size, whichever is smaller)
         return min(data_size, num_cluster_bound_upper)
 
     num_cluster_max = (2 * max_clusters - min_clusters) * (

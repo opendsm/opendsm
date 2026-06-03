@@ -31,7 +31,7 @@ pd.options.mode.chained_assignment = None  # suppress warnings
 logger = logging.getLogger(__name__)
 
 
-class StratifiedSampling(object):
+class StratifiedSampler:
     """
     Perform stratified sampling on a treatment group and comparison pool.  
     
@@ -44,18 +44,18 @@ class StratifiedSampling(object):
 
     Stratification columns must be configured as follows:
 
-        m = StratifiedSampling()
+        m = StratifiedSampler()
         m.add_column('annual_usage', min_value=0, max_value=20000)
         m.add_column('summer_usage', min_value=0, max_value=1000)
 
     In this case, `annual_usage` and `summer_usage` are feature columns that 
     are present in `df_treatment` and `df_pool`.
-    See `StratifiedSampling.add_column()` for more information on configuring columns.
+    See `StratifiedSampler.add_column()` for more information on configuring columns.
     Once columns are added, execute the model as follows:
 
         m.fit_and_sample(df_treatment, df_pool)
 
-    See `StratifiedSampling.fit_and_sample()` for additional options, notably several
+    See `StratifiedSampler.fit_and_sample()` for additional options, notably several
     parameters which determine the number of meters in the comparison group.
 
     After fitting the model, you can create a StratifiedSamplingDiagnostics object 

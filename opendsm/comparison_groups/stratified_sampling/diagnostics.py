@@ -12,22 +12,16 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-import matplotlib.pyplot as plt
+from itertools import combinations
+
+from matplotlib.figure import Figure
+from matplotlib.patches import Rectangle
 import numpy as np
 import pandas as pd
-from itertools import combinations
+
 from scipy.stats import ttest_ind, ks_2samp
 from scipy.spatial.distance import pdist
 from scipy.stats import chisquare
-import warnings
-
-# Flag to check if plotnine is available
-plotnine_available = True
-try:
-    import plotnine
-    from plotnine import *
-except ModuleNotFoundError:
-    plotnine_available = False
 
 
 def t_and_ks_test(x, y, thresh=0.05):
@@ -68,58 +62,43 @@ class DiagnosticPlotter:
                         "quantile": quantile_range,
                         "value": x["value"].quantile(quantile_range),
                     }
-                )
+                ),
+                include_groups=False,
             )
             .reset_index()
         )
         
-        if plotnine_available:
-            plotnine.options.figure_size = (6, 3 * df_quantile.variable.nunique())
+        variables = list(df_quantile["variable"].unique())
+        fig = Figure(figsize=(6, 3 * len(variables)))
+        axes = fig.subplots(len(variables), 1, squeeze=False)
 
-            base_plot = (
-                ggplot(df_quantile, aes(x="quantile", y="value", color="population"))
-                + geom_point()
-                + facet_wrap("~variable", scales="free_y", ncol=1)
-                + theme_bw()
-            )
+        for ax, variable in zip(axes[:, 0], variables):
+            var_df = df_quantile[df_quantile["variable"] == variable]
+            for population, pop_df in var_df.groupby("population"):
+                ax.scatter(pop_df["quantile"], pop_df["value"], s=8, label=str(population))
 
-            df_range = (
-                df_quantile.groupby("variable")
-                .apply(lambda df: pd.Series({"min": df.value.min(), "max": df.value.max()}))
-                .reset_index()
-            )
+            ax.set_title(str(variable))
+            ax.set_xlabel("quantile")
+            ax.set_ylabel("value")
+            ax.legend()
 
-            df_equiv = df_equiv.merge(df_range)
-            df_equiv["x"] = 0
-            df_equiv["y"] = (df_equiv["max"] - df_equiv["min"]) * 0.95 + df_equiv["min"]
-            df_equiv["y2"] = (df_equiv["max"] - df_equiv["min"]) * 0.8 + df_equiv["min"]
+            equiv_row = df_equiv[df_equiv["variable"] == variable]
+            if not equiv_row.empty:
+                row = equiv_row.iloc[0]
+                if row["t_ok"]:
+                    facecolor = "lightgreen"
+                else:
+                    facecolor = "orange"
 
-            p = (
-                base_plot
-                + geom_label(
-                    aes(label="t_p", fill="t_ok", x="x", y="y"),
-                    data=df_equiv,
-                    ha="left",
-                    va="top",
-                    color="black",
-                    size=10,
+                ax.text(
+                    0.01, 0.98, f"{row['t_p']}\n{row['ks_p']}",
+                    transform=ax.transAxes, va="top", ha="left",
+                    bbox={"facecolor": facecolor, "alpha": 0.5},
                 )
-                + geom_label(
-                    aes(label="ks_p", fill="ks_ok", x="x", y="y2"),
-                    data=df_equiv,
-                    ha="left",
-                    va="top",
-                    color="black",
-                    size=10,
-                )
-                + scale_fill_manual({True: "lightgreen", False: "orange"}, guide=None)
-                + scale_color_discrete()
-            )
 
-            return p
-        else:
-            warnings.warn("Plotnine is not installed. Diagnostic functionality will not be available. Use 'pip install plotnine' to address this.")
-            return None
+        fig.tight_layout()
+
+        return fig
 
     def scatter(self, df, cols=None):
         if cols is None:
@@ -130,45 +109,42 @@ class DiagnosticPlotter:
         return [p for p in plots]
 
     def _scatter(self, df, col_x, col_y):
-        def sample_if_too_big(df):
-            if len(df) > 2000:
-                df = df.sample(2000)
-            return df
+        def sample_if_too_big(group):
+            if len(group) > 2000:
+                group = group.sample(2000)
+            return group
 
-        df = (
-            df.groupby("population", group_keys=False)
-            .apply(sample_if_too_big)
-            .reset_index()
-        )
+        sampled = [sample_if_too_big(group) for _, group in df.groupby("population")]
+        df = pd.concat(sampled, ignore_index=True)
 
-        if plotnine_available:
-            plotnine.options.figure_size = (12, 5)
-            base_plot = (
-                ggplot(df, aes(x=col_x, y=col_y, color="population"))
-                + geom_point()
-                + facet_wrap("~population", nrow=1)
-                + theme_bw()
-            )
-            outlier_bins = self.data_treatment.outlier_bins
-            outlier_bins = outlier_bins[outlier_bins["outlier"]]["bin"].values
-            df_rects = self.binning.edges_xy(col_x, col_y)
-            df_rects = df_rects[~df_rects["bin"].isin(outlier_bins)]
+        outlier_bins = self.data_treatment.outlier_bins
+        outlier_bins = outlier_bins[outlier_bins["outlier"]]["bin"].values
+        df_rects = self.binning.edges_xy(col_x, col_y)
+        df_rects = df_rects[~df_rects["bin"].isin(outlier_bins)]
 
-            # due to plotnine bug
-            df_rects[col_x] = np.nan
-            df_rects[col_y] = np.nan
-            p = base_plot + geom_rect(
-                aes(xmin="x_min", xmax="x_max", ymin="y_min", ymax="y_max"),
-                data=df_rects,
-                color="black",
-                fill=None,
-                size=0.2,
-            )
+        populations = list(df["population"].unique())
+        fig = Figure(figsize=(12, 5))
+        axes = fig.subplots(1, len(populations), squeeze=False)
 
-            return p
-        else:
-            warnings.warn("Plotnine is not installed. Diagnostic functionality will not be available. Use 'pip install plotnine' to address this.")
-            return None
+        for ax, population in zip(axes[0], populations):
+            pop_df = df[df["population"] == population]
+            ax.scatter(pop_df[col_x], pop_df[col_y], s=10)
+            ax.set_title(str(population))
+            ax.set_xlabel(col_x)
+            ax.set_ylabel(col_y)
+            for _, rect in df_rects.iterrows():
+                ax.add_patch(
+                    Rectangle(
+                        (rect["x_min"], rect["y_min"]),
+                        rect["x_max"] - rect["x_min"],
+                        rect["y_max"] - rect["y_min"],
+                        fill=False, edgecolor="black", linewidth=0.2,
+                    )
+                )
+
+        fig.tight_layout()
+
+        return fig
 
     def histogram(self, df, cols=None):
         if cols is None:
@@ -177,40 +153,33 @@ class DiagnosticPlotter:
         return [self._histogram(df, c) for c in cols]
 
     def _histogram(self, df, col):
-        if plotnine_available:
-            plotnine.options.figure_size = (12, 5)
-            p = (
-                ggplot(df, aes(x=col, fill="population"))
-                + geom_histogram(bins=30)
-                + facet_wrap("~population", nrow=1, scales="free_y")
-                + theme_bw()
-            )
+        outlier_bins = self.data_treatment.outlier_bins
+        outlier_bins = outlier_bins[outlier_bins["outlier"]]["bin"].values
+        df_rects = self.binning.edges_xy(col, col)
+        df_rects = df_rects[~df_rects["bin"].isin(outlier_bins)]
 
-            outlier_bins = self.data_treatment.outlier_bins
-            outlier_bins = outlier_bins[outlier_bins["outlier"]]["bin"].values
-            df_rects = self.binning.edges_xy(col, col)
-            df_rects = df_rects[~df_rects["bin"].isin(outlier_bins)]
+        populations = list(df["population"].unique())
+        fig = Figure(figsize=(12, 5))
+        axes = fig.subplots(1, len(populations), squeeze=False)
 
-            # due to plotnine bug
-            df_rects[col] = np.nan
-            p = p + geom_rect(
-                aes(xmin="x_min", xmax="x_max", ymin=-np.inf, ymax=np.inf),
-                data=df_rects,
-                color="black",
-                fill=None,
-                size=0.2,
-            )
+        for ax, population in zip(axes[0], populations):
+            pop_df = df[df["population"] == population]
+            ax.hist(pop_df[col].dropna(), bins=30)
+            ax.set_title(str(population))
+            ax.set_xlabel(col)
+            for _, rect in df_rects.iterrows():
+                ax.axvline(rect["x_min"], color="black", linewidth=0.2)
+                ax.axvline(rect["x_max"], color="black", linewidth=0.2)
 
-            return p
-        else:
-            warnings.warn("Plotnine is not installed. Diagnostic functionality will not be available. Use 'pip install plotnine' to address this.")
-            return None
+        fig.tight_layout()
+
+        return fig
 
 
 class StratifiedSamplingDiagnostics(DiagnosticPlotter):
     """
     Construct plots and tables summarizing results of stratified sampling.
-    Operates on a StratifiedSamplingModel.  Plots will show treatment,
+    Operates on a StratifiedSampler.  Plots will show treatment,
     pool, and comparison group meters on the same axes to allow for easy comparisons.
     If fitting failed, plots will be available with treatment and pool meters only.
 
@@ -235,7 +204,7 @@ class StratifiedSamplingDiagnostics(DiagnosticPlotter):
     ==========
 
     model:
-        A StratifiedSamplingModel, after fit() or fit_and_sample() have been run.
+        A StratifiedSampler, after fit() or fit_and_sample() have been run.
 
     """
 
