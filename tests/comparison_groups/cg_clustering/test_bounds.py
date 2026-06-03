@@ -43,3 +43,12 @@ def test_num_cluster_max_at_least_two():
     upper = _get_num_cluster_max(data_size=100, min_cluster_size=15, num_cluster_bound_upper=1500)
 
     assert upper >= 2
+
+
+def test_num_cluster_max_below_setpoint_falls_back_without_warning():
+    """When the upper bound is below the sigmoid setpoint (250) the calibration
+    is impossible; the function must fall back to min(data_size, upper) without
+    emitting a numpy warning (fatal under the strict warning filter)."""
+    upper = _get_num_cluster_max(data_size=500, min_cluster_size=15, num_cluster_bound_upper=10)
+
+    assert upper == 10

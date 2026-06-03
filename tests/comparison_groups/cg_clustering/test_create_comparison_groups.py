@@ -19,11 +19,6 @@ from opendsm.comparison_groups.cg_clustering.create_comparison_groups import CG_
 from opendsm.comparison_groups.cg_clustering.settings import CG_Clustering_Settings
 
 
-# FPCA (the default feature transform) builds a Fourier basis via skfda, which
-# emits a third-party DeprecationWarning the strict filter would otherwise fail on.
-pytestmark = pytest.mark.filterwarnings("ignore:The Fourier class is deprecated:DeprecationWarning")
-
-
 def test_get_labels_assigns_every_pool_meter(cg_clustering_data):
     _, comparison_pool_data = cg_clustering_data
     clustering = CG_Clustering(CG_Clustering_Settings())
