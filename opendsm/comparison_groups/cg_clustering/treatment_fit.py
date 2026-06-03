@@ -127,6 +127,34 @@ class ClusterTreatmentMatchError(Exception):
     pass
 
 
+def _initial_cluster_weights(t_ls: np.ndarray, cp_ls: np.ndarray) -> np.ndarray:
+    """Initial per-cluster weights for the optimizer (one row per treatment).
+
+    Inverse distance raised to a high power so the nearest cluster dominates,
+    normalized to sum to 1. A treatment that exactly matches a cluster
+    (distance 0) receives full weight on that cluster rather than a 0/0 result.
+    float32 is sufficient since these only seed the optimizer.
+    """
+    distances = scipy.spatial.distance.cdist(t_ls, cp_ls, metric="euclidean").astype(np.float32)  # type: ignore
+    min_dists = np.min(distances, axis=1, keepdims=True)
+
+    # exact-match columns (the only place a distance can be 0, since 0 is then the row min)
+    exact = distances == 0
+
+    # inverse-distance weight in (0, 1]; nearest cluster -> 1. Divide every entry
+    # (exact-match entries become 0/0 -> overwritten below).
+    with np.errstate(divide="ignore", invalid="ignore"):
+        np.divide(min_dists, distances, out=distances)
+
+    distances[exact] = 1.0
+    # larger exponent centralizes weight on the nearest cluster, smaller spreads it
+    np.power(distances, 20, out=distances)
+    row_sums = np.sum(distances, axis=1, keepdims=True)
+    np.divide(distances, row_sums, out=distances)
+
+    return distances
+
+
 def _match_treatment_to_cluster(
     df_ls_t: pd.DataFrame,
     df_ls_cluster: pd.Series,
@@ -160,21 +188,7 @@ def _match_treatment_to_cluster(
     # filter to valid rows
     t_ls = t_ls[idx_valid, :]
 
-    # Get percent from each cluster — use float32 to halve memory,
-    # following the IMM pattern (these are initial weights for the
-    # optimizer, so float32 precision is more than sufficient).
-    distances = scipy.spatial.distance.cdist(t_ls, cp_ls, metric="euclidean").astype(np.float32)  # type: ignore
-
-    # Compute normalized inverse-distance weights in-place to avoid
-    # intermediate array copies.
-    min_dists = np.min(distances, axis=1, keepdims=True)
-    # change this number (20) to alter weights, larger centralizes the weight, smaller spreads them out
-    np.divide(min_dists, distances, out=distances, where=distances != 0)
-    distances[distances == 0] = 1.0  # exact match gets full weight
-    np.power(distances, 20, out=distances)
-    row_sums = np.sum(distances, axis=1, keepdims=True)
-    np.divide(distances, row_sums, out=distances)
-    distances_norm = distances
+    distances_norm = _initial_cluster_weights(t_ls, cp_ls)
 
     n_valid = t_ls.shape[0]
     n_clusters = cp_ls.shape[0]

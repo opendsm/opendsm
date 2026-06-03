@@ -18,6 +18,32 @@ import pytest
 
 import opendsm.comparison_groups as cg
 from opendsm.comparison_groups.cg_clustering import treatment_fit
+from opendsm.comparison_groups.cg_clustering.treatment_fit import _initial_cluster_weights
+
+
+def test_initial_cluster_weights_exact_match_gets_full_weight():
+    """Regression: a treatment equal to a cluster centroid must put full weight
+    on that cluster. The previous in-place divide collapsed the row to uniform
+    weights instead."""
+    cp_ls = np.array([[0.0, 0.0, 0.0], [1.0, 2.0, 3.0], [9.0, 9.0, 9.0]])
+    t_ls = np.array([[1.0, 2.0, 3.0]])  # exactly equals cluster 1
+
+    weights = _initial_cluster_weights(t_ls, cp_ls)
+
+    assert weights.shape == (1, 3)
+    np.testing.assert_allclose(weights[0], [0.0, 1.0, 0.0], atol=1e-6)
+
+
+def test_initial_cluster_weights_peak_on_nearest_and_normalized():
+    """Non-exact treatment: weight peaks on the nearest cluster and sums to 1."""
+    cp_ls = np.array([[0.0, 0.0, 0.0], [1.0, 2.0, 3.0], [9.0, 9.0, 9.0]])
+    t_ls = np.array([[1.1, 2.0, 3.0]])  # closest to cluster 1
+
+    weights = _initial_cluster_weights(t_ls, cp_ls)
+
+    assert weights[0].argmax() == 1
+    np.testing.assert_allclose(weights[0].sum(), 1.0, atol=1e-6)
+    assert (weights[0] >= 0).all()
 
 
 
