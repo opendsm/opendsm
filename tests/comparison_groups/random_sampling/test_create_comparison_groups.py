@@ -63,6 +63,16 @@ def test_rejects_both_n_meters_total_and_per_treatment():
         Settings(n_meters_total=10, n_meters_per_treatment=4)
 
 
+def test_rejects_non_positive_n_meters_total():
+    with pytest.raises(ValueError):
+        Settings(n_meters_total=0, n_meters_per_treatment=None)
+
+
+def test_rejects_non_positive_n_meters_per_treatment():
+    with pytest.raises(ValueError):
+        Settings(n_meters_per_treatment=0)
+
+
 def test_oversampling_pool_raises(cg_loadshape_data):
     treatment_data, comparison_pool_data = cg_loadshape_data
     rs = Random_Sampling(Settings(n_meters_total=10_000, n_meters_per_treatment=None, seed=1))
