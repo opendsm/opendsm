@@ -16,6 +16,35 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from opendsm.comparison_groups.common import Data, Data_Settings
+from opendsm.comparison_groups.common import const as _const
+
+
+
+def _hour_loadshape_data(df_baseline, meter_ids):
+    settings = Data_Settings(
+        agg_type=_const.AggType.MEAN,
+        loadshape_type=_const.LoadshapeType.OBSERVED,
+        time_period=_const.TimePeriod.HOUR,
+    )
+    time_series = df_baseline.loc[meter_ids].reset_index()[["id", "datetime", "observed"]]
+    data = Data(time_series_df=time_series, settings=settings)
+
+    return data
+
+
+@pytest.fixture(scope="session")
+def cg_loadshape_data(_comstock_hourly_all):
+    """(treatment_data, comparison_pool_data) Data objects with 24-hour load
+    shapes built from real ComStock hourly observations. Disjoint meter sets."""
+    df_baseline, _ = _comstock_hourly_all
+    ids = sorted(df_baseline.index.get_level_values("id").unique())
+
+    treatment_data = _hour_loadshape_data(df_baseline, ids[:8])
+    comparison_pool_data = _hour_loadshape_data(df_baseline, ids[8:40])
+
+    return treatment_data, comparison_pool_data
+
 
 @pytest.fixture
 def col_name():

@@ -570,10 +570,16 @@ class Data:
                 ~loadshape_df.index.isin(self._excluded_ids["id"])
             ]
 
-        # If the dataframes are empty return None, not an empty dataframe
-        if features_df is not None:
-            self._features = features_df if not features_df.empty else None
-        self._loadshape = loadshape_df if not loadshape_df.empty else None
+        # Empty or absent dataframes become None, not an empty dataframe
+        if features_df is not None and not features_df.empty:
+            self._features = features_df
+        else:
+            self._features = None
+
+        if loadshape_df is not None and not loadshape_df.empty:
+            self._loadshape = loadshape_df
+        else:
+            self._loadshape = None
 
         # filter pool to max size
         self._trim_data()
