@@ -35,6 +35,24 @@ def test_equivalence(diagnostics_obj):
     assert equivalence["ks_ok"].all() == True and equivalence["t_ok"].all() == True
 
 
+def test_count_bins_returns_populated_frame(diagnostics_obj):
+    counts = diagnostics_obj.count_bins()
+
+    assert not counts.empty
+
+
+def test_equivalence_passed_returns_bool(diagnostics_obj):
+    passed = diagnostics_obj.equivalence_passed()
+
+    assert isinstance(passed, (bool, np.bool_))
+
+
+def test_histogram_builds_a_plot_per_column(diagnostics_obj):
+    plots = diagnostics_obj.histogram()
+
+    assert len(plots) >= 1
+
+
 def test_n_sampled_to_n_treatment_ratio_is_not_floored(diagnostics_obj):
     """Regression: the ratio must stay a float. Flooring it to int broke
     comparisons against fractional thresholds (e.g. the DSS 0.25 default)."""

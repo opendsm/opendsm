@@ -128,6 +128,60 @@ def test_model_correction_uncertainty_finite_when_model_equals_observed():
     assert np.isfinite(mTrc_unc)
 
 
+@pytest.mark.parametrize(
+    "algorithm",
+    [CorrectionAlgorithm.ODID, CorrectionAlgorithm.PCTDID, CorrectionAlgorithm.ABSPCTDID],
+)
+def test_uncertainty_finite_for_each_algorithm(algorithm):
+    """Each scale_var branch (ODID constant, PCT/ABSPCT ratio) stays finite."""
+    cg_label = np.array([0, 0, 0, 1, 1, 1])
+    mCGr_unc = np.full(OCGR.shape, 2.0)
+
+    _, mTrc_unc, _ = model_correction(
+        OTR, MTR, OCGR, MCGR,
+        None, 5.0, None, mCGr_unc, None,
+        cg_label, T_WEIGHT, _settings(algorithm=algorithm),
+    )
+
+    assert np.isfinite(mTrc_unc)
+
+
+def test_rejects_non_finite_mtr():
+    cg_label = np.array([0, 0, 0, 1, 1, 1])
+    with pytest.raises(ValueError):
+        model_correction(
+            OTR, np.nan, OCGR, MCGR, None, None, None, None, None,
+            cg_label, T_WEIGHT, _settings(),
+        )
+
+
+def test_rejects_comparison_group_shorter_than_five():
+    short = np.array([1.0, 2.0, 3.0])
+    with pytest.raises(ValueError):
+        model_correction(
+            OTR, MTR, short, short, None, None, None, None, None,
+            np.array([0, 0, 0]), np.array([1.0]), _settings(),
+        )
+
+
+def test_rejects_mismatched_cg_lengths():
+    cg_label = np.array([0, 0, 0, 1, 1, 1])
+    with pytest.raises(ValueError):
+        model_correction(
+            OTR, MTR, OCGR, MCGR[:5], None, None, None, None, None,
+            cg_label, T_WEIGHT, _settings(),
+        )
+
+
+def test_rejects_t_weight_length_mismatch():
+    cg_label = np.array([0, 0, 0, 1, 1, 1])  # two clusters
+    with pytest.raises(ValueError):
+        model_correction(
+            OTR, MTR, OCGR, MCGR, None, None, None, None, None,
+            cg_label, np.array([1.0]), _settings(),  # only one weight
+        )
+
+
 def test_uncertainty_with_observed_uncertainty_and_correlation():
     """Exercises the covariance branch (oCGr_unc != 0) of the uncertainty math."""
     cg_label = np.array([0, 0, 0, 1, 1, 1])
