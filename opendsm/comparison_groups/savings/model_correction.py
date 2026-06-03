@@ -58,39 +58,30 @@ def _unit_correction_unc(
     mCGr_var = mCGr_unc**2
 
     if method == "ordinary_difference_in_differences":
-        # scale = 1
+        # scale = 1, so it carries no variance
         scale_var = 0
 
-    elif method == "percent_difference_in_differences":
-        # scale = mTr/mCGr
-        # neglecting covariance between MTr and MCGr
-        cov_term = 0
-        # cov = mTr_unc*mCGr_unc*corr_mT_mCG
-        # cov_term = 2*cov/(mTr*mCGr)
-        
-        scale_var = scale**2*(mTr_var/mTr**2 + mCGr_var/mCGr**2 - cov_term)
+    elif method in ("percent_difference_in_differences", "absolute_percent_difference_in_differences"):
+        # scale = mTr/mCGr (abs for the latter; |.| has unit-magnitude derivative).
+        # Absolute form of Var(mTr/mCGr), neglecting covariance between mTr and mCGr;
+        # avoids dividing by mTr (singular when mTr == 0).
+        scale_var = mTr_var/mCGr**2 + (mTr**2)*mCGr_var/mCGr**4
 
-    elif method == "absolute_percent_difference_in_differences":
-        # scale = np.abs(mTr/mCGr)
-        # can take uncertainty of interior, then (partial of abs(x))^2 = 1
-        # neglecting covariance between MTr and MCGr
-        cov_term = 0
-        # cov = mTr_unc*mCGr_unc*corr_mT_mCG
-        # cov_term = 2*cov/(mTr*mCGr)
-
-        scale_var = scale**2*(mTr_var/mTr**2 + mCGr_var/mCGr**2 - cov_term)
+    else:
+        raise ValueError(f"unknown correction method: {method}")
 
     if np.all(oCGr_unc == 0):
-        CG_diff_var = mCGr_unc**2
+        CG_diff_var = mCGr_var
     else: # if observed has uncertainty, it and it's covariance with model should be considered
         cov = mCGr_unc*oCGr_unc*CGr_corr
         CG_diff_var = mCGr_var + oCGr_unc**2 - 2*cov
 
-    # neglect covariance between scale and CG_diff
-    correction_var = correction**2*(CG_diff_var/CG_diff**2 + scale_var/scale**2)
+    # correction = scale * CG_diff. Propagate in absolute form (neglecting covariance
+    # between scale and CG_diff) so CG_diff == 0 or scale == 0 do not divide by zero.
+    correction_var = scale**2*CG_diff_var + CG_diff**2*scale_var
     correction_unc = np.sqrt(correction_var)
 
-    return correction_unc  
+    return correction_unc
 
 
 def _unit_correction(
@@ -211,6 +202,19 @@ def _effective_sample_size(weight):
     return n
 
 
+def _model_magnitude_weights(mCGr):
+    # Normalized |model| weights; None when the magnitudes sum to zero (uniform fallback).
+    abs_mCGr = np.abs(mCGr)
+    total = np.sum(abs_mCGr)
+
+    if total == 0:
+        return None
+
+    weights = abs_mCGr / total
+
+    return weights
+
+
 def _cluster_correction(
     oTr: float, 
     mTr: float,
@@ -247,7 +251,7 @@ def _cluster_correction(
     if settings.weight_cluster_aggregation is None:
         cluster_weight = None
     elif settings.weight_cluster_aggregation == _settings.WeightClusterAggChoice.MODEL:
-        cluster_weight = np.abs(mCGr) / np.sum(np.abs(mCGr))
+        cluster_weight = _model_magnitude_weights(mCGr)
 
     # remove outliers
     if settings.outlier_rejection.enabled:
@@ -269,7 +273,7 @@ def _cluster_correction(
 
         # renormalize weights
         if cluster_weight is not None:
-            cluster_weight = np.abs(mCGr) / np.sum(np.abs(mCGr))
+            cluster_weight = _model_magnitude_weights(mCGr)
 
     # apply caps
     # decision: should capped values have their uncertainty considered or excluded?
@@ -334,11 +338,16 @@ def model_correction(
 ):
     # if no did, return
     if settings.algorithm is None:
-        # scale = 0
-        # scale_unc = 0
+        # no difference-in-differences correction applied
         mTrc = float(mTr)
-        mTrc_unc = float(mTr_unc) if mTr_unc is not None else np.nan
-        mask = np.full_like(mTr, False, dtype=bool)
+
+        if mTr_unc is not None:
+            mTrc_unc = float(mTr_unc)
+        else:
+            mTrc_unc = np.nan
+
+        # no comparison-group meters are used; mask spans the CG meters
+        mask = np.zeros(np.shape(oCGr), dtype=bool)
 
         return mTrc, mTrc_unc, mask
     
@@ -389,25 +398,27 @@ def model_correction(
     unique_labels = unique_labels[np.isfinite(unique_labels)]
     unique_labels = unique_labels[unique_labels >= 0] # exclude outlier label(s)
 
-    cluster_correct = np.empty(unique_labels.shape)
-    cluster_correct_unc = np.empty(unique_labels.shape)
-    for label in unique_labels:
+    # T_weight is positionally aligned with the sorted non-negative labels,
+    # so index it by enumeration position, not by label value (which may be
+    # non-contiguous or float).
+    T_weight = np.asarray(T_weight).flatten()
+
+    cluster_correct = np.full(unique_labels.shape, np.nan)
+    cluster_correct_unc = np.full(unique_labels.shape, np.nan)
+    for i, label in enumerate(unique_labels):
         # get label mask
         label_mask = CG_label == label
         mask = global_mask & label_mask
 
-        if T_weight[label] == 0:
-            _correct = np.nan
-            _correct_unc = np.nan
-
-            # update global mask
+        if T_weight[i] == 0:
+            # zero-weight cluster: drop from the global mask, leave correction nan
             global_mask[label_mask] = False
-        
+
         else:
             _correct, _correct_unc, _mask = _cluster_correction(
-                oTr, 
+                oTr,
                 mTr,
-                _apply_mask(mask, oCGr), 
+                _apply_mask(mask, oCGr),
                 _apply_mask(mask, mCGr),
                 oTr_unc,
                 mTr_unc,
@@ -424,8 +435,8 @@ def model_correction(
             # update global mask
             global_mask[mask] = _update_mask(global_mask[mask], mask=_mask)
 
-        cluster_correct[label] = _correct
-        cluster_correct_unc[label] = _correct_unc
+            cluster_correct[i] = _correct
+            cluster_correct_unc[i] = _correct_unc
 
     # combine clusters with weights to get corrected model
     idx_valid = (T_weight > 0).flatten()

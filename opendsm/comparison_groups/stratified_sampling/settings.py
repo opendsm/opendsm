@@ -49,11 +49,21 @@ class StratificationColumnSettings(BaseSettings):
 
     """whether to use fixed width bins or fixed proportion bins"""
     is_fixed_width: bool = pydantic.Field(
-        default=False, 
+        default=False,
     )
 
     """column requires equivalence when auto-binning"""
     auto_bin_equivalence: Literal[False] = False
+
+    @pydantic.model_validator(mode="after")
+    def _check_value_bounds(self):
+        if self.min_value_allowed > self.max_value_allowed:
+            raise ValueError(
+                f"min_value_allowed ({self.min_value_allowed}) must be <= "
+                f"max_value_allowed ({self.max_value_allowed})"
+            )
+
+        return self
 
 
 class DSS_StratificationColumnSettings(StratificationColumnSettings):
@@ -68,8 +78,8 @@ class Settings(BaseSettings):
     """
     min_n_sampled_to_n_treatment_ratio: int
         TODO: FILL THIS OUT
-    seed: int
-        Seed for random number generator
+    seed: int | None
+        Seed for the random number generator; None draws fresh entropy each run
     """
 
     min_n_treatment_per_bin: int = pydantic.Field(
@@ -78,9 +88,9 @@ class Settings(BaseSettings):
         validate_default=True,
     )
 
-    seed: int = pydantic.Field(
-        default=42, 
-        ge=0, 
+    seed: Optional[int] = pydantic.Field(
+        default=None,
+        ge=0,
         validate_default=True,
     )
 

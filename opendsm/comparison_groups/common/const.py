@@ -93,7 +93,7 @@ weekday_num = {
 }
 
 time_period_row_counts = {
-    "hourly": 24,
+    "hour": 24,
     "month": 12,
     "hourly_month": 24 * 12,
     "day_of_week": 7,
@@ -110,7 +110,7 @@ time_period_row_counts = {
 
 min_granularity_per_time_period = {
     # All the values are in minutes
-    "hourly": 60,
+    "hour": 60,
     "month": 60 * 24 * 28, # this is not used since we can have a different day per month
     "hourly_month": 60,
     "day_of_week": 60 * 24 * 7,

@@ -132,11 +132,17 @@ def quantile_means_population(X, Y, n_quantiles):
 
     return means_x, means_y, quantiles_x, quantiles_y
 
-def chisquare_dist(X,Y):
-    distance = 0
-    for i in range(len(X)):
-        distance = distance + ((X[i] - Y[i])**2 / (X[i] + Y[i]))
-    return distance 
+def chisquare_dist(X, Y):
+    X = np.asarray(X, dtype=float)
+    Y = np.asarray(Y, dtype=float)
+
+    denominator = X + Y
+    numerator = (X - Y) ** 2
+    # bins where both quantile means are zero contribute nothing (avoid 0/0 -> NaN)
+    terms = np.divide(numerator, denominator, out=np.zeros_like(numerator), where=denominator != 0)
+    distance = float(np.sum(terms))
+
+    return distance
 
 def get_distance_func(how="euclidean"):
     if how == "euclidean":

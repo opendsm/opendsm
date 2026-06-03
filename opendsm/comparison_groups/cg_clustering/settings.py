@@ -94,10 +94,6 @@ class _CG_Clustering_Settings(_settings.ClusteringSettings):
     )
 
 
-class ClusteringSettings(BaseSettings):
-    pass
-
-
 def CG_Clustering_Settings(**kwargs) -> _CG_Clustering_Settings:
     default_dict = {
         "feature_transform": {

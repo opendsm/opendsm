@@ -19,6 +19,42 @@ import pandas as pd
 
 from opendsm.comparison_groups.stratified_sampling.model import StratifiedSampling, BinnedData
 from opendsm.comparison_groups.stratified_sampling.bins import ModelSamplingException
+from opendsm.comparison_groups.stratified_sampling.settings import StratificationColumnSettings
+
+
+def test_stratification_column_rejects_inverted_bounds():
+    """min_value_allowed must not exceed max_value_allowed."""
+    with pytest.raises(ValueError):
+        StratificationColumnSettings(
+            column_name="usage", min_value_allowed=6000, max_value_allowed=3000
+        )
+
+
+def test_perturb_does_not_mutate_global_rng():
+    """Regression: _perturb must seed a local RNG, not the global numpy RNG.
+    Seeding the global state leaked the seed to every other consumer in the process."""
+    model = StratifiedSampling()
+    model.add_column("col1")
+    df = pd.DataFrame({"col1": [0.0, 0.0, 0.0, 1.0, 1.0]})
+
+    np.random.seed(12345)
+    state_before = np.random.get_state()[1]
+    model._perturb(df, random_seed=1)
+    state_after = np.random.get_state()[1]
+
+    assert np.array_equal(state_before, state_after)
+
+
+def test_perturb_with_seed_is_reproducible():
+    """A provided seed makes perturbation reproducible across calls."""
+    model = StratifiedSampling()
+    model.add_column("col1")
+    df = pd.DataFrame({"col1": [0.0, 0.0, 0.0, 1.0, 1.0]})
+
+    out1 = model._perturb(df, random_seed=7)
+    out2 = model._perturb(df, random_seed=7)
+
+    pd.testing.assert_frame_equal(out1, out2)
 
 
 def test_stratified_sampling_fit_and_sample():

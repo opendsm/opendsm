@@ -21,9 +21,21 @@ from opendsm.comparison_groups.stratified_sampling.equivalence import *
 
 
 
+def test_chisquare_dist_zero_denominator_is_finite():
+    """A bin where both quantile means are zero must contribute 0, not NaN
+    (the term 0/0 previously propagated NaN into bin selection)."""
+    X = np.array([0.0, 4.0, 0.0])
+    Y = np.array([0.0, 0.0, 0.0])
+
+    distance = chisquare_dist(X, Y)
+
+    assert np.isfinite(distance)
+    assert distance == pytest.approx(4.0)
+
+
 @pytest.fixture
 def equiv_X():
-    # 3 columns, 6 rows, column first 
+    # 3 columns, 6 rows, column first
     return np.array(
             [[1,1,1,10,10,10],
             [1,1,1,10,10,10],
