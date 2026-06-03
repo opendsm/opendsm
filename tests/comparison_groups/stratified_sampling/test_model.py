@@ -17,7 +17,7 @@ import pytest
 import numpy as np
 import pandas as pd
 
-from opendsm.comparison_groups.stratified_sampling.model import StratifiedSampling, BinnedData
+from opendsm.comparison_groups.stratified_sampling.model import StratifiedSamplingModel, BinnedData
 from opendsm.comparison_groups.stratified_sampling.bins import ModelSamplingException
 from opendsm.comparison_groups.stratified_sampling.settings import StratificationColumnSettings
 
@@ -33,7 +33,7 @@ def test_stratification_column_rejects_inverted_bounds():
 def test_perturb_does_not_mutate_global_rng():
     """Regression: _perturb must seed a local RNG, not the global numpy RNG.
     Seeding the global state leaked the seed to every other consumer in the process."""
-    model = StratifiedSampling()
+    model = StratifiedSamplingModel()
     model.add_column("col1")
     df = pd.DataFrame({"col1": [0.0, 0.0, 0.0, 1.0, 1.0]})
 
@@ -47,7 +47,7 @@ def test_perturb_does_not_mutate_global_rng():
 
 def test_perturb_with_seed_is_reproducible():
     """A provided seed makes perturbation reproducible across calls."""
-    model = StratifiedSampling()
+    model = StratifiedSamplingModel()
     model.add_column("col1")
     df = pd.DataFrame({"col1": [0.0, 0.0, 0.0, 1.0, 1.0]})
 
@@ -58,7 +58,7 @@ def test_perturb_with_seed_is_reproducible():
 
 
 def test_stratified_sampling_fit_and_sample():
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSamplingModel()
     df_treatment = pd.DataFrame([{"id": f"id_{x}", "col1": x} for x in range(0, 10)])
     df_pool = pd.DataFrame([{"id": f"id_{x}", "col1": x / 2.0} for x in range(0, 1000)])
     stratified_sampling_obj.add_column("col1")
@@ -129,7 +129,7 @@ def test_stratified_sampling_fit_and_sample_random_seed_check():
     random_seed = 1
     stratification_params = ["baseline_annual_kwh", "baseline_bd_pct_heating_load"]
 
-    model = StratifiedSampling(
+    model = StratifiedSamplingModel(
         treatment_label="treatment", pool_label="comparison", output_name="control"
     )
     [model.add_column(col) for col in stratification_params]
@@ -140,7 +140,7 @@ def test_stratified_sampling_fit_and_sample_random_seed_check():
     )
 
     for run_num in range(0, 10):
-        model_temp = StratifiedSampling(
+        model_temp = StratifiedSamplingModel(
             treatment_label="treatment", pool_label="comparison", output_name="control"
         )
         [model_temp.add_column(col) for col in stratification_params]
@@ -163,7 +163,7 @@ def test_stratified_sampling_fit_and_sample_random_seed_check():
 
 @pytest.fixture
 def stratified_sampling_obj():
-    return StratifiedSampling()
+    return StratifiedSamplingModel()
 
 
 def test_stratified_sampling_fit_and_sample_min_allowed_max_allowed(
@@ -197,7 +197,7 @@ def test_stratified_sampling_fit_and_sample_min_allowed_max_allowed(
 def test_stratified_sampling_fit_and_sample_n_samples_approx_limit(
     df_treatment, df_pool, col_name
 ):
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSamplingModel()
     stratified_sampling_obj.add_column(col_name)
 
     n_samples_approx = 40
@@ -213,7 +213,7 @@ def test_stratified_sampling_fit_and_sample_n_samples_approx_limit(
 def test_stratified_sampling_fit_and_sample_n_samples_approx_limit(
     df_treatment, df_pool, col_name
 ):
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSamplingModel()
     col_name = "col1"
     df_treatment = pd.DataFrame(
         [
@@ -248,7 +248,7 @@ def test_stratified_sampling_fit_and_sample_n_samples_approx_limit(
 def test_stratified_sampling_fit_and_sample_n_samples_approx_variations(
     df_treatment, df_pool, col_name
 ):
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSamplingModel()
     stratified_sampling_obj.add_column(col_name)
     ## attempting to estimate both n_bins and n_samples
     stratified_sampling_obj.fit_and_sample(df_treatment, df_pool, random_seed=1)
@@ -257,14 +257,14 @@ def test_stratified_sampling_fit_and_sample_n_samples_approx_variations(
     assert len(bins_df) == 3
 
     ## enforcing 1 bin
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSamplingModel()
     stratified_sampling_obj.add_column(col_name, n_bins=1)
     stratified_sampling_obj.fit_and_sample(df_treatment, df_pool, random_seed=1)
     output = stratified_sampling_obj.data_sample.df
     bins_df = stratified_sampling_obj.diagnostics().count_bins()
 
     ## enforcing 4 bins
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSamplingModel()
     stratified_sampling_obj.add_column(col_name, n_bins=4)
     stratified_sampling_obj.fit_and_sample(df_treatment, df_pool, random_seed=1)
     output = stratified_sampling_obj.data_sample.df
@@ -272,7 +272,7 @@ def test_stratified_sampling_fit_and_sample_n_samples_approx_variations(
     assert len(bins_df) == 4
 
     ## enforcing n_samples_approx=40
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSamplingModel()
     stratified_sampling_obj.add_column(col_name)
     stratified_sampling_obj.fit_and_sample(
         df_treatment,
@@ -292,7 +292,7 @@ def test_stratified_sampling_fit_and_sample_too_many_bins(df_treatment, df_pool,
     df_pool["col2"] = df_pool[col_name].astype(int)
     df_treatment["col3"] = df_treatment[col_name].astype(int) * 2
     df_pool["col3"] = df_pool[col_name].astype(int) / 2
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSamplingModel()
     stratified_sampling_obj.add_column(col_name)
     stratified_sampling_obj.add_column("col2")
     stratified_sampling_obj.add_column("col3")
@@ -308,7 +308,7 @@ def test_stratified_sampling_fit_and_sample_dont_require_equivalence(
     df_pool["col2"] = df_pool[col_name].astype(int)
     df_treatment["col3"] = df_treatment[col_name].astype(int) * 2
     df_pool["col3"] = df_pool[col_name].astype(int) / 2
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSamplingModel()
     stratified_sampling_obj.add_column(col_name)
     stratified_sampling_obj.add_column("col2")
     stratified_sampling_obj.add_column("col3", auto_bin_require_equivalence=False)
@@ -322,7 +322,7 @@ def test_stratified_sampling_fit_and_sample_dont_require_equivalence(
 def test_stratified_sampling_fit_and_sample_upper_limit_n_samples_approx(
     df_treatment, df_pool, col_name
 ):
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSamplingModel()
     stratified_sampling_obj.add_column(col_name)
     ## attempting to estimate both n_bins and n_samples
     with pytest.raises(ModelSamplingException):

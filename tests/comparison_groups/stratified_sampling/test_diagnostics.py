@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 
-from opendsm.comparison_groups.stratified_sampling.model import StratifiedSampling
+from opendsm.comparison_groups.stratified_sampling.model import StratifiedSamplingModel
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def diagnostics_obj_2d():
     df_pool = pd.DataFrame(
         {"id": [f"p{i}" for i in range(600)], "c1": rng.uniform(0, 100, 600), "c2": rng.uniform(0, 100, 600)}
     )
-    model = StratifiedSampling()
+    model = StratifiedSamplingModel()
     model.add_column("c1", n_bins=3)
     model.add_column("c2", n_bins=3)
     model.fit_and_sample(
@@ -45,7 +45,7 @@ def diagnostics_obj_2d():
 
 @pytest.fixture
 def diagnostics_obj(df_treatment, df_pool, col_name):
-    stratified_sampling_obj = StratifiedSampling()
+    stratified_sampling_obj = StratifiedSamplingModel()
     stratified_sampling_obj.add_column(col_name, n_bins=4)
     stratified_sampling_obj.fit_and_sample(
         df_treatment, df_pool, n_samples_approx=len(df_treatment), random_seed=1

@@ -20,7 +20,7 @@ import pandas as pd
 
 from opendsm.comparison_groups.common.base_comparison_group import Comparison_Group_Algorithm
 
-from opendsm.comparison_groups.stratified_sampling.model import StratifiedSampling
+from opendsm.comparison_groups.stratified_sampling.model import StratifiedSamplingModel
 from opendsm.comparison_groups.stratified_sampling.bins import ModelSamplingException
 from opendsm.comparison_groups.stratified_sampling.diagnostics import StratifiedSamplingDiagnostics
 from opendsm.comparison_groups.stratified_sampling.bin_selection import StratifiedSamplingBinSelector
@@ -36,7 +36,7 @@ class Stratified_Sampling(Comparison_Group_Algorithm):
         self.settings = settings
         self.df_raw = None
 
-        self.model = StratifiedSampling()
+        self.model = StratifiedSamplingModel()
         self.model_bin_selector = None
 
         for settings in self.settings.stratification_column:
