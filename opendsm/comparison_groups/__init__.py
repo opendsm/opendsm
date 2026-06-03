@@ -29,5 +29,4 @@ from opendsm.comparison_groups.random_sampling import (
 from opendsm.comparison_groups.common import (
     Data,
     Data_Settings,
-    load_tutorial_data,
 )

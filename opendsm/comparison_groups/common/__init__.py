@@ -20,5 +20,3 @@
 
 from opendsm.comparison_groups.common.data import Data
 from opendsm.comparison_groups.common.data_settings import Data_Settings
-
-from opendsm.comparison_groups.common.tutorial_data import load_tutorial_data
