@@ -1,18 +1,17 @@
 [build-system]
-requires = ["hatchling>=1.25"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
 name = "opendsm"
 version = "1.2.7"
-description = "Standard methods for predicting building energy usage"   # set directly
-# dynamic = ["version"]                                  # only version is dynamic
+description = "Standard methods for predicting building energy usage"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [{ name = "opendsm", email = "opendsm@lists.lfenergy.org" }]
 classifiers = [
-  "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -28,11 +27,11 @@ dependencies = [
   "numba",
   "numpy>=1.24.4",
   "pandas>=1.1.0,<3.0.0",
+  "platformdirs",
   "pyarrow>=15.0.0",
   "pydantic>=2.0",
   "pywavelets",
   "requests",
-  "scikit-learn>=1.3.0",
   "qpsolvers[highs]",
   "scikit-fda>0.7.1",
   "scikit-learn>=1.3.0",
@@ -51,21 +50,56 @@ dev = [
   "pytest-cov>=7.0.0",
   "pytest-profiling",
   "pytest-xdist",
-  "snapshottest==0.6.0",
+  "syrupy>=5,<6",
   "tox",
   "twine",
-  "typing",
 ]
 
 [tool.hatch.build.targets.wheel]
 # non-src layout: the importable package directory is opendsm/opendsm
 packages = ["opendsm"]
 
+[tool.hatch.build.targets.sdist]
+# tutorial/test datasets are downloaded on demand (load_test_data), not shipped
+exclude = ["/data"]
+
 [project.urls]
 Homepage = "https://lfenergy.org/projects/opendsm"
 Documentation = "https://opendsm.energy"
-Repository = "http://github.com/opendsm/opendsm"
-Issues = "http://github.com/opendsm/opendsm/issues"
+Repository = "https://github.com/opendsm/opendsm"
+Issues = "https://github.com/opendsm/opendsm/issues"
 
-[project.scripts]
-opendsm = "opendsm.cli:main"
+[tool.pytest.ini_options]
+# --cov / --cov-report are off by default to keep normal runs fast. The
+# sys.monitoring coverage backend (see [tool.coverage.run] core) keeps
+# breakpoints/pdb working under --cov on Python 3.12+, so enabling these no
+# longer blocks local debugging there. Run a debug+coverage session serially
+# (-n0); the debugger can't attach to xdist workers.
+addopts = [
+  "-n", "auto",            # parallel run (pytest-xdist)
+  "-vv",                   # verbose
+  # "--cov=./",
+  # "--cov-report", "term-missing",
+]
+markers = [
+  "slow: tests that take >1s on a typical workstation; skip in dev loops with `pytest -m \"not slow\"`",
+  "regression: snapshot regression tests pinning full prediction arrays",
+  "hourly_model: tests that fit HourlyModel (spectral clustering + elasticnet — slowest path)",
+]
+# `error` turns warnings into failures; the entries below suppress known-benign
+# native-extension warnings that would otherwise fail (or segfault) the run.
+filterwarnings = [
+  "error",
+  "default:Level value of 5 is too high",
+  "ignore:builtin type swigvarlink has no __module__ attribute",
+  "ignore:builtin type SwigPyObject has no __module__ attribute",
+  "default:`BaseEstimator._validate_data` is deprecated in 1.6",
+  # coverage on Python <3.12 can't use the sysmon core and warns; harmless fallback
+  "ignore:Can't use core=sysmon",
+]
+
+[tool.coverage.run]
+# sys.monitoring backend (Python 3.12+) leaves sys.settrace free, so coverage
+# and the debugger coexist; older versions warn and fall back to the C tracer.
+core = "sysmon"
+omit = [".tox/*"]

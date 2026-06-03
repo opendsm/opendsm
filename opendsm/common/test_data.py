@@ -15,21 +15,21 @@
 from __future__ import annotations
 
 from pathlib import Path
-from io import BytesIO
 
 import pandas as pd
-import pyarrow.parquet as pq
 
+import platformdirs
 import requests
 
 from opendsm import __file__ as opendsm_file_path
 from opendsm.common.const import TutorialDataChoice
 
-# Define the current directory
-current_dir = Path(opendsm_file_path).resolve().parent
-data_dir = current_dir.parent / "data"
+# data/ ships only with the source repo, not the installed wheel. _load_file uses
+# the in-repo copy when present (source checkouts, CI) and otherwise downloads the
+# file into a user cache directory.
+repo_data_dir = Path(opendsm_file_path).resolve().parent.parent / "data"
+cache_dir = Path(platformdirs.user_cache_dir("opendsm")) / "data"
 
-# Set download information
 repo_full_name = "opendsm/opendsm"
 branch = "master"
 path = "data"
@@ -85,14 +85,14 @@ def load_test_data(data_type: str):
 
 
 def _load_time_series_data(data_type):
-    if data_type in comparison_group_time_series:
-        df = pd.concat(
-            [_load_file("hourly_data_0.parquet"), _load_file("hourly_data_1.parquet")],
-            axis=0,
-        )
+    if data_type in treatment_time_series:
+        df = _load_file("hourly_data_0.parquet")
 
-    elif data_type in treatment_time_series:
-        df = _load_file("hourly_data_2.parquet")
+    elif data_type in comparison_group_time_series:
+        raise NotImplementedError(
+            "Comparison-group tutorial data (hourly_data_1.parquet, hourly_data_2.parquet) "
+            "is not yet available."
+        )
 
     # localize datetime and convert to CST
     df = df.reset_index()
@@ -154,53 +154,39 @@ def _load_other_data(data_type):
     return df
 
 
-def _load_file(file: Path | str):
-    if isinstance(file, str):
-        file = data_dir / file
+def _load_file(name: str):
+    source = _resolve_file(name)
 
-    file_type = None
-    if file.suffix == ".csv":
-        file_type = "csv"
-    elif file.suffix == ".parquet":
-        file_type = "parquet"
-    
-    url = f"https://raw.githubusercontent.com/{repo_full_name}/{branch}/{path}/{file.name}"
-
-    if file.exists():
-        data = file
-
+    if name.endswith(".csv"):
+        df = pd.read_csv(source)
+    elif name.endswith(".parquet"):
+        df = pd.read_parquet(source, engine="pyarrow")
     else:
-        response = requests.get(url)
-        response.raise_for_status()
-        try:
-            with open(file, "wb") as f:
-                f.write(response.content)
-
-            data = file
-
-        except OSError as e:
-            data = BytesIO(response.content)
-            print(
-                f"Warning: Could not write file {file}: {e}. "
-                "Ensure the directory exists and you have write permissions."
-            )
-
-    try:
-        if file_type == "csv":
-            df = pd.read_csv(data)
-
-        elif file_type == "parquet":
-            df = pd.read_parquet(data, engine="pyarrow")
-
-            # Read the Parquet file into a PyArrow Table
-            # table = pq.read_table(file)
-            # df = table.to_pandas()
-
-    except Exception as e:
-        print(f"Error loading file {file}: {e}")
-        raise e
+        raise ValueError(f"Unsupported tutorial-data file type: {name}")
 
     return df
+
+
+def _resolve_file(name: str) -> Path:
+    """Return a local path to the data file, downloading + caching it if absent.
+
+    The in-repo data/ copy is used in source checkouts and CI; otherwise the file
+    is fetched once from the OpenDSM repository into the user cache directory.
+    """
+
+    repo_file = repo_data_dir / name
+    if repo_file.exists():
+        return repo_file
+
+    cache_file = cache_dir / name
+    if not cache_file.exists():
+        url = f"https://raw.githubusercontent.com/{repo_full_name}/{branch}/{path}/{name}"
+        response = requests.get(url)
+        response.raise_for_status()
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file.write_bytes(response.content)
+
+    return cache_file
 
 
 if __name__ == "__main__":

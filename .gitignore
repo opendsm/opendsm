@@ -13,9 +13,5 @@ uv.lock
 
 .*
 !.github/
-!.travis.yml
-!.coveragerc
 !.gitignore
-!.gitattributes
 !.dockerignore
-!.pyup.yml

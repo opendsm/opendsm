@@ -53,7 +53,7 @@ docker-compose run --rm test tests/test_features.py  # run a specific suite
 docker-compose run --rm test -k compute              # filter for tests with `compute` in the name
 ```
 
-Test configuration can be found in `tox.ini`, `pytest.ini`, and `tests/conftest.py`.
+Test configuration can be found in `pyproject.toml` (`[tool.pytest.ini_options]`), `tox.ini`, and `tests/conftest.py`.
 
 When writing tests using py.test fixtures, place fixtures as close as possible
 to the test functions or classes that call them.
@@ -160,25 +160,18 @@ Pre-release
 
 Releasing
 
-5. bump version - edit `__version__.py` with the new version
+5. bump version - edit `version` in `pyproject.toml` with the new version
 6. Rename `Development` section with the new version in CHANGELOG.md
 7. commit changes
 8. push branch and create PR
 9. merge release branch to master after tests pass and an approved review
-10. create GitHub release describing changes, creating tag `vX.Y.Z` to match new `__version__.py`
+10. create GitHub release describing changes, creating tag `vX.Y.Z` to match the new `pyproject.toml` version
 11. approve the resulting pypi-publish action
-
-You can use `bump_version.sh` to print out commands that rotate the changelog and bump the package version:
-
-```
-./bump_version.sh X.X.X Y.Y.Y
-```
 
 Other resources
 ---------------
 
-- [README](README.rst): basic project information written in RST for PyPI preview.
-  Copied and lightly modified for formatting from [docs/index.rst](docs/index.rst)
+- [README](README.md): basic project information shown on the PyPI project page.
 - [MAINTAINERS](MAINTAINERS.md): an ordered list of project maintainers.
 - [LICENSE](LICENSE): Apache 2.0.
 - [CHARTER](CHARTER): open source project charter.
