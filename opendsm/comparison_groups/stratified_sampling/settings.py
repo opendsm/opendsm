@@ -14,12 +14,19 @@
 
 from __future__ import annotations
 
+from enum import Enum
+
 import pydantic
 
-import opendsm.comparison_groups.stratified_sampling.const as _const
 from opendsm.common.base_settings import BaseSettings
 
 from typing import Optional, Literal, Union
+
+
+
+class DistanceMetric(str, Enum):
+    EUCLIDEAN = "euclidean"
+    CHISQUARE = "chisquare"
 
 
 class StratificationColumnSettings(BaseSettings):
@@ -195,8 +202,8 @@ class DistanceStratifiedSamplingSettings(Settings):
         default=True, 
     )
 
-    equivalence_method: _const.DistanceMetric = pydantic.Field(
-        default=_const.DistanceMetric.CHISQUARE,
+    equivalence_method: DistanceMetric = pydantic.Field(
+        default=DistanceMetric.CHISQUARE,
         validate_default=True,
     )
 

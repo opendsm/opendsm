@@ -60,8 +60,8 @@ class Stratified_Sampling(Comparison_Group_Algorithm):
         return clusters, treatment_weights
 
     def _stratification_features(self, data):
-        """Stratification feature frame keyed by meter_id (the id column the sampler expects)."""
-        features = data.features.reset_index().rename(columns={"id": "meter_id"})
+        """Stratification feature frame with the id column the sampler bins on."""
+        features = data.features.reset_index()
 
         return features
 
@@ -95,7 +95,7 @@ class Stratified_Sampling(Comparison_Group_Algorithm):
     def _select_bins_by_equivalence(self, treatment_features, pool_features):
         """Distance-stratified path: search bin counts that maximize load-shape equivalence."""
         equivalence_features = pd.concat([self.treatment_loadshape, self.comparison_pool_loadshape])
-        equivalence_features.index.name = "meter_id"
+        equivalence_features.index.name = "id"
 
         self.bin_selector = StratifiedSamplingBinSelector(
             self.sampler,
@@ -103,7 +103,7 @@ class Stratified_Sampling(Comparison_Group_Algorithm):
             pool_features,
             equivalence_feature_ids=equivalence_features.index,
             equivalence_feature_matrix=equivalence_features,
-            df_id_col="meter_id",
+            df_id_col="id",
             equivalence_method=self.settings.equivalence_method,
             equivalence_quantile_size=self.settings.equivalence_quantile,
             n_samples_approx=self.settings.n_samples_approx,
@@ -120,7 +120,7 @@ class Stratified_Sampling(Comparison_Group_Algorithm):
         self.df_raw = self.sampler.data_sample.df
         sampled = self.df_raw[self.df_raw["_outlier_bin"] == False]
 
-        clusters = self._clusters_df(sampled["meter_id"].unique())
+        clusters = self._clusters_df(sampled["id"].unique())
         treatment_weights = self._treatment_weights_df(self.treatment_ids)
 
         self.clusters = clusters
