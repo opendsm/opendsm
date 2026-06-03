@@ -22,6 +22,7 @@ from opendsm.comparison_groups.stratified_sampling.bins import ModelSamplingExce
 from opendsm.comparison_groups.stratified_sampling.settings import StratificationColumnSettings
 
 
+
 def test_stratification_column_rejects_inverted_bounds():
     """min_value_allowed must not exceed max_value_allowed."""
     with pytest.raises(ValueError):

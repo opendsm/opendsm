@@ -20,6 +20,7 @@ from opendsm.comparison_groups.common import Data, Data_Settings
 from opendsm.comparison_groups.common import const as _const
 
 
+
 def _long_loadshape_df(n_ids=3, n_time=24):
     rows = [
         {"id": f"m{i}", "time": t, "loadshape": float(t + i)}
@@ -36,7 +37,6 @@ def _hourly_frame(meter_id, n_hours):
     return pd.DataFrame(
         {"id": meter_id, "datetime": timestamps, "observed": np.arange(n_hours, dtype=float)}
     )
-
 
 
 def _treatment_time_series(comstock_hourly_all, n_ids=3):

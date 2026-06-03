@@ -74,7 +74,9 @@ def equiv_Y():
 def feature_matrix(equiv_X, equiv_Y):
     x = equiv_X
     y = equiv_Y
-    return np.concatenate([x.transpose(), y.transpose()])
+    matrix = np.concatenate([x.transpose(), y.transpose()])
+
+    return matrix
 
 
 

@@ -21,6 +21,7 @@ from matplotlib.figure import Figure
 from opendsm.comparison_groups.stratified_sampling.sampling import StratifiedSampler
 
 
+
 @pytest.fixture
 def diagnostics_obj_2d():
     """Two-column diagnostics so scatter (which needs column pairs) is exercised."""
@@ -50,7 +51,9 @@ def diagnostics_obj(df_treatment, df_pool, col_name):
     stratified_sampling_obj.fit_and_sample(
         df_treatment, df_pool, n_samples_approx=len(df_treatment), random_seed=1
     )
-    return stratified_sampling_obj.diagnostics()
+    diagnostics = stratified_sampling_obj.diagnostics()
+
+    return diagnostics
 
 
 def test_equivalence(diagnostics_obj):
