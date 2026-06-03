@@ -47,6 +47,40 @@ def cg_loadshape_data(_comstock_hourly_all):
 
 
 @pytest.fixture(scope="session")
+def stratified_feature_loadshape_data():
+    """(treatment_data, comparison_pool_data) Data objects carrying both
+    stratification features (summer_usage, winter_usage) and load shapes, for
+    the public Stratified_Sampling flow. No real dataset pairs both, so these
+    are constructed deterministically."""
+    rng = np.random.default_rng(0)
+
+    def _data(prefix, n):
+        ids = [f"{prefix}{i}" for i in range(n)]
+        features = pd.DataFrame(
+            {
+                "id": ids,
+                "summer_usage": rng.uniform(3000, 6000, n),
+                "winter_usage": rng.uniform(3000, 6000, n),
+            }
+        )
+        rows = [
+            {"id": meter_id, "time": t, "loadshape": float(rng.normal(10, 1))}
+            for meter_id in ids
+            for t in range(1, 25)
+        ]
+        loadshape = pd.DataFrame(rows)
+        settings = Data_Settings(agg_type=None, loadshape_type=None, time_period=None)
+        data = Data(loadshape_df=loadshape, features_df=features, settings=settings)
+
+        return data
+
+    treatment_data = _data("t", 40)
+    comparison_pool_data = _data("p", 400)
+
+    return treatment_data, comparison_pool_data
+
+
+@pytest.fixture(scope="session")
 def cg_clustering_data(_comstock_hourly_all):
     """(treatment_data, comparison_pool_data) with a comparison pool large enough
     to cluster at the default min_cluster_size of 15."""
