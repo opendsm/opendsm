@@ -31,7 +31,7 @@ pd.options.mode.chained_assignment = None  # suppress warnings
 logger = logging.getLogger(__name__)
 
 
-class StratifiedSampling(object):
+class StratifiedSampling:
     """
     Perform stratified sampling on a treatment group and comparison pool.  
     

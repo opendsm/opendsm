@@ -91,7 +91,7 @@ class BinnedData:
         )
 
 
-class Binning(object):
+class Binning:
     """Contains list of multidimensional bins"""
 
     def __init__(self):

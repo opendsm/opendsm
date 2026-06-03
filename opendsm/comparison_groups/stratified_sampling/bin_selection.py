@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 __all__ = ("StratifiedSamplingBinSelector",)
 
 
-class StratifiedSamplingBinSelector(object):
+class StratifiedSamplingBinSelector:
     def __init__(
         self,
         model,

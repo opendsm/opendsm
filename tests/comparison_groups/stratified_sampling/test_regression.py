@@ -12,7 +12,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-"""Characterization (golden) tests pinning the exact stratified-sampling output.
+"""Snapshot regression tests pinning the exact stratified-sampling output.
 
 These exist to guard a structural rewrite: the sampled comparison group and the
 per-bin counts must stay identical across any refactor that preserves behavior.
@@ -46,7 +46,7 @@ def _engine_summary(model):
     }
 
 
-def test_engine_single_column_golden(df_treatment, df_pool, col_name, snapshot):
+def test_engine_single_column_snapshot(df_treatment, df_pool, col_name, snapshot):
     model = StratifiedSampling()
     model.add_column(col_name, n_bins=4)
     model.fit_and_sample(df_treatment, df_pool, n_samples_approx=len(df_treatment), random_seed=1)
@@ -54,7 +54,7 @@ def test_engine_single_column_golden(df_treatment, df_pool, col_name, snapshot):
     assert _engine_summary(model) == snapshot
 
 
-def test_engine_multi_column_golden(snapshot):
+def test_engine_multi_column_snapshot(snapshot):
     rng = np.random.default_rng(0)
     df_treatment = pd.DataFrame(
         {"id": [f"t{i}" for i in range(60)], "c1": rng.uniform(0, 100, 60), "c2": rng.uniform(0, 100, 60)}
@@ -73,7 +73,7 @@ def test_engine_multi_column_golden(snapshot):
     assert _engine_summary(model) == snapshot
 
 
-def test_public_dss_equivalence_flow_golden(stratified_feature_loadshape_data, snapshot):
+def test_public_dss_equivalence_flow_snapshot(stratified_feature_loadshape_data, snapshot):
     """Pins the distance-stratified (equivalence) path's sampled comparison group."""
     treatment_data, comparison_pool_data = stratified_feature_loadshape_data
     columns = [
