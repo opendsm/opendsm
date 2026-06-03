@@ -18,6 +18,18 @@ from opendsm.comparison_groups.individual_meter_matching.create_comparison_group
     Individual_Meter_Matching,
 )
 from opendsm.comparison_groups.individual_meter_matching.settings import Settings
+from opendsm.comparison_groups.individual_meter_matching.highs_settings import HiGHS_Settings
+
+
+def test_highs_settings_defaults_construct():
+    settings = HiGHS_Settings()
+
+    assert settings.presolve in ("off", "choose", "on")
+
+
+def test_highs_settings_rejects_invalid_literal():
+    with pytest.raises(ValueError):
+        HiGHS_Settings(presolve="maybe")
 
 
 def test_get_comparison_group_returns_clusters_and_weights(cg_loadshape_data):

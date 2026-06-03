@@ -198,6 +198,55 @@ def test_extend_concatenates_loadshapes():
     assert sorted(data_a.loadshape.index) == ["a", "b"]
 
 
+def test_month_time_period_ingestion(_comstock_monthly_all):
+    """The month period groups into 12 columns via its dedicated branch."""
+    df_baseline, _ = _comstock_monthly_all
+    ids = sorted(df_baseline.index.get_level_values("id").unique())[:3]
+    time_series = df_baseline.loc[ids].reset_index()[["id", "datetime", "observed"]]
+    settings = Data_Settings(
+        agg_type=_const.AggType.MEAN,
+        loadshape_type=_const.LoadshapeType.OBSERVED,
+        time_period=_const.TimePeriod.MONTH,
+    )
+
+    data = Data(time_series_df=time_series, settings=settings)
+
+    assert data.loadshape.shape[1] == 12
+
+
+def test_unstacked_loadshape_ingestion():
+    """A wide loadshape (id + integer time columns) ingests via the unstacked path."""
+    wide = pd.DataFrame({"id": ["a", "b"]})
+    for t in range(1, 25):
+        wide[t] = [float(t), float(t + 1)]
+
+    data = Data(loadshape_df=wide)
+
+    assert data.loadshape.shape == (2, 24)
+
+
+def test_extend_rejects_mismatched_time_period(_comstock_hourly_all):
+    df_baseline, _ = _comstock_hourly_all
+    hour_data = Data(time_series_df=_hourly_frame("a", 48), settings=Data_Settings(
+        agg_type=_const.AggType.MEAN,
+        loadshape_type=_const.LoadshapeType.OBSERVED,
+        time_period=_const.TimePeriod.HOUR,
+    ))
+    loadshape_only = Data(loadshape_df=_long_loadshape_df(n_ids=1))
+
+    with pytest.raises(ValueError):
+        hour_data.extend(loadshape_only)
+
+
+def test_features_with_nan_row_excluded():
+    features = pd.DataFrame({"id": ["a", "b", "c"], "x": [1.0, np.nan, 3.0]})
+    settings = Data_Settings(agg_type=None, loadshape_type=None, time_period=None)
+
+    data = Data(features_df=features, settings=settings)
+
+    assert sorted(data.features.index) == ["a", "c"]
+
+
 def test_partial_loadshape_settings_raise():
     """If any of agg_type/loadshape_type/time_period is set, all must be set."""
     with pytest.raises(ValueError):
