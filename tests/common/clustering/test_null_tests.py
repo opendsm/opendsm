@@ -12,8 +12,9 @@ from opendsm.common.clustering.metrics.cross_k_metrics import (
     CrossKMetrics,
     has_cluster_structure,
 )
+from opendsm.common.clustering.metrics import selection as _selection
 from opendsm.common.clustering.metrics.labels import ClusteringResult
-from opendsm.common.clustering.metrics.settings import ScoreSettings
+from opendsm.common.clustering.metrics.settings import ScoreSettings, SmallClusterMode
 from opendsm.common.clustering.metrics.single_k_metrics import SingleKMetrics
 
 
@@ -436,6 +437,109 @@ class TestLabelsIntegrationEdgeCases:
         # The result must be k>=2 (the good labeling), not k=1
         assert cr.k >= 2
         assert cr.has_cluster_structure is True
+
+    @pytest.mark.parametrize("lower, k1_allowed", [(1, True), (2, False)])
+    def test_degenerate_labeling_respects_k1_allowance(self, lower, k1_allowed):
+        """A labeling that collapses to one cluster is returned as a single
+        cluster when the lower bound allows k=1, and raises a clear error
+        (naming n_cluster_lower) when it does not.
+        """
+        rng = np.random.default_rng(0)
+        X = rng.normal(0, 1, (40, 4))
+
+        # OUTLIER trimming sends the lone 2-point cluster to -1, collapsing
+        # the labeling to a single cluster.
+        cr = ClusteringResult(
+            data=X, seed=42, n_cluster_lower=lower, min_cluster_size=3,
+            small_cluster_mode=SmallClusterMode.OUTLIER,
+        )
+        labels = np.zeros(40, dtype=int)
+        labels[:2] = 1
+        cr.add(2, labels)
+
+        if k1_allowed:
+            assert cr.k == 1
+            assert cr.selection_confidence == 1.0
+        else:
+            assert not cr._labels_store
+            for accessor in ("k", "metrics", "labels"):
+                with pytest.raises(ValueError, match=f"n_cluster_lower={lower}"):
+                    getattr(cr, accessor)
+
+    def test_valid_label_count_excludes_outliers(self):
+        """valid_label_count / unique_valid_labels drop the -1 outlier label,
+        while label_count / unique_labels keep it as a literal unique label.
+        """
+        X = np.random.default_rng(0).normal(0, 1, (10, 3)).astype(np.float32)
+        labels = np.array([0, 0, 0, 1, 1, 1, -1, -1, 2, 2])
+        lm = SingleKMetrics(data=X, labels=labels, distance_metric="euclidean", seed=0)
+
+        assert lm.label_count == 4
+        assert -1 in lm.unique_labels
+        assert lm.valid_label_count == 3
+        assert -1 not in lm.unique_valid_labels
+
+    def test_single_specified_k_bypasses_cross_k_selection(self, monkeypatch):
+        """With a single specified k, the within-k best is returned with
+        full confidence and the cross-k council never runs.
+        """
+        rng = np.random.default_rng(1)
+        X = np.vstack([rng.normal(c, 0.3, (20, 4)) for c in (0, 5, 10)])
+
+        cr = ClusteringResult(data=X, seed=42, n_cluster_lower=3)
+        cr.add(3, KMeans(n_clusters=3, n_init=3, random_state=0).fit_predict(X))
+        cr.add(3, KMeans(n_clusters=3, n_init=3, random_state=1).fit_predict(X))
+
+        def _must_not_run(*args, **kwargs):
+            raise AssertionError("cross-k council should be bypassed for one k")
+
+        monkeypatch.setattr(_selection, "select_best_across_k", _must_not_run)
+
+        assert cr.k_values == [3]
+        assert cr.k == 3
+        assert cr.selection_confidence == 1.0
+
+    def test_metrics_raise_when_no_labels_added(self):
+        """Accessing metrics on a result with no labels at all raises a
+        distinct message from the all-rejected case.
+        """
+        rng = np.random.default_rng(2)
+        X = rng.normal(0, 1, (30, 4))
+
+        cr = ClusteringResult(data=X, seed=42)
+
+        with pytest.raises(ValueError, match="No labels have been added"):
+            _ = cr.metrics
+
+    def test_unscored_council_returns_smallest_specified_k(self, monkeypatch):
+        """When valid candidates exist but the council yields no scored
+        winner (None-slot), the result falls back to the candidate at the
+        smallest user-specified k (n_cluster_lower), not insertion order.
+        """
+        rng = np.random.default_rng(7)
+        X = np.vstack([rng.normal(c, 0.4, (25, 4)) for c in (0, 6, 12)])
+
+        cr = ClusteringResult(
+            data=X, seed=42, n_cluster_lower=2, min_cluster_size=3,
+            small_cluster_mode=SmallClusterMode.OUTLIER,
+        )
+        cr.add(2, KMeans(n_clusters=2, n_init=3, random_state=0).fit_predict(X))
+        cr.add(3, KMeans(n_clusters=3, n_init=3, random_state=0).fit_predict(X))
+        cr.add(4, KMeans(n_clusters=4, n_init=3, random_state=0).fit_predict(X))
+        # A rejected (collapsing) candidate: its 2-point cluster is outliered,
+        # dropping below the lower bound, so it becomes a None slot the
+        # council winner can land on, forcing the unscored fallback.
+        collapse = np.zeros(75, dtype=int)
+        collapse[:2] = 1
+        cr.add(2, collapse)
+
+        none_slot = cr._insertion_order.index(None)
+        monkeypatch.setattr(
+            _selection, "select_best_across_k",
+            lambda *a, **k: (none_slot, 0.0),
+        )
+
+        assert cr.k == 2
 
     def test_build_cross_k_extra_scores_injects_into_candidates(self):
         """_build_cross_k_extra_scores should return a list parallel to

@@ -81,9 +81,6 @@ class LabelStore(ArbitraryPydanticModel):
     )
     _eigengap_scores: dict[int, float] | None = pydantic.PrivateAttr(default=None)
     _eigengap_weight: float = pydantic.PrivateAttr(default=0.0)
-    _unscored_merged: dict[int, list[np.ndarray]] = pydantic.PrivateAttr(
-        default_factory=dict,
-    )
     _insertion_order: list[SingleKMetrics | None] = pydantic.PrivateAttr(
         default_factory=list,
     )
@@ -152,7 +149,6 @@ class LabelStore(ArbitraryPydanticModel):
         )
 
         if data_clean is None:
-            self._unscored_merged.setdefault(k, []).append(full_merged)
             self._insertion_order.append(None)
             return None
 
@@ -271,7 +267,7 @@ class ClusteringResult(LabelStore):
     @property
     def k(self) -> int:
         """Number of non-outlier clusters in the best labeling."""
-        return len(np.unique(self._labels_best.labels))
+        return self._labels_best.valid_label_count
 
     @property
     def metrics(self) -> SingleKMetrics:
@@ -370,9 +366,30 @@ class ClusteringResult(LabelStore):
                 candidates.extend(self._labels_store[k])
 
         all_valid = [c for c in candidates if c is not None]
+        if not all_valid:
+            if not candidates:
+                raise ValueError("No labels have been added")
+
+            lower = self.n_cluster_lower
+            raise ValueError(
+                f"No clustering met the cluster-count constraints "
+                f"(n_cluster_lower={lower}): every candidate labeling was "
+                f"rejected — each collapsed below the lower bound or exceeded "
+                f"the maximum cluster count. The data may be degenerate."
+            )
+
         if len(all_valid) == 1:
             self.__dict__["_cache_selection_confidence"] = 1.0
+
             return all_valid[0]
+
+        # A single specified k needs no cross-k selection — return the
+        # within-k best directly and skip the gate and council.
+        if len(self.k_values) == 1:
+            only_k = self.k_values[0]
+            self.__dict__["_cache_selection_confidence"] = 1.0
+
+            return self._labels_k_best[only_k]
 
         # Gap statistic gate: check if any k>1 has genuine cluster
         # structure exceeding a uniform null.  If not, return k=1
@@ -432,11 +449,14 @@ class ClusteringResult(LabelStore):
         winner = council_candidates[winner_idx]
         if winner is not None:
             return winner
-        # Fallback: return the first valid k >= 2 candidate
-        for c in candidates:
-            if c is not None and lm_to_k.get(id(c), 0) >= 2:
-                return c
-        return all_valid[0]
+
+        # Council could not score the candidates; fall back to the labeling
+        # with the fewest clusters.  Every valid candidate cleared
+        # prepare_labels, so its cluster count is >= n_cluster_lower — the
+        # fallback can never drop below the user's lower bound.
+        smallest_k_winner = min(all_valid, key=lambda c: c.valid_label_count)
+
+        return smallest_k_winner
 
     def _build_cross_k_extra_scores(
         self,
@@ -481,14 +501,7 @@ class ClusteringResult(LabelStore):
         if cached is not None:
             return cached
 
-        if not self._labels_store:
-            for k in sorted(self._unscored_merged):
-                if self._unscored_merged[k]:
-                    result = self._unscored_merged[k][0]
-                    self.__dict__["_cache_labels_best_merged"] = result
-                    return result
-            raise ValueError("No labels have been added")
-
         result = self._labels_best._merged_full
         self.__dict__["_cache_labels_best_merged"] = result
+
         return result

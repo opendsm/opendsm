@@ -4,6 +4,13 @@ Changelog
 Development
 -----------
 
+* Bug fix (`clustering`): degenerate-data handling across the selection and algorithm layers.
+  - `ClusteringResult`: `.k` / `.metrics` / `.labels` raised `IndexError` when every candidate labeling was rejected by `prepare_labels` (empty `_labels_store`, e.g. all collapsed below `n_cluster_lower`). They now raise a clear `ValueError` naming `n_cluster_lower` when `k=1` is disallowed, and return the single cluster when it is allowed.
+  - `ClusteringResult`: when valid candidates exist but the council produces no scored winner, the fallback returns the labeling with the fewest clusters (`>= n_cluster_lower`) instead of the insertion-order-first one, and never a count below the lower bound.
+  - `ClusteringResult`: a single specified k (one distinct `k`) bypasses the gap gate and cross-k council entirely, returning the within-k best with full confidence.
+  - `SingleKMetrics`: add `unique_valid_labels` / `valid_label_count` (outlier label `-1` excluded); `ClusteringResult.k` uses the valid count.
+  - `bisect_k_medians`: bound the per-node split retries so unsplittable data (e.g. identical points) no longer loops forever — after the retry budget the node is accepted as a terminal cluster.
+  - `spectral`: the sparse self-tuning path falls back to a dense `eigh` of the smallest eigenpairs when ARPACK fails to converge (previously re-raised).
 * `comparison_groups` test suite: coverage across the package — `Data` ingestion (time-series and features-only), the `Comparison_Group_Algorithm` base, the public `CG_Clustering` / `Individual_Meter_Matching` / `Stratified_Sampling` / `random_sampling` flows, cluster bounds, `savings` correction-cap and settings validators and diagnostics, and equivalence / bin-count edge cases. Per-subpackage test directories made packages to avoid duplicate-basename collisions.
 * `comparison_groups/stratified_sampling`: modernized to match the rest of the package — single linear settings-driven `get_comparison_group` orchestration; standardize on the shared `id` column (was `meter_id`); fold the module-level constants into settings; expose diagnostics as methods on `Stratified_Sampling`; render diagnostic plots with matplotlib instead of plotnine; delete the dead `param_selection` / `const` modules and modernize class declarations. Output is pinned identical by new snapshot regression tests over the sampled comparison group.
 * `clustering`: use skfda `FourierBasis` (was the deprecated `Fourier`); suppress the invalid-log warning in the cluster-bound fallback.

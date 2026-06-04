@@ -339,6 +339,16 @@ class SingleKMetrics(ArbitraryPydanticModel):
         return len(self.unique_labels)
 
     @computed_field_cached_property()
+    def unique_valid_labels(self) -> np.ndarray:
+        labels = self.unique_labels
+
+        return labels[labels >= 0]
+
+    @computed_field_cached_property()
+    def valid_label_count(self) -> int:
+        return len(self.unique_valid_labels)
+
+    @computed_field_cached_property()
     def _is_single_cluster(self) -> bool:
         """True when there is only one cluster (k=1). Most indices are
         undefined for k=1 and should return NaN to abstain from voting."""

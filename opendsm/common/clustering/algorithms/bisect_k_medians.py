@@ -35,6 +35,9 @@ from opendsm.common.clustering.algorithms.k_medians import (
 from opendsm.common.clustering.metrics.labels import ClusteringResult
 
 
+_MAX_SPLIT_ATTEMPTS = 5  # reseed budget before a node is accepted as unsplittable
+
+
 def _cluster_inertia(data: np.ndarray, indices: np.ndarray) -> float:
     """Sum of squared L2 distances to the median centroid."""
     sub = data[indices]
@@ -88,7 +91,7 @@ def _bisect_k_medians_single(data, settings, seed):
     init_priority = (
         -_cluster_inertia(data, all_indices) if use_inertia else -float(n)
     )
-    heapq.heappush(heap, (init_priority, tiebreak, all_indices))
+    heapq.heappush(heap, (init_priority, tiebreak, all_indices, 0))
     tiebreak += 1
 
     current_k = 1
@@ -99,7 +102,7 @@ def _bisect_k_medians_single(data, settings, seed):
         if not heap:
             break
 
-        _, _, indices = heapq.heappop(heap)
+        _, _, indices, attempts = heapq.heappop(heap)
 
         if len(indices) < 2 * min_cs:
             continue
@@ -116,8 +119,12 @@ def _bisect_k_medians_single(data, settings, seed):
         n_left = int(left_mask.sum())
         n_right = int(right_mask.sum())
         if n_left < min_cs or n_right < min_cs:
-            heapq.heappush(heap, (0.0, tiebreak, indices))
-            tiebreak += 1
+            # Reseed and retry; after the budget is spent, leave the node
+            # unsplit (a terminal cluster) so the loop always terminates.
+            if attempts + 1 < _MAX_SPLIT_ATTEMPTS:
+                heapq.heappush(heap, (0.0, tiebreak, indices, attempts + 1))
+                tiebreak += 1
+
             continue
 
         left_idx = indices[left_mask]
@@ -133,7 +140,7 @@ def _bisect_k_medians_single(data, settings, seed):
                     -_cluster_inertia(data, child_idx) if use_inertia
                     else -float(len(child_idx))
                 )
-                heapq.heappush(heap, (priority, tiebreak, child_idx))
+                heapq.heappush(heap, (priority, tiebreak, child_idx, 0))
                 tiebreak += 1
 
         if current_k >= n_lower:
