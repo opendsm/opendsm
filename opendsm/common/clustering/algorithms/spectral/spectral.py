@@ -154,7 +154,12 @@ def _single_spectral_clustering(data, settings, seed):
             eigenvalues = eigenvalues[idx]
             eigenvectors = eigenvectors[:, idx]
         except Exception:
-            raise
+            # ARPACK can fail to converge on large or ill-conditioned
+            # Laplacians; fall back to a dense solve of the smallest eigenpairs.
+            L_dense = L_sparse.toarray()
+            eigenvalues, eigenvectors = _scipy_eigh(
+                L_dense, subset_by_index=[0, n_eigvecs - 1]
+            )
         del L_sparse
 
         embedding = eigenvectors[:, :n_eigvecs]

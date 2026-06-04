@@ -23,7 +23,9 @@ import numpy as np
 import pytest
 
 from opendsm.common.clustering.algorithms.spectral import spectral
+from opendsm.common.clustering.algorithms.spectral.spectral_divisive import spectral_divisive
 from opendsm.common.clustering.algorithms.bisect_k_means import bisect_k_means
+from opendsm.common.clustering.algorithms.bisect_k_medians import bisect_k_medians
 
 from .conftest import make_clustering_settings
 
@@ -106,11 +108,19 @@ class TestAlgorithmSharedBehavior:
         assert len(labels) == 100
         assert len(np.unique(labels)) > 0
 
+    @pytest.mark.filterwarnings("ignore::sklearn.exceptions.ConvergenceWarning")
     @pytest.mark.parametrize("algorithm", _ALGORITHMS)
     def test_identical_samples(self, algorithm):
-        """All-identical data does not crash."""
+        """All-identical data is handled without a hang or IndexError: the
+        algorithm either returns a degenerate labeling or raises a clear
+        ValueError when the fixed k cannot be formed.
+        """
         data = np.ones((50, 10))
-        labels = _run(data, algorithm, n_lower=3, n_upper=3).labels
+        try:
+            labels = _run(data, algorithm, n_lower=3, n_upper=3).labels
+        except ValueError:
+            return
+
         assert len(labels) == 50
         assert len(np.unique(labels)) > 0
 
@@ -169,6 +179,44 @@ class TestAlgorithmSharedBehavior:
             segment = labels[i * 30:(i + 1) * 30]
             most_common = np.bincount(segment).argmax()
             assert np.sum(segment == most_common) >= 20
+
+
+# Bisection-family algorithms cannot manufacture clusters from identical
+# points (each split collapses to one side), so they report degeneracy
+# honestly — unlike spectral, whose k-means label step fabricates clusters.
+_BISECTION_ALGOS = {
+    "bisecting_kmedians": bisect_k_medians,
+    "spectral_divisive": spectral_divisive,
+}
+
+
+class TestDegenerateDataFallback:
+    """Unclusterable data: terminate (no hang) and honour the k=1 allowance."""
+
+    @pytest.mark.parametrize("algorithm", list(_BISECTION_ALGOS))
+    def test_k1_allowed_returns_single_cluster(self, algorithm):
+        """Identical data with k=1 allowed terminates and yields one cluster."""
+        data = np.ones((30, 4))
+        algo_kw = {algorithm: {"n_cluster": {"lower": 1, "upper": 6}}}
+        cs = make_clustering_settings(algorithm, **algo_kw)
+
+        result = _BISECTION_ALGOS[algorithm](data, cs)
+
+        assert result.k == 1
+
+    @pytest.mark.parametrize("algorithm", list(_BISECTION_ALGOS))
+    def test_k1_disallowed_raises(self, algorithm):
+        """Identical data with k=1 disallowed terminates and raises rather
+        than returning a below-lower-bound clustering.
+        """
+        data = np.ones((30, 4))
+        algo_kw = {algorithm: {"n_cluster": {"lower": 2, "upper": 6}}}
+        cs = make_clustering_settings(algorithm, **algo_kw)
+
+        result = _BISECTION_ALGOS[algorithm](data, cs)
+
+        with pytest.raises(ValueError):
+            _ = result.k
 
 
 if __name__ == "__main__":
