@@ -4,6 +4,7 @@ Changelog
 Development
 -----------
 
+* `common/hourly_interpolation`: `_autocorr_fcn` computes the autocorrelation via FFT above 16 lags and the masked loop at or below, returning identical values (missing data is zero-filled after centering, so it contributes 0 to each lag product). Remove the unused `_autocorr_fcn2` / `_autocorr_fcn3` reference variants; raise on an unknown backup interpolation method. Add direct characterization tests pinning both branches to the original output.
 * Bug fix (`clustering`): degenerate-data handling across the selection and algorithm layers.
   - `ClusteringResult`: `.k` / `.metrics` / `.labels` raised `IndexError` when every candidate labeling was rejected by `prepare_labels` (empty `_labels_store`, e.g. all collapsed below `n_cluster_lower`). They now raise a clear `ValueError` naming `n_cluster_lower` when `k=1` is disallowed, and return the single cluster when it is allowed.
   - `ClusteringResult`: when valid candidates exist but the council produces no scored winner, the fallback returns the labeling with the fewest clusters (`>= n_cluster_lower`) instead of the insertion-order-first one, and never a count below the lower bound.
