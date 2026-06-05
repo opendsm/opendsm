@@ -4,6 +4,7 @@ Changelog
 Development
 -----------
 
+* Test/coverage infrastructure. Collect the previously-orphaned `tests/common/metrics.py` (renamed to `test_metrics.py` — its `test_acf` never ran because the filename lacked the `test_` prefix) and correct its stale expectations to `acf`'s actual per-method output. Add a `tox -e coverage` environment that runs serially under `NUMBA_DISABLE_JIT=1` so `@numba.jit` functions are visible to the coverage tracer (they execute as native code and report as uncovered otherwise); add `[tool.coverage.report]` `exclude_lines` and omit the `comparison_groups/savings/dev/` work-in-progress scratch. An `xfail` records that `acf(ac_type=STATIONARY_STATS_FFT)` omits zero-padding and so returns the circular (not linear) autocorrelation.
 * Bug fix (`clustering`): degenerate-data handling across the selection and algorithm layers.
   - `ClusteringResult`: `.k` / `.metrics` / `.labels` raised `IndexError` when every candidate labeling was rejected by `prepare_labels` (empty `_labels_store`, e.g. all collapsed below `n_cluster_lower`). They now raise a clear `ValueError` naming `n_cluster_lower` when `k=1` is disallowed, and return the single cluster when it is allowed.
   - `ClusteringResult`: when valid candidates exist but the council produces no scored winner, the fallback returns the labeling with the fewest clusters (`>= n_cluster_lower`) instead of the insertion-order-first one, and never a count below the lower bound.
