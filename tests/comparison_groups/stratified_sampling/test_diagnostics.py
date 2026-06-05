@@ -19,6 +19,7 @@ import pandas as pd
 from matplotlib.figure import Figure
 
 from opendsm.comparison_groups.stratified_sampling.sampling import StratifiedSampler
+from opendsm.comparison_groups.stratified_sampling.diagnostics import t_and_ks_test
 
 
 
@@ -99,3 +100,45 @@ def test_n_sampled_to_n_treatment_ratio_is_not_floored(diagnostics_obj):
     ratio = diagnostics_obj.n_sampled_to_n_treatment_ratio()
 
     assert isinstance(ratio, (float, np.floating))
+
+
+class TestTAndKsTest:
+    """Direct tests for the t-test + KS equivalence check (only reached via
+    plotting elsewhere)."""
+
+    def test_equal_distributions_pass(self):
+        """Two samples from the same distribution pass both tests (p >> thresh)."""
+        rng = np.random.default_rng(0)
+        x = rng.normal(0, 1, 500)
+        y = rng.normal(0, 1, 500)
+
+        result = t_and_ks_test(x, y)
+
+        assert result["t_ok"]
+        assert result["ks_ok"]
+        assert 0.0 <= result["t_value"] <= 1.0
+        assert 0.0 <= result["ks_value"] <= 1.0
+
+    def test_mean_shifted_distributions_fail(self):
+        """A clear mean shift fails both the t-test and the KS test."""
+        rng = np.random.default_rng(0)
+        x = rng.normal(0, 1, 500)
+        y = rng.normal(1.0, 1, 500)
+
+        result = t_and_ks_test(x, y)
+
+        assert not result["t_ok"]
+        assert not result["ks_ok"]
+
+    def test_threshold_controls_verdict(self):
+        """Raising the threshold can flip a borderline equal case to failing."""
+        rng = np.random.default_rng(1)
+        x = rng.normal(0, 1, 80)
+        y = rng.normal(0.25, 1, 80)
+
+        p_value = t_and_ks_test(x, y)["t_value"]
+        lenient = t_and_ks_test(x, y, thresh=p_value / 2)["t_ok"]
+        strict = t_and_ks_test(x, y, thresh=min(p_value * 2, 1.0))["t_ok"]
+
+        assert lenient
+        assert not strict
