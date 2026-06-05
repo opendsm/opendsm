@@ -19,14 +19,18 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from sklearn.metrics import silhouette_score, davies_bouldin_score
+
 from opendsm.common.clustering.metrics.single_k_metrics import SingleKMetrics
 from opendsm.common.clustering.metrics.cross_k_metrics import CrossKMetrics
+from opendsm.common.clustering.metrics.dbcv import dbcv
 from opendsm.common.clustering.metrics.labels import ClusteringResult
 from opendsm.common.clustering.metrics import selection
 from opendsm.common.clustering.metrics.settings import (
     ClusterRangeSettings,
     ScoreSettings,
     SmallClusterMode,
+    SINGLE_K_INDEX_NAMES,
 )
 
 
@@ -1418,6 +1422,130 @@ class TestSettingsCoupling:
         assert cs.small_cluster_mode == SmallClusterMode.KEEP, (
             f"Default small_cluster_mode should be KEEP, got {cs.small_cluster_mode}"
         )
+
+
+# ── Validity-index correctness: analytic values & monotonicity ───────────────
+
+def _blob_lm(sep, k=3, n=40, d=4, seed=0):
+    """SingleKMetrics on k isotropic blobs whose centres are `sep` apart."""
+    rng = np.random.default_rng(seed)
+    X = np.vstack([rng.normal(c * sep, 1.0, (n, d)) for c in range(k)]).astype(np.float32)
+    labels = np.repeat(np.arange(k), n)
+    lm = SingleKMetrics(data=X, labels=labels, seed=42)
+
+    return lm
+
+
+# ksq_detw measures within-cluster compactness only (k^2 * det(W)); pure
+# separation moves centres without changing within-cluster scatter, so it is
+# separation-invariant rather than separation-monotone.
+_SEPARATION_MONOTONE_INDICES = sorted(SINGLE_K_INDEX_NAMES - {"ksq_detw_index"})
+
+
+class TestValidityIndexAnalyticValues:
+    """Pin validity indices to reference implementations on fixed geometry."""
+
+    def test_silhouette_matches_hand_computed_three_point(self):
+        """Silhouette on a 3-point, 2-cluster geometry equals the hand value.
+
+        Points (0,0),(0,1) in cluster 0 and (0,5) alone in cluster 1:
+        s=0.8 for (0,0), s=0.75 for (0,1), s=0 for the singleton, mean
+        0.51667.  The index negates (minimize convention), so it is the
+        negative of that mean.
+        """
+        X = np.array([[0.0, 0.0], [0.0, 1.0], [0.0, 5.0]], dtype=np.float32)
+        labels = np.array([0, 0, 1])
+        lm = SingleKMetrics(data=X, labels=labels, seed=42)
+        assert float(lm.silhouette_index) == pytest.approx(-0.516667, abs=1e-5)
+
+    def test_silhouette_index_is_negated_sklearn(self):
+        """silhouette_index equals the negative of sklearn's silhouette_score."""
+        lm = _blob_lm(sep=8.0)
+        X, labels = np.asarray(lm.data), np.asarray(lm.labels)
+        assert float(lm.silhouette_index) == pytest.approx(-silhouette_score(X, labels), abs=1e-5)
+
+    def test_davies_bouldin_matches_sklearn(self):
+        """davies_bouldin_index equals sklearn's davies_bouldin_score."""
+        lm = _blob_lm(sep=8.0)
+        X, labels = np.asarray(lm.data), np.asarray(lm.labels)
+        assert float(lm.davies_bouldin_index) == pytest.approx(davies_bouldin_score(X, labels), abs=1e-5)
+
+
+class TestValidityIndexMonotonicity:
+    """Every quality index improves as cluster separation grows.
+
+    All indices are normalized to minimize (maximize-natural ones are
+    negated), so a wider gap must produce a strictly smaller value.  A single
+    failing index pinpoints a sign/formula inversion.
+    """
+
+    @pytest.fixture(scope="class")
+    def low_sep(self):
+        return _blob_lm(sep=2.0)
+
+    @pytest.fixture(scope="class")
+    def high_sep(self):
+        return _blob_lm(sep=30.0)
+
+    @pytest.mark.parametrize("index", _SEPARATION_MONOTONE_INDICES)
+    def test_improves_with_separation(self, index, low_sep, high_sep):
+        """index(well-separated) < index(overlapping)."""
+        v_low = float(getattr(low_sep, index))
+        v_high = float(getattr(high_sep, index))
+        assert np.isfinite(v_low) and np.isfinite(v_high), f"{index} not finite"
+        assert v_high < v_low, f"{index} did not improve with separation ({v_low} -> {v_high})"
+
+    def test_ksq_detw_is_separation_invariant(self):
+        """ksq_detw (within-cluster only) is unchanged by pure separation."""
+        v_low = float(_blob_lm(sep=2.0).ksq_detw_index)
+        v_high = float(_blob_lm(sep=30.0).ksq_detw_index)
+        assert v_high == pytest.approx(v_low, rel=1e-6)
+
+
+class TestDBCV:
+    """Density-Based Clustering Validation index behaviour."""
+
+    def test_increases_with_separation(self):
+        """DBCV is higher (better) for well-separated than overlapping blobs."""
+        def blobs(sep, seed=0):
+            rng = np.random.default_rng(seed)
+            X = np.vstack([rng.normal(c * sep, 1.0, (40, 4)) for c in range(3)])
+            y = np.repeat(np.arange(3), 40)
+
+            return X, y
+
+        x_lo, y_lo = blobs(3.0)
+        x_hi, y_hi = blobs(30.0)
+        assert dbcv(x_hi, y_hi) > dbcv(x_lo, y_lo)
+
+    def test_low_for_random_labels_on_uniform(self):
+        """Random labels over uniform data score poorly (well below structure)."""
+        rng = np.random.default_rng(1)
+        X = rng.uniform(0, 10, (120, 4))
+        y = rng.integers(0, 3, 120)
+        assert dbcv(X, y) < 0.1
+
+    def test_all_noise_returns_zero(self):
+        """All-noise labeling has no clusters to validate -> 0.0."""
+        X = np.random.default_rng(0).normal(0, 1, (40, 4))
+        y = np.full(40, -1)
+        assert dbcv(X, y) == 0.0
+
+    def test_duplicates_raise_when_checked(self):
+        """Duplicate rows are rejected when check_duplicates is on."""
+        rng = np.random.default_rng(0)
+        X = np.vstack([rng.normal(c * 30, 1.0, (20, 4)) for c in range(2)])
+        X[1] = X[0]
+        with pytest.raises(ValueError, match="Duplicated samples"):
+            dbcv(X, np.repeat([0, 1], 20), check_duplicates=True)
+
+    def test_duplicates_tolerated_when_unchecked(self):
+        """With the check off, duplicates are tolerated and a score returns."""
+        rng = np.random.default_rng(0)
+        X = np.vstack([rng.normal(c * 30, 1.0, (20, 4)) for c in range(2)])
+        X[1] = X[0]
+        result = dbcv(X, np.repeat([0, 1], 20), check_duplicates=False)
+        assert np.isfinite(result)
 
 
 if __name__ == '__main__':

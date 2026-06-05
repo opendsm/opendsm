@@ -28,8 +28,10 @@ from opendsm.common.clustering.algorithms.spectral import spectral
 from opendsm.common.clustering.algorithms.spectral.spectral_divisive import spectral_divisive
 from opendsm.common.clustering.algorithms.bisect_k_means import bisect_k_means
 from opendsm.common.clustering.algorithms.bisect_k_medians import bisect_k_medians
+from opendsm.common.clustering.algorithms.k_medians import kmedians
 
 from .conftest import make_clustering_settings
+
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +41,8 @@ from .conftest import make_clustering_settings
 _ALGO_FN = {
     "spectral": spectral,
     "bisecting_kmeans": bisect_k_means,
+    "kmedians": kmedians,
+    "bisecting_kmedians": bisect_k_medians,
 }
 
 # Algorithm names that the parametrized tests iterate over.
@@ -46,14 +50,16 @@ _ALGORITHMS = list(_ALGO_FN.keys())
 
 
 def _algo_settings_key(algorithm):
-    """Return the keyword for algorithm-specific sub-settings."""
-    return algorithm  # "spectral" or "bisecting_kmeans"
+    """Return the keyword for algorithm-specific sub-settings (== the algorithm name)."""
+
+    return algorithm
 
 
 def _run(data, algorithm, seed=42, n_lower=2, n_upper=5, **extra_algo):
     """Run an algorithm directly and return its ClusteringResult."""
     algo_kw = {_algo_settings_key(algorithm): {"n_cluster": {"lower": n_lower, "upper": n_upper}, **extra_algo}}
     cs = make_clustering_settings(algorithm, seed=seed, **algo_kw)
+
     return _ALGO_FN[algorithm](data, cs)
 
 
@@ -182,30 +188,33 @@ class TestAlgorithmSharedBehavior:
         assert adjusted_rand_score(true_labels, labels) > 0.95
 
 
-# Bisection-family algorithms cannot manufacture clusters from identical
-# points (each split collapses to one side), so they report degeneracy
-# honestly — unlike spectral, whose k-means label step fabricates clusters.
-_BISECTION_ALGOS = {
-    "bisecting_kmedians": bisect_k_medians,
-    "spectral_divisive": spectral_divisive,
+# Every k-controlled algorithm except spectral reports degeneracy honestly:
+# on identical points each cluster collapses to one centroid, so the
+# requested k cannot be formed.  Spectral's k-means label step instead
+# fabricates the requested k from the eigenvectors.  spectral_divisive is
+# the honest spectral variant; it is not a council algorithm, hence absent
+# from _ALGO_FN and added here explicitly.
+_HONEST_DEGENERACY_FN = {
+    name: fn for name, fn in _ALGO_FN.items() if name != "spectral"
 }
+_HONEST_DEGENERACY_FN["spectral_divisive"] = spectral_divisive
 
 
 class TestDegenerateDataFallback:
     """Unclusterable data: terminate (no hang) and honour the k=1 allowance."""
 
-    @pytest.mark.parametrize("algorithm", list(_BISECTION_ALGOS))
+    @pytest.mark.parametrize("algorithm", list(_HONEST_DEGENERACY_FN))
     def test_k1_allowed_returns_single_cluster(self, algorithm):
         """Identical data with k=1 allowed terminates and yields one cluster."""
         data = np.ones((30, 4))
         algo_kw = {algorithm: {"n_cluster": {"lower": 1, "upper": 6}}}
         cs = make_clustering_settings(algorithm, **algo_kw)
 
-        result = _BISECTION_ALGOS[algorithm](data, cs)
+        result = _HONEST_DEGENERACY_FN[algorithm](data, cs)
 
         assert result.k == 1
 
-    @pytest.mark.parametrize("algorithm", list(_BISECTION_ALGOS))
+    @pytest.mark.parametrize("algorithm", list(_HONEST_DEGENERACY_FN))
     def test_k1_disallowed_raises(self, algorithm):
         """Identical data with k=1 disallowed terminates and raises rather
         than returning a below-lower-bound clustering.
@@ -214,10 +223,26 @@ class TestDegenerateDataFallback:
         algo_kw = {algorithm: {"n_cluster": {"lower": 2, "upper": 6}}}
         cs = make_clustering_settings(algorithm, **algo_kw)
 
-        result = _BISECTION_ALGOS[algorithm](data, cs)
+        result = _HONEST_DEGENERACY_FN[algorithm](data, cs)
 
         with pytest.raises(ValueError):
             _ = result.k
+
+    def test_spectral_fabricates_forced_k_contract(self):
+        """Spectral forced to k>=2 returns exactly k even on identical data.
+
+        This is the documented forced-k contract, not a bug: requesting an
+        explicit k (n_cluster_lower == n_cluster_upper >= 2) opts out of the
+        degeneracy gate, so the k-means label step partitions the eigenvectors
+        into exactly k groups.  Contrast the honest-degeneracy family above,
+        which raises instead.
+        """
+        data = np.ones((30, 4))
+        cs = make_clustering_settings("spectral", spectral={"n_cluster": {"lower": 3, "upper": 3}})
+
+        result = spectral(data, cs)
+
+        assert result.k == 3
 
 
 if __name__ == "__main__":
