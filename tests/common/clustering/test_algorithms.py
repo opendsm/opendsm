@@ -22,6 +22,8 @@ all of them.
 import numpy as np
 import pytest
 
+from sklearn.metrics import adjusted_rand_score
+
 from opendsm.common.clustering.algorithms.spectral import spectral
 from opendsm.common.clustering.algorithms.spectral.spectral_divisive import spectral_divisive
 from opendsm.common.clustering.algorithms.bisect_k_means import bisect_k_means
@@ -171,14 +173,13 @@ class TestAlgorithmSharedBehavior:
         cluster3 = np.random.randn(30, 5) + np.array([20, 20, 20, 20, 20])
         data = np.vstack([cluster1, cluster2, cluster3])
 
+        true_labels = np.array([0] * 30 + [1] * 30 + [2] * 30)
+
         labels = _run(data, algorithm, n_lower=3, n_upper=3).labels
 
         assert len(np.unique(labels)) == 3
-        # Heuristic: majority of each true cluster should share a label
-        for i in range(3):
-            segment = labels[i * 30:(i + 1) * 30]
-            most_common = np.bincount(segment).argmax()
-            assert np.sum(segment == most_common) >= 20
+        # ground-truth recovery; labels may be permuted, so compare with ARI
+        assert adjusted_rand_score(true_labels, labels) > 0.95
 
 
 # Bisection-family algorithms cannot manufacture clusters from identical
