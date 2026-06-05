@@ -18,12 +18,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-# DailyModel-derived tests (metered/modeled_savings_*_daily) pin a Windows-
-# specific snapshot because the SBPLX optimizer converges to a different
-# local minimum there; aggregate sum/mean stay within ~0.05% but per-bin
-# residual means diverge by tens of percent.
-SNAP_SUFFIX = "_win" if sys.platform == "win32" else ""
-
 from opendsm.eemeter.models.hourly_caltrack.design_matrices import (
     create_caltrack_billing_design_matrix,
     create_caltrack_hourly_preliminary_design_matrix,
@@ -50,11 +44,22 @@ from opendsm.eemeter.models.billing.data import (
 from regression_metrics import regression_block
 
 
+
+# DailyModel-derived tests (metered/modeled_savings_*_daily) pin a Windows-
+# specific snapshot because the SBPLX optimizer converges to a different
+# local minimum there; aggregate sum/mean stay within ~0.05% but per-bin
+# residual means diverge by tens of percent.
+if sys.platform == "win32":
+    SNAP_SUFFIX = "_win"
+else:
+    SNAP_SUFFIX = ""
+
+
 @pytest.fixture(scope="session")
 def baseline_data_daily(comstock_daily):
     df_b, _ = comstock_daily
 
-    return DailyBaselineData(df=df_b.reset_index(), is_electricity_data=True)
+    return DailyBaselineData(df=df_b.reset_index().copy(), is_electricity_data=True)
 
 
 @pytest.fixture(scope="session")
@@ -66,7 +71,7 @@ def baseline_model_daily(baseline_data_daily):
 def reporting_data_daily(comstock_daily):
     _, df_r = comstock_daily
 
-    return DailyReportingData(df=df_r.reset_index(), is_electricity_data=True)
+    return DailyReportingData(df=df_r.reset_index().copy(), is_electricity_data=True)
 
 
 @pytest.fixture(scope="session")
@@ -74,11 +79,10 @@ def reporting_model_daily(comstock_daily):
     # Reporting-period DailyModel is trained as a baseline fit on the reporting period;
     # use DailyBaselineData here because DailyReportingData has no observed values to fit on.
     _, df_r = comstock_daily
+    baseline_data = DailyBaselineData(df=df_r.reset_index().copy(), is_electricity_data=True)
+    model = DailyModel().fit(baseline_data, ignore_disqualification=True)
 
-    return DailyModel().fit(
-        DailyBaselineData(df=df_r.reset_index(), is_electricity_data=True),
-        ignore_disqualification=True,
-    )
+    return model
 
 
 @pytest.fixture
@@ -113,7 +117,7 @@ def test_metered_savings_cdd_hdd_daily(
 @pytest.fixture(scope="session")
 def baseline_model_billing(comstock_monthly):
     df_b, _ = comstock_monthly
-    baseline_data = BillingBaselineData(df=df_b.reset_index(), is_electricity_data=True)
+    baseline_data = BillingBaselineData(df=df_b.reset_index().copy(), is_electricity_data=True)
 
     return BillingModel().fit(baseline_data, ignore_disqualification=True)
 
@@ -218,18 +222,19 @@ def baseline_model_billing_single_record_baseline_data(comstock_monthly, comstoc
     df_hourly, _ = comstock_hourly
     meter_data = df_monthly[["observed"]].rename(columns={"observed": "value"}).dropna()
     meter_data.index = meter_data.index.tz_convert("UTC")
-    temperature_data = df_hourly["temperature"]
+    temperature_data = df_hourly["temperature"].copy()
     temperature_data.index = temperature_data.index.tz_convert("UTC")
 
     baseline_data = create_caltrack_billing_design_matrix(
         meter_data, temperature_data
     ).rename(columns={"meter_value": "observed", "temperature_mean": "temperature"})
     baseline_data = baseline_data[:60]
-
-    return BillingModel().fit(
+    model = BillingModel().fit(
         BillingBaselineData(baseline_data, is_electricity_data=True),
         ignore_disqualification=True,
     )
+
+    return model
 
 
 @pytest.mark.regression
@@ -332,14 +337,15 @@ def _fit_caltrack_hourly(meter_data, temperature_data):
     design = create_caltrack_hourly_segmented_design_matrices(
         preliminary, segmentation, occupancy_lookup, occ_bins, unocc_bins
     )
-
-    return fit_caltrack_hourly_model(
+    model = fit_caltrack_hourly_model(
         design,
         occupancy_lookup,
         occ_bins,
         unocc_bins,
         segment_type="three_month_weighted",
     )
+
+    return model
 
 
 @pytest.fixture(scope="session")
@@ -432,6 +438,7 @@ def test_modeled_savings_cdd_hdd_hourly(
 def normal_year_temperature_data():
     index = pd.date_range("2019-01-01", freq="D", periods=365, tz="America/Chicago")
     np.random.seed(0)
+
     return pd.Series(np.random.rand(365) * 30 + 45, index=index).asfreq("h").ffill()
 
 
@@ -497,7 +504,7 @@ def baseline_model_billing_single_record(comstock_monthly, comstock_hourly):
     df_hourly, _ = comstock_hourly
     meter_data = df_monthly[["observed"]].rename(columns={"observed": "value"}).dropna()
     meter_data.index = meter_data.index.tz_convert("UTC")
-    temperature_data = df_hourly["temperature"]
+    temperature_data = df_hourly["temperature"].copy()
     temperature_data.index = temperature_data.index.tz_convert("UTC")
     # 4 monthly records → 3 billing periods (minimum that exercises the optimizer
     # without collapsing observed stdev to zero on the design matrix)
@@ -505,11 +512,12 @@ def baseline_model_billing_single_record(comstock_monthly, comstock_hourly):
     baseline_data = create_caltrack_billing_design_matrix(
         baseline_meter_data, temperature_data
     ).rename(columns={"meter_value": "observed", "temperature_mean": "temperature"})
-
-    return BillingModel().fit(
+    model = BillingModel().fit(
         BillingBaselineData(baseline_data, is_electricity_data=True),
         ignore_disqualification=True,
     )
+
+    return model
 
 
 @pytest.mark.regression
