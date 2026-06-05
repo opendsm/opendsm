@@ -102,4 +102,24 @@ filterwarnings = [
 # sys.monitoring backend (Python 3.12+) leaves sys.settrace free, so coverage
 # and the debugger coexist; older versions warn and fall back to the C tracer.
 core = "sysmon"
-omit = [".tox/*"]
+# Run coverage under NUMBA_DISABLE_JIT=1 (see `tox -e coverage`); JIT-compiled
+# functions execute as native code the tracer cannot see, so they report as
+# uncovered even when exercised.
+omit = [
+  ".tox/*",
+  # work-in-progress scratch, excluded from coverage rather than tested
+  "*/comparison_groups/savings/dev/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "if __name__ == .__main__.:",
+  "raise NotImplementedError",
+  "@(abc\\.)?abstractmethod",
+  "if TYPE_CHECKING:",
+  "def _warmup_numba",
+]
+# Conservative starting floor for `tox -e coverage` (full suite, JIT off).
+# Raise it as test coverage is added.
+fail_under = 85
