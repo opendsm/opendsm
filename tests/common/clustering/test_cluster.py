@@ -1237,5 +1237,53 @@ class TestLabelOpsEdgeCases:
 # Run tests
 # =============================================================================
 
+class TestClusterFeaturesContract:
+    """Public-API contract of cluster_features (DataFrame -> label array)."""
+
+    @pytest.fixture
+    def two_shape_df(self):
+        """20 rising ramps then 20 falling ramps — shapes survive per-sample norm."""
+        rng = np.random.default_rng(0)
+        rising = [np.linspace(0, 1, 24) + rng.normal(0, 0.02, 24) for _ in range(20)]
+        falling = [np.linspace(1, 0, 24) + rng.normal(0, 0.02, 24) for _ in range(20)]
+        df = pd.DataFrame(np.vstack([rising, falling]))
+
+        return df
+
+    def _k2_settings(self):
+        """Forced k=2 with outlier removal off so blocks map cleanly to labels."""
+        cs = make_clustering_settings(
+            "kmedians",
+            outlier_removal_sigma=None,
+            kmedians={"n_cluster": {"lower": 2, "upper": 2}},
+        )
+
+        return cs
+
+    def test_returns_integer_array_length_n(self, two_shape_df):
+        """Result is an integer ndarray with one label per input row."""
+        labels = cluster_features(two_shape_df, make_clustering_settings("kmedians"))
+        assert isinstance(labels, np.ndarray)
+        assert np.issubdtype(labels.dtype, np.integer)
+        assert len(labels) == len(two_shape_df)
+
+    def test_row_order_preserved(self, two_shape_df):
+        """Label i corresponds to input row i: each shape block maps to one label."""
+        labels = cluster_features(two_shape_df, self._k2_settings())
+        rising_labels = set(labels[:20])
+        falling_labels = set(labels[20:])
+        assert len(rising_labels) == 1
+        assert len(falling_labels) == 1
+        assert rising_labels.isdisjoint(falling_labels)
+
+    def test_lower_bound_above_n_returns_identity(self, two_shape_df):
+        """When n_cluster_lower >= n_samples the pipeline returns identity labels."""
+        settings = make_clustering_settings(
+            "kmedians", kmedians={"n_cluster": {"lower": 100, "upper": 100}},
+        )
+        labels = cluster_features(two_shape_df, settings)
+        assert np.array_equal(labels, np.arange(len(two_shape_df)))
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v', '--tb=short'])

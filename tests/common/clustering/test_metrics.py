@@ -26,6 +26,7 @@ from opendsm.common.clustering.metrics.cross_k_metrics import CrossKMetrics
 from opendsm.common.clustering.metrics.dbcv import dbcv
 from opendsm.common.clustering.metrics.labels import ClusteringResult
 from opendsm.common.clustering.metrics import selection
+from opendsm.common.clustering.metrics.label_ops import prepare_labels
 from opendsm.common.clustering.metrics.settings import (
     ClusterRangeSettings,
     ScoreSettings,
@@ -1546,6 +1547,75 @@ class TestDBCV:
         X[1] = X[0]
         result = dbcv(X, np.repeat([0, 1], 20), check_duplicates=False)
         assert np.isfinite(result)
+
+
+# ── Voter discriminability weighting ─────────────────────────────────────────
+
+class TestDiscriminabilityWeights:
+    """Council weights scale by each voter's coefficient of variation."""
+
+    def test_flat_voter_downweighted_sharp_kept(self):
+        """A constant-score voter loses almost all weight; a varied one keeps it."""
+        score_matrix = np.array([[5.0, 1.0], [5.0, 2.0], [5.0, 3.0], [5.0, 10.0]])
+        adjusted = selection._discriminability_weights(
+            score_matrix, ["flat", "sharp"], {"flat": 1.0, "sharp": 1.0},
+        )
+        assert adjusted["flat"] == pytest.approx(0.0, abs=1e-6)
+        assert adjusted["sharp"] > 0.5
+
+    def test_zero_weight_voter_skipped(self):
+        """A voter with non-positive council weight is left untouched."""
+        score_matrix = np.array([[1.0], [2.0], [3.0]])
+        adjusted = selection._discriminability_weights(
+            score_matrix, ["v"], {"v": 0.0},
+        )
+        assert adjusted["v"] == 0.0
+
+
+# ── prepare_labels small-cluster strategies ──────────────────────────────────
+
+class TestPrepareLabels:
+    """The small-cluster strategy branch of label preparation."""
+
+    @pytest.fixture
+    def labels_with_singleton(self):
+        rng = np.random.default_rng(0)
+        data = rng.normal(0, 1, (10, 3))
+        labels = np.array([0, 0, 0, 0, 1, 1, 1, 1, 1, 2])  # cluster 2 is a singleton
+
+        return data, labels
+
+    def test_keep_preserves_all_clusters(self, labels_with_singleton):
+        """KEEP retains every cluster, full coverage, no outliers introduced."""
+        data, labels = labels_with_singleton
+        merged, _, labels_clean, coverage = prepare_labels(
+            labels, data, ScoreSettings(), None,
+            min_cluster_size=1, small_cluster_mode=SmallClusterMode.KEEP,
+        )
+        assert len(np.unique(labels_clean)) == 3
+        assert coverage == 1.0
+        assert -1 not in merged
+
+    def test_outlier_relabels_small_cluster(self, labels_with_singleton):
+        """OUTLIER demotes the sub-threshold cluster to -1 and lowers coverage."""
+        data, labels = labels_with_singleton
+        merged, _, labels_clean, coverage = prepare_labels(
+            labels, data, ScoreSettings(), None,
+            min_cluster_size=3, small_cluster_mode=SmallClusterMode.OUTLIER,
+        )
+        assert -1 in merged
+        assert coverage == pytest.approx(0.9)
+        assert len(np.unique(labels_clean)) == 2
+
+    def test_below_lower_bound_returns_none(self, labels_with_singleton):
+        """Fewer clusters than n_cluster_lower invalidates the labeling."""
+        data, labels = labels_with_singleton
+        _, data_clean, labels_clean, _ = prepare_labels(
+            labels, data, ScoreSettings(), 5,
+            min_cluster_size=1, small_cluster_mode=SmallClusterMode.KEEP,
+        )
+        assert data_clean is None
+        assert labels_clean is None
 
 
 if __name__ == '__main__':
