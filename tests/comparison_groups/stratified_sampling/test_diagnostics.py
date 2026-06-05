@@ -142,3 +142,30 @@ class TestTAndKsTest:
 
         assert lenient
         assert not strict
+
+
+class TestEquivalenceNegative:
+    """A pool disjoint from the treatment cannot be matched: equivalence fails."""
+
+    @pytest.mark.filterwarnings("ignore:One or more sample arguments is too small")
+    def test_disjoint_pool_fails_equivalence(self, col_name):
+        """Sampling from a far-shifted pool yields a CG that fails equivalence.
+
+        The pool cannot supply the treatment's bins, so the matched CG is
+        under-populated and the t/KS equivalence checks reject (the expected
+        small-sample warning is suppressed).
+        """
+        df_treatment = pd.DataFrame(
+            [{"id": f"t_{x}", col_name: x} for x in np.arange(0, 10, 0.1)]
+        )
+        df_pool = pd.DataFrame(
+            [{"id": f"p_{x}", col_name: x} for x in np.arange(100, 120, 0.05)]
+        )
+        model = StratifiedSampler()
+        model.add_column(col_name, n_bins=4)
+        model.fit_and_sample(
+            df_treatment, df_pool, n_samples_approx=len(df_treatment), random_seed=1,
+            min_n_sampled_to_n_treatment_ratio=0, relax_n_samples_approx_constraint=True,
+        )
+
+        assert model.diagnostics().equivalence_passed() is False
