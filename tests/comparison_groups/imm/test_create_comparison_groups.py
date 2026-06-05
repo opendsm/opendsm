@@ -99,3 +99,30 @@ def test_minimize_loadshape_distance_path(cg_loadshape_data):
 def test_allow_duplicates_requires_meter_distance():
     with pytest.raises(ValueError):
         Settings(allow_duplicate_matches=True, selection_method="minimize_loadshape_distance")
+
+
+def test_matches_are_brute_force_nearest(cg_loadshape_data):
+    """With duplicates allowed, each treatment's matches are its nearest pool
+    meters by Euclidean loadshape distance (vs brute-force ground truth)."""
+    import numpy as np
+
+    treatment_data, comparison_pool_data = cg_loadshape_data
+    n_match = 3
+    imm = Individual_Meter_Matching(
+        Settings(
+            n_matches_per_treatment=n_match,
+            allow_duplicate_matches=True,
+            selection_method="minimize_meter_distance",
+        )
+    )
+
+    clusters, _ = imm.get_comparison_group(treatment_data, comparison_pool_data)
+
+    pool_ls = imm.comparison_pool_loadshape
+    pool_ids = np.asarray(pool_ls.index)
+    pool_mat = pool_ls.to_numpy()
+    for tid in imm.treatment_loadshape.index:
+        matched = set(clusters.index[clusters["treatment"] == tid])
+        dists = np.linalg.norm(pool_mat - imm.treatment_loadshape.loc[tid].to_numpy(), axis=1)
+        nearest = set(pool_ids[np.argsort(dists, kind="stable")[:n_match]])
+        assert matched == nearest, f"treatment {tid}: matcher {matched} != brute-force {nearest}"
