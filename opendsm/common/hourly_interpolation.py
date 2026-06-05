@@ -27,12 +27,20 @@ from sklearn.linear_model import BayesianRidge
 from scipy.interpolate import RBFInterpolator
 
 
+
+# At or below this many lags the direct masked loop is used; above it the FFT
+# path is used. Both paths return identical correlation values.
+_AUTOCORR_FFT_LAG_THRESHOLD = 16
+
+
 def _autocorr_fcn(x, lags, exclude_0=True):
     """Compute autocorrelation function for given lags.
 
-    Manually computes non-partial autocorrelation, handling missing values
-    via masked arrays. Returns both positive lags (future) and negative lags
-    (past) by mirroring the correlation values.
+    Computes non-partial autocorrelation, handling missing values via masked
+    arrays, and returns both positive lags (future) and negative lags (past) by
+    mirroring the correlation values. Few lags use a direct masked loop; many
+    lags use an FFT with missing values zero-filled after centering, which
+    contributes 0 to each lag product and so matches the masked-loop result.
 
     Args:
         x: Input array (may contain NaN values)
@@ -42,25 +50,34 @@ def _autocorr_fcn(x, lags, exclude_0=True):
     Returns:
         2D array with shape (n_lags, 2) containing [lag, correlation] pairs
     """
+    lags = np.asarray(lags)
     x_masked = ma.masked_invalid(x)
     mean = ma.mean(x_masked)
     var = ma.var(x_masked)
 
-    if var == 0:
+    if not np.isfinite(var) or var == 0:
         var = 1.0
 
-    x_centered = x_masked - mean
     n = len(x)
 
-    # Compute correlation for each lag
-    corr = np.zeros(len(lags))
+    if len(lags) <= _AUTOCORR_FFT_LAG_THRESHOLD:
+        x_centered = x_masked - mean
+        corr = np.zeros(len(lags))
 
-    for idx, lag in enumerate(lags):
-        if lag == 0:
-            corr[idx] = 1.0
-        else:
-            lag_corr = ma.sum(x_centered[lag:] * x_centered[:-lag]) / n / var
-            corr[idx] = ma.filled(lag_corr, 0.0)
+        for idx, lag in enumerate(lags):
+            if lag == 0:
+                corr[idx] = 1.0
+            else:
+                lag_corr = ma.sum(x_centered[lag:] * x_centered[:-lag]) / n / var
+                corr[idx] = ma.filled(lag_corr, 0.0)
+
+    else:
+        x_filled = ma.filled(x_masked - mean, 0.0)
+        spectrum = np.fft.rfft(x_filled, 2 * n)
+        acov = np.fft.irfft(spectrum * np.conj(spectrum), 2 * n)[:n] / n / var
+        safe_lags = np.clip(lags, 0, n - 1)
+        corr = np.where(lags < n, acov[safe_lags], 0.0)
+        corr[lags == 0] = 1.0
 
     result = np.vstack((lags, corr)).T
 
@@ -76,48 +93,6 @@ def _autocorr_fcn(x, lags, exclude_0=True):
     result = np.vstack((reversed_result, result))
 
     return result
-
-
-def _autocorr_fcn2(x, lags):
-    """Alternative autocorr using np.correlate (unused, kept for reference).
-
-    Computes non-partial autocorrelation using numpy's correlate function.
-    Generally slower than _autocorr_fcn for typical use cases.
-    """
-    x_masked = ma.masked_invalid(x)
-    mean = ma.mean(x_masked)
-    var = ma.var(x_masked)
-    x_centered = x_masked - mean
-
-    corr = ma.correlate(x_centered, x_centered, "full")[len(x) - 1:] / var / len(x)
-
-    return corr[:len(lags)]
-
-
-def _autocorr_fcn3(x, lags):
-    """Alternative autocorr using FFT (unused, kept for reference).
-
-    Computes non-partial autocorrelation using Fast Fourier Transform.
-    Most efficient for very long time series but has higher memory overhead.
-    """
-    x_masked = ma.masked_invalid(x)
-    n = len(x)
-
-    # Pad to nearest power of 2 for FFT efficiency
-    ext_size = 2 * n - 1
-    fft_size = 2 ** np.ceil(np.log2(ext_size)).astype("int")
-
-    mean = ma.mean(x_masked)
-    var = ma.var(x_masked)
-    x_centered = x - mean
-
-    # Compute autocorrelation via FFT
-    cf = np.fft.fft(x_centered, fft_size)
-    sf = cf.conjugate() * cf
-    corr = np.fft.ifft(sf).real
-    corr = corr / var / n
-
-    return corr[:len(lags)]
 
 
 def _multiple_imputation(df, columns=None, **kwargs):
@@ -345,6 +320,8 @@ def interpolate(df: pd.DataFrame, columns: Optional[List[str]] = None) -> pd.Dat
                 df[col] = df[col].ffill()
             elif method == "bfill":
                 df[col] = df[col].bfill()
+            else:
+                raise ValueError(f"Unknown interpolation method: {method!r}")
 
         # Create interpolation flag: True where originally missing and now filled
         df[flag_col] = False
