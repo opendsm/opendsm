@@ -23,6 +23,7 @@ from opendsm.common.metrics import (
     ReportingMetrics,
     acf,
 )
+from opendsm.common.stats.basic import t_stat
 
 
 
@@ -258,27 +259,60 @@ def test_baseline_metrics_percentage_errors_nonnegative(realistic_baseline):
         assert value >= 0.0
 
 
-def test_baseline_metrics_autocorrelation_adjusted_terms_finite(realistic_baseline):
-    """n_prime, the adjusted dofs, and every autocorr/adjusted RMSE are finite."""
+def test_baseline_metrics_adjusted_rmse_identities(realistic_baseline):
+    """Each adjusted/autocorr RMSE equals √(SSE / its dof), and exceeds plain RMSE.
+
+    ddof = n - p and n_prime (autocorr-effective n) are both < n, so dividing
+    SSE by them inflates the RMSE relative to the unadjusted √(SSE/n).
+    """
     m = realistic_baseline
 
+    assert 1 <= m.ddof < m.n
     assert m.n_prime >= 1
-    assert m.ddof >= 1
     assert m.ddof_autocorr >= 1
-    for value in [
-        m.rmse_autocorr, m.rmse_adj, m.rmse_autocorr_adj,
-        m.cvrmse_autocorr, m.cvrmse_adj, m.cvrmse_autocorr_adj,
-        m.pnrmse, m.pnrmse_autocorr, m.pnrmse_adj, m.pnrmse_autocorr_adj,
-        m.pnmae, m.pnmbe, m.r_squared_adj, m.index_of_agreement,
-    ]:
-        assert np.isfinite(value)
+    assert m.rmse_adj == pytest.approx((m.sse / m.ddof) ** 0.5)
+    assert m.rmse_autocorr == pytest.approx((m.sse / m.n_prime) ** 0.5)
+    assert m.rmse_autocorr_adj == pytest.approx((m.sse / m.ddof_autocorr) ** 0.5)
+    assert m.rmse_adj > m.rmse
 
 
-def test_baseline_metrics_pi_rating_is_valid_label(realistic_baseline):
-    """pi_rating returns one of the defined qualitative buckets."""
-    assert realistic_baseline.pi_rating in {
-        "excellent", "very good", "good", "satisfactory", "poor", "bad", "very bad"
-    }
+def test_baseline_metrics_normalization_identities(realistic_baseline):
+    """CVRMSE/PN variants divide their RMSE by the observed mean / IQR respectively."""
+    m = realistic_baseline
+    mean = m.observed.mean
+    iqr = m.observed.iqr
+
+    assert m.cvrmse_adj == pytest.approx(m.rmse_adj / mean)
+    assert m.cvrmse_autocorr == pytest.approx(m.rmse_autocorr / mean)
+    assert m.cvrmse_autocorr_adj == pytest.approx(m.rmse_autocorr_adj / mean)
+    assert m.pnrmse == pytest.approx(m.rmse / iqr)
+    assert m.pnrmse_adj == pytest.approx(m.rmse_adj / iqr)
+    assert m.pnmae == pytest.approx(m.mae / iqr)
+    assert m.pnmbe == pytest.approx(m.mbe / iqr)
+    assert 0.0 <= m.index_of_agreement <= 1.0
+
+
+def test_baseline_metrics_pi_rating_buckets_by_quality():
+    """pi_rating maps a near-perfect fit to 'excellent' and a poor fit to 'very bad'.
+
+    Performance index pi = pearson_r · willmott_index, so a tight fit scores
+    high (pi >= 0.85) and a fit uncorrelated with truth scores low (pi < 0.40).
+    """
+    rng = np.random.default_rng(0)
+    truth = rng.normal(100.0, 10.0, 200)
+
+    good = BaselineMetrics(
+        df=pd.DataFrame({"observed": truth, "predicted": truth + rng.normal(0, 1, 200)}),
+        num_model_params=2,
+    )
+    bad = BaselineMetrics(
+        df=pd.DataFrame({"observed": truth, "predicted": rng.normal(100.0, 10.0, 200)}),
+        num_model_params=2,
+    )
+
+    assert good.pi_rating == "excellent"
+    assert bad.pi >= 0.0  # uncorrelated → pi collapses toward 0
+    assert bad.pi_rating == "very bad"
 
 
 def test_baseline_metrics_from_dict_roundtrip(realistic_baseline):
@@ -316,17 +350,48 @@ def test_reporting_metrics_no_load_change_zero_savings(realistic_baseline):
     assert rm.savings == pytest.approx(0.0, abs=1e-9)
 
 
-@pytest.mark.parametrize("frequency", ["hourly", "daily", "billing"])
-def test_reporting_metrics_uncertainty_finite_per_frequency(realistic_baseline, frequency):
-    """Total savings uncertainty, FSU and per-point uncertainty are finite."""
+def test_reporting_metrics_t_stat_matches_basic(realistic_baseline):
+    """The reporting t-stat equals basic.t_stat at the configured confidence/dof."""
     rm = ReportingMetrics(
         baseline_metrics=realistic_baseline,
         reporting_df=realistic_baseline.df,
-        data_frequency=frequency,
+        data_frequency="hourly",
+        confidence_level=0.90,
+        t_tail=2,
     )
 
-    assert rm.t_stat > 0
-    assert np.isfinite(rm.total_savings_uncertainty)
-    assert rm.total_savings_uncertainty > 0
-    assert np.isfinite(rm.fsu)
-    assert np.isfinite(rm.predicted_data_point_unc)
+    assert rm.t_stat == pytest.approx(t_stat(1 - 0.90, realistic_baseline.ddof, tail=2))
+
+
+def test_reporting_metrics_ashrae_frequency_factors(realistic_baseline):
+    """The per-frequency uncertainty scales the shared base by the ASHRAE factors.
+
+    Hourly uses the flat 1.26 correction; daily and billing apply the
+    Sun & Baltazar polynomials evaluated at the number of reporting months
+    (here a single January, so M=1).
+    """
+    df = realistic_baseline.df
+    rm_h = ReportingMetrics(baseline_metrics=realistic_baseline, reporting_df=df, data_frequency="hourly")
+    rm_d = ReportingMetrics(baseline_metrics=realistic_baseline, reporting_df=df, data_frequency="daily")
+    rm_b = ReportingMetrics(baseline_metrics=realistic_baseline, reporting_df=df, data_frequency="billing")
+
+    base = rm_h.total_savings_uncertainty / 1.26
+    months = 1
+
+    assert rm_d.total_savings_uncertainty == pytest.approx(
+        base * np.polyval([-0.00024, 0.03535, 1.00286], months)
+    )
+    assert rm_b.total_savings_uncertainty == pytest.approx(
+        base * np.polyval([-0.00022, 0.03306, 0.94054], months)
+    )
+
+
+def test_reporting_metrics_fsu_and_per_point_definitions(realistic_baseline):
+    """FSU = uncertainty / savings and per-point unc = uncertainty / √n."""
+    df = realistic_baseline.df
+    rm = ReportingMetrics(baseline_metrics=realistic_baseline, reporting_df=df, data_frequency="hourly")
+
+    assert rm.fsu == pytest.approx(rm.total_savings_uncertainty / rm.savings)
+    assert rm.predicted_data_point_unc == pytest.approx(
+        rm.total_savings_uncertainty / np.sqrt(rm.n)
+    )

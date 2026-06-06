@@ -417,6 +417,23 @@ def test_get_C_positive_for_each_algo(algo):
     assert C > 0
 
 
+def test_get_C_stdev_equals_sigma_times_std():
+    """The 'stdev' algorithm returns exactly sigma * std(resid)."""
+    resid = np.array([1.0, 2.0, 3.0, 4.0, 5.0, -2.0, -1.0])
+
+    C = get_C(resid, mu=0.0, sigma=3.0, algo="stdev")
+
+    assert C == pytest.approx(3.0 * np.std(resid))
+
+
+def test_get_C_grows_with_residual_scale():
+    """A more-dispersed residual set yields a larger scale estimate."""
+    tight = np.array([-1.0, 0.0, 1.0, 0.5, -0.5])
+    wide = tight * 10.0
+
+    assert get_C(wide, mu=0.0, sigma=3.0, algo="mad") > get_C(tight, mu=0.0, sigma=3.0, algo="mad")
+
+
 def test_sliding_window_shape():
     """sliding_window tiles the array into overlapping windows of the given size."""
     windows = sliding_window(np.arange(10.0), 3, step=2)

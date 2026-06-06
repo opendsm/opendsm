@@ -159,6 +159,47 @@ def test_zero_variance_column_skipped(cls):
     assert np.allclose(transformed, 3.0)
 
 
+SIGNED_TRANSFORMS = [Standardize, Bisymlog, YeoJohnson]
+
+
+@pytest.mark.parametrize("cls", SIGNED_TRANSFORMS)
+def test_signed_data_roundtrip(cls):
+    """Transforms that accept the full real line round-trip on signed data.
+
+    BoxCox is excluded (positive-only); YeoJohnson exists precisely to handle
+    negatives and zeros, so the inputs span both signs and zero.
+    """
+    rng = np.random.default_rng(1)
+    a = rng.normal(0.0, 5.0, 300)
+    b = np.concatenate([rng.uniform(-10.0, -1.0, 150), rng.uniform(1.0, 10.0, 150)])
+    data = np.column_stack([a, b])
+
+    transform = cls()
+    transformed = transform.fit_transform(data)
+    recovered = transform.inverse_transform(transformed)
+
+    assert not transform.skip_dims_.any()
+    assert np.allclose(recovered, data, atol=1e-6, rtol=1e-6)
+
+
+@pytest.mark.parametrize("cls", [Standardize, YeoJohnson])
+def test_exact_zero_values_roundtrip(cls):
+    """Exact zeros survive the round-trip for transforms defined at zero.
+
+    YeoJohnson is continuous at 0 by construction; Standardize is linear.
+    (Bisymlog is excluded: its data-driven scale estimate degenerates when a
+    cluster of values sits exactly at zero.)
+    """
+    rng = np.random.default_rng(2)
+    data = rng.normal(0.0, 3.0, 200)
+    data[::10] = 0.0
+
+    transform = cls()
+    recovered = transform.inverse_transform(transform.fit_transform(data))
+
+    assert np.allclose(recovered, data, atol=1e-6)
+
+
 def test_box_cox_skips_non_positive_column():
     """BoxCox requires positive data; a column with non-positive values is skipped."""
     data = np.array([-1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0]).reshape(-1, 1)
