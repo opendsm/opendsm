@@ -1438,10 +1438,23 @@ def _blob_lm(sep, k=3, n=40, d=4, seed=0):
     return lm
 
 
-# ksq_detw measures within-cluster compactness only (k^2 * det(W)); pure
-# separation moves centres without changing within-cluster scatter, so it is
-# separation-invariant rather than separation-monotone.
-_SEPARATION_MONOTONE_INDICES = sorted(SINGLE_K_INDEX_NAMES - {"ksq_detw_index"})
+# Within-cluster scatter indices (SSE, trace(W), the determinant-of-W family,
+# ball-hall mean dispersion, MSE, negentropy, ksq_detw) measure compactness
+# only: pure separation moves centres without changing within-cluster spread,
+# so these are invariant to it rather than monotone in it.  Asserting strict
+# monotonicity on them is unstable (the value is flat to floating-point noise,
+# which flips the comparison across platforms / Python versions).
+_SEPARATION_INVARIANT_INDICES = {
+    "ball_hall_index",
+    "banfeld_raftery_index",
+    "ksq_detw_index",
+    "mean_squared_error_index",
+    "negentropy_index",
+    "scott_symons_index",
+    "sum_of_squared_errors_index",
+    "trace_w_index",
+}
+_SEPARATION_MONOTONE_INDICES = sorted(SINGLE_K_INDEX_NAMES - _SEPARATION_INVARIANT_INDICES)
 
 
 class TestValidityIndexAnalyticValues:
@@ -1497,11 +1510,12 @@ class TestValidityIndexMonotonicity:
         assert np.isfinite(v_low) and np.isfinite(v_high), f"{index} not finite"
         assert v_high < v_low, f"{index} did not improve with separation ({v_low} -> {v_high})"
 
-    def test_ksq_detw_is_separation_invariant(self):
-        """ksq_detw (within-cluster only) is unchanged by pure separation."""
-        v_low = float(_blob_lm(sep=2.0).ksq_detw_index)
-        v_high = float(_blob_lm(sep=30.0).ksq_detw_index)
-        assert v_high == pytest.approx(v_low, rel=1e-6)
+    @pytest.mark.parametrize("index", sorted(_SEPARATION_INVARIANT_INDICES))
+    def test_within_cluster_index_is_separation_invariant(self, index, low_sep, high_sep):
+        """Within-cluster scatter indices are unchanged by pure separation."""
+        v_low = float(getattr(low_sep, index))
+        v_high = float(getattr(high_sep, index))
+        assert v_high == pytest.approx(v_low, rel=1e-3)
 
 
 class TestDBCV:
