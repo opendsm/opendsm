@@ -97,4 +97,10 @@ def robust_mu_sigma(x, robust_type="huber_m_estimate", **kwargs):
     elif robust_type == "ransac":
         mu, sigma = ransac_mu_sigma(x, **kwargs)
 
+    else:
+        raise ValueError(
+            f"Unknown robust_type {robust_type!r}. Must be one of "
+            "'iqr', 'huber_m_estimate', 'adaptive_weighted', 'ransac'."
+        )
+
     return mu, sigma

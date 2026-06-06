@@ -310,7 +310,7 @@ def generalized_loss_derivative(
     elif alpha <= LOSS_ALPHA_MIN:  # at -infinity, Welsch/Leclerc loss
         dloss_dx = x / scale**2 * np.exp(-0.5 * (x / scale) ** 2)
     else:
-        dloss_dx = x / scale**2 * ((x / scale) ** 2 / np.abs(alpha - 2) + 1)
+        dloss_dx = x / scale**2 * ((x / scale) ** 2 / np.abs(alpha - 2) + 1) ** (alpha / 2 - 1)
 
     return dloss_dx
 
