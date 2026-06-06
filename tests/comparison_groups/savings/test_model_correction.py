@@ -150,6 +150,27 @@ def test_uncertainty_finite_for_each_algorithm(algorithm):
     assert np.isfinite(mTrc_unc)
 
 
+@pytest.mark.parametrize("algorithm", [CorrectionAlgorithm.PCTDID, CorrectionAlgorithm.ABSPCTDID])
+def test_zero_cg_model_magnitude_stays_finite(algorithm):
+    """A comparison meter with zero model magnitude has an undefined percent
+    scale mTr/mCGr; the guard makes it contribute no correction, so the
+    correction and its uncertainty stay finite. Outlier rejection is disabled
+    so the guard, not the rejection, is what is exercised."""
+    cg_label = np.array([0, 0, 0, 1, 1, 1])
+    mCGr = np.array([0.0, 100.0, 100.0, 95.0, 110.0, 100.0])  # first model magnitude == 0
+    mCGr_unc = np.full(6, 2.0)
+
+    mTrc, mTrc_unc, _ = model_correction(
+        OTR, MTR, OCGR, mCGr,
+        None, 5.0, None, mCGr_unc, None,
+        cg_label, T_WEIGHT,
+        _settings(algorithm=algorithm, outlier_rejection={"enabled": False}),
+    )
+
+    assert np.isfinite(mTrc)
+    assert np.isfinite(mTrc_unc)
+
+
 def test_rejects_non_finite_mtr():
     cg_label = np.array([0, 0, 0, 1, 1, 1])
     with pytest.raises(ValueError):

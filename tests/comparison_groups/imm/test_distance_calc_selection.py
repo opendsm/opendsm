@@ -30,6 +30,7 @@ def _total_memory_gb():
 from opendsm.comparison_groups.individual_meter_matching.settings import Settings
 from opendsm.comparison_groups.individual_meter_matching.distance_calc_selection import (
     DistanceMatching,
+    DistanceMatchingError,
     _distances,
     _iter_chunks,
 )
@@ -550,3 +551,51 @@ def test_n_match_reduction_warns(caplog):
         DistanceMatching(settings=settings).get_comparison_group(treatment, pool)
 
     assert any("Reduced matches per treatment" in r.message for r in caplog.records)
+
+
+class TestMatchingEdgeCases:
+    """Empty pool, threshold-filters-all, single treatment, tie determinism."""
+
+    def _matcher(self, **overrides):
+        settings = Settings(selection_method="minimize_meter_distance", **overrides)
+
+        return DistanceMatching(settings=settings)
+
+    def test_empty_pool_raises(self):
+        """An empty comparison pool cannot supply matches."""
+        treatment = generate_group(5, make_random=True)
+        empty_pool = generate_group(5, make_random=True, id_prefix="c").iloc[:0]
+        with pytest.raises(DistanceMatchingError, match="empty"):
+            self._matcher(allow_duplicate_matches=True).get_comparison_group(treatment, empty_pool)
+
+    def test_max_distance_filters_all_raises(self):
+        """A threshold below every match distance leaves no comparison group."""
+        random.seed(1)
+        treatment = generate_group(5, make_random=True)
+        pool = generate_group(40, make_random=True, id_prefix="c")
+        matcher = self._matcher(allow_duplicate_matches=True, max_distance_threshold=1e-12)
+        with pytest.raises(DistanceMatchingError, match="filtered out all"):
+            matcher.get_comparison_group(treatment, pool)
+
+    def test_single_treatment_matches(self):
+        """A single treatment meter is matched to its nearest pool meters."""
+        random.seed(1)
+        treatment = generate_group(1, make_random=True)
+        pool = generate_group(20, make_random=True, id_prefix="c")
+        matcher = self._matcher(allow_duplicate_matches=True, n_matches_per_treatment=4)
+
+        df = matcher.get_comparison_group(treatment, pool)
+
+        assert set(df["treatment"].unique()) == set(treatment.index)
+        assert len(df) == 4
+
+    def test_tied_distances_are_deterministic(self):
+        """Identical (tied-distance) pool meters yield the same matches each run."""
+        treatment = generate_group(3, make_random=True)
+        tied_pool = generate_group(20, make_random=False, non_random_value=5.0, id_prefix="c")
+        matcher = self._matcher(allow_duplicate_matches=True, n_matches_per_treatment=3)
+
+        first = matcher.get_comparison_group(treatment, tied_pool)
+        second = matcher.get_comparison_group(treatment, tied_pool)
+
+        assert list(first["id"]) == list(second["id"])

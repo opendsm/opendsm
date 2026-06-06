@@ -397,6 +397,9 @@ class DistanceMatching:
         n_treatment = ls_t.shape[0]
         n_pool = ls_cp.shape[0]
 
+        if n_pool == 0:
+            raise DistanceMatchingError("Comparison pool is empty; no matches can be made.")
+
         if candidate_multiplier is not None:
             per_treatment_k = n_match * candidate_multiplier
             if n_treatment * per_treatment_k < n_pool:
@@ -464,7 +467,13 @@ class DistanceMatching:
 
         # check that the distance is less than the threshold
         if max_distance_threshold is not None:
+            n_before = len(df)
             df = df[df["distance"] <= max_distance_threshold]
+            if n_before > 0 and len(df) == 0:
+                raise DistanceMatchingError(
+                    f"max_distance_threshold={max_distance_threshold} filtered out all "
+                    f"{n_before} candidate matches; no comparison group could be formed."
+                )
 
         # add column if id is duplicated
         df["duplicated"] = df.duplicated(subset="id", keep=False)
