@@ -1136,5 +1136,26 @@ class TestWaveletTransformScope:
         assert np.allclose(a, b)
 
 
+class TestFpcaKnownRecovery:
+    """FPCA captures low-rank structure in fewer components than noise."""
+
+    def test_structured_compresses_more_than_noise(self):
+        """A low-rank sinusoid signal reaches the variance target with fewer
+        components than pure noise at the same ratio."""
+        rng = np.random.default_rng(0)
+        t = np.linspace(0, 4 * np.pi, 24)
+        x = np.arange(24)
+        structured = np.array([np.sin(t) * rng.uniform(0.8, 1.2) + rng.normal(0, 0.05, 24)
+                               for _ in range(40)])
+        noise = rng.normal(0, 1, (40, 24))
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            n_structured = _fpca_base(x, structured, min_var_ratio=0.9).shape[1]
+            n_noise = _fpca_base(x, noise, min_var_ratio=0.9).shape[1]
+
+        assert n_structured < n_noise
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v', '--tb=short'])

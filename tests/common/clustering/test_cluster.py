@@ -1285,5 +1285,45 @@ class TestClusterFeaturesContract:
         assert np.array_equal(labels, np.arange(len(two_shape_df)))
 
 
+class TestClusterFeaturesDegenerateColumns:
+    """Pipeline behaviour on NaN and zero-variance feature columns."""
+
+    def _k2_settings(self):
+        cs = make_clustering_settings(
+            "kmedians",
+            outlier_removal_sigma=None,
+            kmedians={"n_cluster": {"lower": 2, "upper": 2}},
+        )
+
+        return cs
+
+    @pytest.fixture
+    def two_block_df(self):
+        rng = np.random.default_rng(0)
+        data = np.vstack([rng.normal(0, 1, (15, 6)), rng.normal(20, 1, (15, 6))])
+
+        return pd.DataFrame(data)
+
+    def test_whole_column_nan_raises(self, two_block_df):
+        """A wholly-NaN feature column is rejected as non-finite, not clustered."""
+        two_block_df[2] = np.nan
+        with pytest.raises(ValueError, match="non-finite"):
+            cluster_features(two_block_df, self._k2_settings())
+
+    def test_interior_nan_raises(self, two_block_df):
+        """A single NaN cell is likewise rejected."""
+        two_block_df.iloc[0, 0] = np.nan
+        with pytest.raises(ValueError, match="non-finite"):
+            cluster_features(two_block_df, self._k2_settings())
+
+    def test_zero_variance_column_handled(self, two_block_df):
+        """A constant (zero-variance) column is absorbed by the safe scalers,
+        leaving finite labels rather than dividing by a zero scale."""
+        two_block_df[3] = 5.0
+        labels = cluster_features(two_block_df, self._k2_settings())
+        assert len(labels) == len(two_block_df)
+        assert np.all(np.isfinite(labels))
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v', '--tb=short'])

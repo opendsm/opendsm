@@ -19,11 +19,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from scipy.spatial.distance import cdist
 from sklearn.metrics import silhouette_score, davies_bouldin_score
 
 from opendsm.common.clustering.metrics.single_k_metrics import SingleKMetrics
 from opendsm.common.clustering.metrics.cross_k_metrics import CrossKMetrics
-from opendsm.common.clustering.metrics.dbcv import dbcv
+from opendsm.common.clustering.metrics.dbcv import dbcv, dbcv_prevalidated
 from opendsm.common.clustering.metrics.labels import ClusteringResult
 from opendsm.common.clustering.metrics import selection
 from opendsm.common.clustering.metrics.label_ops import prepare_labels
@@ -1547,6 +1548,21 @@ class TestDBCV:
         X[1] = X[0]
         result = dbcv(X, np.repeat([0, 1], 20), check_duplicates=False)
         assert np.isfinite(result)
+
+    def test_prevalidated_matches_full_dbcv(self):
+        """dbcv_prevalidated (fast path on noise-free inputs) equals dbcv()."""
+        rng = np.random.default_rng(0)
+        X = np.vstack([rng.normal(c * 30, 1.0, (15, 4)) for c in range(3)])
+        y = np.repeat(np.arange(3), 15)
+
+        full = dbcv(X, y)
+
+        distances = cdist(X, X, metric="sqeuclidean")
+        members = [np.where(y == c)[0] for c in range(3)]
+        sizes = np.array([len(m) for m in members])
+        prevalidated = dbcv_prevalidated(len(X), X.shape[1], sizes, members, distances)
+
+        assert prevalidated == pytest.approx(full, rel=1e-9)
 
 
 # ── Voter discriminability weighting ─────────────────────────────────────────
