@@ -159,6 +159,24 @@ def test_safe_divide_array_masks_invalid_elementwise():
     assert result[2] == pytest.approx(2.0)
 
 
+def test_safe_divide_mixed_array_and_scalar():
+    """Array-over-scalar and scalar-over-array broadcast and mask correctly."""
+    assert np.allclose(safe_divide(np.array([10.0, 10.0]), 2), [5.0, 5.0])
+
+    scalar_over_array = safe_divide(10, np.array([2.0, 0.0]))
+    assert scalar_over_array[0] == pytest.approx(5.0)
+    assert np.isnan(scalar_over_array[1])
+
+
+def test_safe_divide_return_all_false_drops_invalid():
+    """return_all=False returns only the valid quotients, dropping masked entries."""
+    result = safe_divide(
+        np.array([10.0, 10.0, 6.0]), np.array([2.0, 0.0, 3.0]), return_all=False
+    )
+
+    assert np.allclose(result, [5.0, 2.0])
+
+
 def test_log_cosh_small_x_taylor_branch():
     """For small x, log(cosh(x)) ≈ x²/2 via the stable Taylor expansion."""
     assert log_cosh(0.0) == pytest.approx(0.0)
@@ -182,6 +200,22 @@ def test_sigmoid_midpoint_and_saturation():
     assert sigmoid(0.0) == pytest.approx(0.5)
     assert sigmoid(100.0) == pytest.approx(1.0)
     assert sigmoid(-100.0) == pytest.approx(0.0, abs=1e-40)
+
+
+def test_sigmoid_callable_scale():
+    """A callable k is evaluated per-point; a constant k=2 still gives 0.5 at x0."""
+    x = np.array([0.0, 1.0, 2.0])
+
+    result = sigmoid(x, k=lambda xx, x0: np.full_like(xx, 2.0))
+
+    assert result[0] == pytest.approx(0.5)
+    assert np.all(np.diff(result) > 0)
+
+
+def test_sigmoid_callable_scale_rejects_nonpositive():
+    """A callable k that returns a non-positive scale raises ValueError."""
+    with pytest.raises(ValueError, match="non-negative and non-zero"):
+        sigmoid(np.array([0.0, 1.0]), k=lambda xx, x0: np.zeros_like(xx))
 
 
 def test_to_np_array_handles_scalar_list_array_none():
@@ -218,3 +252,14 @@ def test_log_cosh_accepts_integer_dtype():
     result = log_cosh(np.array([0, 1, 2]))
 
     assert np.allclose(result, np.log(np.cosh([0.0, 1.0, 2.0])))
+
+
+@pytest.mark.parametrize("dtype", [np.float16, np.float32])
+def test_log_cosh_preserves_low_precision_dtype(dtype):
+    """log_cosh runs in the input float precision and matches the reference."""
+    x = np.array([0.0, 1.0, 2.0], dtype=dtype)
+
+    result = log_cosh(x)
+
+    assert result.dtype == dtype
+    assert np.allclose(result, np.log(np.cosh(x.astype(np.float64))), atol=1e-2)
