@@ -247,3 +247,24 @@ def test_mad_zero_when_majority_identical():
     x = np.array([5.0, 5.0, 5.0, 1.0, 9.0])
 
     assert median_absolute_deviation(x) == 0.0
+
+
+def test_fast_std_uses_weighted_path_for_nonuniform_weights():
+    """Non-uniform weights route fast_std to the weighted-std calculation."""
+    x = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    weights = np.array([0.5, 0.1, 0.1, 0.1, 0.2])
+
+    result = fast_std(x, weights)
+    mean = np.average(x, weights=weights)
+    expected = weighted_std(x.copy(), weights, mean)
+
+    assert result == pytest.approx(expected)
+
+
+def test_weighted_quantile_old_style_matches_numpy_quantile():
+    """old_style=True reproduces numpy.quantile's endpoint convention."""
+    x = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+
+    result = weighted_quantile(x, [0.25, 0.5, 0.75], old_style=True)
+
+    assert np.allclose(result, np.quantile(x, [0.25, 0.5, 0.75]))

@@ -27,10 +27,12 @@ from opendsm.common.stats.adaptive_loss import (
     generalized_loss_derivative,
     generalized_loss_fcn,
     generalized_loss_weights,
+    get_C,
     penalized_loss_fcn,
     remove_outliers,
     rolling_C,
     rolling_IQR_outlier,
+    sliding_window,
 )
 
 
@@ -398,3 +400,39 @@ def test_kernel_cache_return_local_scale_shape():
 
     assert c_local.shape == (150,)
     assert np.all(c_local > 0)
+
+
+# ---------------------------------------------------------------------------
+# get_C — robust scale estimate, and sliding_window validation
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("algo", ["iqr_legacy", "iqr", "mad", "stdev"])
+def test_get_C_positive_for_each_algo(algo):
+    """Every scale-estimation algorithm returns a finite positive C."""
+    resid = np.array([1.0, 2.0, 3.0, 4.0, 5.0, -2.0, -1.0])
+
+    C = get_C(resid, mu=0.0, sigma=3.0, quantile=0.25, algo=algo)
+
+    assert np.isfinite(C)
+    assert C > 0
+
+
+def test_sliding_window_shape():
+    """sliding_window tiles the array into overlapping windows of the given size."""
+    windows = sliding_window(np.arange(10.0), 3, step=2)
+
+    assert windows.shape == (4, 3)
+    assert np.array_equal(windows[0], [0, 1, 2])
+    assert np.array_equal(windows[1], [2, 3, 4])
+
+
+def test_sliding_window_rejects_oversized_window():
+    """A window larger than the array raises ValueError."""
+    with pytest.raises(ValueError, match="Window size"):
+        sliding_window(np.arange(5.0), 10)
+
+
+def test_sliding_window_rejects_negative_step():
+    """A negative step raises ValueError."""
+    with pytest.raises(ValueError, match="Step must be positive"):
+        sliding_window(np.arange(5.0), 2, step=-1)
