@@ -371,42 +371,6 @@ class SufficiencyCriteria(BaseSettings):
                 )
             )
 
-    def _check_high_frequency_temperature_values(self):
-        # TODO broken as written
-        # If high frequency data check for 50% data coverage in rollup
-        min_pct = self.settings.temperature.min_pct_hourly_coverage
-        if len(temperature_features[temperature_features.coverage <= min_pct]) > 0:
-            self.warnings.append(
-                EEMeterWarning(
-                    qualified_name="eemeter.sufficiency_criteria.missing_high_frequency_temperature_data",
-                    description=(
-                        f"More than {(1-min_pct)*100:.0f}% of the high frequency Temperature data is missing."
-                    ),
-                    data={
-                        "high_frequency_data_missing_count": len(
-                            temperature_features[
-                                temperature_features.coverage <= min_pct
-                            ].index.to_list()
-                        )
-                    },
-                )
-            )
-
-        # Set missing high frequency data to NaN
-        temperature_features.value[temperature_features.coverage > min_pct] = (
-            temperature_features[temperature_features.coverage > min_pct].value
-            / temperature_features[temperature_features.coverage > min_pct].coverage
-        )
-
-        temperature_features = (
-            temperature_features[temperature_features.coverage > min_pct]
-            .reindex(temperature_features.index)[["value"]]
-            .rename(columns={"value": "temperature_mean"})
-        )
-
-        if "coverage" in temperature_features.columns:
-            temperature_features = temperature_features.drop(columns=["coverage"])
-
     def _check_high_frequency_observed_values(self):
         min_pct = self.settings.observed.min_pct_hourly_coverage
         low_coverage = self.data[self.data.coverage <= min_pct]
@@ -447,7 +411,6 @@ class SufficiencyCriteria(BaseSettings):
         self._check_valid_days_percentage(col="temperature")
         self._check_valid_days_percentage(col="joint")
         self._check_valid_monthly_coverage(col="temperature")
-        # self._check_high_frequency_temperature_values()
 
 
 class HourlySufficiencyCriteria(SufficiencyCriteria):
@@ -497,7 +460,6 @@ class HourlySufficiencyCriteria(SufficiencyCriteria):
 
         # TODO these will only apply to legacy, and currently do not work
         # self._check_high_frequency_observed_values()
-        # self._check_high_frequency_temperature_values()
         # self._check_hourly_consecutive_temperature_data()
 
     def check_sufficiency_reporting(self):
@@ -532,7 +494,6 @@ class DailySufficiencyCriteria(SufficiencyCriteria):
 
         # TODO : Maybe make these checks static? To work with the current data class
         # self._check_high_frequency_meter_values()
-        # self._check_high_frequency_temperature_values()
 
     def check_sufficiency_reporting(self):
         super().check_sufficiency_reporting()
@@ -646,7 +607,6 @@ class BillingSufficiencyCriteria(SufficiencyCriteria):
         #     self._check_observed_data_billing_bimonthly()
 
         self._check_estimated_observed_values()
-        # self._check_high_frequency_temperature_values()
 
     def check_sufficiency_reporting(self):
         super().check_sufficiency_reporting()
