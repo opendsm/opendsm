@@ -4,6 +4,8 @@ Changelog
 Development
 -----------
 
+* `eemeter/models/hourly_caltrack/derivatives`: remove the unreachable error-band subgraph (`_compute_ols_error`, `_compute_fsu_error`, `_compute_error_bands_metered_savings`, `_compute_error_bands_modeled_savings`) — `metered_savings`/`modeled_savings` always return `(results, None)` and nothing calls the helpers; drop the now-orphaned `from scipy.stats import t`.
+* `drmeter` tests: smoke-test the caltrack `Model` (single-segment `HourlyModel` subclass) configuration — the package previously had no tests.
 * Bug fix (`eemeter/models/daily`, `billing`): `is_fitted` was only set during `fit`, so calling `predict` on a freshly-constructed model raised `AttributeError` instead of the documented `RuntimeError`. Initialize `is_fitted = False` in `DailyModel.__init__` (inherited by `BillingModel`).
 * `eemeter/models/billing` tests: predict failure paths (unfitted → `RuntimeError`, wrong type → `TypeError`, bad aggregation → `ValueError`), `to_dict` developer-mode flag, and the monthly-aggregation arithmetic identity (predicted/observed summed, `predicted_unc` combined in quadrature and sub-additive vs a linear sum, temperature averaged).
 * `eemeter/common/sufficiency_criteria` tests: per-rule both-directions coverage for the daily gatekeeper (no-data, baseline-day-length boundaries, gas negative-observed, unique-values, daily and monthly coverage, extreme-value warning, requested-window boundary gap) plus the billing off-cycle-read check — each asserts the exact `qualified_name` on failure and that clean data passes with no spurious warning.
