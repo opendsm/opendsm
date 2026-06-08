@@ -4,6 +4,7 @@ Changelog
 Development
 -----------
 
+* `eemeter/models/hourly` tests: fast (no-fit) unit tests for `regressors` (the `_NullFitMixin` null-fit on all-zero single- and 24-target inputs — the hourly fabrication guard — across Safe{Linear,Ridge,Lasso,ElasticNet}, plus fall-through to a real fit on non-zero targets) and `scalers` (Safe{Standard,Robust}Scaler clamp near-zero `scale_` to 1.0 on fit and on direct assignment, leaving well-scaled features untouched).
 * `eemeter/models/daily` tests: `parameters.ModelCoefficients` `to_np_array`/`from_np_arrays` roundtrip across all 8 model types, breakpoint-reorder and c_hdd heating/cooling sign disambiguation, and unknown-ids `ValueError`; daily-model behavior — a temperature-insensitive load fits negligible HDD/CDD slopes and a flat prediction (no fabricated temperature response), no-load-change predicts ~0 savings, and a known reporting-period reduction is recovered as savings.
 * Bug fix (`eemeter/models/daily/fit_base_models`): `fit_model` lacked a final `else`, so an unknown `model_key` returned an unbound local (`UnboundLocalError`); it now raises `ValueError`.
 * `eemeter/models/hourly_caltrack/derivatives`: remove the unreachable error-band subgraph (`_compute_ols_error`, `_compute_fsu_error`, `_compute_error_bands_metered_savings`, `_compute_error_bands_modeled_savings`) — `metered_savings`/`modeled_savings` always return `(results, None)` and nothing calls the helpers; drop the now-orphaned `from scipy.stats import t`.
