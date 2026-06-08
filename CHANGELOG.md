@@ -4,6 +4,8 @@ Changelog
 Development
 -----------
 
+* Bug fix (`eemeter/models/daily`, `billing`): `is_fitted` was only set during `fit`, so calling `predict` on a freshly-constructed model raised `AttributeError` instead of the documented `RuntimeError`. Initialize `is_fitted = False` in `DailyModel.__init__` (inherited by `BillingModel`).
+* `eemeter/models/billing` tests: predict failure paths (unfitted → `RuntimeError`, wrong type → `TypeError`, bad aggregation → `ValueError`), `to_dict` developer-mode flag, and the monthly-aggregation arithmetic identity (predicted/observed summed, `predicted_unc` combined in quadrature and sub-additive vs a linear sum, temperature averaged).
 * `eemeter/common/sufficiency_criteria` tests: per-rule both-directions coverage for the daily gatekeeper (no-data, baseline-day-length boundaries, gas negative-observed, unique-values, daily and monthly coverage, extreme-value warning, requested-window boundary gap) plus the billing off-cycle-read check — each asserts the exact `qualified_name` on failure and that clean data passes with no spurious warning.
 * `eemeter/common` tests: `data_settings` validators (baseline-length invariant, coverage-percentage bounds, billing-period bounds, float→int coercion) and `data_processor_utilities.compute_minimum_granularity` across regular, single-point, and irregular indices.
 * `eemeter/common/sufficiency_criteria`: remove the dead, broken `_check_high_frequency_temperature_values` (commented out at every call site and referencing an undefined `temperature_features`) and its commented-out call sites.

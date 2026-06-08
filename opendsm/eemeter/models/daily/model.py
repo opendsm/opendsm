@@ -113,6 +113,7 @@ class DailyModel:
             "we": [n + 1 for n in n_week if day_dict[n+1] == "weekend"],
         }
         self.verbose = verbose
+        self.is_fitted = False
 
     def _initialize_settings(
         self,
