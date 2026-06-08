@@ -16,8 +16,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from opendsm.eemeter.common.data_settings import DailyDataSufficiencySettings
-from opendsm.eemeter.common.sufficiency_criteria import SufficiencyCriteria
+from opendsm.eemeter.common.data_settings import (
+    BillingDataSufficiencySettings,
+    DailyDataSufficiencySettings,
+)
+from opendsm.eemeter.common.sufficiency_criteria import (
+    BillingSufficiencyCriteria,
+    SufficiencyCriteria,
+)
 
 
 
@@ -298,5 +304,46 @@ def test_boundary_gap_passes_when_aligned():
     sc = _criteria(df, settings=settings)
 
     sc._check_n_days_boundary_gap("start")
+
+    assert sc.disqualification == []
+
+
+# ---------------------------------------------------------------------------
+# billing off-cycle reads  (period must be within [min_days, max_days])
+# ---------------------------------------------------------------------------
+
+def _billing_criteria(df):
+    sc = BillingSufficiencyCriteria(
+        data=df,
+        is_electricity_data=True,
+        is_reporting_data=False,
+        settings=BillingDataSufficiencySettings(),
+    )
+    sc.disqualification = []
+    sc.warnings = []
+
+    return sc
+
+
+def test_billing_offcycle_read_disqualifies():
+    """A short off-cycle period (below the 25-day floor) is flagged."""
+    index = pd.to_datetime(
+        ["2020-01-01", "2020-02-01", "2020-03-01", "2020-03-10", "2020-04-10"]
+    ).tz_localize("UTC")
+    df = pd.DataFrame({"value": [10.0, 12.0, 11.0, 3.0, 9.0]}, index=index)
+    sc = _billing_criteria(df)
+
+    sc._check_observed_data_billing_monthly()
+
+    assert "eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data" in _dq_names(sc)
+
+
+def test_billing_regular_monthly_cadence_passes():
+    """A regular monthly cadence has no off-cycle reads."""
+    index = pd.date_range("2020-01-01", periods=12, freq="MS", tz="UTC")
+    df = pd.DataFrame({"value": np.arange(12.0)}, index=index)
+    sc = _billing_criteria(df)
+
+    sc._check_observed_data_billing_monthly()
 
     assert sc.disqualification == []
