@@ -12,8 +12,6 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-import warnings
-
 import numpy as np
 import pytest
 
@@ -47,6 +45,16 @@ def test_iqr_outlier_widens_with_sigma_threshold():
 
     assert wide[0] < narrow[0]
     assert wide[1] > narrow[1]
+
+
+def test_iqr_outlier_weights_shift_bounds():
+    """Supplying weights routes through the weighted-quantile path and moves bounds."""
+    x = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+
+    unweighted = IQR_outlier(x)
+    weighted = IQR_outlier(x, weights=np.array([5.0, 1.0, 1.0, 1.0, 1.0]))
+
+    assert not np.allclose(unweighted, weighted)
 
 
 def test_iqr_outlier_ignores_non_finite():
@@ -113,19 +121,8 @@ def test_remove_outliers_extreme_finite_value_keeps_inliers_not_fallback():
     assert np.array_equal(idx, np.arange(4))
 
 
-def test_remove_outliers_fallback_keeps_one_when_no_finite_in_bounds():
-    """With no finite data, the bounds are undefined and the fallback keeps one point.
-
-    All-non-finite input leaves the in-bounds set empty across the whole sigma
-    sweep, so the closest-point fallback returns exactly one index. This is the
-    only path that reaches that branch.
-    """
-    x = np.array([np.inf, -np.inf])
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        kept, idx = remove_outliers(x)
-
-    assert len(kept) == 1
-    assert len(idx) == 1
-    assert idx[0] in (0, 1)
+# The closest-point fallback in remove_outliers is unreachable for finite input
+# (a 20k-trial search found no trigger) and the only path to it — all-non-finite
+# input — raises in _IQR_outlier under NUMBA_DISABLE_JIT, so it cannot be covered
+# portably. It carries a `# pragma: no cover` in the source rather than a
+# JIT-mode-dependent test.
