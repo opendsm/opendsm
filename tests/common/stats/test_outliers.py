@@ -12,6 +12,8 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -96,17 +98,34 @@ def test_remove_outliers_respects_weights():
     assert np.array_equal(idx, np.arange(5))
 
 
-def test_remove_outliers_keeps_closest_when_all_excluded():
-    """When the bounds would exclude everything, the closest point is retained.
+def test_remove_outliers_extreme_finite_value_keeps_inliers_not_fallback():
+    """A lone extreme finite value never empties the in-bounds set.
 
-    Two tightly-clustered points and one far point: widening the sigma search
-    can still leave an empty kept-set on the first pass, and the fallback keeps
-    exactly one element (a non-empty result is guaranteed).
+    The 25th/75th percentiles sit on the cluster of zeros, so the zeros are
+    always inside the bounds and are returned by the normal path — the
+    closest-point fallback is not reached for finite data.
     """
     x = np.array([0.0, 0.0, 0.0, 0.0, 1e9])
 
     kept, idx = remove_outliers(x, sigma_threshold=3)
 
-    assert len(kept) >= 1
-    assert len(idx) == len(kept)
-    assert np.all(np.isin(idx, np.arange(len(x))))
+    assert np.array_equal(kept, np.zeros(4))
+    assert np.array_equal(idx, np.arange(4))
+
+
+def test_remove_outliers_fallback_keeps_one_when_no_finite_in_bounds():
+    """With no finite data, the bounds are undefined and the fallback keeps one point.
+
+    All-non-finite input leaves the in-bounds set empty across the whole sigma
+    sweep, so the closest-point fallback returns exactly one index. This is the
+    only path that reaches that branch.
+    """
+    x = np.array([np.inf, -np.inf])
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        kept, idx = remove_outliers(x)
+
+    assert len(kept) == 1
+    assert len(idx) == 1
+    assert idx[0] in (0, 1)

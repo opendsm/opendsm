@@ -15,6 +15,7 @@
 import numpy as np
 import pytest
 
+from opendsm.common.stats.basic import median_absolute_deviation
 from opendsm.common.stats.distribution_transform.mu_sigma import robust_mu_sigma
 
 
@@ -29,17 +30,32 @@ def standard_normal():
     return np.random.default_rng(0).normal(0.0, 1.0, 4000)
 
 
-@pytest.mark.parametrize("robust_type", ["iqr", "huber_m_estimate", "adaptive_weighted", "ransac"])
+@pytest.mark.parametrize("robust_type", ["iqr", "huber_m_estimate", "adaptive_weighted"])
 def test_robust_mu_sigma_recovers_location_and_scale(robust_type, standard_normal):
-    """Every estimator recovers mu≈0, sigma≈1 on a large standard-normal sample."""
-    kwargs = {}
-    if robust_type == "ransac":
-        kwargs["seed"] = 0
+    """The population estimators recover mu≈0, sigma≈1 on a standard-normal sample.
 
-    mu, sigma = robust_mu_sigma(standard_normal, robust_type=robust_type, **kwargs)
+    RANSAC is excluded: it keeps the minimum-scale subsample by design, so it
+    estimates the densest core rather than the population scale (see
+    test_ransac_selects_most_compact_subsample).
+    """
+    mu, sigma = robust_mu_sigma(standard_normal, robust_type=robust_type)
 
     assert _scalar(mu) == pytest.approx(0.0, abs=0.1)
     assert _scalar(sigma) == pytest.approx(1.0, abs=0.1)
+
+
+def test_ransac_selects_most_compact_subsample(standard_normal):
+    """RANSAC's scale never exceeds the full-sample MAD (it minimizes scatter).
+
+    Because it is seeded with the full-data MAD and only ever replaces it with a
+    smaller subsample scale, the result is bounded above by the full MAD — and
+    on clean data it lands below the population scale, not at it.
+    """
+    full_mad = median_absolute_deviation(standard_normal)
+    _, sigma = robust_mu_sigma(standard_normal, robust_type="ransac", seed=0)
+
+    assert _scalar(sigma) <= full_mad
+    assert _scalar(sigma) < 1.0
 
 
 def test_unknown_robust_type_raises():
@@ -70,12 +86,38 @@ def test_huber_failure_falls_back_to_iqr(standard_normal):
 
 
 def test_ransac_is_deterministic_under_seed(standard_normal):
-    """A fixed seed makes the RANSAC estimator reproducible."""
+    """A fixed seed makes the RANSAC estimator reproducible run-to-run."""
     a = robust_mu_sigma(standard_normal, robust_type="ransac", seed=5)
     b = robust_mu_sigma(standard_normal, robust_type="ransac", seed=5)
 
     assert _scalar(a[0]) == _scalar(b[0])
     assert _scalar(a[1]) == _scalar(b[1])
+
+
+def test_ransac_actually_iterates_over_distinct_subsamples(standard_normal):
+    """More iterations lower the selected scale, proving each draw is distinct.
+
+    RANSAC keeps the minimum-scale subsample, so drawing more distinct
+    subsamples can only lower the result. If every iteration drew the same
+    subsample (a seeding bug), n_iter would have no effect and the scales
+    would be equal.
+    """
+    one = robust_mu_sigma(standard_normal, robust_type="ransac", seed=0, n_iter=1)
+    many = robust_mu_sigma(standard_normal, robust_type="ransac", seed=0, n_iter=200)
+
+    assert _scalar(many[1]) < _scalar(one[1])
+
+
+def test_ransac_does_not_pollute_global_rng(standard_normal):
+    """The estimator draws from a local Generator, leaving the global RNG intact."""
+    np.random.seed(12345)
+    before = np.random.random()
+
+    np.random.seed(12345)
+    robust_mu_sigma(standard_normal, robust_type="ransac", seed=7)
+    after = np.random.random()
+
+    assert before == after
 
 
 def test_robust_estimators_resist_outliers():

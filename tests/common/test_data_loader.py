@@ -1,3 +1,4 @@
+import pandas as pd
 import pytest
 
 from opendsm.common import test_data
@@ -90,30 +91,70 @@ def test_load_file_rejects_unsupported_extension(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize(
     "data_type",
-    ["features", "month_loadshape", "seasonal_day_of_week_loadshape",
+    ["month_loadshape", "seasonal_day_of_week_loadshape",
      "seasonal_hourly_day_of_week_loadshape"],
 )
 def test_load_other_data_from_repo(data_type):
-    """The CSV tutorial datasets load from the in-repo copy, indexed by id."""
+    """The CSV loadshape datasets load from the in-repo copy, indexed by id."""
     df = test_data.load_test_data(data_type)
 
     assert df.index.name == "id"
     assert len(df) > 0
 
 
-def test_load_hourly_treatment_data_splits_baseline_reporting():
-    """Hourly treatment data returns a (baseline, reporting) pair on an id/datetime index."""
+# The fingerprint tests below pin the shape/scale of the committed tutorial
+# datasets. They are deliberately exact so that any change to the in-repo data
+# files (data/features.csv, data/hourly_data_0.parquet) is caught here rather
+# than silently shifting downstream snapshots.
+
+def test_features_dataset_fingerprint():
+    """The features dataset has its committed shape and id count."""
+    df = test_data.load_test_data("features")
+
+    assert df.shape == (1200, 3)
+    assert df.index.name == "id"
+    assert df.index.nunique() == 1200
+
+
+@pytest.mark.slow
+def test_hourly_treatment_dataset_fingerprint():
+    """Hourly treatment data has its committed structure, scale and date range."""
     baseline, reporting = test_data.load_test_data("hourly_treatment_data")
 
     assert list(baseline.columns) == ["temperature", "ghi", "observed"]
     assert baseline.index.names == ["id", "datetime"]
+    assert baseline.index.get_level_values("id").nunique() == 100
+    assert len(baseline) == 875900
     assert len(reporting) == len(baseline)
 
+    assert baseline["observed"].sum() == pytest.approx(85072318.08, rel=1e-6)
+    datetimes = baseline.index.get_level_values("datetime")
+    assert datetimes.min().year == 2018
+    assert datetimes.max().year == 2018
 
+
+@pytest.mark.slow
 @pytest.mark.parametrize("data_type", ["daily_treatment_data", "monthly_treatment_data"])
-def test_load_aggregated_treatment_data(data_type):
-    """Daily/monthly treatment data aggregates the hourly series without error."""
+def test_aggregated_treatment_data_loads(data_type):
+    """Daily/monthly treatment data aggregates the hourly series and stays non-empty."""
     baseline, reporting = test_data.load_test_data(data_type)
 
     assert "observed" in baseline.columns
     assert len(baseline) > 0
+
+
+@pytest.mark.slow
+def test_daily_aggregation_equals_sum_of_hourly():
+    """A daily observed value equals the sum of that day's hourly observations."""
+    hourly, _ = test_data.load_test_data("hourly_treatment_data")
+    daily, _ = test_data.load_test_data("daily_treatment_data")
+
+    meter = hourly.index.get_level_values("id")[0]
+    hourly_meter = hourly.xs(meter, level="id")
+    day = hourly_meter.index[0].floor("D")
+
+    same_day = (hourly_meter.index >= day) & (hourly_meter.index < day + pd.Timedelta("1D"))
+    hourly_day_sum = hourly_meter.loc[same_day, "observed"].sum()
+    daily_value = daily.xs(meter, level="id").loc[day, "observed"]
+
+    assert daily_value == pytest.approx(hourly_day_sum)

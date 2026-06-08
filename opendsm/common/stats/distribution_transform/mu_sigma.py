@@ -56,9 +56,9 @@ def ransac_mu_sigma(x, n_iter=100, n_sample=100, seed=None):
     mu = np.median(x)
     sigma = median_absolute_deviation(x, median=mu)
 
+    rng = np.random.default_rng(seed)
     for _ in range(n_iter):
-        np.random.seed(seed)
-        idx = np.random.choice(x.size, n_sample)
+        idx = rng.choice(x.size, n_sample)
         x_sample = x[idx]
 
         mu_sample = np.median(x_sample)

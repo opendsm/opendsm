@@ -43,11 +43,18 @@ def positive_2d():
 
 @pytest.mark.parametrize("cls", TRANSFORMS)
 def test_fit_transform_inverse_roundtrip(cls, positive_2d):
-    """inverse_transform undoes transform back to the original input."""
+    """inverse_transform undoes transform back to the original input.
+
+    Guards against a vacuous pass: every dimension must actually be fit (not
+    skipped) and the forward transform must change the data, so the roundtrip
+    is exercising a real transform rather than an identity.
+    """
     transform = cls()
     transformed = transform.fit_transform(positive_2d)
     recovered = transform.inverse_transform(transformed)
 
+    assert not transform.skip_dims_.any()
+    assert not np.allclose(transformed, positive_2d)
     assert recovered.shape == positive_2d.shape
     assert np.allclose(recovered, positive_2d, atol=1e-6, rtol=1e-6)
 
