@@ -4,6 +4,8 @@ Changelog
 Development
 -----------
 
+* `eemeter/models/daily` tests: `parameters.ModelCoefficients` `to_np_array`/`from_np_arrays` roundtrip across all 8 model types, breakpoint-reorder and c_hdd heating/cooling sign disambiguation, and unknown-ids `ValueError`; daily-model behavior — a temperature-insensitive load fits negligible HDD/CDD slopes and a flat prediction (no fabricated temperature response), no-load-change predicts ~0 savings, and a known reporting-period reduction is recovered as savings.
+* Bug fix (`eemeter/models/daily/fit_base_models`): `fit_model` lacked a final `else`, so an unknown `model_key` returned an unbound local (`UnboundLocalError`); it now raises `ValueError`.
 * `eemeter/models/hourly_caltrack/derivatives`: remove the unreachable error-band subgraph (`_compute_ols_error`, `_compute_fsu_error`, `_compute_error_bands_metered_savings`, `_compute_error_bands_modeled_savings`) — `metered_savings`/`modeled_savings` always return `(results, None)` and nothing calls the helpers; drop the now-orphaned `from scipy.stats import t`.
 * `drmeter` tests: smoke-test the caltrack `Model` (single-segment `HourlyModel` subclass) configuration — the package previously had no tests.
 * Bug fix (`eemeter/models/daily`, `billing`): `is_fitted` was only set during `fit`, so calling `predict` on a freshly-constructed model raised `AttributeError` instead of the documented `RuntimeError`. Initialize `is_fitted = False` in `DailyModel.__init__` (inherited by `BillingModel`).

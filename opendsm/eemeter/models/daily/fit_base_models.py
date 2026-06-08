@@ -127,6 +127,9 @@ def fit_model(model_key, fit_input, x0: ModelCoefficients, bnds):
     elif model_key == "tidd":
         res = fit_tidd(*fit_input, x0, bnds, initial_fit=False)
 
+    else:
+        raise ValueError(f"Unknown model_key: {model_key!r}")
+
     return res
 
 

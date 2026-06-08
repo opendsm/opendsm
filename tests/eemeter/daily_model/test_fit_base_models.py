@@ -208,3 +208,9 @@ def test_fit_final_model(meter_data, get_settings, get_optimized_result):
     # Test case 2: Test if the function raises a TypeError when the input arguments are of the wrong type
     with pytest.raises(TypeError):
         fit_final_model("not a dataframe", "not an OptimizedResult", "not a dictionary")
+
+
+def test_fit_model_unknown_key_raises():
+    """An unrecognized model_key raises ValueError rather than an unbound local."""
+    with pytest.raises(ValueError, match="Unknown model_key"):
+        fit_model("not_a_model", fit_input=None, x0=None, bnds=None)
