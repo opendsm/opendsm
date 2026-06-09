@@ -68,528 +68,825 @@ Development
 * Speed up test suite via session-scoped fixtures and `slow`/`regression`/`hourly_model` pytest markers; fast loop with `pytest -m "not slow"`
 * `test_data.py`: scope bare `except` to `OSError`, drop unreachable debug `raise`
 * `test_distance_match_large_treatments`: skip on hosts with <12 GB RAM
+* Reconstruct the changelog into a complete, dated, per-release history synthesized from git history: every `eemeter-`/`opendsm-` release from `eemeter-0.4.13-beta` (2016) onward now has a dated entry. The gridmeter/eesampling `comparison_groups/ARCHIVED_CHANGELOG.md` public releases (`eesampling-0.6.0` through `gridmeter-1.1.0`) plus the unpublished `gridmeter-2.0.0a1` rewrite alpha are likewise synthesized from their original git history; the pre-public `0.0.1`–`0.5.5` terse entries are preserved as-is. Rename `archived_gridmeter_changelog.md` to `ARCHIVED_CHANGELOG.md`.
+
+opendsm-1.2.7 (2026-02-11)
+--------------------------
+
+* Merge GRIDmeter into OpenDSM: comparison-group functionality (stratified sampling, individual meter matching, random sampling, synthetic data, equivalence) now ships under `opendsm.comparison_groups`. Still in development; the final API is unfinished.
+* Restructure clustering: comparison-group clustering moves to `comparison_groups/cg_clustering`; shared hourly-model / CG clustering consolidated under `opendsm.common.clustering`.
+* Add clustering algorithms alongside bisecting k-means: DBSCAN, HDBSCAN, Birch, spectral.
+* Add cluster voting (`opendsm.common.clustering.voting`) to combine multiple clusterings.
+* Add `ClusterMetrics` with expanded internal validity indices (incl. density-based validation).
+* Add comparison-group model-correction / savings subsystem under `comparison_groups/savings`.
+* Reorganize stats into `opendsm.common.stats` (`basic`, `adaptive_loss`, `outliers`, and a `distribution_transform` package: Yeo-Johnson, robust Raymaekers Yeo-Johnson, bisymlog, standardization).
+* Numba-accelerate and revise `adaptive_loss` and `stats.basic`.
+* Update example datasets (NREL-sourced) to include GHI; `load_test_data` always pulls from GitHub.
+* Switch build to `pyproject.toml` (`hatchling` + `uv`); remove `setup.py`, `Pipfile`(.lock).
+* Trim runtime deps (drop `attrs`, `click`; docs/dev to extras), widen `pandas` to `<3.0.0`, require `pyarrow>=15.0.0`.
+* Migrate documentation to MkDocs.
+* Reorganize tests into `tests/eemeter`, `tests/common`, `tests/comparison_groups`.
+* Fix `from_series` instantiation of the daily data class.
+
+opendsm-1.2.6 (2025-08-06)
+--------------------------
+
+* Fixed a bug in `_DailyData.from_series` (daily model `Data` class) where redundant settings normalization in the classmethod broke instantiation; removed the stray `settings` handling so `from_series` constructs the daily data class correctly (#565).
+
+opendsm-1.2.5 (2025-07-24)
+--------------------------
+
+* Spectral clustering's `assign_labels` is now configurable via a new `SpectralAssignLabels` enum (`kmeans`, `discretize`, `cluster_qr`) instead of being hardcoded to `cluster_qr`; note that `discretize` and `cluster_qr` are not guaranteed deterministic under a fixed seed.
+* Added new model-fit metrics to `BaselineMetrics`: Nash-Sutcliffe Efficiency (`nse`), Normalized NSE (`nnse`), Kling-Gupta Efficiency (`kge`), and accuracy-within-tolerance metrics `a10`/`a20`/`a30` (fraction of points with relative residual within 10/20/30%).
+* Renamed the Confidence Index to Performance Index: `ci`/`ci_rating` are now `pi`/`pi_rating` (same `pearson_r * wi` formula and rating thresholds).
+* Refactored several `BaselineMetrics` computations (WAPE, sWAPE, Willmott Index `wi`, Legates-McCabe, `explained_variance_score`) to reuse cached `mae`/`sse`/mean/variance values; behavior is unchanged except these no longer apply per-element finite masking before summation.
+
+opendsm-1.2.4 (2025-07-18)
+--------------------------
+
+* Fixed `BaselineMetrics.ci_rating` boundary bug: thresholds used overlapping/gapped bounds (e.g. `ci > 0.85` excluded exactly 0.85, and ranges like `0.76 <= ci <= 0.85` left values such as 0.85-0.86 and 0.75-0.76 unclassified). Rating bands now use clean half-open intervals, so 0.85 maps to `excellent` and every CI value falls into exactly one band.
+* Added autocorrelation-normalized error metrics to `BaselineMetrics`: `rmse_autocorr` (RMSE computed against the effective sample size `n_prime`), plus its normalized variants `cvrmse_autocorr` and `pnrmse_autocorr`.
+
+opendsm-1.2.3 (2025-07-18)
+--------------------------
+
+* Spectral clustering is now deterministic: `_spectral_clustering` seeds NumPy and passes `random_state` to sklearn `SpectralClustering`, restoring global RNG state afterward, and `ClusteringSettings._seed` is now a private attr so the hourly model's seed propagates into clustering settings.
+* Added many new `BaselineMetrics` statistics: `max_error`, `nmae`/`pnmae`, `medae`, `nmbe`/`pnmbe`, `r_squared_adj`, `mape`/`smape`, `wape`/`swape`, `maape`, `wi`/`index_of_agreement`, `pearson_r`, `ci`/`ci_rating`, and `explained_variance_score`.
+* Added autocorrelation-normalized error metrics `rmse_autocorr`, `cvrmse_autocorr`, `pnrmse_autocorr`, `cvrmse_autocorr_adj`, and `pnrmse_autocorr_adj` (scaled by effective sample size `n_prime`).
+* Fixed `ci_rating` thresholds: rating boundaries are now half-open intervals (`>= 0.85` excellent, `0.75 <= ci < 0.85` very good, etc.), eliminating the gaps that left certain `ci` values unrated.
+* Moved `safe_divide` to `opendsm.common.utils` and changed its failure behavior to return `nan` instead of `None` on invalid division.
+
+opendsm-1.2.2 (2025-07-17)
+--------------------------
+
+* Daily model fit check (`DailyModel._check_model_fit`) now compares the autocorrelation-adjusted metrics `cvrmse_adj`/`pnrmse_adj` against their thresholds instead of the unadjusted `cvrmse`/`pnrmse`, as intended
+* Made the residual autocorrelation used in the `n_prime` effective-sample-size calculation consistent by computing it via the internal `acf()` (moving-stats method) rather than `pandas.Series.autocorr`
+* Reworked `acf()` to take an `ac_type` argument (new `AutocorrelationMethod` enum: `MOVING_STATS`, `STATIONARY_CORRELATE`, `STATIONARY_STATS_FFT`), replacing the prior `moving_mean_std` boolean flag
+* Added an `axis` parameter to `median_absolute_deviation()` for computing MAD along a specified axis
+* Models loaded from older serialized dicts without adjusted metrics now backfill `cvrmse_adj`/`pnrmse_adj` from the unadjusted values for compatibility
+
+opendsm-1.2.1 (2025-07-15)
+--------------------------
+
+* Revert the lag-1 autocorrelation used in `BaselineMetrics.n_prime` back to pandas `Series.autocorr(lag=1)`, restoring the pre-1.2.0 effective-sample-size calculation and the uncertainty/`n_prime` values derived from it.
+
+opendsm-1.2.0 (2025-07-10)
+--------------------------
+
+* Hourly model now produces uncertainty estimates alongside predictions (`opendsm/eemeter/models/hourly/model.py`, new hourly settings).
+* Daily and billing models compute `BaselineMetrics` natively, exposed via `model.baseline_metrics`; daily `optimize_results` and metrics paths reworked to use it.
+* Data classes (daily, billing, hourly) accept a dictionary to override data-sufficiency / DQ criteria; sufficiency-criteria handling consolidated under `opendsm/eemeter/common/data_settings.py`. R&D feature.
+* Migrated to the modern Python logger interface, removing deprecation warnings.
+
+opendsm-1.1.0 (2025-05-21)
+--------------------------
+
+* Major rewrite of the Hourly model with re-optimized default configuration (`opendsm/eemeter/models/hourly/`).
+* Replaced hourly temporal clustering with spectral clustering via a new `opendsm/common/clustering/` module (`cluster.py`, `settings.py`).
+* Added adaptive robust ElasticNet weighting per hour-of-day for the Hourly model.
+* Switched temperature handling to fixed temperature bins, and made temporal bins and temperature bins interact jointly on temperature.
+* Reworked the adaptive loss penalization (`adaptive_loss.py`): narrower assumed outlier range so `alpha < 0` fits are now reachable.
+* Disallow negative CVRMSE in the Hourly model; added daily `CVRMSE >= 0` and PNRMSE sufficiency requirements.
+* Partially migrated the Daily model to use `baseline_metrics` and stopped relying on `model_fields` of instantiated settings objects.
+* Changed the extreme-values warning flag to use the IQR rule instead of the incorrect median +/- IQR check.
+* Fixed `high_frequency_temperature_data` warning to report only the invalid temperature rows.
+* Squash numpy divide-by-zero warnings in CalTRACK Hourly metrics, returning `NaN` instead of warning.
+
+opendsm-1.0.0 (2025-02-12)
+--------------------------
+
+* First release under the OpenDSM name; package renamed `eemeter` -> `opendsm` (imports change `import eemeter` -> `import opendsm`; no API/behavior changes beyond the rename).
+* Prior changelog history retroactively prefixed with `eemeter-` to distinguish it from the new `opendsm-` version line.
+* Updated project metadata/docs: README rewritten (`.rst` -> `.md`); CHARTER, CONTRIBUTING, LICENSE, copyright revised for OpenDSM.
+* Packaging/CI: `bump_version` and the publish workflow point at `opendsm`; remove `.travis.yml`, `.pyup.yml`.
+
+eemeter-4.1.1 (2025-02-11)
+--------------------------
+
+* Add GHI sufficiency check for solar hourly model, requiring at least 90% GHI coverage in each calendar month
+* Propagate per-observation `weights` from the data class through to the daily model fit via a `weights` column
+* Add experimental adaptive hourly fit: anomalous days are down-weighted during hourly model fitting (new hourly model settings)
+* Convert daily model settings from `attrs` to `pydantic`
+* Refactor the daily model initial-guess optimization to use a consolidated `optimize` function
+
+eemeter-4.1.0 (2025-01-28)
+--------------------------
+
+* Add a redesigned `HourlyModel` with native solar support via a GHI feature, improving nonsolar results. Auto-detects solar vs. nonsolar from a GHI column at `fit()` (or force via `HourlySolarSettings`/`HourlyNonSolarSettings`); exposes `HourlyBaselineData`/`HourlyReportingData` with full serialization.
+* Move the previous CalTRACK hourly model to `eemeter.eemeter.models.hourly_caltrack`; `hourly` now refers to the new model.
+* Hourly fitting: temporal clustering (wavelet decomposition via PyWavelets + FPCA + bisecting k-means), configurable temperature binning, elastic-net over sparse design matrices; new utilities under `eemeter.common.clustering`.
+* Add `eemeter.common.hourly_interpolation` for sparse hourly meter/weather (incl. GHI), DST-aware.
+* Add `pv_start` as a first-class parameter for PV installation date.
+* Add `eemeter.common.metrics` (`BaselineMetrics`/`ReportingMetrics`) incl. `cvrmse`/`pnrmse` (and autocorrelation-adjusted variants) and CVRMSE/PNRMSE disqualification.
+* Add a `drmeter` demand-response package (`drmeter.models.caltrack`) derived from hourly CalTRACK.
+* Move sufficiency checks into pydantic validation; lowercase hourly settings keys (daily-model consistency).
+* Drop Python 3.8; require `numpy>=1.24.4`, `scipy>=1.10.1`, `pandas>=1.1.0`; add `scikit-learn>=1.3.0`, `pyarrow`, `PyWavelets`, `fdasrsf`, `scikit-fda`.
+* Disable numba JIT on Windows (int32/int64 return-type bug); set seed dtype for Windows.
+* Remove the CLI (`eemeter.utilities.cli`).
+* Fixes: `r_squared_adj` when `_safe_divide` returns `None`; hourly frequency label; prediction datetime realignment / DST index shifts.
+* Restrict namespace exports via `__all__`; suppress SWIG/importlib/sklearn/pywt native warnings.
+* Add automated GitHub Actions test runners.
+
+eemeter-4.0.8 (2025-01-07)
+--------------------------
+
+* Fix `linear_fit` bug caused by SciPy's `theilslopes(y, x)` argument order differing from `linregress(x, y)`; return slope 0 for identical observed values regardless of alpha, and handle the all-identical-observations case without raising.
+* Allow identical observations in the daily model `linear_fit` without raising an exception.
+* Constrain daily-model balance points to `T_min_seg`/`T_max_seg` rather than `T_min`/`T_max`.
+* Handle ambiguous and nonexistent local times when constructing the billing dataclass (DST transitions).
+* Fix serialization/deserialization of hourly CalTRACK metrics.
+* Fix `HourlyBaselineData`/`HourlyReportingData` not actually NaN-ing zero rows when `is_electricity=True`.
+* Rename `HourlyBaselineData.sufficiency_warnings` to `HourlyBaselineData.warnings` and add a `disqualification` field to `HourlyBaselineData` and `HourlyReportingData` for consistency across data models.
+* Bump to latest dependencies and clear all deprecation/FutureWarning issues as of 2024-12-20 (pandas frequency aliases `M`/`H`/`T` -> `ME`/`h`/`min`, chained-assignment and downcasting warnings, `read_json` literal JSON, `pkg_resources` -> `importlib.resources`); builds now error on warnings.
+* Add a GitHub Action to publish to PyPI; add `platform` to docker-compose for the nlopt wheel and pin an older `griffe` to fix the docs build.
+
+eemeter-4.0.7 (2024-10-24)
+--------------------------
+
+* Fixed a crash when constructing the daily dataclass (`_DailyData`) for timezones with daylight-saving transitions: the daily `DatetimeIndex` is now built with `ambiguous=True` and `nonexistent="shift_forward"`, so fall-back ambiguous times and spring-forward nonexistent times no longer raise.
+
+eemeter-4.0.6 (2024-08-05)
+--------------------------
+
+* Documentation overhaul: rebuilt the docs site with new tutorials (including an hourly-model tutorial placeholder), example scripts, updated navigation, and a GitHub Actions workflow for docs deployment; old docs removed.
+* `DailyReportingData.from_series` now accepts `is_electricity_data` as optional (`bool | None`, defaults to `None`); when omitted it is treated as `True` for the all-NaN temperature-only case.
+* Modernized type hints across daily and billing `data`/`model` modules and `utilities/io` (PEP 604 `|` syntax replacing `Optional`/`Union`).
+* Test data loading now sets the reporting period a year ahead of the baseline period.
+
+eemeter-4.0.5 (2024-07-12)
+--------------------------
+
+* Fix legacy daily model deserialization: negate `beta_hdd` for heating-only (`HDD_TIDD`) models imported from 2.0, whose heating-slope sign convention is reversed; corrects predictions/metered savings for these models
+
+eemeter-4.0.4 (2024-06-11)
+--------------------------
 
-opendsm-1.2.7
------------
+* Add support for deserializing legacy hourly models in `models/hourly/wrapper.py`
+* Fix legacy daily model deserialization in `models/daily/model.py`
+
+eemeter-4.0.3 (2024-06-05)
+--------------------------
+
+* `BillingModel.predict()` now raises `DisqualifiedModelError` when the model was disqualified during fitting; pass the new `ignore_disqualification=True` argument to predict anyway
+* Daily/billing prediction output now retains rows with missing temperature instead of dropping them in the data dataclass: predictions reindex to the full input, and `observed` is masked to `NaN` for days lacking a temperature value (toggleable via `mask_observed_with_missing_temperature`)
 
-* Switch build to use pyproject.toml and uv 
-* Change pyproject.toml build system to hatchling 
-* Update to example data to include GHI
-* Update `load_test_data` function to always pull from GitHub.
-* Add comparison groups. This feature is still in development. Final API is unfinished.
-* Consolidate clustering for hourly model and CG clustering
-* Add cluster voting
-* Include new indices and update `ClusteringMetrics` class
-* Implemented Numba and revised functions in adaptive_loss and stats.basic
-* Update dependencies
+eemeter-4.0.2 (2024-05-07)
+--------------------------
 
-opendsm-1.2.6
------------
+* Force daily-model datetime indexes to nanosecond resolution in `eemeter/models/daily/data.py`, preventing dataframe-merge failures when input indexes carry mismatched datetime64 units
+* Resample coverage in `as_freq` from a consistent origin (`origin=resampled.index[0]`), fixing incorrect coverage fractions when downsampling sub-daily data
 
-* Fixed bug in `from_series` instantiation of daily data class
+eemeter-4.0.1 (2024-03-04)
+--------------------------
 
-opendsm-1.2.5
------------
+* Correct dataframe input behavior and final-row temperature aggregation in meter/temperature data handling
+* Fix billing-period handling and `from_series` trimming so the hour of the input index is respected
+* Remove unnecessary datetime normalization to preserve hour of day for non-billing data
+* Convert timestamps in certain warnings to strings so warning objects serialize correctly
+* Allow configuration of `segment_type` in the `HourlyModel` wrapper (defaults to `three_month_weighted`)
 
-* Expose SpectralClustering's assign_labels options. `discretize` and `cluster_qr` are not always deterministic with seed
-* Added more metrics to BaselineMetrics
+eemeter-4.0.0 (2024-02-26)
+--------------------------
 
-opendsm-1.2.4
------
+* Major rewrite of the daily model (CalTRACK 2.1): new model methods, fit/predict API, attribute layout, and serialization format; serialized models are now self-contained (`predict()` no longer depends on the live model object)
+* New `DailyModel`, `BillingModel`, and `HourlyModel` wrapper classes giving the hourly and billing models a daily-style API, including `to_dict`/`to_json` serialization on the hourly wrapper
+* New baseline and reporting dataclasses for daily and billing data that validate and canonicalize input meter/temperature data, with `from_series` constructors, sufficiency/coverage checks, negative-value checks for non-electric data, and timezone preservation when merging series
+* Renamed dataframe columns: `meter_value` -> `observed`, `temperature_mean` -> `temperature`, output `model` -> `predicted`, and `model_unc` -> `predicted_unc`; the `observed` column is now optional to allow temperature-only evaluation
+* Disqualification and warning reporting integrated into the dataclasses and model serialization (renamed to `disqualification`/`warnings`), including CVRMSE-based disqualification logic
+* Hourly model now emits prediction uncertainty and correctly detects missing high-frequency hourly data
+* Error metrics reduced to `*_train` plus a baseline CVRMSE; added PNRMSE to the daily model and CVRMSE to `OptimizedResult`
+* Billing model overhaul: design-matrix changes, spreading billing data to individual days, median-based granularity computation, fixed serialization, and `from_series` indexing constrained to the meter data to disambiguate the final billing period
+* Added an OEEM 3.5.1.1 sufficiency check and removed redundant checks; baseline-length and downsampling-coverage logic updated for new NaN handling
+* Removed all CalTRACK references from models, data classes, warnings, data-quality messages, and tutorials
+* Raise an exception when `predict()` is called before a successful `fit()`
+* Python 3.8 compatibility: removed `match` statements and `X | Y` union syntax, switched to 3.8-compatible typing
+* `matplotlib` import made optional; added `requests` dependency; added Cython optimization for the daily full-model function (with a numba `np.float64` fallback when JIT is disabled)
+* Expanded test coverage and reworked the tutorial notebook with new sample data and feature examples
 
-* Bug fix of metrics that squeaked through
+eemeter-3.2.0 (2023-09-01)
+--------------------------
 
-opendsm-1.2.3
------
+* International support: temperature inputs can now be supplied in Celsius via a `degC` toggle, replacing the prior `region` parameter with explicit temperature conversion factors. The toggle defaults to Fahrenheit, so existing behavior is unchanged.
+* Conversion handling threaded through `design_matrices`, `features`, and the derivatives path so non-Fahrenheit data flows correctly end to end.
+* New high-level `processing.py` module adding eight data-formatting and run helpers aimed at simpler data preparation and a more interpretable UX for new users.
+* New `quickstart.py` entry point; `caltrack_hourly`/`caltrack_daily` model runners relocated there to break import circularity, with the old `eemeter_hourly`/`eemeter_daily` modules renamed to `hourly.py`/`usage_per_day.py`.
+* pandas 2.0 compatibility: replaced `.iteritems()` with `.items()`, `Index.get_loc(x, method=...)` with `get_indexer([x], method=...)[0]`, and used `mean(numeric_only=True)`; minimum requirement is now `pandas>=1.0.0` (built/tested against 2.0).
+* Fixed a bug in `get_baseline_data` for the CalTRACK hourly/daily paths, plus a meter-data index frequency warning in `features`.
+* Clarified docs/behavior of the `start`, `end`, and `max_days` parameters in `get_reporting_data()` and `get_baseline_data()`.
+* New international tutorial notebook and additional UK sample datasets (temperature, gas, electricity); Dockerfile updated for Python 3.10 and a Rust toolchain, with Pipfile dependencies unpinned and relocked.
 
-* Spectral clustering is now seeded appropriately
-* Fixed bug making seed in main hourly settings not be passed to clustering settings
-* Including new metrics in baseline_metrics
+eemeter-3.1.1 (2022-09-16)
+--------------------------
 
-opendsm-1.2.2
------
+* `ModelMetrics` now computes `observed_mean` and `predicted_mean` as the mean of absolute values rather than the signed mean, so CVRMSE and other normalized metrics stay sensible for solar (negative net-usage) meters.
 
-* Change daily model to use CVRMSE_adj and PNRMSE_adj as intended
-* Autocorrelation function is now consistent
+eemeter-3.1.0 (2021-07-09)
+--------------------------
 
-opendsm-1.2.1
------
+* CalTRACK hourly methods now drop `hour_of_week` categories that are missing from the segment's fit data, so predictions for those hours return null instead of erroring or extrapolating.
 
-* Revert how autocorr is calculated prior to 1.2.0
+eemeter-3.0.0 (2021-03-26)
+--------------------------
 
-opendsm-1.2.0
------
+* Drop Python 2.7 support; remove `py35`, add `py38` to the supported/tested versions.
+* CalTRACK hourly model now fits separate occupied and unoccupied temperature bins: `fit_temperature_bins` can take an `occupancy_lookup` to derive distinct bins per mode, and the hourly model formula uses these mode-specific bins.
+* Breaking API change: `create_caltrack_hourly_segmented_design_matrices` now requires separate sets of bins for occupied and unoccupied temperatures.
+* Fix model serialization and refresh the Pipfile lock.
 
-* Add hourly model uncertainty
-* Daily model uses BaselineMetrics natively now, accessible from model.baseline_metrics
-* Data classes now accept dictionaries to modify DQ criteria. This is an R&D feature
-* Migrate to modern Python logger interface to solve deprecation warnings
+eemeter-2.10.11 (2021-01-21)
+----------------------------
 
-opendsm-1.1.0
------
+* Compatibility with `pandas` 1.2.1: updated `caltrack`, `metrics`, `io`, and `segmentation` code so the test suite passes on the newer pandas.
+* Fixed a bug in `CalTRACKSegmentModel` prediction (`segmentation.py`) where a Series was renamed via the DataFrame-only `rename(columns=...)` call, raising `TypeError` and breaking `metered_savings()` (and the tutorial).
+* Tutorial updates, including naming the predicted-usage Series so it carries through downstream.
 
-* Updated the Hourly model
-* Performed new optimization for Hourly model configuration
-* Developed adaptive robust weighting per hour-of-day for the hourly model
-* Updated adaptive loss function. Previously it assumed too large of a range of outliers and made choosing alphas < 0 unlikely
-* Altered clustering methodology, it now uses spectral clustering
-* Changed temperature binning to be fixed bins
-* Made temporal bins/temperature bins act together on temperature
-* Disallow negative CVRMSE in Hourly model
-* Added daily CVRMSE >= 0 and PNRMSE sufficiency requirements
-* Partially updated Daily model to use baseline_metrics
-* Changed extreme values warning flag to check using IQR rule instead of median +- IQR which is incorrect
-* Fix warning data on `high_frequency_temperature_data` warning.
-* Squash numpy divide-by-zero warnings in caltrack Hourly metrics.
+eemeter-2.10.0 (2020-09-21)
+---------------------------
 
-opendsm-1.0.0
------
+* Add fractional savings uncertainty (FSU) terms to `ModelMetrics`: new `confidence_level`, `n_prime`, `single_tailed_confidence_level`, `degrees_of_freedom`, `t_stat`, `cvrmse_auto_corr_correction`, `approx_factor_auto_corr_correction`, and `fsu_base_term` attributes, plus an autocorrelation-corrected `cvrmse_adj`, supporting FSU computations.
+* New FSU terms are serialized through `ModelMetrics.json()`/`from_json()` and degrade gracefully (set to `None`) for degenerate inputs (non-finite `n_prime`, zero/insufficient degrees of freedom).
 
-* Initial OpenDSM release
+eemeter-2.9.2 (2020-04-28)
+--------------------------
 
-eemeter-4.1.1
------
+* Removed version pinning of dependencies in `setup.py`, allowing installation alongside newer library versions (reverses the pinning introduced in 2.9.1).
 
-* Add GHI sufficiency check requiring 90% coverage for each month
-* Add weights propogation from data class to daily model via "weights" column
-* Converted daily model settings from attrs to pydantic
-* Refactored daily model initial guess optimization to use consolidated optimize function
-* Add experimental daily weighting for hourly model fitting (if one day is crazy, it will be down weighted in the fit)
+eemeter-2.9.1 (2020-01-23)
+--------------------------
 
-eemeter-4.1.0
------
+* Pin dependency versions in `setup.py` (`click==7.0`, `pandas==0.24.2`, `statsmodels==0.10.2`, `scipy==1.2.2`) to avoid breakage from upstream library updates.
 
-* Add new hourly model to support solar meters and improve nonsolar results
+eemeter-2.9.0 (2020-01-14)
+--------------------------
 
-eemeter-4.0.8
------
+* Add `from_json` classmethods to reload model results from their `.json()` output, enabling serialization round-trips for `CalTRACKUsagePerDayModelResults` and `CalTRACKHourlyModelResults` (plus the underlying candidate/segment models and `ModelMetrics`).
+* Fix hourly model deserialization so `CalTRACKHourlyModel` reloads correctly from JSON.
+* Make the dtype conversion in hourly deserialization compatible with other pandas versions.
+* Clarify documentation of the blackout period.
 
-* Add github action to publish to pypi
-* Bump to latest packages and remove all deprecation/future warnings as of 2024-12-20.
-* Allow identical observations to not raise exception for daily model in `linear_fit`.
-* Handle ambiguous and nonexistent local times when creating billing dataclass 
-* Fix serialization and deserialization of hourly CalTRACK metrics.
-* Rename HourlyBaselineData.sufficiency_warnings -> HourlyBaselineData.warnings
-* Add disqualification field to HourlyBaselineData and HourlyReportingData
-* Fix bug where HourlyBaselineData and HourlyReportingData wasn't actually NaNning zero rows when `is_electricity=True`.
-* Constrain eemeter daily model balance points to T_min_seg and T_max_seg rather than T_min and T_max.
-* Fix bug in `linear_fit` due to SciPy's `theilslopes(y, x)` not following the same order as `linregress(x, y)`
+eemeter-2.8.6 (2019-12-10)
+--------------------------
 
-eemeter-4.0.7
------
+* Fix `get_baseline_data` and `get_reporting_data` raising when called with non-UTC-timezone data and no explicit `start`/`end`: the open-ended bounds derived from `pd.Timestamp.min`/`pd.Timestamp.max` are now offset by one day so they no longer overflow when converted out of UTC.
 
-* Handle ambiguous and nonexistent local times when creating daily dataclass
+eemeter-2.8.5 (2019-11-21)
+--------------------------
 
-eemeter-4.0.6
------
+* Add `clean_caltrack_billing_daily_data(data, source_interval)` to `transform`, a unified cleaner that routes billing data through `clean_caltrack_billing_data` and resamples/downsamples daily and sub-daily (hourly/30min/15min) data to daily per CalTRACK 2.2.2.1 / 2.2.3.4 / 2.2.3.5; also exposes `downsample_and_clean_caltrack_daily_data`. The data-cleaning tutorial now uses this function.
+* Extend `meter_data_from_json` with an `orient='records'` format (list of `{'start', 'value'}` dicts), optional per-record `estimated` boolean flag coerced into an `estimated` column, coercion of non-numeric values to NaN, and graceful handling of `None`/empty input (returns an empty UTC-indexed meter-data frame).
 
-* Update docs.
-* Update typehints on core daily and utility functions.
-* Minor change to loading test data to ensure the reporting period is a year ahead of the baseline period.
+eemeter-2.8.4 (2019-11-07)
+--------------------------
 
-eemeter-4.0.5
------
+* Further restrict the segments used in hourly `totals_metrics` to rows with `weight == 1` (previously `weight > 0`), so metrics are computed only on each model's own segment data.
 
-* Flip slope when deserializing legacy hdd_only models
+eemeter-2.8.3 (2019-11-07)
+--------------------------
 
-eemeter-4.0.4
------
+* Fix hourly CalTRACK `totals_metrics`: the per-segment `ModelMetrics` now computes over only the rows that belong to the segment (`weight > 0`) instead of the full segment frame, predicting on that subset so observed and predicted values are aligned to the model's own data.
 
-* Add support for deserializing legacy hourly models
-* Fix legacy daily model deserialization
+eemeter-2.8.2 (2019-11-04)
+--------------------------
 
-eemeter-4.0.3
------
+* Add `totals_metrics` to CalTRACK hourly models: each fitted segment now computes a `ModelMetrics` object, and `CalTRACKHourlyModelResults.totals_metrics` exposes them as a per-segment dict (keyed by segment name), serialized in `.json()`.
+* Fix segment metric computation so predictions exclude rows with NaN weights, aligning predicted values with the weighted-fit observations.
 
-* Move masking behavior for rows with missing temperature from reporting dataclass to prediction output
-* Add disqualification check to billing model predict()
+eemeter-2.8.1 (2019-10-18)
+--------------------------
 
-eemeter-4.0.2
------
+* Fix `get_baseline_data` handling of the `n_days_billing_period_overshoot` kwarg added in 2.8.0: the default changes from `np.inf` to `None` (meaning any amount of overshoot is allowed), and the overshoot limit now gates the `ignore_billing_period_gap_for_day_count` end-date snapping instead of unconditionally raising `NoBaselineDataError`.
 
-* Force index to use nanosecond precision
-* Compute coverage using same offset as initial reads to fix issues when downsampling hourly data
-* Update test data location
-* Fix bug in daily plotting to remove NaN values if input
-* Refactor sufficiency criteria to be more explicit and easier to manage
+eemeter-2.8.0 (2019-10-18)
+--------------------------
 
-eemeter-4.0.1
------
+* Add `n_days_billing_period_overshoot` kwarg to `get_baseline_data` to cap the number of overshoot days tolerated when `allow_billing_period_overshoot=True`; exceeding the limit now raises `NoBaselineDataError`.
 
-* Correct dataframe input behavior and final row temperature aggregation
-* Remove unnecessary datetime normalization in order to respect hour of day
-* Convert timestamps in certain warnings to strings to allow serialization
-* Allow configuration of segment_type in HourlyModel wrapper
+eemeter-2.7.7 (2019-10-16)
+--------------------------
 
+* Add `clean_caltrack_billing_data(data, source_interval)` to filter raw billing data to CalTRACK specifications: drops monthly periods outside 25-35 days and bimonthly periods outside 25-70 days (CalTRACK 2.2.3.4/2.2.3.5), and folds estimated reads into the subsequent actual read when not consecutive (CalTRACK 2.2.3.1).
 
-eemeter-4.0.0
------
+eemeter-2.7.6 (2019-10-02)
+--------------------------
 
-* Update daily model methods, API, and serialization
-* Provide new API for hourly model to match daily syntax and prepare for future additions
-* Add baseline and reporting dataclasses to support compliant initialization of meter and temperature data
+* Updated `io` functions (`meter_data_from_csv`/`_json`, `temperature_data_from_csv`/`_json`) to support pandas >=0.24.x, switching to `pd.to_datetime(..., utc=True)` for UTC localization.
+* CSV resampling in `meter_data_from_csv` now uses `resample(...).sum(min_count=1)`, so empty periods produce NaN rather than 0.
+* Updated documentation for the CalTRACK Hourly methods.
+* Added a tutorial.
 
-eemeter-3.2.0
------
+eemeter-2.7.5 (2019-08-28)
+--------------------------
 
-* Addition of modules and amendments in support of international facility for EEMeter, including principally:
-* Addition of quickstart.py; updating setup.py and __init__/py accordingly.
-* Inclusion of temperature conversion amendments to design_matrices; features; and derivatives.
-* Addition of new tests and samples.
-* Amendments to tutorial.ipynb.
-* Addition of eemeter international.ipynb.
-* Change .iteritems() to .items() in accordance with pandas>=2.0.0
-* .get_loc(x, method=...) to .get_indexer([x],method=...)[0] in accordance with pandas>=2.0.0
-* Updated mean() to mean(numeric_only=True) in accordance to pandas>=2.0.0
-* Updated tests to work with pandas>=2.0.0
-* Update python version in Dockerfile.
-* Update other dependencies (including adding rust) in Dockerfile.
-* Remove pinned dependencies in Pipfile.
-* Relock Pipfile (and do so inside of the docker image).
-* Update pytests to account for changes in newer pandas where categorical variables are no longer included in `df.sum().sum()`.
-* Clarify the functioning of start, end and max_days parameters to `get_reporting_data()` and `get_baseline_data()`.
+* Fix the completeness check for the last term returned by `get_terms`, so the final `eemeter.Term`'s completeness flag is computed correctly.
 
-eemeter-3.1.1
------
+eemeter-2.7.4 (2019-08-15)
+--------------------------
 
-* Update observed_mean calculation to account for solar (negative usage) to provide
-sensible cvrmse calculations.
+* Improve the `get_terms` interface so it returns a list of `eemeter.Term` objects rather than raw data, making term-based outputs easier to consume.
+* Fix the remaining-index reset ordering inside `get_terms` so term boundaries are computed against the correct trailing index.
 
-eemeter-3.1.0
------
+eemeter-2.7.3 (2019-08-14)
+--------------------------
 
-* Remove missing hour_of_week categories in the CalTrack hourly methods so they predict null for those hours. 
+* `as_freq` gains an optional `include_coverage` parameter; when set, it returns a DataFrame with a `value` column plus a `coverage` column giving the fraction of underlying data present in each resampled sample.
 
-eemeter-3.0.0
------
+eemeter-2.7.2 (2019-07-26)
+--------------------------
 
-* Remove python27 support.
-* Update Pipfile lock.
-* Update `fit_temperature_bins` to potentially take an `occupancy_lookup` in order to
-  fit different temperature bins for occupied/unoccupied modes. *This changes the args passed to eemeter.create_caltrack_hourly_segmented_design_matrices, where it now requires a set of bins for occupied and unoccupied temperatures separately.*
-* Update CalTRACK hourly model formula to use different bins for occupied and
-  unoccupied mode.
+* Fix the columns returned in an empty prediction result when calling CalTRACK usage-per-day methods with `with_design_matrix=True`; the empty result now includes the design-matrix columns.
+* Add a Python 3.7 test environment to CI.
+* Improve the GitHub bug-report issue template.
+* Add a test for `as_freq`.
 
-eemeter-2.10.11
--------
+eemeter-2.7.1 (2019-07-16)
+--------------------------
 
-* Fix tests and make changes to ensure tests pass on pandas version 1.2.1.
-* Fix bug in segmentation.py causing a section of tutorial to fail.
+* Fix `as_freq` to correctly handle an all-null input series when resampling cumulative data, using `.first()` rather than `.mean()` to identify empty buckets so fully-null series no longer error.
 
-eemeter-2.10.0
-------
+eemeter-2.6.1 (2019-07-16)
+--------------------------
 
-* Add additional terms into ModelMetrics() class which can be used in fractional savings uncertainy computations.
+* Fix `as_freq` so it correctly handles meter series that are entirely null: for `series_type="cumulative"`, null-period detection now uses `.first()` instead of `.mean()` when resampling, so an all-null input resamples without error and sums to 0.
 
-eemeter-2.9.2
------
+eemeter-2.7.0 (2019-06-10)
+--------------------------
 
-* Remove fixing of versions of libraries in setup.py to avoid unforeseen issues with library updates.
+* Add `get_terms` to `eemeter.transform` for labeling a `DatetimeIndex` into consecutive terms of specified day lengths (`term_lengths`, optional `term_labels`, `start`, and `method` of `'strict'` or `'nearest'`), enabling reporting data to be split into an arbitrary number of terms.
 
-eemeter-2.9.1
------
+eemeter-2.6.0 (2019-06-03)
+--------------------------
 
-* Fix versions of libraries in setup.py to avoid unforeseen issues with library updates.
+* Change `fit_caltrack_hourly_model` to return a `CalTRACKHourlyModelResults` object instead of a `CalTRACKHourlyModel`, aligning its output with the `caltrack_usage_per_day` model.
 
-eemeter-2.9.0
------
+eemeter-2.5.4 (2019-05-07)
+--------------------------
 
-* Clarify blackout period.
+* `DataSufficiency` now always exposes a `data` dict (new constructor arg, included in `.json()`), populated by `caltrack_sufficiency_criteria` even when no warnings are raised. It carries the underlying values for each sufficiency check (extra data before/after the requested window, negative meter values, total/valid/missing day counts, and extreme-value stats such as median, quantiles, limit, and max), so callers can inspect the metrics behind a pass/fail rather than only the warnings.
 
-eemeter-2.8.6
------
+eemeter-2.5.3 (2019-04-16)
+--------------------------
 
-* Fix issue with `get_reporting_data` and `get_baseline_data` when passing data with non-UTC timezones.
+* Fix `metered_savings` so it no longer fails to compute error bands when the baseline has zero variance; in that case no error band is calculated (`eemeter/derivatives.py`).
 
-eemeter-2.8.5
------
+eemeter-2.5.2 (2019-03-22)
+--------------------------
 
-* Add functions to clean billing/daily data according to caltrack rules.
+* Fix `as_freq` to preserve the series sum/mean when resampling: it no longer unconditionally NaNs the last value, and instead appends a single null index at the target frequency only when the resampled range falls short of the source's last timestamp.
 
-eemeter-2.8.4
------
+eemeter-2.5.1 (2019-03-21)
+--------------------------
 
-* Further limit segments used in hourly `totals_metrics` to only calculate when weight=1.
+* `get_baseline_data` and `get_reporting_data` now also catch `KeyError` (in addition to `IndexError`) when locating the nearest index position via `index.get_loc(..., method="nearest")`, so the fallback path is taken instead of raising on this case.
 
-eemeter-2.8.3
------
+eemeter-2.5.0 (2019-03-21)
+--------------------------
 
-* Update hourly `totals_metrics` calculation to properly use only the segment of the model.
+* Added `allow_billing_period_overshoot` and `max_days` parameters to `transform.get_baseline_data` and `transform.get_reporting_data`, making baseline/reporting window selection more correct for irregular billing-period data.
+* `transform.as_freq` now preserves nulls properly when resampling, and gained a `series_type` parameter (`"cumulative"` vs `"instantaneous"`) controlling whether values are spread or copied across the finer time intervals.
+* Updated the `jupyter` dependency to a version compatible with the latest `tornado`.
 
-eemeter-2.8.2
------
+eemeter-2.4.0 (2019-03-13)
+--------------------------
 
-* Add `totals_metrics` to hourly models.
+* Fix CalTRACK hourly model fitting failure that occasionally raised `LinAlgError: SVD did not converge`; when only a single occupancy mode is detected, the multicollinearity it introduced is now handled.
 
-eemeter-2.8.1
------
+eemeter-2.3.1 (2019-03-08)
+--------------------------
 
-* Fix bug with `get_baseline_data` in regards to recent addition of `n_days_billing_period_overshoot` kwarg.
+* Fix occasional `LinAlgError: SVD did not converge` when fitting CalTRACK hourly models, by casting `segment_data` to `np.float32` in `fit_caltrack_hourly_model_segment` before the WLS fit.
 
-eemeter-2.8.0
------
+eemeter-2.3.0 (2019-03-04)
+--------------------------
 
-* Update `get_baseline_data` to allow for limit to billing overshoot using `n_days_billing_period_overshoot` kwarg.
+* Fix bug where model predictions included non-null temperature feature values in the last row that should be `NaN` (`features.py`).
+* Fix `transform.get_baseline_data` and `transform.get_reporting_data` data slicing to pull a full year of data even with irregular billing-period dates.
 
-eemeter-2.7.7
------
+eemeter-2.2.10 (2019-01-28)
+---------------------------
 
-* Add function to clean billing data to fit caltrack specifications (`clean_caltrack_billing_data`).
+* `transform.as_freq` gains a `series_type` argument (`'cumulative'` default, or `'instantaneous'`) so it can resample sampled data such as temperature/weather: instantaneous series are copied across sub-intervals and aggregated by mean, rather than spread and summed like cumulative meter data.
+* `transform.as_freq`'s first parameter is renamed from `meter_data_series` to `data_series` to reflect that it now handles non-meter data.
 
-eemeter-2.7.6
------
+eemeter-2.2.9 (2019-01-16)
+--------------------------
 
-* Update io functions to support latest pandas (>=0.24.x).
-* Update documentation for CalTRACK Hourly methods.
-* Add tutorial.
+* Prediction with an empty model formula now returns `NaN`s instead of erroring, handled in `eemeter/segmentation.py`.
 
-eemeter-2.7.5
------
+eemeter-2.2.8 (2019-01-15)
+--------------------------
 
-* Fix completeness check for `get_terms` for last term.
+* Fix `compute_occupancy_feature` to handle data with fewer than 168 values (less than one full week of hourly data) instead of failing.
 
-eemeter-2.7.4
------
+eemeter-2.2.7 (2019-01-15)
+--------------------------
 
-* Make more usable outputs for the `get_terms` function (list of eemeter.Term objects).
+* `SegmentModel` renamed to `CalTRACKSegmentModel`. Its `predict` now hard-codes selection of the `C(hour_of_week)` design-matrix columns, intersects them with the fit parameters, drops all-zero hour-of-week rows, and reindexes the result back to the input so missing hours stay `NaN` rather than producing misaligned predictions.
+* Fixed NaN handling in hourly CalTRACK fitting: `fit_caltrack_hourly_model_segment` now detects segments that are empty or all-`NaN`, returns a model with null `formula`/`model`/`model_params`, and emits an `eemeter.fit_caltrack_hourly_model_segment.no_nonnull_data` warning instead of attempting a fit.
+* `SegmentedModel` prediction sums per-segment predictions with `min_count=1`, so fully-missing hours stay `NaN` instead of collapsing to `0`.
 
-eemeter-2.7.3
------
+eemeter-2.2.6 (2019-01-13)
+--------------------------
 
-* Update `as_freq` so it has an optional `include_coverage` parameter where it returns a dataframe with one column including the percent coverage of data used to create each sample.
+* Reverts the 2.2.5 small-data (<1 week) fix for hourly occupancy feature calculation in `segmentation.py`, as that change was not the correct way to handle the issue.
 
-eemeter-2.7.2
------
+eemeter-2.2.5 (2019-01-11)
+--------------------------
 
-* Fixes the columns that are given in an empty prediction result called with the
-  ` with_design_matrix=True` flag set for caltrack usage per day methods.
-* Update bug report github issue template.
-* Add test for `as_freq`.
+* Fix bug computing the hourly occupancy feature on small datasets (less than one week) by dropping `NaN`s when adding weights in `segmentation.py`.
+* Bump dev `eeweather` version.
+* Add `bump_version` helper script.
+* Filter two specific warnings during tests: the statsmodels pandas `.ix` warning and the eemeter model-fitting warning.
 
-eemeter-2.7.1
------
+eemeter-2.2.4 (2018-12-19)
+--------------------------
 
-* Change `as_freq` to handle all Null series.
+* Add `json()` serialization for `SegmentModel` and `SegmentedModel` in `segmentation.py`.
+* Enable serializing CalTRACK hourly models to JSON via the new segmentation serialization support.
 
-eemeter-2.7.0
------
+eemeter-2.2.3 (2018-12-12)
+--------------------------
 
-* Add `get_terms` method to allow splitting reporting data into any number
-  of terms specified by day length.
+* Cast `max_value` to `float` in `caltrack_sufficiency_criteria` so the extreme-values warning stays JSON-serializable when meter values are `int64`.
 
-eemeter-2.6.0
------
+eemeter-2.2.2 (2018-12-10)
+--------------------------
 
-* Change `fit_caltrack_hourly_model` so it returns a `CalTRACKHourlyModelResults` object rather than a `CalTRACKHourlyModel`, in order to bring it in line with the `caltrack_usage_per_day` model outputs.
+* Add a non-critical `extreme_values_detected` warning to `caltrack_sufficiency_criteria` (CalTRACK 2.3.6): flags meter values above `median + 3 * IQR` and reports the count and max of extreme values.
 
-eemeter-2.5.4-post1
------------
+eemeter-2.2.1 (2018-11-26)
+--------------------------
 
-* Update MANIFEST.in to fix release and update `./bump_version.sh` script
-  to remove build directories.
+* Fix an operator-precedence bug in fractional savings uncertainty (FSU) error-band calculations for billing-interval data: the `interval.startswith("billing") & len(...) > 0` conditions in `_compute_error_bands_metered_savings` and `_compute_error_bands_modeled_savings` now correctly parenthesize each operand, so the post-period observation count uses the billing-month branch as intended.
 
-eemeter-2.5.4
------
+eemeter-2.2.0 (2018-11-08)
+--------------------------
 
-* Add data fields to the `DataSufficiency` even if there are no warnings when calculating sufficiency.
+* Add fractional savings uncertainty (FSU) to modeled savings derivatives in `derivatives.py`, including a combined-FSU value across the savings period.
+* Fix `NoneType` handling in the autocorrelation path so missing values no longer raise during derivative computation.
+* Force float casting for Python 2.7 compatibility in the savings calculations.
+* Fix the CalTRACK documentation link.
 
-eemeter-2.5.3-post2
------------
+eemeter-2.1.8 (2018-10-29)
+--------------------------
 
-* Attempt 2 to fix release .whl file by removing local build and dist
-  directories before running `python setup.py upload`.
+* Fix `caltrack_usage_per_day_predict` so models built with empty temperature data return an empty prediction DataFrame instead of raising an error; the empty-prediction `ModelPrediction` no longer forces `prediction_index` onto its empty result.
 
-eemeter-2.5.3-post1
------------
+eemeter-2.1.7 (2018-10-10)
+--------------------------
 
-* Fix release .whl file which had some extra directories.
-* Add draft MAINTAINERS.md.
+* Fix error in savings/error-band computation for models built from a single record: `_compute_error_bands` now treats a `None` `autocorr_resid` as a degenerate case and returns no error bands instead of raising, so `metered_savings` succeeds on single-record (e.g. minimal billing) baselines.
 
-eemeter-2.5.3
------
+eemeter-2.1.6 (2018-10-02)
+--------------------------
 
-* Fix `metered_savings` behavior so that it does not fail to compute error bands when there is 0 variance in the baseline.
+* Treat all-NaN data as empty in CalTrack usage-per-day fitting and `transform`: emptiness checks now use `df.dropna().empty` instead of `df.empty`, so traces containing only missing values are correctly handled.
+* Documentation updates for running the CalTrack hourly methods.
 
-eemeter-2.5.2
------
+eemeter-2.1.5 (2018-09-28)
+--------------------------
 
-* Fix `as_freq` behavior to preserve sum and add a null last index at the target
-  frequency if necessary.
+* Fix zero-division errors in metered-savings metrics: error-band (`fsu_error_band`) computation now guards additional cases by checking for valid post-period observation (`post_obs`) values rather than failing on degenerate inputs.
+* Explicitly apply the Apache License 2.0 to the project.
 
-eemeter-2.5.1
------
+eemeter-2.1.4 (2018-09-27)
+--------------------------
 
-* Capture an additional exception type (`KeyError`) in recently adjusted
-  `get_baseline_data` and `get_reporting_data` methods.
+* Fix a `ZeroDivisionError` in `ModelMetrics` calculation when the input series has length 1.
 
-eemeter-2.5.0
------
+eemeter-2.1.3 (2018-09-27)
+--------------------------
 
-* Add parameters to `get_baseline_data` and `get_reporting_data` to help make
-  these methods a bit more correct for billing data.
-* Preserve nulls properly in `as_freq`.
-* Update jupyter version to be compatible with latest tornado version.
+* Fix `caltrack` billing design matrix creation for traces with empty temperature data (changes how degree-day columns are added).
+* Fix `ZeroDivisionError` in `metered_savings`: skip computing error bands when the reporting period yields 0 or 1 result rows (`_compute_error_bands` requires more than one row).
 
-eemeter-2.4.0
------
+eemeter-2.1.2 (2018-09-26)
+--------------------------
 
-* Fix for bug that occasionally leads to `LinAlgError: SVD did not converge` error when fitting caltrack hourly models by addressing multi-collinearity when only a single occupancy mode is detected
+* Add automatic t-stat computation for metered-savings error bands; this adds `scipy` as an explicit `setup.py` requirement.
+* Skip error-band computation when the reporting-period data is empty for metered savings.
+* Limit the `matplotlib` version in the build to avoid an incompatible release.
 
-eemeter-2.3.1
------
+eemeter-2.1.1 (2018-09-25)
+--------------------------
 
-* Hot fix for bug that occasionally leads to `LinAlgError: SVD did not converge` error when fitting caltrack hourly models by converting the weights from `np.float64` ton `np.float32`.
+* Fix balance-point ranges in the prefab CalTRACK design-matrix creation methods (daily and billing): heating and cooling balance points now span `range(30, 91)` instead of starting at 50.
+* Fix the total-degree-day too-low warning (`get_total_degree_day_too_low_warning`) to evaluate the total summed degree days rather than the average degree days.
 
-eemeter-2.3.0
------
+eemeter-2.1.0 (2018-09-25)
+--------------------------
 
-* Fix bug where the model prediction includes features in the last row that should be null.
-* Fix in `transform.get_baseline_data` and `transform.get_reporting_data` to enable pulling a full year of data even with irregular billing periods
+* Add CalTRACK hourly modeling: `fit_caltrack_hourly_model` (per-segment hour-of-week models with occupancy + binned-temperature features) via new processors in `eemeter.caltrack.hourly`.
+* Add `eemeter.segmentation` (`SegmentModel`/`SegmentedModel`, `segment_time_series`, `fit_segmented_model`, `iterate_segmented_dataset`).
+* Add `eemeter.features` consolidating feature computation (temperature/time/usage-per-day/occupancy/temperature-bin features, `merge_features`).
+* Add `eemeter.derivatives` (`metered_savings`, `modeled_savings`); `metered_savings` computes fractional-savings-uncertainty (FSU) and OLS error bands.
+* Reorganize `eemeter.caltrack` into `usage_per_day.py`, `hourly.py`, `design_matrices.py`.
+* Remove `eemeter.api`; public types re-exported from their functional homes.
+* `use_billing_presets` applies a minimum data-sufficiency requirement; error when billing presets are used without a weights column.
+* Apply black formatting repo-wide.
 
-eemeter-2.2.10
-------
+eemeter-2.0.5 (2018-09-20)
+--------------------------
 
-* Added option in `transform.as_freq` to handle instantaneous data such as temperature and other weather variables.
+* `compute_temperature_features` now raises a clear `ValueError` ("Duplicates found in input meter trace index.") when the meter data index contains duplicate timestamps, instead of producing confusing downstream errors.
 
-eemeter-2.2.9
------
+eemeter-2.0.4 (2018-09-18)
+--------------------------
 
-* Predict with empty formula now returns NaNs.
+* `ModelMetrics` no longer raises a `ValueError` when the `observed` and `predicted` input series differ in length; it now records an `EEMeterWarning` (`eemeter.metrics.input_series_are_of_different_lengths`) and proceeds, computing metrics over the merged series and exposing the length details via `warnings`.
 
-eemeter-2.2.8
------
+eemeter-2.0.3 (2018-09-13)
+--------------------------
 
-* Update `compute_occupancy_feature` so it can handle instances where there are less than 168 values in the data.
+* Complete rewrite of the 2.x series. The old object model (`structures/` with `Project`/`Trace`/`ModelingPeriod`/`Site`, the bundled `weather/` location and `eeweather_wrapper` modules, `co2/`, and `testing/` mocks/resources) is removed in favor of a pandas-centric API operating directly on meter-data and temperature `Series`/`DataFrame`.
+* New CalTRACK billing/daily methods in `caltrack.py`: `caltrack_method` fits candidate models (`get_cdd_hdd_candidate_models`, `get_cdd_only_candidate_models`, `get_hdd_only_candidate_models`, `get_intercept_only_candidate_models`) and `select_best_candidate`; `caltrack_metered_savings` and `caltrack_modeled_savings` compute savings; `caltrack_sufficiency_criteria` enforces data-sufficiency rules.
+* New public result types in `api.py`: `ModelResults` (replaces the old `ModelFit`), `CandidateModel`, `DataSufficiency`, and `EEMeterWarning`.
+* New `metrics` module with a `ModelMetrics` object, attached to `ModelResults` and produced inside `caltrack_method`; reports `r_squared_adj` (adjusted R-squared) rather than raw `r_squared`.
+* New `transform.py` data-prep helpers: `merge_temperature_data`, `compute_temperature_features`, `as_freq`, `day_counts`, `get_baseline_data`, `get_reporting_data`, and `remove_duplicates`; `merge_temperature_data` uses average degree days and is faster.
+* New `io` module for reading/writing meter and temperature data to/from CSV and JSON (`meter_data_from_csv`/`_json`, `temperature_data_from_csv`, plus `_to_csv` writers).
+* New `visualization.py` plotting helpers (e.g. `plot_caltrack_candidate`).
+* Sample-data overhaul: the large bundled `traces.csv`/`projects.csv` are removed and replaced by a curated `samples/` set (IL electricity/gas billing-monthly/bimonthly, daily, and hourly fixtures) loadable via `samples/load.py`.
+* New exception hierarchy in `exceptions`: `EEMeterError`, `NoBaselineDataError`, `NoReportingDataError`, `MissingModelParameterError`, `UnrecognizedModelTypeError`.
+* Robust empty/missing-data handling across `as_freq`, `day_counts`, modeled-savings computation, and other edge cases that previously errored.
+* JSON serialization made safe for non-finite values: NaN and infinity in model output and all metrics are coerced to JSON-valid floats.
+* `caltrack_method` gains a `weights` option and an updated default p-value limit; billing-period predictions use mean (per-day) values.
+* Python 2.7 compatibility retained (integer-to-float casts before division); drops Python 3.4 support.
 
-eemeter-2.2.7
------
-
-* SegmentModel becomes CalTRACKSegmentModel, which includes a hard-coded check that the same hours of week are in the model fit parameters and the prediction design matrix.
-
-eemeter-2.2.6
------
-
-* Reverts small data bug fix.
-
-eemeter-2.2.5
------
-
-* Fix bug with small data (1<week) for hourly occupancy feature calculation.
-* Bump dev eeweather version.
-* Add `bump_version` script.
-* Filter two specific warnings when running tests:
-  statsmodels pandas .ix warning, and eemeter model fitting warning.
-
-eemeter-2.2.4
------
-
-* Add `json()` serialization for `SegmentModel` and `SegmentedModel`.
-
-eemeter-2.2.3
------
-
-* Change `max_value` to float so that it can be json serialized even if the input is int64s.
-
-eemeter-2.2.2
------
-
-* Add warning to `caltrack_sufficiency_criteria` regarding extreme values.
-
-eemeter-2.2.1
------
-
-* Fix bug in fractional savings uncertainty calculations using billing data.
-
-eemeter-2.2.0
------
-
-* Add fractional savings uncertainty to modeled savings derivatives.
-
-eemeter-2.1.8
------
-
-* Update so that models built with empty temperature data won't result in error.
-
-eemeter-2.1.7
------
-
-* Update so that models built from a single record won't result in error.
-
-eemeter-2.1.6
------
-
-* Update multiple places where `df.empty` is used and replaced with `df.dropna().empty`.
-* Update documentation for running CalTRACK hourly methods.
-
-eemeter-2.1.5
------
-
-* Fix zero division error in metrics calculation for several metrics that
-  would otherwise cause division by zero errors in fsu_error_band calculation.
-
-eemeter-2.1.4
------
-
-* Fix zero division error in metrics calculation for series of length 1.
-
-eemeter-2.1.3
------
-
-* Fix bug related to caltrack billing design matrix creation during empty temperature traces.
-
-eemeter-2.1.2
------
-
-* Add automatic t-stat computation for metered savings error bands, the
-  implementation of which requires expicitly adding scipy to setup.py
-  requirements.
-* Don't compute error bands if reporting period data is empty for metered
-  savings.
-
-eemeter-2.1.1
------
-
-* Fix degree day ranges (30-90) for prefab caltrack design matrix creation
-  methods.
-* Fix the warning for total degree days to use total degree days instead of
-  average degree days.
-
-eemeter-2.1.0
------
-
-* Update the `use_billing_presets` option in `fit_caltrack_usage_per_day_model`
-  to use a minimum data sufficiency requirement for qualifying CandidateModels
-  (similar to daily methods).
-* Add an error when attempting to use billing presets without passing a weights
-  column to facilitate weighted least squares.
-
-eemeter-2.0.5
------
-
-* Give better error for duplicated meter index in compute temperature features.
-
-eemeter-2.0.4
------
-
-* Change metrics input length error to warning.
-
-eemeter-2.0.3
------
-
-* Apply black code style for easy opinionated PEP 008 formatting
-* Apply JSON-safe float conversion to all metrics.
-
-eemeter-2.0.2
------
+eemeter-2.0.2 (2018-09-06)
+--------------------------
 
 * Cont. fixing JSON representation of NaN values
 
-eemeter-2.0.1
------
+eemeter-2.0.1 (2018-09-06)
+--------------------------
 
 * Fixed JSON representation of model classes
 
-eemeter-2.0.0
------
+eemeter-2.0.0 (2018-09-06)
+--------------------------
 
 * Initial release of 2.x.x series
+
+eemeter-1.5.1 (2018-08-09)
+--------------------------
+
+* Weather-station lookup now uses `eeweather`'s station ranking and selection instead of a local nearest-by-haversine index. `lat_lng_to_usaf_station`, `lat_lng_to_tmy3_station`, and the `zipcode_to_*_station` functions delegate to a new `lat_lng_to_station_using_eeweather` helper that ranks stations by climate-zone/moisture matching plus a naive proximity fallback, then selects the top-ranked station meeting 90% coverage over the last 5 years.
+* `zipcode_to_*_station` functions now resolve ZIP codes via `eeweather.zcta_to_lat_long` and return `None` on an unrecognized ZCTA, rather than reading from bundled JSON station-index resources.
+* Bumped the `eeweather` dependency from `0.1.10` to `0.3.3`.
+
+eemeter-1.5.0 (2018-07-31)
+--------------------------
+
+* Replace the bundled weather subsystem with the external `eeweather` package: remove the internal NOAA / TMY3 / CZ2010 clients and the SQL/JSON weather cache in favor of a single `eeweather_wrapper`.
+* Relicense MIT -> Apache 2.0.
+* Add Docker support (`Dockerfile`, `docker-compose.yml`) with a working in-container CLI.
+* Fix the hourly model producing results from an out-of-order DataFrame.
+* Raise the CO2 client read-failure log from info to error level.
+
+eemeter-1.4.0 (2018-03-27)
+--------------------------
+
+* `CaltrackMonthlyModel` now passes `billing=True` into its CDD/HDD/full fits, adding a `billing` flag to `_fit_cdd_only`/`_fit_hdd_only`/`_fit_full` that skips the extra per-breakpoint degree-day sufficiency check (>=10 nonzero days and >=20 total degree days) to align monthly fits with billing-period methods.
+* AVERT CO2 client (`eemeter/co2`) handles missing weather data gracefully: returns empty series and logs when no data is found for a given year/region instead of failing.
+* Compatibility fixes for a newer `scipy` version.
+
+eemeter-1.3.3 (2018-01-31)
+--------------------------
+
+* Register `CaltrackDailyModel` in `EnergyEfficiencyMeter`'s string-name model map so it can be selected by name (alongside `CaltrackMonthlyModel` and `HourlyDayOfWeekModel`) via the `custom_model_class` string argument
+* Improve CLI/library logging output
+* Silence pandas deprecation/`FutureWarning`s by replacing `get_value`/`set_value` with `.at[]`/`.loc[]` access
+
+eemeter-1.3.2 (2017-12-18)
+--------------------------
+
+* Added `NOAAWeatherSourceBase.load_cached(year_from, year_to)` to load already-cached NOAA weather data (GSOD/ISD) from the weather cache for a year range, merging each saved year into `tempC` without refetching from the network.
+
+eemeter-1.3.1 (2017-12-08)
+--------------------------
+
+* Modeling-period start/end dates parsed by `deserialize_meter_input` are now normalized to UTC (`astimezone(pytz.utc)`), fixing timezone-naive baseline/reporting period boundaries from serialized meter input.
+
+eemeter-1.3.0 (2017-11-23)
+--------------------------
+
+* Maintenance/packaging release; no user-facing code changes. Includes the full Apache-2.0 license text in the `LICENSE` file and routine dev-dependency bumps.
+
+eemeter-1.2.2 (2017-11-14)
+--------------------------
+
+* Add CO2-avoided estimation via AVERT: new `eemeter/co2` module with an AVERT client, file cache, and a `zipcode_avert_region.json` resource mapping ZIP codes to AVERT regions, plus a `co2_avoided` calculation derivative
+* Hourly model data-sufficiency: replace the fraction-coverage check with an explicit data-sufficiency check (`min_contiguous_months`) in `hourly_model`, so insufficient-data cases are caught up front instead of via coverage fraction
+* Hourly model `fit` now returns output and emits diagnostics when there is insufficient data to fit
+* Support specifying a custom model class through the meter: expose `DayOfWeekBasedLinearRegression` and `HourlyLoadProfileModel` and accept a custom model via meter kwargs, with a log message when a custom model class is used
+* Add `xlrd` dependency
+
+eemeter-1.2.1 (2017-10-09)
+--------------------------
+
+* Add `DayOfWeekBasedLinearRegression` hourly model: separate weekday/weekend regressions on HDD/CDD plus hour-of-day and day-of-week features (with hour:day-of-week interaction), with unit tests.
+* Factor savings/avoided-energy derivative computations out of `eemeter/ee/meter.py` into a dedicated `eemeter/ee/derivatives.py` module exposing individual derivative functions (baseline/reporting balance points, coefficients, normal-year and reporting-period model outputs).
+* CLI: add an option to ignore data-sufficiency requirements, add input/error checking with clearer error messages, and fix a data-input parsing bug.
+* Add hourly load-profile (resource-curve) model support with tests.
+* Packaging fix: include `sample_data/__init__.py` and bundled `*.csv` files in `setup.py` so `pip install` ships sample data correctly.
+
+eemeter-1.2.0 (2017-09-13)
+--------------------------
+
+* CLI `analyze` and `sample` gain a `--full-output` flag (with `--output-dir`) that writes the complete meter output to `output.json` plus per-derivative CSVs, alongside the default printed savings summary.
+* CLI `analyze` gains an `--ignore-data-sufficiency` flag to run meters without enforcing data sufficiency requirements.
+* CLI date parsing now accepts plain `%Y-%m-%d` and `%m/%d/%Y` date formats in addition to the existing datetime formats.
+* `analyze` (and the underlying `run_meter`/`_analyze`) now return the meter output instead of only printing it, matching the documented behavior.
+* Robustness fixes in `run_meter`: handle missing savings derivatives gracefully (print baseline/reporting tracebacks instead of crashing on an empty list), correctly include the first record when building traces, and tolerate an empty/absent options dict.
+
+eemeter-1.1.0 (2017-08-15)
+--------------------------
+
+* Added CZ2010 weather-normal support: new `CZ2010WeatherSource` and `CZ2010Client` for the California Climate Zone 2010 normal-year dataset (required by some California regulations), selectable as a `cz2010` weather-station mapping option, with bundled ZIP-to-USAF and supported-station resources
+* Refactored hourly normal weather sources around a shared `NormalHourlyWeatherSourceBase`, so `CZ2010WeatherSource` reuses the same weather cache and API as `TMY3WeatherSource`
+* `EnergyEfficiencyMeter.__init__` now accepts arbitrary `**kwargs` (recognized keys: `default_model_mapping`, `default_formatter_mapping`, `weather_station_mapping`, `weather_normal_station_mapping`); passed kwargs are retained and surfaced as `meter_kwargs` in evaluation output
+* Expanded real-weather-normal and CZ2010 test coverage
+
+eemeter-1.0.1 (2017-08-01)
+--------------------------
+
+* `EnergyEfficiencyMeter` now honors `baseline_period.start_date` and `reporting_period.end_date` when slicing trace data: baseline data is bounded below by the baseline start (when set) and reporting data is bounded above by the reporting end (when set), instead of always running baseline to its end and treating reporting as open-ended.
+* Maintenance: added CodeCov and a CI tox environment, plus routine dependency bumps (`numpy`, `sqlalchemy`, `sphinx`, `pytest`).
+
+eemeter-1.0.0 (2017-06-30)
+--------------------------
+
+* Milestone 1.0.0 release; promotes the 0.5.15-alpha codebase to a stable version with no functional changes. The only diff versus 0.5.15-alpha is the version string bumped to `1.0.0` in `eemeter/__init__.py`, `docs/conf.py`, and `docs/eemeter_installation.rst`.
+
+eemeter-0.5.15-alpha (2017-06-30)
+---------------------------------
+
+* `CaltrackMonthlyModel` and `CaltrackDailyModel` `__init__` now accept `**kwargs`, so unrecognized keyword arguments are silently ignored instead of raising.
+* Fixed a pandas deprecation warning in the trace serializers (`ArbitrarySerializer`, `ArbitraryStartSerializer`, `ArbitraryEndSerializer`) by switching index conversion from the deprecated `.to_datetime()` to `.to_pydatetime()`.
+* Packaging: added `MANIFEST.in` so bundled `sample_data` is included in the source distribution.
+
+eemeter-0.5.14-alpha (2017-06-28)
+---------------------------------
+
+* Added an `eemeter` command-line entrypoint with an `analyze` subcommand (built on `click`) that runs the `EnergyEfficiencyMeter` over input traces
+* `analyze` reads project and trace CSVs, builds `EnergyTrace` objects, and processes multiple traces per run including both electricity and natural-gas interpretations
+* Added bundled sample data (`projects.csv`, `traces.csv`) plus an example command so the CLI can be exercised out of the box
+* Output now includes confidence intervals and reporting-period savings
+* Trace timestamps accept multiple date formats (`%Y-%m-%d %H:%M:%S`, ISO 8601 with and without a trailing `Z`)
+* Added CLI regression tests (`test_cli.py`) and cleaned up log messages
+
+eemeter-0.5.13-alpha (2017-06-14)
+---------------------------------
+
+* Fix `NOAAClient` ISD temperature parsing: detect already-set hourly readings with `pd.isnull(series.ix[dt])` instead of an `is None` check, so the first reading per hour is kept correctly when multiple sub-hourly readings collapse to the same minute-0 timestamp.
+* Add test coverage for the NOAA weather client.
+
+eemeter-0.5.12-alpha (2017-06-09)
+---------------------------------
+
+* Added a new CalTRACK daily model (`caltrack_daily`, version 0) in `eemeter/modeling/models/`, registered as a selectable model with a corresponding electricity trace.
+* Routed traces with daily-or-finer frequency (`<= daily`) to the daily model, and rejected billing-frequency data from the daily model.
+* Added a weighted-least-squares (WLS) fitting option to both the CalTRACK daily and monthly models.
+* Aligned the monthly model's HDD/CDD balance-point grid search with the daily model: moved the p-value test into the grid search, switched to adjusted R-squared, added an HDD/CDD data-sufficiency requirement, and corrected the CDD/HDD balance-point sign check.
+* Fixed RMSE computation in both daily and monthly models.
+* Corrected handling of the first hourly ISD weather reading, forcing each reading to the hour boundary and keeping only the first reading per hour.
+* Dependency updates: numpy 1.12.1 to 1.13.0, lxml 3.7.3 to 3.8.0 (constraint removed), sphinx 1.6.1 to 1.6.2.
+
+eemeter-0.5.11-alpha (2017-05-16)
+---------------------------------
+
+* When a modeling period has no weather source, `SplitModeledEnergyTrace.fit` now fails that period with a `DataSufficiencyException` and a descriptive message identifying the trace and period, instead of failing later with an opaque error.
+
+eemeter-0.5.10-alpha (2017-05-16)
+---------------------------------
+
+* Maintenance/packaging release; no user-facing changes (version bump in `eemeter/__init__.py` and docs only).
+
+eemeter-0.5.9-alpha (2017-05-15)
+--------------------------------
+
+* Energy efficiency meter now emits model-parameter derivatives for the baseline and reporting periods: best-fit heating (`HDD_*`) and cooling (`CDD_*`) coefficients, intercepts, and CDD/HDD balance-point derivatives
+* Python 3 fix: replaced dict `has_key()` calls with `in` in the meter code
+* Moved 15-minute interval handling into `ModelDataFormatter` (consolidated out of `ModelDataBillingFormatter`); improved NOAA weather source temperature handling
+
+eemeter-0.5.8-alpha (2017-03-30)
+--------------------------------
+
+* Fixed a `KeyError` in `CaltrackMonthlyModel` where CDD/HDD daily-mean dictionaries (`cdd_data_daily_mean_values`/`hdd_data_daily_mean_values`) were not initialized before appending NaN placeholders for months without usable data, causing fits to fail on certain inputs.
+
+eemeter-0.5.7-alpha (2017-03-29)
+--------------------------------
+
+* Reworked the CalTRACK monthly model to stop forcing billing periods onto calendar-month boundaries: `CaltrackMonthlyModel.billing_to_daily` is replaced by `billing_to_monthly_avg`, which computes per-period usage-per-day plus CDD/HDD averages (requiring at least 15 valid temperature days per period) directly over the actual billing intervals.
+* Prediction now runs against unaveraged temperature data via a new `add_cols_to_demand_fixture` path instead of resampling demand fixtures through `daily_to_monthly_avg`, and negative daily energy values are now excluded as invalid during model fitting.
+* Split `min_contiguous_months` into separate `min_contiguous_baseline_months` and `min_contiguous_reporting_months` options on the CalTRACK model so baseline and reporting data-sufficiency thresholds can be set independently.
+* `EnergyEfficiencyMeter` now accepts custom formatters and models per selector (as a `(class_or_name, kwargs)` tuple, where the class may be given by name), with custom keyword arguments merged into or overriding the defaults.
+* Added a billing-period demand fixture helper to the formatters for generating monthly-billing test/prediction inputs.
+* Dependency bumps: `numpy` 1.12.0 to 1.12.1, `sqlalchemy` 1.1.6 to 1.1.7.
+
+eemeter-0.5.6-alpha (2017-03-29)
+--------------------------------
+
+* `EnergyEfficiencyMeter` now merges caller-supplied formatter and model kwargs with the defaults instead of replacing them wholesale: passing only kwargs (no class) overrides the default class's parameters, and a custom class may be given as an import-path string. Added internal `_get_formatter`/`_get_model` helpers.
+* Fixed a bug in `EnergyEfficiencyMeter` where a missing default model mapping used `==` instead of `=`, so `output['status']` was never set to `FAILURE` on that path.
+* `CaltrackMonthlyModel` replaced the single `min_contiguous_months` parameter with separate `min_contiguous_baseline_months` and `min_contiguous_reporting_months` (both default 12), applied to the baseline and reporting sufficiency checks respectively.
+
+eemeter-0.5.5-alpha (2017-03-23)
+--------------------------------
+
+* Added masked variants of the reporting-period derivatives in `EnergyEfficiencyMeter` (e.g. `Masked baseline model, reporting period` and `Masked baseline model minus observed, reporting period`), which null out per-day predicted `value`/`variance` wherever observed usage or temperature data is missing.
+* Bumped the `pandas` requirement to `>= 0.19.2` (from `>= 0.18, < 0.19`) to support Python 3.6.0, and added a Python 3.6 build to CI.
+
+eemeter-0.5.4-alpha (2017-03-17)
+--------------------------------
+
+* `EnergyTrace` now accepts optional `trace_id` and `interval` arguments, and `EnergyEfficiencyMeter` echoes `trace_id`, `project_id`, and `interval` back in its output dict for identifying which trace/project a result belongs to.
+* Meter input deserialization reads optional `trace_id`/`interval` keys per trace and an optional `project_id` key per project, threading them through to the constructed `EnergyTrace`/project objects.
+* Reduced log verbosity: weather-source matching messages and dispatcher/split logging dropped from `INFO` to `DEBUG`, so default-level meter runs are much quieter.
+* Updated `statsmodels` dependency from the `0.8.0rc1` release candidate to the stable `0.8.0`.
+* Documentation/tutorial refresh of basic-usage notebook and example input/output JSON; no API change.
+
+eemeter-0.5.3-alpha (2017-03-10)
+--------------------------------
+
+* Fixed `CaltrackMonthlyModel.fit` raising an `UnboundLocalError` when the CDD-only or full (HDD+CDD) candidate models were not qualified: `cdd_formula`/`cdd_mod`/`cdd_res`/`cdd_rsquared`/`cdd_bp` and the corresponding `full_*` variables are now initialized when their fit branch is skipped, so model selection no longer crashes for buildings without a qualifying cooling fit.
+
+eemeter-0.5.2-alpha (2017-03-10)
+--------------------------------
+
+* Fixed CalTRACK monthly model selection: the full (HDD+CDD) model was never chosen because the comparison was `full_rsquared > full_rsquared` (always false) and ran outside the fit block; it now correctly compares against `best_rsquared` so the full model is selected when it fits best and has non-negative coefficients
+* `CaltrackMonthlyModel` now raises explicit exceptions when predictions or variances are `NaN` instead of returning bad values silently
+* Substantially refactored CalTRACK monthly model code and expanded model-sufficiency errors to report more detail on why a model could not be fit
+* `EnergyEfficiencyMeter` now emits a `'Temperature, normal year'` derivative series (observed degF temperatures over the normal year) when a weather-normal source is available
+
+eemeter-0.5.1-alpha (2017-03-08)
+--------------------------------
+
+* Reworked meter derivative computation so time-based derivatives are returned as JSON-serializable time series (values, variances, and dates as lists) with descriptive labels, rather than scalar summaries
+* Added baseline-period-baseline-model and reporting-period-reporting-model derivatives to the meter output
+* Added support for unsummed predictions in `CaltrackMonthlyModel`: derivatives can now be returned per-period rather than only summed across the baseline/reporting period (fixes incorrect summing behavior)
+* Added a data-sufficiency requirement enforced across the caltrack, billing, and seasonal models and in the meter; insufficient data is now flagged instead of silently fitting
+* Meter now computes derivatives even when the model fit fails, and gracefully handles null weather source, null weather-normal source, missing weather station, and zero-trace cases
+* Fixed `BillingElasticNetCVModel` CDD/HDD calculation so the `np.maximum(...)` floor is applied to per-period degree-days before summing (previously clamped the summed value, producing wrong heating/cooling degree-day inputs)
+* Hardened temperature-series handling (correct degF -> tempF conversion) and mask-series error handling; results are consistently returned as lists with a uniform number of items
+* Python 3 compatibility fix: import `reduce` from `functools`
+* Documentation: improved installation instructions and fixed the eemeter tutorial
+
+eemeter-0.5.0-alpha (2017-02-03)
+--------------------------------
+
+* Replace the old trace-centric meter with a streamlined `EnergyEfficiencyMeter` whose `evaluate()` takes a structured `meter_input` + `formatter`; remove the standalone `Aggregator` and the `ee/aggregate.py` / `ee/derivatives.py` layer.
+* `CaltrackMonthlyModel` reuses the shared formatter pipeline (`billing_to_daily`, `daily_to_monthly_avg`).
+* Add `eemeter.modeling.exceptions`; tighter error checking around Caltrack fit/predict.
+* Elastic-net base model returns prediction variances.
+* Rework derivative calculations and meter output serialization to carry variance estimates.
+* Fold in trace dedup + frequency inference for Caltrack from the 0.4.18-alpha line.
+* Improve missing-data handling with added test coverage.
+
+eemeter-0.4.18-alpha (2017-01-31)
+---------------------------------
+
+* Fixed `CaltrackFormatter` handling of duplicate and irregular timestamps: indices are now deduplicated (keeping the last value) and sorted before processing in both `create_daily_data` and `convert_to_monthly`.
+* `create_daily_data` now infers the index frequency to correctly distribute usage across periods for short/irregular frames, avoiding the loss of the first usage value when periodicity is known.
+* Added test coverage for the Caltrack formatter duplicate-index and short-frame cases.
+
+eemeter-0.4.17-alpha (2017-01-23)
+---------------------------------
+
+* Fixed CalTRACK prediction-variance computation so the residual error (`mse_resid`) is combined additively with the parameter-covariance term instead of multiplicatively, correcting the uncertainty/error bounds on predicted usage.
+
+eemeter-0.4.16-alpha (2017-01-17)
+---------------------------------
+
+* `CaltrackFormatter.create_input` now infers a trace's index frequency via `pd.infer_freq` when `trace.data.index.freq` is unset, so traces without an explicit frequency (e.g. hourly data) are handled correctly instead of misclassified.
+* Added test coverage for the Caltrack formatter on hourly traces.
+
+eemeter-0.4.15-alpha (2017-01-16)
+---------------------------------
+
+* Added a new CalTRACK model (`CaltrackModel` in `eemeter/modeling/models/caltrack.py`) and a matching `CaltrackFormatter`, implementing the CalTRACK billing/usage methodology via statsmodels OLS
+* Added an optional grid search over balance points in the CalTRACK model, and extended the searched balance-point range down to 50 degrees
+* Added gross-actual and gross-predicted derivative calculations (`eemeter/ee/derivatives.py`), sourcing gross actual from the model input data and aligning the gross predicted end date with the gross actual
+* CalTRACK formatter now handles missing input data, and prediction handles NaNs (including the case where statsmodels `design_info` is not populated when NaNs are present)
+* Fixed a bug in the CalTRACK qualification criteria
+* Added `statsmodels` as a dependency (wired into tox, docs, flake8, and test mocks) to support the new CalTRACK model
+
+eemeter-0.4.14-alpha (2017-01-04)
+---------------------------------
+
+* Replaced the weather cache backend `SqliteJSONStore` with `SqlJSONStore`, built on SQLAlchemy: the cache is now configured by a database URL (e.g. `sqlite:///...`) instead of a directory path, allowing non-SQLite backends.
+* Cache location is now read from the `EEMETER_WEATHER_CACHE_URL` environment variable (replacing the former `EEMETER_WEATHER_CACHE_DIRECTORY`); it still defaults to a SQLite file under `~/.eemeter/cache`.
+* Added `SQLAlchemy` as a runtime dependency.
+
+eemeter-0.4.13-beta (2016-12-13)
+--------------------------------
+
+* First tagged release of the Open Energy Efficiency Meter (`eemeter`); subsumes the entire 0.0.x–0.4.x development line (none of which were git-tagged) into the trace-centric architecture.
+* Trace-centric data model under `eemeter.structures`: `EnergyTrace`/`EnergyTraceSet`, `ModelingPeriod`/`ModelingPeriodSet`, `Intervention`, `Site`, and `Project` replace the older consumption/project objects.
+* Energy-efficiency meter pipeline in `eemeter.ee`: `EnergyEfficiencyMeter` for trace-centric metering, an aggregation class for portfolio-level rollups (with serialized status and outputs), and derivative-pair computation (savings, gross predicted, annualized) with upper/lower confidence bounds.
+* Modeling layer (`eemeter.modeling`): `SeasonalElasticNetCVModel` and a billing-period model built on `ElasticNetCV`, with bootstrap-estimated empirical errors; model fit output always returned, including start/end dates and tracebacks on failure.
+* Weather subsystem (`eemeter.weather`) rewritten around a pandas-index-based API: `ISDWeatherSource` (hourly + daily temperatures), `GSOD` and `TMY3`/`CZ2010` normal sources, lazy loading of station/TMY3 indices and FTP connections, UTC/timezone-aware handling, and a swappable caching layer (no ORM).
+* Location resolution via in-memory station/climate-zone/ZIP indices using haversine nearest-station lookup; raises clear errors on bad ZIP/station and handles null location fields.
+* I/O (`eemeter.io`): ESPI/Green Button XML parsers (electricity + natural gas, forward/reverse summing, `has_solar` and net-metering support) plus serializers for traces, meter input/output, and aggregation input.
+* Input/output serialization for meters and aggregations: takes serialized records via `to_records`/`from_records`, requires derivative labels, and emits serialized modeled energy traces and demand fixtures.
+* Python 2/3 compatibility throughout (via `six`), structured logging across meter/model/weather, and bundled station/ZIP/climate-zone resource data.
+* Documentation overhaul: trace-centric tutorials and Jupyter notebooks for `eemeter` and the datastore, glossary, methods overview, and processor/model docs.
