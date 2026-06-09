@@ -141,22 +141,25 @@ def get_optimized_result(get_settings):
     )
 
 
-def test_fit_initial_models_from_full_model(meter_data, get_settings):
-    # Test case 1: Test the function with a sample dataset
-    model_res = fit_initial_models_from_full_model(meter_data, get_settings)
-    assert isinstance(model_res, OptimizedResult)
+def test_fit_initial_models_recovers_on_clean_data(meter_data, get_settings):
+    """A clean fit converges to an OptimizedResult with finite coefficients."""
+    result = fit_initial_models_from_full_model(meter_data, get_settings)
 
-    # Test case 3: Test the function with a dataset that has missing values
-    T = np.array([10, 20, 30, 40, 50])
-    obs = np.array([1, 2, np.nan, 4, 5])
-    model_res = fit_initial_models_from_full_model(meter_data, get_settings)
-    assert isinstance(model_res, OptimizedResult)
+    assert isinstance(result, OptimizedResult)
+    assert result.success
+    assert np.all(np.isfinite(result.x))
 
-    # Test case 4: Test the function with a dataset that has negative values
-    T = np.array([10, 20, 30, 40, 50])
-    obs = np.array([-1, 2, 3, 4, 5])
-    model_res = fit_initial_models_from_full_model(meter_data, get_settings)
-    assert isinstance(model_res, OptimizedResult)
+
+def test_fit_initial_models_handles_negative_observed(meter_data, get_settings):
+    """Negative observed (e.g. net-metered electricity) still fits, not crashes."""
+    df = meter_data.copy()
+    df.iloc[5, df.columns.get_loc("observed")] = -50.0
+
+    result = fit_initial_models_from_full_model(df, get_settings)
+
+    assert isinstance(result, OptimizedResult)
+    assert result.success
+    assert np.all(np.isfinite(result.x))
 
 
 def test_fit_model(meter_data, get_settings):
@@ -208,3 +211,9 @@ def test_fit_final_model(meter_data, get_settings, get_optimized_result):
     # Test case 2: Test if the function raises a TypeError when the input arguments are of the wrong type
     with pytest.raises(TypeError):
         fit_final_model("not a dataframe", "not an OptimizedResult", "not a dictionary")
+
+
+def test_fit_model_unknown_key_raises():
+    """An unrecognized model_key raises ValueError rather than an unbound local."""
+    with pytest.raises(ValueError, match="Unknown model_key"):
+        fit_model("not_a_model", fit_input=None, x0=None, bnds=None)

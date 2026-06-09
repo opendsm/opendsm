@@ -11,6 +11,8 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
+import json
+
 import pytest
 
 import numpy as np
@@ -20,6 +22,7 @@ from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
     DisqualifiedModelError,
 )
+
 
 
 @pytest.fixture
@@ -38,6 +41,7 @@ def daily_series(comstock_daily):
 def bad_daily_series(daily_series):
     meter, temp = daily_series
     meter.iloc[:50] += meter["value"].median() * 50
+
     return meter, temp
 
 
@@ -46,6 +50,7 @@ def missing_daily_data(bad_daily_series) -> DailyBaselineData:
     meter, temp = bad_daily_series
     meter = meter[:-90]
     baseline_data = DailyBaselineData.from_series(meter, temp, is_electricity_data=True)
+
     return baseline_data
 
 
@@ -53,6 +58,7 @@ def missing_daily_data(bad_daily_series) -> DailyBaselineData:
 def bad_daily_data(bad_daily_series) -> DailyBaselineData:
     meter, temp = bad_daily_series
     baseline_data = DailyBaselineData.from_series(meter, temp, is_electricity_data=True)
+
     return baseline_data
 
 
@@ -121,3 +127,57 @@ def test_predict_df_matches_input_index(daily_series):
     )
     res = baseline_model.predict(reporting_data_missing_temp)
     assert len(res) == len(reporting_data_missing_temp.df)
+
+
+def test_daily_predict_before_fit_raises(daily_series):
+    """Predicting on an unfitted DailyModel raises RuntimeError, not AttributeError."""
+    meter, temp = daily_series
+    data = DailyBaselineData.from_series(meter, temp, is_electricity_data=True)
+
+    with pytest.raises(RuntimeError, match="must be fit"):
+        DailyModel().predict(data)
+
+
+def test_json_daily(comstock_daily):
+    df_b, df_r = comstock_daily
+    baseline_data = DailyBaselineData(df=df_b.reset_index(), is_electricity_data=True)
+    baseline_model = DailyModel().fit(baseline_data, ignore_disqualification=True)
+
+    reporting_data = DailyReportingData(df=df_r.reset_index(), is_electricity_data=True)
+    metered_savings_dataframe = baseline_model.predict(reporting_data)
+    total_metered_savings = (
+        metered_savings_dataframe["observed"] - metered_savings_dataframe["predicted"]
+    ).sum()
+
+    json_str = baseline_model.to_json()
+    loaded_model = DailyModel.from_json(json_str)
+    prediction_json = loaded_model.predict(reporting_data)
+    total_metered_savings_loaded = (
+        prediction_json["observed"] - prediction_json["predicted"]
+    ).sum()
+
+    assert total_metered_savings == total_metered_savings_loaded
+
+
+def test_legacy_deserialization_daily(comstock_daily, snapshot):
+    legacy_model_dict = {
+        "model_type": "hdd_only",
+        "formula": "meter_value ~ hdd_46",
+        "status": "QUALIFIED",
+        "model_params": {"intercept": 12, "beta_hdd": 2, "heating_balance_point": 50},
+        "r_squared_adj": 0.3,
+        "warnings": [],
+    }
+    serialized_str = json.dumps(legacy_model_dict)
+    baseline_model = DailyModel.from_2_0_json(serialized_str)
+
+    _, df_r = comstock_daily
+    df_r = df_r.copy()
+    df_r.index = df_r.index.tz_convert("UTC")
+    reporting_data = DailyReportingData(df=df_r.reset_index(), is_electricity_data=True)
+    metered_savings_dataframe = baseline_model.predict(reporting_data)
+    total_metered_savings = (
+        metered_savings_dataframe["observed"] - metered_savings_dataframe["predicted"]
+    ).sum()
+
+    assert round(float(total_metered_savings), 2) == snapshot(name="total_metered_savings")

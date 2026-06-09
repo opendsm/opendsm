@@ -17,6 +17,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from opendsm.eemeter import (
+    HourlyCaltrackModel,
+    HourlyCaltrackBaselineData,
+    HourlyCaltrackReportingData,
+)
 from opendsm.eemeter.models.hourly_caltrack.model import (
     caltrack_hourly_fit_feature_processor,
     caltrack_hourly_prediction_feature_processor,
@@ -483,3 +488,57 @@ def test_fit_caltrack_hourly_model_segment_single_mode(
     assert segment_model.warnings is not None
     prediction = segment_model.predict(segment_data)
     assert round(prediction.sum(), 2) == 960.0
+
+
+def test_json_hourly_with_zeros(comstock_hourly):
+    df_b, _ = comstock_hourly
+    meter = df_b[["observed"]].rename(columns={"observed": "value"}).copy()
+    meter["value"] = 0
+    temperature = df_b["temperature"]
+
+    baseline = HourlyCaltrackBaselineData.from_series(meter, temperature, is_electricity_data=True)
+    assert baseline.df["observed"].isnull().all()
+    reporting = HourlyCaltrackReportingData.from_series(meter, temperature, is_electricity_data=True)
+    assert reporting.df["observed"].isnull().all()
+
+
+@pytest.mark.slow
+def test_json_caltrack_hourly(comstock_hourly):
+    df_b, df_r = comstock_hourly
+    meter_b = df_b[["observed"]].rename(columns={"observed": "value"}).copy()
+    meter_r = df_r[["observed"]].rename(columns={"observed": "value"}).copy()
+    temperature = df_b["temperature"]
+
+    baseline = HourlyCaltrackBaselineData.from_series(meter_b, temperature, is_electricity_data=True)
+    baseline_model = HourlyCaltrackModel().fit(baseline)
+
+    reporting = HourlyCaltrackReportingData.from_series(meter_r, df_r["temperature"], is_electricity_data=True)
+    result1 = baseline_model.predict(reporting)
+
+    json_str = baseline_model.to_json()
+    m = HourlyCaltrackModel.from_json(json_str)
+    result2 = m.predict(reporting)
+
+    assert result1["predicted"].sum() == result2["predicted"].sum()
+    assert (
+        baseline_model.model.totals_metrics["dec-jan-feb-weighted"].observed_length
+        == m.model.totals_metrics["dec-jan-feb-weighted"].observed_length
+    )
+
+
+def test_legacy_deserialization_hourly(request, comstock_hourly, snapshot):
+    with open(request.fspath.dirname + "/legacy_hourly.json", "r") as f:
+        legacy_str = f.read()
+    baseline_model = HourlyCaltrackModel.from_2_0_json(legacy_str)
+
+    _, df_r = comstock_hourly
+    meter = df_r[["observed"]].rename(columns={"observed": "value"}).copy()
+    temperature = df_r["temperature"]
+
+    reporting = HourlyCaltrackReportingData.from_series(meter, temperature, is_electricity_data=True)
+    metered_savings_dataframe = baseline_model.predict(reporting)
+    total_metered_savings = (
+        metered_savings_dataframe["observed"] - metered_savings_dataframe["predicted"]
+    ).sum()
+
+    assert round(float(total_metered_savings), 2) == snapshot(name="total_metered_savings")
