@@ -104,3 +104,24 @@ def test_uncertainty_quadrature_below_linear_sum(fitted_model, baseline_data):
     finite = monthly["predicted_unc"].notna()
 
     assert (monthly["predicted_unc"][finite] <= linear_sum[finite] + 1e-9).all()
+
+
+def test_json_billing(comstock_monthly):
+    df_b, df_r = comstock_monthly
+    baseline_data = BillingBaselineData(df=df_b.reset_index(), is_electricity_data=True)
+    baseline_model = BillingModel().fit(baseline_data, ignore_disqualification=True)
+
+    reporting_data = BillingReportingData(df=df_r.reset_index(), is_electricity_data=True)
+    metered_savings_dataframe = baseline_model.predict(reporting_data)
+    total_metered_savings = (
+        metered_savings_dataframe["observed"] - metered_savings_dataframe["predicted"]
+    ).sum()
+
+    json_str = baseline_model.to_json()
+    loaded_model = BillingModel.from_json(json_str)
+    prediction_json = loaded_model.predict(reporting_data)
+    total_metered_savings_loaded = (
+        prediction_json["observed"] - prediction_json["predicted"]
+    ).sum()
+
+    assert total_metered_savings == total_metered_savings_loaded

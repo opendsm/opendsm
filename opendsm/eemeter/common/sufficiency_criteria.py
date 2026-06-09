@@ -62,8 +62,8 @@ class SufficiencyCriteria(BaseSettings):
     _n_valid_days = None
     _n_valid_temperature_days = None
 
-    disqualification: list = []
-    warnings: list = []
+    disqualification: list[EEMeterWarning] = pydantic.Field(default_factory=list)
+    warnings: list[EEMeterWarning] = pydantic.Field(default_factory=list)
 
     def _should_skip_col(self, col: str) -> bool:
         """Check if a column-based check should be skipped."""

@@ -58,9 +58,6 @@ def _criteria(df, is_electricity_data=True, is_reporting_data=False, settings=No
         is_reporting_data=is_reporting_data,
         settings=settings,
     )
-    # Defensive: start each instance with its own empty result lists.
-    sc.disqualification = []
-    sc.warnings = []
 
     return sc
 
@@ -171,14 +168,20 @@ def test_negative_observed_passes_clean_gas():
 # ---------------------------------------------------------------------------
 
 def test_unique_values_disqualifies_repeated_observed():
-    """A near-constant observed series fails the 10%-unique floor."""
+    """A constant observed series fails the 10%-unique floor with the right payload."""
     df = _daily_frame()
     df["observed"] = 5.0
     sc = _criteria(df)
 
     sc._check_unique_values(col="observed")
 
-    assert "eemeter.sufficiency_criteria.insufficient_unique_observed_values" in _dq_names(sc)
+    name = "eemeter.sufficiency_criteria.insufficient_unique_observed_values"
+    assert name in _dq_names(sc)
+    payload = next(d for d in sc.disqualification if d.qualified_name == name).data
+    assert payload["n_unique_values"] == 1
+    assert payload["n_total_values"] == 365
+    assert payload["unique_percentage"] == 0.3
+    assert payload["min_required_percentage"] == 10.0
 
 
 def test_unique_values_passes_varied_observed():
@@ -262,14 +265,17 @@ def test_valid_monthly_coverage_passes_full_year():
 # ---------------------------------------------------------------------------
 
 def test_extreme_values_warns_on_outlier():
-    """An observed value outside 3x IQR raises an extreme-values warning."""
+    """A single value outside 3x IQR raises an extreme-values warning counting one."""
     df = _daily_frame()
     df.iloc[10, df.columns.get_loc("observed")] = 1e6
     sc = _criteria(df)
 
     sc._check_extreme_values()
 
-    assert "eemeter.sufficiency_criteria.extreme_values_detected" in _warning_names(sc)
+    name = "eemeter.sufficiency_criteria.extreme_values_detected"
+    assert name in _warning_names(sc)
+    payload = next(w for w in sc.warnings if w.qualified_name == name).data
+    assert payload["n_extreme_values"] == 1
 
 
 def test_extreme_values_quiet_on_clean_data():
@@ -319,8 +325,6 @@ def _billing_criteria(df):
         is_reporting_data=False,
         settings=BillingDataSufficiencySettings(),
     )
-    sc.disqualification = []
-    sc.warnings = []
 
     return sc
 
@@ -347,3 +351,80 @@ def test_billing_regular_monthly_cadence_passes():
     sc._check_observed_data_billing_monthly()
 
     assert sc.disqualification == []
+
+
+# ---------------------------------------------------------------------------
+# baseline orchestration  (the public gate must invoke each wired rule)
+# ---------------------------------------------------------------------------
+
+def _frame_all_nan():
+    df = _daily_frame()
+    df["observed"] = np.nan
+    df["temperature"] = np.nan
+
+    return df
+
+
+def _frame_low_temperature_coverage():
+    df = _daily_frame()
+    df.iloc[:80, df.columns.get_loc("temperature_not_null")] = 0.0
+    df.iloc[:80, df.columns.get_loc("temperature_null")] = 24.0
+
+    return df
+
+
+def _frame_sparse_january():
+    df = _daily_frame()
+    df.loc[df.index.month == 1, "temperature"] = np.nan
+
+    return df
+
+
+def _frame_single_extreme_observed():
+    df = _daily_frame()
+    df.iloc[10, df.columns.get_loc("observed")] = 1e6
+
+    return df
+
+
+@pytest.mark.parametrize(
+    "build_frame, expected_suffix",
+    [
+        (_frame_all_nan, "no_data"),
+        (lambda: _daily_frame(n_days=328), "incorrect_number_of_total_days"),
+        (_frame_low_temperature_coverage, "too_many_days_with_missing_temperature_data"),
+        (_frame_sparse_january, "missing_monthly_temperature_data"),
+        (_frame_single_extreme_observed, "extreme_values_detected"),
+    ],
+)
+def test_baseline_orchestration_wires_each_rule(build_frame, expected_suffix):
+    """check_sufficiency_baseline (the public gate) invokes each wired rule.
+
+    Guards against a rule being silently dropped from the orchestration.
+    """
+    sc = _criteria(build_frame())
+
+    sc.check_sufficiency_baseline()
+
+    expected = f"eemeter.sufficiency_criteria.{expected_suffix}"
+    assert expected in (_dq_names(sc) | _warning_names(sc))
+
+
+def test_clean_frame_passes_full_baseline():
+    """A clean frame raises no disqualification through the public baseline gate."""
+    sc = _criteria(_daily_frame())
+
+    sc.check_sufficiency_baseline()
+
+    assert sc.disqualification == []
+
+
+def test_fresh_instances_have_independent_result_lists():
+    """Each SufficiencyCriteria starts empty and does not share its result lists."""
+    first = _criteria(_daily_frame())
+    second = _criteria(_daily_frame())
+
+    first.disqualification.append("sentinel")
+
+    assert second.disqualification == []
+    assert second.warnings == []

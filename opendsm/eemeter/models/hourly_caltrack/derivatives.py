@@ -76,10 +76,8 @@ def metered_savings(
         - ``counterfactual_heating_load``
         - ``counterfactual_cooling_load``
 
-    error_bands : :any:`dict`, optional
-        If baseline_model is an instance of CalTRACKUsagePerDayModelResults,
-        will also return a dictionary of FSU and OLS error bands for the
-        aggregated energy savings over the post period.
+    error_bands : ``None``
+        Always ``None``.
     """
     if degc == True:
         temperature_data = 32 + (temperature_data * 1.8)
@@ -116,10 +114,7 @@ def metered_savings(
 
     results = results.dropna().reindex(results.index)  # carry NaNs
 
-    # compute t-statistic associated with n degrees of freedom
-    # and a two-tailed confidence level.
-    error_bands = None
-    return results, error_bands
+    return results, None
 
 
 def modeled_savings(
@@ -183,11 +178,8 @@ def modeled_savings(
         - ``modeled_base_load_savings``
         - ``modeled_cooling_load_savings``
         - ``modeled_heating_load_savings``
-    error_bands : :any:`dict`, optional
-        If baseline_model and reporting_model are instances of
-        CalTRACKUsagePerDayModelResults, will also return a dictionary of
-        FSU and error bands for the aggregated energy savings over the
-        normal year period.
+    error_bands : ``None``
+        Always ``None``.
     """
     if degc == True:
         temperature_data = 32 + (temperature_data * 1.8)
@@ -230,5 +222,4 @@ def modeled_savings(
 
     results = results.dropna().reindex(results.index)  # carry NaNs
 
-    error_bands = None
-    return results, error_bands
+    return results, None

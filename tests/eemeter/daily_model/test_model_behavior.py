@@ -35,6 +35,26 @@ def temperature():
     return _seasonal_temperature()
 
 
+def _heating_load(daily_temp, seed):
+    """Daily load with a genuine heating response: 80 + 1.2*HDD(60F) + noise."""
+    rng = np.random.default_rng(seed)
+    base = 80.0 + 1.2 * np.maximum(60.0 - daily_temp.values, 0.0)
+
+    return base + rng.normal(0, 2.0, len(daily_temp))
+
+
+@pytest.fixture(scope="module")
+def heating_baseline(temperature):
+    """DailyModel fit once on a load with a real heating response, with its data."""
+    days = pd.date_range("2020-01-01", periods=365, freq="D", tz="America/Chicago")
+    daily_temp = temperature.resample("D").mean().reindex(days)
+    meter = pd.Series(_heating_load(daily_temp, seed=2), index=days)
+    data = DailyBaselineData.from_series(meter, temperature, is_electricity_data=True)
+    model = DailyModel().fit(data, ignore_disqualification=True)
+
+    return model, data
+
+
 @pytest.mark.slow
 def test_flat_load_does_not_fabricate_temperature_response(temperature):
     """A temperature-insensitive load yields negligible HDD/CDD slopes.
@@ -61,20 +81,13 @@ def test_flat_load_does_not_fabricate_temperature_response(temperature):
 
 
 @pytest.mark.slow
-def test_no_load_change_gives_near_zero_savings(temperature):
+def test_no_load_change_gives_near_zero_savings(heating_baseline):
     """Predicting on the baseline reproduces it, so modeled savings are ~0.
 
     With no load change, summed predicted ≈ summed observed; the savings
     fraction (1 - predicted/observed) sits near zero rather than drifting.
     """
-    rng = np.random.default_rng(2)
-    days = pd.date_range("2020-01-01", periods=365, freq="D", tz="America/Chicago")
-    # a load with a genuine heating response, so the model fits real structure
-    daily_temp = temperature.resample("D").mean().reindex(days)
-    load = 80.0 + 1.2 * np.maximum(60.0 - daily_temp.values, 0.0)
-    meter = pd.Series(load + rng.normal(0, 2.0, 365), index=days)
-    data = DailyBaselineData.from_series(meter, temperature, is_electricity_data=True)
-    model = DailyModel().fit(data, ignore_disqualification=True)
+    model, data = heating_baseline
 
     result = model.predict(data)
     savings_fraction = 1.0 - result["predicted"].sum() / result["observed"].sum()
@@ -83,24 +96,20 @@ def test_no_load_change_gives_near_zero_savings(temperature):
 
 
 @pytest.mark.slow
-def test_known_reduction_recovers_as_savings(temperature):
-    """A known constant reduction in the reporting period is recovered as savings.
+def test_known_reduction_recovers_as_savings(heating_baseline, temperature):
+    """A known reduction injected into an independent load is recovered as savings.
 
-    Reporting observed is the model's own baseline prediction minus a fixed
-    per-day reduction, so recovered savings (predicted - observed) ≈ the known
-    total reduction.
+    Reporting observed is the generative heating load (not the model's own
+    prediction) minus a fixed per-day reduction, so recovery exercises the
+    model's counterfactual rather than reducing to an identity.
     """
-    rng = np.random.default_rng(3)
+    model, _ = heating_baseline
     days = pd.date_range("2020-01-01", periods=365, freq="D", tz="America/Chicago")
     daily_temp = temperature.resample("D").mean().reindex(days)
-    load = 80.0 + 1.2 * np.maximum(60.0 - daily_temp.values, 0.0)
-    meter = pd.Series(load + rng.normal(0, 2.0, 365), index=days)
-    data = DailyBaselineData.from_series(meter, temperature, is_electricity_data=True)
-    model = DailyModel().fit(data, ignore_disqualification=True)
-
-    baseline_predicted = model.predict(data)["predicted"]
     reduction_per_day = 5.0
-    reporting_meter = baseline_predicted - reduction_per_day
+    reporting_meter = pd.Series(
+        _heating_load(daily_temp, seed=4) - reduction_per_day, index=days
+    )
     reporting = DailyReportingData.from_series(
         reporting_meter, temperature, is_electricity_data=True
     )
@@ -109,4 +118,4 @@ def test_known_reduction_recovers_as_savings(temperature):
     recovered = (result["predicted"] - result["observed"]).sum()
     expected = reduction_per_day * result["observed"].notna().sum()
 
-    assert recovered == pytest.approx(expected, rel=0.02)
+    assert recovered == pytest.approx(expected, rel=0.1)

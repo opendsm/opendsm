@@ -53,3 +53,10 @@ def test_edge_bin_percent_out_of_range_rejected(bad_percent):
     """edge_bin_percent must lie in (0, 0.45]."""
     with pytest.raises(pydantic.ValidationError):
         TemperatureBinSettings(edge_bin_percent=bad_percent)
+
+
+def test_edge_bin_percent_upper_boundary_accepted():
+    """edge_bin_percent at the 0.45 ceiling is accepted."""
+    settings = TemperatureBinSettings(edge_bin_percent=0.45)
+
+    assert settings.edge_bin_percent == 0.45

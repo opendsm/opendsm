@@ -18,6 +18,7 @@ import pytest
 from opendsm.eemeter.models.hourly.scalers import (
     SafeRobustScaler,
     SafeStandardScaler,
+    _MIN_SCALE,
 )
 
 
@@ -63,3 +64,14 @@ def test_well_scaled_data_unaffected(cls):
 
     assert np.all(scaler.scale_ > 1e-6)
     assert np.all(scaler.scale_ != 1.0)
+
+
+@pytest.mark.parametrize("cls", SAFE_SCALERS)
+def test_scale_clamp_threshold_boundary(cls):
+    """A scale exactly at the clamp threshold is kept; just below is clamped to 1.0."""
+    scaler = cls()
+
+    scaler.scale_ = np.array([_MIN_SCALE, _MIN_SCALE / 2])
+
+    assert scaler.scale_[0] == _MIN_SCALE
+    assert scaler.scale_[1] == 1.0

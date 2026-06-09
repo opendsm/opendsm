@@ -63,3 +63,14 @@ def test_nonzero_target_does_real_fit(cls, design_matrix):
     model = cls().fit(design_matrix, y)
 
     assert np.any(model.coef_ != 0.0)
+
+
+def test_linear_regression_recovers_known_coefficients(design_matrix):
+    """Unregularized SafeLinearRegression recovers the exact generating coefficients."""
+    beta = np.array([1.0, -2.0, 0.5])
+    y = design_matrix @ beta + 3.0
+
+    model = SafeLinearRegression().fit(design_matrix, y)
+
+    assert np.allclose(model.coef_, beta, atol=1e-8)
+    assert np.isclose(model.intercept_, 3.0, atol=1e-8)
