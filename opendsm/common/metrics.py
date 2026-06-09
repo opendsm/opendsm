@@ -1555,9 +1555,11 @@ def acf(
             corr = np.correlate(xc, xc, "full")[(n - 1):] / var / n
 
         elif ac_type == AutocorrelationMethod.STATIONARY_STATS_FFT.value:
-            cf = np.fft.fft(xc)
+            # zero-pad to >= 2n-1 so the circular correlation from the FFT
+            # equals the linear autocorrelation (matches STATIONARY_CORRELATE)
+            cf = np.fft.fft(xc, n=2 * n)
             sf = cf.conjugate() * cf
-            corr = np.fft.ifft(sf).real / var / len(x)
+            corr = np.fft.ifft(sf).real[:n] / var / n
 
         corr = corr[:len(lags)]
 

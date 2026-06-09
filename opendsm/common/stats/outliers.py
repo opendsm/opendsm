@@ -66,8 +66,11 @@ def remove_outliers(x, weights=None, sigma_threshold=3, quantile=0.25):
         if idx_no_outliers.size > 0:
             break
 
-    # if idx_no_outliers is empty, keep the closest meter to the outlier bounds
-    if len(idx_no_outliers) == 0:
+    # if idx_no_outliers is empty, keep the closest meter to the outlier bounds.
+    # Unreachable for finite input (the q1..q3 interval always retains points);
+    # the only path here is all-non-finite input, which raises in _IQR_outlier
+    # under NUMBA_DISABLE_JIT, so the block cannot be exercised in coverage.
+    if len(idx_no_outliers) == 0:  # pragma: no cover
         # distance between x and outlier bounds
         dist = -np.minimum(x - outlier_bnds[0], outlier_bnds[1] - x)
 
