@@ -12,6 +12,9 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+import os
+import pathlib
+
 import numpy as np
 import pytest
 
@@ -19,6 +22,7 @@ from opendsm.comparison_groups.savings.model_correction import (
     model_correction,
     _model_magnitude_weights,
 )
+from .generate_correction_fixtures import build_fixtures
 from opendsm.comparison_groups.savings.settings import (
     CGCorrectionSettings,
     CorrectionAlgorithm,
@@ -146,6 +150,27 @@ def test_uncertainty_finite_for_each_algorithm(algorithm):
     assert np.isfinite(mTrc_unc)
 
 
+@pytest.mark.parametrize("algorithm", [CorrectionAlgorithm.PCTDID, CorrectionAlgorithm.ABSPCTDID])
+def test_zero_cg_model_magnitude_stays_finite(algorithm):
+    """A comparison meter with zero model magnitude has an undefined percent
+    scale mTr/mCGr; the guard makes it contribute no correction, so the
+    correction and its uncertainty stay finite. Outlier rejection is disabled
+    so the guard, not the rejection, is what is exercised."""
+    cg_label = np.array([0, 0, 0, 1, 1, 1])
+    mCGr = np.array([0.0, 100.0, 100.0, 95.0, 110.0, 100.0])  # first model magnitude == 0
+    mCGr_unc = np.full(6, 2.0)
+
+    mTrc, mTrc_unc, _ = model_correction(
+        OTR, MTR, OCGR, mCGr,
+        None, 5.0, None, mCGr_unc, None,
+        cg_label, T_WEIGHT,
+        _settings(algorithm=algorithm, outlier_rejection={"enabled": False}),
+    )
+
+    assert np.isfinite(mTrc)
+    assert np.isfinite(mTrc_unc)
+
+
 def test_rejects_non_finite_mtr():
     cg_label = np.array([0, 0, 0, 1, 1, 1])
     with pytest.raises(ValueError):
@@ -269,3 +294,104 @@ def test_model_correction_zero_model_cluster_weights_finite():
     )
 
     assert np.isfinite(mTrc)
+
+
+# ── Fixture generation (run once, manually, JIT-on) ──────────────────────────
+
+@pytest.mark.skipif(
+    not os.environ.get("GENERATE_FIXTURES"),
+    reason="regenerates committed model_correction fixtures; run manually",
+)
+def test_generate_correction_fixtures(
+    _comstock_hourly_all, _comstock_daily_all, _comstock_monthly_all
+):
+    """Regenerate the real-data .npz fixtures from ComStock meters.
+
+    GENERATE_FIXTURES=1 [GENERATE_FIXTURES_N=99] pytest -k generate_correction_fixtures
+    """
+    n_pool = int(os.environ.get("GENERATE_FIXTURES_N", "99"))
+    min_cluster_size = int(os.environ.get("GENERATE_FIXTURES_MIN", "5"))
+    build_fixtures(
+        _comstock_hourly_all, _comstock_daily_all, _comstock_monthly_all,
+        n_pool=n_pool, min_cluster_size=min_cluster_size,
+    )
+
+
+# ── Real-data snapshot across granularities x correction algorithms ──────────
+
+_FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures"
+
+# Pinned corrected reporting-period usage (mTrc) and its uncertainty, produced
+# by model_correction on the committed real-ComStock fixtures. Regenerate the
+# fixtures with generate_correction_fixtures (GENERATE_FIXTURES=1) if the
+# upstream models change; update these alongside.
+_EXPECTED = {
+    ("hourly", CorrectionAlgorithm.ODID): (725413.0, 701720.3),
+    ("hourly", CorrectionAlgorithm.PCTDID): (775788.8, 95833.3),
+    ("daily", CorrectionAlgorithm.ODID): (723842.4, 700256.7),
+    ("daily", CorrectionAlgorithm.PCTDID): (774513.8, 98120.7),
+    ("billing", CorrectionAlgorithm.ODID): (723322.1, 702686.8),
+    ("billing", CorrectionAlgorithm.PCTDID): (774280.6, 108783.8),
+}
+
+
+def _load_fixture(granularity):
+    """Load committed real-data model_correction inputs for a granularity."""
+    data = np.load(_FIXTURE_DIR / f"model_correction_{granularity}.npz")
+
+    return data
+
+
+def _run_correction(data, algorithm):
+    """Run model_correction on fixture arrays for one algorithm."""
+    settings = CGCorrectionSettings(algorithm=algorithm, correction_cap={"enabled": False})
+    mTrc, mTrc_unc, mask = model_correction(
+        float(data["oTr"]), float(data["mTr"]), data["oCGr"], data["mCGr"],
+        None, float(data["mTr_unc"]), None, data["mCGr_unc"], None,
+        data["CG_label"], data["T_weight"], settings,
+    )
+
+    return mTrc, mTrc_unc, mask
+
+
+@pytest.mark.regression
+class TestModelCorrectionRealData:
+    """Snapshot model_correction on real ComStock-derived inputs.
+
+    Inputs are frozen in committed .npz fixtures, so the correction is
+    deterministic; the pinned outputs catch drift in the correction math.
+    """
+
+    GRANULARITIES = ["hourly", "daily", "billing"]
+
+    @pytest.mark.parametrize("granularity", GRANULARITIES)
+    @pytest.mark.parametrize("algorithm", [CorrectionAlgorithm.ODID, CorrectionAlgorithm.PCTDID])
+    def test_corrected_value_matches_snapshot(self, granularity, algorithm):
+        """Corrected usage and uncertainty match the pinned real-data snapshot."""
+        data = _load_fixture(granularity)
+        mTrc, mTrc_unc, _ = _run_correction(data, algorithm)
+
+        expected_mTrc, expected_unc = _EXPECTED[(granularity, algorithm)]
+        assert mTrc == pytest.approx(expected_mTrc, rel=1e-4)
+        assert mTrc_unc == pytest.approx(expected_unc, rel=1e-4)
+
+    @pytest.mark.parametrize("granularity", GRANULARITIES)
+    def test_correction_pulls_inflated_estimate_toward_observed(self, granularity):
+        """The DID correction moves the (over-predicting) model estimate toward
+        observed: oTr < mTrc < mTr when the comparison group shares the gap."""
+        data = _load_fixture(granularity)
+        oTr, mTr = float(data["oTr"]), float(data["mTr"])
+        mTrc, _, _ = _run_correction(data, CorrectionAlgorithm.PCTDID)
+
+        assert mTr > mTrc > oTr
+
+    @pytest.mark.parametrize("granularity", GRANULARITIES)
+    def test_abspct_equals_pct_for_positive_magnitudes(self, granularity):
+        """With positive model magnitudes the absolute-percent scale equals the
+        percent scale (the |.| is a no-op)."""
+        data = _load_fixture(granularity)
+        pct, pct_unc, _ = _run_correction(data, CorrectionAlgorithm.PCTDID)
+        abspct, abspct_unc, _ = _run_correction(data, CorrectionAlgorithm.ABSPCTDID)
+
+        assert abspct == pytest.approx(pct, rel=1e-9)
+        assert abspct_unc == pytest.approx(pct_unc, rel=1e-9)

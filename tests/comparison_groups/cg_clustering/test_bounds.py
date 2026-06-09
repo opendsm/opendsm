@@ -52,3 +52,18 @@ def test_num_cluster_max_below_setpoint_falls_back_without_warning():
     upper = _get_num_cluster_max(data_size=500, min_cluster_size=15, num_cluster_bound_upper=10)
 
     assert upper == 10
+
+
+def test_upper_bound_monotonic_in_data_size():
+    """A larger pool never supports fewer clusters than a smaller one."""
+    sizes = [30, 100, 500, 1000, 5000, 20000]
+    uppers = [get_cluster_bounds(s, 15, 8, 1500)[1] for s in sizes]
+    assert all(b >= a for a, b in zip(uppers, uppers[1:]))
+
+
+def test_minimum_increases_with_data_size_before_cap():
+    """The exponential minimum curve rises with data size (here below the
+    lower-bound cap, so the raw curve is observed)."""
+    small = _get_num_cluster_min(data_size=100, min_cluster_size=2, num_cluster_bound_lower=1000)
+    large = _get_num_cluster_min(data_size=5000, min_cluster_size=2, num_cluster_bound_lower=1000)
+    assert large > small

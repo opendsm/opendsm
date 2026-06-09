@@ -25,21 +25,8 @@ def _get_num_cluster_min(
     """
     returns lower bounds using data_size which is number models in cluster
     """
-
-    linear = False
-
-    # assume we want 8 clusters of min size 15 meters with a pool of 1000 meters
-    base_pool = 1000
-    base_cluster_size = 15
-    base_min_clusters = 8
-
-    if linear:
-        k = (base_cluster_size*base_min_clusters)/base_pool
-        num_cluster_min = k*data_size/min_cluster_size
-    
-    else:
-        k = 30 + 4.58*np.exp(data_size/335)
-        num_cluster_min = k/min_cluster_size
+    k = 30 + 4.58 * np.exp(data_size / 335)
+    num_cluster_min = k / min_cluster_size
 
     n = max(int(np.floor(num_cluster_min)), 2)
     n = min(num_cluster_bound_lower, n)

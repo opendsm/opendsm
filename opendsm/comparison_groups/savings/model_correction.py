@@ -64,8 +64,11 @@ def _unit_correction_unc(
     elif method in ("percent_difference_in_differences", "absolute_percent_difference_in_differences"):
         # scale = mTr/mCGr (abs for the latter; |.| has unit-magnitude derivative).
         # Absolute form of Var(mTr/mCGr), neglecting covariance between mTr and mCGr;
-        # avoids dividing by mTr (singular when mTr == 0).
-        scale_var = mTr_var/mCGr**2 + (mTr**2)*mCGr_var/mCGr**4
+        # avoids dividing by mTr (singular when mTr == 0).  A zero mCGr (guarded to
+        # scale 0 in _unit_correction) likewise contributes no scale variance.
+        denom = np.asarray(mCGr, dtype=float)
+        inv_sq = np.divide(1.0, denom ** 2, out=np.zeros_like(denom), where=denom != 0)
+        scale_var = mTr_var * inv_sq + (mTr ** 2) * mCGr_var * inv_sq ** 2
 
     else:
         raise ValueError(f"unknown correction method: {method}")
@@ -124,13 +127,17 @@ def _unit_correction(
     if method == "ordinary_difference_in_differences":
         scale = 1
 
-    elif method == "percent_difference_in_differences":
-        # equivalent to simplified savings = mT*oCG/mCG - oT 
-        scale = mTr/mCGr
-
-    elif method == "absolute_percent_difference_in_differences":
-        # simplified savings = mT(1 - np.sign(mT)*np.sign(mCG) + oCG/mCG) - oT
-        scale = np.abs(mTr/mCGr)
+    elif method in (
+        "percent_difference_in_differences",
+        "absolute_percent_difference_in_differences",
+    ):
+        # scale = mTr / mCGr (abs for the latter). A zero comparison-group model
+        # magnitude makes the percent scale undefined; guard it to 0 — that meter
+        # contributes no correction — rather than dividing to inf.
+        denom = np.asarray(mCGr, dtype=float)
+        scale = np.divide(mTr, denom, out=np.zeros_like(denom), where=denom != 0)
+        if method == "absolute_percent_difference_in_differences":
+            scale = np.abs(scale)
 
     CG_diff = mCGr - oCGr
 

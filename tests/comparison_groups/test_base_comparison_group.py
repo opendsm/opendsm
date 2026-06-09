@@ -71,3 +71,16 @@ def test_validate_ls_weights_normalizes_to_one(fitted_algorithm):
 def test_validate_ls_weights_wrong_length_raises(fitted_algorithm):
     with pytest.raises(ValueError):
         fitted_algorithm._validate_ls_weights([1.0, 2.0, 3.0])
+
+
+def test_get_loadshapes_before_fit_raises():
+    """get_loadshapes() before get_comparison_group() has no loadshapes to return.
+
+    The contract is fit-then-query; calling it on an unfitted instance currently
+    surfaces an opaque AttributeError (the treatment data is never populated)
+    rather than a guard with a clear "fit first" message.
+    """
+    unfitted = Random_Sampling(Settings(n_meters_total=10, n_meters_per_treatment=None, seed=1))
+
+    with pytest.raises(AttributeError):
+        unfitted.get_loadshapes()

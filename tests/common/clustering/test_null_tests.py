@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import warnings
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 from sklearn.cluster import KMeans
@@ -295,6 +297,52 @@ class TestHasClusterStructureGate:
         assert np.isfinite(ckm.hopkins_test)
         assert ckm.hopkins_test < 0.05  # detects the two clusters
         assert has_cluster_structure(ckm) is True
+
+
+class TestGateGroupedAgreementLogic:
+    """Branch logic of ``has_cluster_structure`` with injected p-values.
+
+    The gate reads only the four null-test p-values; injecting them directly
+    exercises every grouped-agreement branch deterministically, independent
+    of any dataset.  Distance group = (gap, hopkins); model group =
+    (sigclust, spectral_gap).  alpha defaults to 0.05.
+    """
+
+    @staticmethod
+    def _stub(gap, hopkins, sigclust, spectral_gap):
+        """A minimal object exposing the four p-value attributes the gate reads."""
+        ns = SimpleNamespace(
+            gap_statistic=gap,
+            hopkins_test=hopkins,
+            sigclust_test=sigclust,
+            spectral_gap_test=spectral_gap,
+        )
+
+        return ns
+
+    @pytest.mark.parametrize("pvals, expected, why", [
+        ((0.01, 0.50, 0.01, 0.50), True, "both groups have a significant test"),
+        ((0.01, 0.50, 0.50, 0.50), False, "only the distance group is significant"),
+        ((0.50, 0.50, 0.01, 0.50), False, "only the model group is significant"),
+        ((0.50, 0.50, 0.50, 0.50), False, "no group is significant"),
+        ((0.01, 0.01, np.nan, np.nan), True, "model group absent, 2-of-N majority met"),
+        ((0.01, 0.50, np.nan, np.nan), False, "model group absent, majority not met"),
+        ((np.nan, np.nan, 0.01, 0.01), True, "distance group absent, majority met"),
+        ((0.01, np.nan, np.nan, np.nan), True, "fewer than 2 computable -> permissive"),
+        ((np.nan, np.nan, np.nan, np.nan), True, "nothing computable -> permissive"),
+    ])
+    def test_branches(self, pvals, expected, why):
+        """Each grouped-agreement branch resolves as documented."""
+        result = has_cluster_structure(self._stub(*pvals))
+        assert result is expected, why
+
+    def test_alpha_threshold_is_strict(self):
+        """A p-value exactly at alpha is not significant (strict less-than)."""
+        at_alpha = self._stub(0.05, 0.50, 0.05, 0.50)
+        assert has_cluster_structure(at_alpha, alpha=0.05) is False
+
+        below = self._stub(0.049, 0.50, 0.049, 0.50)
+        assert has_cluster_structure(below, alpha=0.05) is True
 
 
 # ── k=1 index abstention ────────────────────────────────────────────────────

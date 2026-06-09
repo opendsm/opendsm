@@ -65,11 +65,13 @@ def test_get_comparison_group_is_deterministic(cg_clustering_data):
     np.testing.assert_allclose(coeffs_1.to_numpy(), coeffs_2.to_numpy())
 
 
-def test_clustering_output_snapshot(cg_clustering_data, snapshot):
-    """Pin permutation-invariant clustering outputs: number of non-outlier
-    clusters, sorted cluster sizes, and each treatment's dominant weight."""
+@pytest.mark.parametrize("seed", [42, 7, 123])
+def test_clustering_output_snapshot(cg_clustering_data, seed, snapshot):
+    """Pin permutation-invariant clustering outputs across seeds: number of
+    non-outlier clusters, sorted cluster sizes, and each treatment's dominant
+    weight."""
     treatment_data, comparison_pool_data = cg_clustering_data
-    labels, coeffs = CG_Clustering(CG_Clustering_Settings()).get_comparison_group(
+    labels, coeffs = CG_Clustering(CG_Clustering_Settings(seed=seed)).get_comparison_group(
         treatment_data, comparison_pool_data
     )
 
