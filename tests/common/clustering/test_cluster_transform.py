@@ -25,8 +25,15 @@ from opendsm.common.clustering.transform import (
     transform_features,
     FpcaError,
 )
+import pywt
+
 from opendsm.common.clustering.transform.normalize import _safe_standardize
 from opendsm.common.clustering.transform.fpca import _fpca_base
+from opendsm.common.clustering.transform.wavelet import (
+    _dwt_coeffs,
+    _reduce_single_subband,
+    _MIN_PCA_COEFFS,
+)
 from opendsm.common.clustering.settings import (
     ClusteringSettings,
     NormalizeSettings,
@@ -1027,6 +1034,128 @@ class TestTransformFeatures:
 # =============================================================================
 # Run tests
 # =============================================================================
+
+# =============================================================================
+# Wavelet DWT internals: roundtrip, energy localisation, auto-cap, passthrough
+# =============================================================================
+
+def _sinusoid_signals(n=40, t_points=64, noise=0.05, seed=0):
+    """A low-frequency sinusoid replicated across rows with light noise."""
+    rng = np.random.default_rng(seed)
+    t = np.linspace(0, 4 * np.pi, t_points)
+    data = np.array([np.sin(t) + rng.normal(0, noise, t_points) for _ in range(n)])
+
+    return data
+
+
+class TestWaveletRoundtrip:
+    """DWT coefficients reconstruct the original signal."""
+
+    def test_dwt_waverec_roundtrip(self):
+        """_dwt_coeffs -> pywt.waverec recovers the input to float precision."""
+        data = _sinusoid_signals()
+        subbands, _ = _dwt_coeffs(data, "db1", "smooth", None)
+        reconstructed = pywt.waverec(subbands, "db1", mode="smooth", axis=1)
+        assert np.max(np.abs(reconstructed[:, : data.shape[1]] - data)) < 1e-6
+
+    def test_low_frequency_energy_in_approximation_band(self):
+        """A slow sinusoid concentrates energy in the coarse approximation band.
+
+        ``wavedec`` returns [cA_n, cD_n, ..., cD_1]; the approximation cA_n
+        should carry far more energy than the finest detail band cD_1.
+        """
+        data = _sinusoid_signals(noise=0.0)
+        subbands, _ = _dwt_coeffs(data, "db1", "smooth", None)
+        approx_energy = float(np.sum(subbands[0] ** 2))
+        finest_detail_energy = float(np.sum(subbands[-1] ** 2))
+        assert approx_energy > 10 * finest_detail_energy
+
+
+class TestWaveletAutoCap:
+    """Level auto-capping keeps every subband PCA-able."""
+
+    def test_coarsest_band_meets_min_coeffs(self):
+        """Auto-cap stops so the coarsest subband has >= _MIN_PCA_COEFFS coeffs."""
+        data = _sinusoid_signals(t_points=64)
+        subbands, cap_fraction = _dwt_coeffs(data, "db1", "smooth", None)
+        assert subbands[0].shape[1] >= _MIN_PCA_COEFFS
+        assert 0.0 <= cap_fraction <= 1.0
+
+    def test_excessive_levels_are_capped(self):
+        """Requesting more levels than fit reports a positive cap fraction."""
+        data = _sinusoid_signals(t_points=64)
+        _, cap_fraction = _dwt_coeffs(data, "db1", "smooth", n_levels=10)
+        assert cap_fraction > 0.0
+
+
+class TestSubbandPassthrough:
+    """Subbands too small for PCA pass through unchanged (no fabrication)."""
+
+    def test_too_few_coefficients_passthrough(self):
+        """A subband with < _MIN_PCA_COEFFS columns is returned as-is, ratio 1.0."""
+        band = np.random.default_rng(0).normal(0, 1, (40, _MIN_PCA_COEFFS - 1))
+        reduced, explained = _reduce_single_subband(band, None, "parallel_analysis", seed=0)
+        assert reduced is band
+        assert explained == 1.0
+
+    def test_too_few_samples_passthrough(self):
+        """<= 2 samples is insufficient for PCA; the band passes through."""
+        band = np.random.default_rng(0).normal(0, 1, (2, 10))
+        reduced, explained = _reduce_single_subband(band, None, "parallel_analysis", seed=0)
+        assert explained == 1.0
+        assert reduced.shape == band.shape
+
+
+class TestWaveletTransformScope:
+    """Full transform: scope matters, output is deterministic and bounded."""
+
+    def _cs(self, scope):
+        cs = ClusteringSettings(seed=0, feature_transform={"wavelet": {"pca_scope": scope}})
+
+        return cs
+
+    def test_per_level_and_global_differ(self):
+        """per_level and global PCA scopes yield different feature widths."""
+        data = _sinusoid_signals()
+        per_level, _, _ = wavelet_transform(data, self._cs("per_level"))
+        global_, _, _ = wavelet_transform(data, self._cs("global"))
+        assert per_level.shape[1] != global_.shape[1]
+
+    def test_explained_ratio_and_cap_are_fractions(self):
+        """Reported explained-variance and cap fractions stay within [0, 1]."""
+        data = _sinusoid_signals()
+        _, explained, cap = wavelet_transform(data, self._cs("per_level"))
+        assert 0.0 <= explained <= 1.0
+        assert 0.0 <= cap <= 1.0
+
+    def test_deterministic(self):
+        """Same seed -> identical transformed features."""
+        data = _sinusoid_signals()
+        a, _, _ = wavelet_transform(data, self._cs("per_level"))
+        b, _, _ = wavelet_transform(data, self._cs("per_level"))
+        assert np.allclose(a, b)
+
+
+class TestFpcaKnownRecovery:
+    """FPCA captures low-rank structure in fewer components than noise."""
+
+    def test_structured_compresses_more_than_noise(self):
+        """A low-rank sinusoid signal reaches the variance target with fewer
+        components than pure noise at the same ratio."""
+        rng = np.random.default_rng(0)
+        t = np.linspace(0, 4 * np.pi, 24)
+        x = np.arange(24)
+        structured = np.array([np.sin(t) * rng.uniform(0.8, 1.2) + rng.normal(0, 0.05, 24)
+                               for _ in range(40)])
+        noise = rng.normal(0, 1, (40, 24))
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            n_structured = _fpca_base(x, structured, min_var_ratio=0.9).shape[1]
+            n_noise = _fpca_base(x, noise, min_var_ratio=0.9).shape[1]
+
+        assert n_structured < n_noise
+
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v', '--tb=short'])

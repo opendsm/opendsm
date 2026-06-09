@@ -18,7 +18,12 @@ import pytest
 
 import opendsm.comparison_groups as cg
 from opendsm.comparison_groups.cg_clustering import treatment_fit
-from opendsm.comparison_groups.cg_clustering.treatment_fit import _initial_cluster_weights
+from opendsm.comparison_groups.cg_clustering.treatment_fit import (
+    _initial_cluster_weights,
+    _match_treatment_to_cluster,
+)
+from opendsm.comparison_groups.cg_clustering.settings import CG_Clustering_Settings
+
 
 
 def test_initial_cluster_weights_exact_match_gets_full_weight():
@@ -123,3 +128,28 @@ def test_match_treatment_to_clusters_recovers_source_cluster(loadshape_inputs):
     predicted = df_coeffs.to_numpy().argmax(axis=1)
 
     assert (predicted == expected_labels).mean() >= 0.6
+
+
+def test_single_cluster_assigns_full_weight():
+    """With one cluster the sum-to-one constraint forces all weight onto it."""
+    rng = np.random.default_rng(0)
+    t_ls = pd.DataFrame(rng.normal(0, 1, (3, 24)), index=["t0", "t1", "t2"])
+    cluster_ls = pd.DataFrame(rng.normal(0, 1, (1, 24)), index=[0])
+
+    coeffs = _match_treatment_to_cluster(t_ls, cluster_ls, CG_Clustering_Settings())
+
+    np.testing.assert_allclose(coeffs.to_numpy(), 1.0, atol=1e-6)
+
+
+def test_invalid_treatment_rows_yield_nan():
+    """A NaN treatment loadshape row produces NaN weights; valid rows still sum to 1."""
+    rng = np.random.default_rng(0)
+    t_ls = pd.DataFrame(rng.normal(0, 1, (3, 24)), index=["t0", "t1", "t2"])
+    t_ls.iloc[1, :] = np.nan
+    cluster_ls = pd.DataFrame(rng.normal(0, 1, (2, 24)), index=[0, 1])
+
+    coeffs = _match_treatment_to_cluster(t_ls, cluster_ls, CG_Clustering_Settings())
+
+    assert coeffs.loc["t1"].isnull().all()
+    assert not coeffs.loc["t0"].isnull().any()
+    np.testing.assert_allclose(coeffs.loc["t0"].sum(), 1.0, atol=1e-6)

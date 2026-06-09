@@ -120,6 +120,6 @@ exclude_lines = [
   "if TYPE_CHECKING:",
   "def _warmup_numba",
 ]
-# Conservative starting floor for `tox -e coverage` (full suite, JIT off).
-# Raise it as test coverage is added.
-fail_under = 85
+# Conservative floor for `tox -e coverage` (full suite, JIT off). Raise it as
+# test coverage is added. The full suite measures 87.37% JIT-off.
+fail_under = 87
