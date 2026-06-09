@@ -254,3 +254,31 @@ def test_plot_records_based_equiv_average_chisquare(
     bin_selection.plot_records_based_equiv_average(plot=False)
     results = bin_selection.results_as_json()
     assert 'bins_selected_str' in list(results['n_bin_results'][0].keys())
+
+
+def test_selected_bin_minimizes_distance(
+    df_treatment, df_pool, col_name, equivalence_feature_ids, equivalence_feature_matrix
+):
+    """The selector returns the bin configuration with the smallest treatment-
+    comparison distance among all non-disqualified options (optimality)."""
+    df_treatment["col2"] = df_treatment[col_name] * 2
+    df_pool["col2"] = df_pool[col_name] * 2
+
+    stratified_sampling_obj = StratifiedSampler()
+    stratified_sampling_obj.add_column(col_name)
+    stratified_sampling_obj.add_column("col2")
+
+    bin_selection = StratifiedSamplingBinSelector(
+        stratified_sampling_obj, df_treatment, df_pool,
+        min_n_bins=2, max_n_bins=4, random_seed=1,
+        equivalence_method="euclidean",
+        equivalence_feature_ids=equivalence_feature_ids,
+        equivalence_feature_matrix=equivalence_feature_matrix,
+    )
+
+    results = bin_selection.results_as_json()
+    selected = results["bins_selected"]
+    scored = [r for r in results["n_bin_results"] if r["distance"] is not None]
+
+    selected_distance = next(r["distance"] for r in scored if r["bins_selected_str"] == selected)
+    assert selected_distance == min(r["distance"] for r in scored)

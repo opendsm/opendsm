@@ -19,14 +19,20 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from scipy.spatial.distance import cdist
+from sklearn.metrics import silhouette_score, davies_bouldin_score
+
 from opendsm.common.clustering.metrics.single_k_metrics import SingleKMetrics
 from opendsm.common.clustering.metrics.cross_k_metrics import CrossKMetrics
+from opendsm.common.clustering.metrics.dbcv import dbcv, dbcv_prevalidated
 from opendsm.common.clustering.metrics.labels import ClusteringResult
 from opendsm.common.clustering.metrics import selection
+from opendsm.common.clustering.metrics.label_ops import prepare_labels
 from opendsm.common.clustering.metrics.settings import (
     ClusterRangeSettings,
     ScoreSettings,
     SmallClusterMode,
+    SINGLE_K_INDEX_NAMES,
 )
 
 
@@ -1418,6 +1424,228 @@ class TestSettingsCoupling:
         assert cs.small_cluster_mode == SmallClusterMode.KEEP, (
             f"Default small_cluster_mode should be KEEP, got {cs.small_cluster_mode}"
         )
+
+
+# ── Validity-index correctness: analytic values & monotonicity ───────────────
+
+def _blob_lm(sep, k=3, n=40, d=4, seed=0):
+    """SingleKMetrics on k isotropic blobs whose centres are `sep` apart."""
+    rng = np.random.default_rng(seed)
+    X = np.vstack([rng.normal(c * sep, 1.0, (n, d)) for c in range(k)]).astype(np.float32)
+    labels = np.repeat(np.arange(k), n)
+    lm = SingleKMetrics(data=X, labels=labels, seed=42)
+
+    return lm
+
+
+# Within-cluster scatter indices (SSE, trace(W), the determinant-of-W family,
+# ball-hall mean dispersion, MSE, negentropy, ksq_detw) measure compactness
+# only: pure separation moves centres without changing within-cluster spread,
+# so these are invariant to it rather than monotone in it.  Asserting strict
+# monotonicity on them is unstable (the value is flat to floating-point noise,
+# which flips the comparison across platforms / Python versions).
+_SEPARATION_INVARIANT_INDICES = {
+    "ball_hall_index",
+    "banfeld_raftery_index",
+    "ksq_detw_index",
+    "mean_squared_error_index",
+    "negentropy_index",
+    "scott_symons_index",
+    "sum_of_squared_errors_index",
+    "trace_w_index",
+}
+_SEPARATION_MONOTONE_INDICES = sorted(SINGLE_K_INDEX_NAMES - _SEPARATION_INVARIANT_INDICES)
+
+
+class TestValidityIndexAnalyticValues:
+    """Pin validity indices to reference implementations on fixed geometry."""
+
+    def test_silhouette_matches_hand_computed_three_point(self):
+        """Silhouette on a 3-point, 2-cluster geometry equals the hand value.
+
+        Points (0,0),(0,1) in cluster 0 and (0,5) alone in cluster 1:
+        s=0.8 for (0,0), s=0.75 for (0,1), s=0 for the singleton, mean
+        0.51667.  The index negates (minimize convention), so it is the
+        negative of that mean.
+        """
+        X = np.array([[0.0, 0.0], [0.0, 1.0], [0.0, 5.0]], dtype=np.float32)
+        labels = np.array([0, 0, 1])
+        lm = SingleKMetrics(data=X, labels=labels, seed=42)
+        assert float(lm.silhouette_index) == pytest.approx(-0.516667, abs=1e-5)
+
+    def test_silhouette_index_is_negated_sklearn(self):
+        """silhouette_index equals the negative of sklearn's silhouette_score."""
+        lm = _blob_lm(sep=8.0)
+        X, labels = np.asarray(lm.data), np.asarray(lm.labels)
+        assert float(lm.silhouette_index) == pytest.approx(-silhouette_score(X, labels), abs=1e-5)
+
+    def test_davies_bouldin_matches_sklearn(self):
+        """davies_bouldin_index equals sklearn's davies_bouldin_score."""
+        lm = _blob_lm(sep=8.0)
+        X, labels = np.asarray(lm.data), np.asarray(lm.labels)
+        assert float(lm.davies_bouldin_index) == pytest.approx(davies_bouldin_score(X, labels), abs=1e-5)
+
+
+class TestValidityIndexMonotonicity:
+    """Every quality index improves as cluster separation grows.
+
+    All indices are normalized to minimize (maximize-natural ones are
+    negated), so a wider gap must produce a strictly smaller value.  A single
+    failing index pinpoints a sign/formula inversion.
+    """
+
+    @pytest.fixture(scope="class")
+    def low_sep(self):
+        return _blob_lm(sep=2.0)
+
+    @pytest.fixture(scope="class")
+    def high_sep(self):
+        return _blob_lm(sep=30.0)
+
+    @pytest.mark.parametrize("index", _SEPARATION_MONOTONE_INDICES)
+    def test_improves_with_separation(self, index, low_sep, high_sep):
+        """index(well-separated) < index(overlapping)."""
+        v_low = float(getattr(low_sep, index))
+        v_high = float(getattr(high_sep, index))
+        assert np.isfinite(v_low) and np.isfinite(v_high), f"{index} not finite"
+        assert v_high < v_low, f"{index} did not improve with separation ({v_low} -> {v_high})"
+
+    @pytest.mark.parametrize("index", sorted(_SEPARATION_INVARIANT_INDICES))
+    def test_within_cluster_index_is_separation_invariant(self, index, low_sep, high_sep):
+        """Within-cluster scatter indices are unchanged by pure separation."""
+        v_low = float(getattr(low_sep, index))
+        v_high = float(getattr(high_sep, index))
+        assert v_high == pytest.approx(v_low, rel=1e-3)
+
+
+class TestDBCV:
+    """Density-Based Clustering Validation index behaviour."""
+
+    def test_increases_with_separation(self):
+        """DBCV is higher (better) for well-separated than overlapping blobs."""
+        def blobs(sep, seed=0):
+            rng = np.random.default_rng(seed)
+            X = np.vstack([rng.normal(c * sep, 1.0, (40, 4)) for c in range(3)])
+            y = np.repeat(np.arange(3), 40)
+
+            return X, y
+
+        x_lo, y_lo = blobs(3.0)
+        x_hi, y_hi = blobs(30.0)
+        assert dbcv(x_hi, y_hi) > dbcv(x_lo, y_lo)
+
+    def test_low_for_random_labels_on_uniform(self):
+        """Random labels over uniform data score poorly (well below structure)."""
+        rng = np.random.default_rng(1)
+        X = rng.uniform(0, 10, (120, 4))
+        y = rng.integers(0, 3, 120)
+        assert dbcv(X, y) < 0.1
+
+    def test_all_noise_returns_zero(self):
+        """All-noise labeling has no clusters to validate -> 0.0."""
+        X = np.random.default_rng(0).normal(0, 1, (40, 4))
+        y = np.full(40, -1)
+        assert dbcv(X, y) == 0.0
+
+    def test_duplicates_raise_when_checked(self):
+        """Duplicate rows are rejected when check_duplicates is on."""
+        rng = np.random.default_rng(0)
+        X = np.vstack([rng.normal(c * 30, 1.0, (20, 4)) for c in range(2)])
+        X[1] = X[0]
+        with pytest.raises(ValueError, match="Duplicated samples"):
+            dbcv(X, np.repeat([0, 1], 20), check_duplicates=True)
+
+    def test_duplicates_tolerated_when_unchecked(self):
+        """With the check off, duplicates are tolerated and a score returns."""
+        rng = np.random.default_rng(0)
+        X = np.vstack([rng.normal(c * 30, 1.0, (20, 4)) for c in range(2)])
+        X[1] = X[0]
+        result = dbcv(X, np.repeat([0, 1], 20), check_duplicates=False)
+        assert np.isfinite(result)
+
+    def test_prevalidated_matches_full_dbcv(self):
+        """dbcv_prevalidated (fast path on noise-free inputs) equals dbcv()."""
+        rng = np.random.default_rng(0)
+        X = np.vstack([rng.normal(c * 30, 1.0, (15, 4)) for c in range(3)])
+        y = np.repeat(np.arange(3), 15)
+
+        full = dbcv(X, y)
+
+        distances = cdist(X, X, metric="sqeuclidean")
+        members = [np.where(y == c)[0] for c in range(3)]
+        sizes = np.array([len(m) for m in members])
+        prevalidated = dbcv_prevalidated(len(X), X.shape[1], sizes, members, distances)
+
+        assert prevalidated == pytest.approx(full, rel=1e-9)
+
+
+# ── Voter discriminability weighting ─────────────────────────────────────────
+
+class TestDiscriminabilityWeights:
+    """Council weights scale by each voter's coefficient of variation."""
+
+    def test_flat_voter_downweighted_sharp_kept(self):
+        """A constant-score voter loses almost all weight; a varied one keeps it."""
+        score_matrix = np.array([[5.0, 1.0], [5.0, 2.0], [5.0, 3.0], [5.0, 10.0]])
+        adjusted = selection._discriminability_weights(
+            score_matrix, ["flat", "sharp"], {"flat": 1.0, "sharp": 1.0},
+        )
+        assert adjusted["flat"] == pytest.approx(0.0, abs=1e-6)
+        assert adjusted["sharp"] > 0.5
+
+    def test_zero_weight_voter_skipped(self):
+        """A voter with non-positive council weight is left untouched."""
+        score_matrix = np.array([[1.0], [2.0], [3.0]])
+        adjusted = selection._discriminability_weights(
+            score_matrix, ["v"], {"v": 0.0},
+        )
+        assert adjusted["v"] == 0.0
+
+
+# ── prepare_labels small-cluster strategies ──────────────────────────────────
+
+class TestPrepareLabels:
+    """The small-cluster strategy branch of label preparation."""
+
+    @pytest.fixture
+    def labels_with_singleton(self):
+        rng = np.random.default_rng(0)
+        data = rng.normal(0, 1, (10, 3))
+        labels = np.array([0, 0, 0, 0, 1, 1, 1, 1, 1, 2])  # cluster 2 is a singleton
+
+        return data, labels
+
+    def test_keep_preserves_all_clusters(self, labels_with_singleton):
+        """KEEP retains every cluster, full coverage, no outliers introduced."""
+        data, labels = labels_with_singleton
+        merged, _, labels_clean, coverage = prepare_labels(
+            labels, data, ScoreSettings(), None,
+            min_cluster_size=1, small_cluster_mode=SmallClusterMode.KEEP,
+        )
+        assert len(np.unique(labels_clean)) == 3
+        assert coverage == 1.0
+        assert -1 not in merged
+
+    def test_outlier_relabels_small_cluster(self, labels_with_singleton):
+        """OUTLIER demotes the sub-threshold cluster to -1 and lowers coverage."""
+        data, labels = labels_with_singleton
+        merged, _, labels_clean, coverage = prepare_labels(
+            labels, data, ScoreSettings(), None,
+            min_cluster_size=3, small_cluster_mode=SmallClusterMode.OUTLIER,
+        )
+        assert -1 in merged
+        assert coverage == pytest.approx(0.9)
+        assert len(np.unique(labels_clean)) == 2
+
+    def test_below_lower_bound_returns_none(self, labels_with_singleton):
+        """Fewer clusters than n_cluster_lower invalidates the labeling."""
+        data, labels = labels_with_singleton
+        _, data_clean, labels_clean, _ = prepare_labels(
+            labels, data, ScoreSettings(), 5,
+            min_cluster_size=1, small_cluster_mode=SmallClusterMode.KEEP,
+        )
+        assert data_clean is None
+        assert labels_clean is None
 
 
 if __name__ == '__main__':
