@@ -528,12 +528,6 @@ def _knots_from_constrained_curvature(
 # Utilities
 # ------------------------------------------------------------------
 
-def _clipped_std(values: np.ndarray, clip_val: float = 1e-6) -> float:
-    """Standard deviation clipped to avoid near-zero values."""
-    std = np.std(values)
-    return 1.0 if std < clip_val else std
-
-
 def _clipped_mad(values: np.ndarray, clip_val: float = 1e-6) -> float:
     """MAD-based robust scale estimate, clipped to avoid near-zero values."""
     scale = median_absolute_deviation(values)

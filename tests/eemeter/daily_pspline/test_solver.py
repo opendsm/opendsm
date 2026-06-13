@@ -12,6 +12,7 @@ from opendsm.eemeter.models.daily_pspline.solver import (
 )
 
 
+
 class TestPadKnots:
     def test_degree_3_adds_3_each_side(self):
         knots = np.array([0.0, 1.0, 2.0, 3.0])
@@ -78,6 +79,7 @@ class TestSolverSolve:
         internal_knots = np.linspace(-2, 2, 8)
         padded = pad_knots(internal_knots, degree=3)
         weights = np.ones(50)
+
         return x, y, padded, weights
 
     def test_solve_returns_coefs_and_V(self, simple_problem):
@@ -90,13 +92,18 @@ class TestSolverSolve:
 
     def test_unconstrained_fit_matches_least_squares(self, simple_problem):
         x, y, padded, weights = simple_problem
-        # kappa=0 disables monotonicity → unconstrained WLS
+        # [bp0, bp1] is the flat (TIDD) zone; placing both at the right
+        # boundary leaves the whole domain as a single HDD zone, and kappa=0
+        # disables its monotonicity constraint → plain weighted least squares.
         solver = PSplineSolver(x, y, padded, 3, weights, 0.0, None, 0.0)
-        bp = np.array([-2.0, 2.0])
-        coefs, V, _ = solver.solve(bp, weights, 0.0, 30)
-        pred = solver.B @ coefs
-        rmse = np.sqrt(np.mean((y - pred) ** 2))
-        assert rmse < 0.05, f"Unconstrained fit should be nearly exact, got RMSE={rmse:.4f}"
+        bp = np.array([2.0, 2.0])
+        coefs, _, _ = solver.solve(bp, weights, 0.0, 30)
+
+        ols_coefs, *_ = np.linalg.lstsq(solver.B, y, rcond=None)
+        np.testing.assert_allclose(
+            solver.B @ coefs, solver.B @ ols_coefs, atol=1e-3,
+            err_msg="Unconstrained solve should match ordinary least squares",
+        )
 
     def test_monotone_constraint_enforced(self, rng):
         """HDD zone derivatives should be non-negative (decreasing energy)."""

@@ -5,72 +5,69 @@ import pytest
 
 from opendsm.eemeter.models.daily_pspline.fitting import fit_segment
 from opendsm.eemeter.models.daily_pspline.spline import PSpline
+from opendsm.eemeter.models.daily_pspline.settings import DailyPSplineSettings
 from opendsm.eemeter.models.daily_pspline.uncertainty import (
     _bartlett_vif,
     _compute_acf_K,
-    _interpolate_sigma_sq,
+    _fit_sigma_scale,
 )
 
 
+
 class TestPredictionUncertainty:
-    def test_returns_positive_array(self, v_shaped_data, dev_settings):
+    def test_bounds_bracket_prediction(self, v_shaped_data, dev_settings):
         T, y = v_shaped_data
         spl = fit_segment(T, y, dev_settings)
-        unc = spl.prediction_uncertainty(T)
-        assert unc.shape == T.shape
-        assert np.all(unc > 0), "Uncertainty must be strictly positive"
+        lower, upper = spl.prediction_uncertainty(T)
+        pred = spl.predict(T)
+
+        assert lower.shape == upper.shape == T.shape
+        assert np.all(upper > lower), "Interval must have positive width"
+        assert np.all(lower <= pred) and np.all(pred <= upper)
 
     def test_shape_matches_input(self, v_shaped_data, dev_settings):
         T, y = v_shaped_data
         spl = fit_segment(T, y, dev_settings)
         T_new = np.array([30.0, 50.0, 70.0])
-        unc = spl.prediction_uncertainty(T_new)
-        assert unc.shape == (3,)
+        lower, upper = spl.prediction_uncertainty(T_new)
 
-    def test_wider_at_extrapolation_model_term(self, rng, dev_settings):
-        """Model uncertainty (leverage) should grow outside training range."""
+        assert lower.shape == (3,) and upper.shape == (3,)
+
+    def test_wider_at_extrapolation(self, rng, dev_settings):
+        """Interval width should grow outside the training range."""
         T = np.sort(rng.uniform(30, 70, 200))
         y = 30 + 0.5 * np.maximum(50 - T, 0) + rng.normal(0, 0.1, 200)
         spl = fit_segment(T, y, dev_settings)
 
-        # Compare model variance only (remove noise term by checking
-        # that far-extrapolation > near-extrapolation)
-        T_near = np.array([28.0])
-        T_far = np.array([10.0])
-        unc_near = spl.prediction_uncertainty(T_near)
-        unc_far = spl.prediction_uncertainty(T_far)
-        assert unc_far[0] > unc_near[0], (
-            f"Far extrapolation ({unc_far[0]:.3f}) should have wider uncertainty "
-            f"than near extrapolation ({unc_near[0]:.3f})"
+        lo_near, hi_near = spl.prediction_uncertainty(np.array([28.0]))
+        lo_far, hi_far = spl.prediction_uncertainty(np.array([10.0]))
+        width_near = (hi_near - lo_near)[0]
+        width_far = (hi_far - lo_far)[0]
+
+        assert width_far > width_near, (
+            f"Far extrapolation width ({width_far:.3f}) should exceed "
+            f"near ({width_near:.3f})"
         )
 
     def test_lower_alpha_gives_wider_interval(self, v_shaped_data):
         """Lower significance → wider PI (more confidence)."""
-        from opendsm.eemeter.models.daily_pspline.settings import DailyPSplineSettings
         T, y = v_shaped_data
-
         s90 = DailyPSplineSettings(
-            developer_mode=True, silent_developer_mode=True,
-            uncertainty_alpha=0.1,
+            developer_mode=True, silent_developer_mode=True, uncertainty_alpha=0.1,
         )
         s99 = DailyPSplineSettings(
-            developer_mode=True, silent_developer_mode=True,
-            uncertainty_alpha=0.01,
+            developer_mode=True, silent_developer_mode=True, uncertainty_alpha=0.01,
         )
-        spl90 = fit_segment(T, y, s90)
-        spl99 = fit_segment(T, y, s99)
+        lo90, hi90 = fit_segment(T, y, s90).prediction_uncertainty(T)
+        lo99, hi99 = fit_segment(T, y, s99).prediction_uncertainty(T)
 
-        unc90 = spl90.prediction_uncertainty(T)
-        unc99 = spl99.prediction_uncertainty(T)
-        assert np.all(unc99 > unc90), (
+        assert np.all((hi99 - lo99) > (hi90 - lo90)), (
             "99% PI should be wider than 90% PI at every point"
         )
 
-    def test_vif_disabled_gives_narrower_interval(self, v_shaped_data):
-        """Disabling autocorrelation should reduce uncertainty."""
-        from opendsm.eemeter.models.daily_pspline.settings import DailyPSplineSettings
+    def test_vif_disabled_does_not_widen_interval(self, v_shaped_data):
+        """Disabling autocorrelation should not widen the interval."""
         T, y = v_shaped_data
-
         s_with = DailyPSplineSettings(
             developer_mode=True, silent_developer_mode=True,
             include_autocorrelation_in_uncertainty=True,
@@ -79,15 +76,11 @@ class TestPredictionUncertainty:
             developer_mode=True, silent_developer_mode=True,
             include_autocorrelation_in_uncertainty=False,
         )
-        spl_with = fit_segment(T, y, s_with)
-        spl_without = fit_segment(T, y, s_without)
+        lo_w, hi_w = fit_segment(T, y, s_with).prediction_uncertainty(T)
+        lo_wo, hi_wo = fit_segment(T, y, s_without).prediction_uncertainty(T)
 
-        unc_with = spl_with.prediction_uncertainty(T)
-        unc_without = spl_without.prediction_uncertainty(T)
-        # When VIF=1 (no autocorrelation), both should be equal
-        # When VIF>1, _with should be >= _without
-        assert np.all(unc_with >= unc_without - 1e-10), (
-            "VIF-enabled uncertainty should be >= VIF-disabled"
+        assert np.all((hi_w - lo_w) >= (hi_wo - lo_wo) - 1e-9), (
+            "VIF-enabled interval should be >= VIF-disabled"
         )
 
     def test_raises_without_fit(self):
@@ -106,26 +99,41 @@ class TestPredictionUncertainty:
             spl.prediction_uncertainty(np.array([50.0]))
 
 
-class TestInterpolateSigmaSq:
-    def test_interior_matches_training(self):
-        x_train = np.array([10.0, 30.0, 50.0, 70.0, 90.0])
-        sigma = np.array([2.0, 1.5, 1.0, 1.5, 2.0])
-        x_new = np.array([30.0, 50.0, 70.0])
-        result = _interpolate_sigma_sq(x_new, x_train, sigma)
-        np.testing.assert_allclose(
-            result, sigma[1:4] ** 2, rtol=1e-10,
-            err_msg="Interior points should match training σ² exactly",
-        )
+class TestFitSigmaScale:
+    def test_shape_matches_input(self, rng):
+        x = np.linspace(0, 100, 200)
+        scale = _fit_sigma_scale(x, rng.standard_normal(200))
 
-    def test_extrapolation_grows(self):
-        x_train = np.linspace(20, 80, 50)
-        sigma = 1.0 + 0.02 * np.abs(x_train - 50)
-        x_extrap = np.array([10.0, 90.0])
-        result = _interpolate_sigma_sq(x_extrap, x_train, sigma)
-        boundary_sq = np.array([sigma[0] ** 2, sigma[-1] ** 2])
-        assert np.all(result >= boundary_sq - 1e-10), (
-            "Extrapolated σ² should be >= boundary σ²"
-        )
+        assert scale.shape == x.shape
+
+    def test_clipped_to_bounds(self, rng):
+        x = np.linspace(0, 100, 200)
+        # extreme heteroscedasticity would push the raw ratio past [0.5, 2.0]
+        residuals = rng.standard_normal(200) * (0.01 + 0.5 * x)
+        scale = _fit_sigma_scale(x, residuals)
+
+        assert np.all(scale >= 0.5) and np.all(scale <= 2.0)
+
+    def test_homoscedastic_near_one(self, rng):
+        x = np.linspace(0, 100, 300)
+        scale = _fit_sigma_scale(x, rng.standard_normal(300))
+
+        assert scale.mean() == pytest.approx(1.0, abs=0.15)
+        assert scale.std() < 0.2
+
+    def test_recovers_heteroscedastic_trend(self, rng):
+        """Scale must be larger where residuals are noisier."""
+        x = np.linspace(0, 100, 300)
+        residuals = rng.standard_normal(300) * (0.3 + 0.03 * x)
+        scale = _fit_sigma_scale(x, residuals)
+
+        assert scale[x > 75].mean() > scale[x < 25].mean()
+
+    def test_near_zero_residuals_returns_ones(self):
+        x = np.linspace(0, 100, 50)
+        scale = _fit_sigma_scale(x, np.full(50, 1e-15))
+
+        np.testing.assert_array_equal(scale, np.ones(50))
 
 
 class TestBartlettVif:

@@ -3,8 +3,10 @@
 import numpy as np
 import pytest
 
-from opendsm.eemeter.models.daily_pspline.fitting import fit_segment, _clipped_std, _rescale_to_range
+from opendsm.eemeter.models.daily_pspline.fitting import fit_segment, _clipped_mad
 from opendsm.eemeter.models.daily_pspline.spline import PSpline
+from opendsm.common.stats.basic import median_absolute_deviation
+
 
 
 class TestFitSegment:
@@ -77,24 +79,20 @@ class TestFitSegment:
         )
 
 
-class TestClippedStd:
-    def test_normal_values(self):
-        assert _clipped_std(np.array([1, 2, 3, 4, 5])) == pytest.approx(np.std([1, 2, 3, 4, 5]))
+class TestClippedMad:
+    def test_matches_scaled_mad(self):
+        x = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+
+        assert _clipped_mad(x) == pytest.approx(median_absolute_deviation(x))
 
     def test_constant_returns_one(self):
-        assert _clipped_std(np.array([5.0, 5.0, 5.0])) == 1.0
+        assert _clipped_mad(np.array([5.0, 5.0, 5.0])) == 1.0
 
     def test_near_zero_returns_one(self):
-        assert _clipped_std(np.array([1.0, 1.0 + 1e-8])) == 1.0
+        assert _clipped_mad(np.array([1.0, 1.0 + 1e-8])) == 1.0
 
+    def test_resists_single_outlier(self):
+        clean = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        contaminated = np.append(clean, 1000.0)
 
-class TestRescaleToRange:
-    def test_basic_rescale(self):
-        values = np.array([0.0, 5.0, 10.0])
-        result = _rescale_to_range(values, 1.0, 10.0)
-        np.testing.assert_allclose(result, [1.0, 5.5, 10.0])
-
-    def test_constant_input(self):
-        values = np.array([3.0, 3.0, 3.0])
-        result = _rescale_to_range(values, 1.0, 10.0)
-        np.testing.assert_array_equal(result, [1.0, 1.0, 1.0])
+        assert _clipped_mad(contaminated) == pytest.approx(_clipped_mad(clean), rel=0.5)
