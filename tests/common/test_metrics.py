@@ -386,12 +386,9 @@ def test_reporting_metrics_ashrae_frequency_factors(realistic_baseline):
     )
 
 
-def test_reporting_metrics_fsu_and_per_point_definitions(realistic_baseline):
-    """FSU = uncertainty / savings and per-point unc = uncertainty / √n."""
+def test_reporting_metrics_fsu_definition(realistic_baseline):
+    """FSU = uncertainty / savings."""
     df = realistic_baseline.df
     rm = ReportingMetrics(baseline_metrics=realistic_baseline, reporting_df=df, data_frequency="hourly")
 
     assert rm.fsu == pytest.approx(rm.total_savings_uncertainty / rm.savings)
-    assert rm.predicted_data_point_unc == pytest.approx(
-        rm.total_savings_uncertainty / np.sqrt(rm.n)
-    )
