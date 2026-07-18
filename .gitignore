@@ -15,3 +15,4 @@ uv.lock
 !.github/
 !.gitignore
 !.dockerignore
+!.git-blame-ignore-revs

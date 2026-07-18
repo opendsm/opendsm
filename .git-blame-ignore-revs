@@ -1,0 +1,5 @@
+# Bulk reformats to ignore in `git blame` (configure with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs)
+
+# Apply ruff format across the codebase
+b00e9e0b63e42966822705186145445c6c570578
