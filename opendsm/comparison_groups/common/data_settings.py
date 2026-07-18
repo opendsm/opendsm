@@ -95,6 +95,12 @@ class Data_Settings(BaseSettings):
         validate_default=True,
     )
 
+    """seed for comparison-pool trimming; None draws fresh entropy each run"""
+    seed: Optional[int] = pydantic.Field(
+        default=None,
+        validate_default=True,
+    )
+
     """aggregation type for the loadshape"""
     agg_type: Optional[_const.AggType] = pydantic.Field(
         default=_const.AggType.MEAN,

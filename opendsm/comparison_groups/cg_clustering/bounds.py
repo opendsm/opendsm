@@ -25,21 +25,8 @@ def _get_num_cluster_min(
     """
     returns lower bounds using data_size which is number models in cluster
     """
-
-    linear = False
-
-    # assume we want 8 clusters of min size 15 meters with a pool of 1000 meters
-    base_pool = 1000
-    base_cluster_size = 15
-    base_min_clusters = 8
-
-    if linear:
-        k = (base_cluster_size*base_min_clusters)/base_pool
-        num_cluster_min = k*data_size/min_cluster_size
-    
-    else:
-        k = 30 + 4.58*np.exp(data_size/335)
-        num_cluster_min = k/min_cluster_size
+    k = 30 + 4.58 * np.exp(data_size / 335)
+    num_cluster_min = k / min_cluster_size
 
     n = max(int(np.floor(num_cluster_min)), 2)
     n = min(num_cluster_bound_lower, n)
@@ -64,22 +51,24 @@ def _get_num_cluster_max(
     n_set = 1000
     n_max_set = 250
 
-    k = (n_set - n_min) * (
-        np.log(
-            (
-                ((n_max_set - min_clusters) / (2 * max_clusters - min_clusters) + 0.5)
+    # The log argument turns non-positive when num_cluster_bound_upper < n_max_set,
+    # making k non-finite; suppress the expected invalid-log warning and fall back
+    # to a flat cap below.
+    with np.errstate(invalid="ignore", divide="ignore"):
+        k = (n_set - n_min) * (
+            np.log(
+                (
+                    ((n_max_set - min_clusters) / (2 * max_clusters - min_clusters) + 0.5)
+                    ** -1
+                    - 1
+                )
                 ** -1
-                - 1
             )
-            ** -1
-        )
-    ) ** -1
+        ) ** -1
 
     if not np.isfinite(k):
-        """
-        TODO: Figure out better way to handle this.
-        Currently occurs when num_cluster_bound_upper is less than n_max_set
-        """
+        # the sigmoid cannot reach n_max_set when the upper bound is below it;
+        # cap at the requested upper bound (or the data size, whichever is smaller)
         return min(data_size, num_cluster_bound_upper)
 
     num_cluster_max = (2 * max_clusters - min_clusters) * (

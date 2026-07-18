@@ -1,0 +1,71 @@
+{
+  "bin_counts": {
+    "MultBin: col1_000": {
+      "n_pool": 245,
+      "n_sampled": 21,
+      "n_treatment": 21
+    },
+    "MultBin: col1_001": {
+      "n_pool": 245,
+      "n_sampled": 4,
+      "n_treatment": 4
+    },
+    "MultBin: col1_002": {
+      "n_pool": 245,
+      "n_sampled": 8,
+      "n_treatment": 8
+    },
+    "MultBin: col1_003": {
+      "n_pool": 246,
+      "n_sampled": 12,
+      "n_treatment": 13
+    }
+  },
+  "sampled_ids": [
+    "id_pool_0.04",
+    "id_pool_0.27",
+    "id_pool_0.51",
+    "id_pool_0.58",
+    "id_pool_0.67",
+    "id_pool_0.73",
+    "id_pool_0.78",
+    "id_pool_0.85",
+    "id_pool_0.9",
+    "id_pool_0.9500000000000001",
+    "id_pool_1.12",
+    "id_pool_1.27",
+    "id_pool_1.6",
+    "id_pool_1.73",
+    "id_pool_1.82",
+    "id_pool_2.07",
+    "id_pool_2.19",
+    "id_pool_2.2",
+    "id_pool_2.21",
+    "id_pool_2.29",
+    "id_pool_2.44",
+    "id_pool_3.12",
+    "id_pool_4.5200000000000005",
+    "id_pool_4.66",
+    "id_pool_4.89",
+    "id_pool_5.48",
+    "id_pool_5.57",
+    "id_pool_5.8",
+    "id_pool_6.17",
+    "id_pool_6.97",
+    "id_pool_7.09",
+    "id_pool_7.11",
+    "id_pool_7.34",
+    "id_pool_7.390000000000001",
+    "id_pool_7.930000000000001",
+    "id_pool_8.02",
+    "id_pool_8.13",
+    "id_pool_8.2",
+    "id_pool_8.25",
+    "id_pool_8.620000000000001",
+    "id_pool_9.43",
+    "id_pool_9.55",
+    "id_pool_9.57",
+    "id_pool_9.65",
+    "id_pool_9.8"
+  ]
+}

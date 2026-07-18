@@ -15,7 +15,7 @@
 import copy
 import itertools
 import logging
-import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 import pandas as pd
 import numpy as np
 from . import equivalence
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 __all__ = ("StratifiedSamplingBinSelector",)
 
 
-class StratifiedSamplingBinSelector(object):
+class StratifiedSamplingBinSelector:
     def __init__(
         self,
         model,
@@ -67,7 +67,7 @@ class StratifiedSamplingBinSelector(object):
 
         Example usage:
 
-            m = StratifiedSampling()
+            m = StratifiedSampler()
             m.add_column('annual_usage', min_value=0, max_value=20000)
             m.add_column('summer_usage', min_value=0, max_value=1000)
             s = StratifiedSamplingBinSelector(m, df_treatment, df_pool,
@@ -78,7 +78,7 @@ class StratifiedSamplingBinSelector(object):
 
         Attributes
         ==========
-        model: eemeter.gridmeter.StratifiedSampling
+        model: eemeter.gridmeter.StratifiedSampler
             Model with stratification columns added.
         df_treatment: pandas.DataFrame
             dataframe to use for constructing the stratified sampling bins.
@@ -106,7 +106,7 @@ class StratifiedSamplingBinSelector(object):
             Minimum number of treatment samples that must exist in a given bin for
             it to be considered a non-outlier bin (only applicable if there are
             cols with fixed_width=True)
-        min_n_sampled_to_n_treatment_ratio: int
+        min_n_sampled_to_n_treatment_ratio: float
             Minimum number samples that must exist in each bin per treatment datapoint in that bin.
         min_n_bins: int
             Minimum number of bins to use in stratified sampling.
@@ -380,10 +380,13 @@ class StratifiedSamplingBinSelector(object):
         ]
 
         if plot:
-            fig, ax = plt.subplots()
+            fig = Figure()
+            ax = fig.subplots()
             for wm in wrong_models:
-                plt.plot(self.equiv_samples_avg[wm], alpha=0.1, color="b")
+                ax.plot(self.equiv_samples_avg[wm], alpha=0.1, color="b")
             equiv_df[[self.bins_selected_str, "treatment", "comparison pool"]].plot(
                 color=["k", "r", "k"], style=["-", "-", "."], ax=ax
             )
-            plt.legend(loc="center left", bbox_to_anchor=(1.0, 0.5))
+            ax.legend(loc="center left", bbox_to_anchor=(1.0, 0.5))
+
+            return fig

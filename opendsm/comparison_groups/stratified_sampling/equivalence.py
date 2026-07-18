@@ -24,6 +24,10 @@ def ids_to_index(subset_ids, all_ids):
     df_1 = pd.DataFrame({'a': subset_ids}).reset_index()
     df_2 = pd.DataFrame({'a': all_ids}).reset_index().rename(columns={'index': 'x'})
 
+    # duplicate pool ids would expand the merge and silently misalign indexes
+    if df_2['a'].duplicated().any():
+        raise ValueError("`all_ids` must be unique")
+
     df_out = df_1.merge(df_2)
     diff = len(df_1) - len(df_out)
     if diff > 0:
@@ -132,11 +136,17 @@ def quantile_means_population(X, Y, n_quantiles):
 
     return means_x, means_y, quantiles_x, quantiles_y
 
-def chisquare_dist(X,Y):
-    distance = 0
-    for i in range(len(X)):
-        distance = distance + ((X[i] - Y[i])**2 / (X[i] + Y[i]))
-    return distance 
+def chisquare_dist(X, Y):
+    X = np.asarray(X, dtype=float)
+    Y = np.asarray(Y, dtype=float)
+
+    denominator = X + Y
+    numerator = (X - Y) ** 2
+    # bins where both quantile means are zero contribute nothing (avoid 0/0 -> NaN)
+    terms = np.divide(numerator, denominator, out=np.zeros_like(numerator), where=denominator != 0)
+    distance = float(np.sum(terms))
+
+    return distance
 
 def get_distance_func(how="euclidean"):
     if how == "euclidean":

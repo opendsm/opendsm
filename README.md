@@ -95,14 +95,11 @@ process.
 
 ### Technical goals
 
-1. Update the Demand Response (DR) model
+1. Integrate comparison groups
 
-In the most recent release, the hourly energy efficiency (EE) model has been entirely
-changed and updated. Much like the billing model is to the daily model, the DR model is a
-subset of the EE hourly model. Many of the improvements seen in the EE hourly model could
-be realized in the DR model if it were finalized. It is currently in a functional state
-within a branch, but its parameters have not been optimized rendering it unusable for
-measurements. In the meantime, the existing DR model is still available.
+Comparison groups are frequently used after DR/EEmeter in order to correct models for 
+external population-level effects by using non-participant meters. Similar to EEweather, 
+this process could be streamlines and made more cohesive by fully integrating it into OpenDSM. 
 
 2. Reassess existing sufficiency and disqualification criteria
 
@@ -119,7 +116,16 @@ experimental and not allowed for official measurement because we have not quanti
 much data is required post-installation to be able to accurately predict the meter's
 behavior in the reporting year.
 
-4. Improve the daily model
+4. Update the Demand Response (DR) model
+
+In the most recent release, the hourly energy efficiency (EE) model has been entirely
+changed and updated. Much like the billing model is to the daily model, the DR model is a
+subset of the EE hourly model. Many of the improvements seen in the EE hourly model could
+be realized in the DR model if it were finalized. It is currently in a functional state
+within a branch, but its parameters have not been optimized rendering it unusable for
+measurements. In the meantime, the existing DR model is still available.
+
+5. Improve the daily model
 
 There are two potential areas of improvement of the daily model. First it could be extended
 to allow additional sources of information, but this must carefully be considered as the
@@ -129,7 +135,7 @@ cooling and heating regions such that the model would be able to change slope. T
 likely still be limited such that the model's slope in each region is appropriately
 constrained. A new smoothing function would also need to be developed.
 
-5. Integrate EEweather
+6. Integrate EEweather
 
 EEweather is commonly used to obtain weather information to be used within OpenDSM. If it 
 were more tightly coupled, it would streamline the most standard use of OpenDSM. As an 
@@ -137,20 +143,7 @@ example this could simplify several of the data classes such that the aggregatio
 weather data would be done within EEweather instead of within data classes where it is a
 more complex procedure
 
-6. Integrate GRIDmeter
-
-GRIDmeter is frequently used after DR/EEmeter in order to correct models for external
-population-level effects by using non-participant meters. Similarly to EEweather, this 
-process could be streamlines and made more cohesive by fully integrating it into OpenDSM. 
-
-7. Organize and revise existing test suite
-
-The existing testing suite is the last remaining vestige of the library prior to the 
-extensive reorganization and API changes made. It would be well served to update the
-testing suite to make it easier for future contributors to know how and where they 
-should develop their tests for any new features or bugs found.
-
-8. Greater weather coverage
+7. Greater weather coverage
 
 The weather station coverage in the EEweather package includes full coverage of US and
 Australia, but with some technical work, it could be expanded to include greater, or

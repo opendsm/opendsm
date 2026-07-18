@@ -17,7 +17,12 @@ import pytest
 from opendsm.common.utils import (
     np_clip,
     OoM,
-    RoundToSigFigs)
+    RoundToSigFigs,
+    safe_divide,
+    log_cosh,
+    sigmoid,
+    to_np_array,
+)
 
 
 
@@ -131,3 +136,130 @@ def test_RoundToSigFigs():
     result = RoundToSigFigs(x, p)
     expected = -1230
     assert result == expected
+
+
+def test_safe_divide_scalar_valid_and_invalid():
+    """A valid scalar division returns a float; a zero denominator returns NaN."""
+    assert safe_divide(10, 2) == pytest.approx(5.0)
+    assert isinstance(safe_divide(10, 2), float)
+    assert np.isnan(safe_divide(10, 0))
+
+
+def test_safe_divide_clamps_tiny_denominator():
+    """A denominator <= min_denominator with a non-trivial numerator yields NaN."""
+    assert np.isnan(safe_divide(10, 1e-4))
+
+
+def test_safe_divide_array_masks_invalid_elementwise():
+    """Element-wise division leaves NaN only where the denominator is invalid."""
+    result = safe_divide(np.array([10.0, 10.0, 6.0]), np.array([2.0, 0.0, 3.0]))
+
+    assert result[0] == pytest.approx(5.0)
+    assert np.isnan(result[1])
+    assert result[2] == pytest.approx(2.0)
+
+
+def test_safe_divide_mixed_array_and_scalar():
+    """Array-over-scalar and scalar-over-array broadcast and mask correctly."""
+    assert np.allclose(safe_divide(np.array([10.0, 10.0]), 2), [5.0, 5.0])
+
+    scalar_over_array = safe_divide(10, np.array([2.0, 0.0]))
+    assert scalar_over_array[0] == pytest.approx(5.0)
+    assert np.isnan(scalar_over_array[1])
+
+
+def test_safe_divide_return_all_false_drops_invalid():
+    """return_all=False returns only the valid quotients, dropping masked entries."""
+    result = safe_divide(
+        np.array([10.0, 10.0, 6.0]), np.array([2.0, 0.0, 3.0]), return_all=False
+    )
+
+    assert np.allclose(result, [5.0, 2.0])
+
+
+def test_log_cosh_small_x_taylor_branch():
+    """For small x, log(cosh(x)) ≈ x²/2 via the stable Taylor expansion."""
+    assert log_cosh(0.0) == pytest.approx(0.0)
+    assert log_cosh(1e-3) == pytest.approx((1e-3) ** 2 / 2, rel=1e-6)
+
+
+def test_log_cosh_large_x_is_stable():
+    """For large x, log(cosh(x)) ≈ |x| - ln(2) without overflow."""
+    assert log_cosh(50.0) == pytest.approx(50.0 - np.log(2))
+
+
+def test_log_cosh_matches_reference_array():
+    """Array log_cosh matches the direct log(cosh(x)) computation."""
+    x = np.array([0.0, 1.0, 2.0, -3.0])
+
+    assert np.allclose(log_cosh(x), np.log(np.cosh(x)))
+
+
+def test_sigmoid_midpoint_and_saturation():
+    """sigmoid(0)=0.5 and saturates to 1 / 0 for large |x| without overflow."""
+    assert sigmoid(0.0) == pytest.approx(0.5)
+    assert sigmoid(100.0) == pytest.approx(1.0)
+    assert sigmoid(-100.0) == pytest.approx(0.0, abs=1e-40)
+
+
+def test_sigmoid_callable_scale():
+    """A callable k is evaluated per-point; a constant k=2 still gives 0.5 at x0."""
+    x = np.array([0.0, 1.0, 2.0])
+
+    result = sigmoid(x, k=lambda xx, x0: np.full_like(xx, 2.0))
+
+    assert result[0] == pytest.approx(0.5)
+    assert np.all(np.diff(result) > 0)
+
+
+def test_sigmoid_callable_scale_rejects_nonpositive():
+    """A callable k that returns a non-positive scale raises ValueError."""
+    with pytest.raises(ValueError, match="non-negative and non-zero"):
+        sigmoid(np.array([0.0, 1.0]), k=lambda xx, x0: np.zeros_like(xx))
+
+
+def test_to_np_array_handles_scalar_list_array_none():
+    """to_np_array wraps scalars/lists to 1-D arrays, passes arrays, keeps None."""
+    assert np.array_equal(to_np_array(5), np.array([5]))
+    assert np.array_equal(to_np_array([1, 2]), np.array([1, 2]))
+
+    arr = np.array([1.0, 2.0])
+    assert np.array_equal(to_np_array(arr), arr)
+    assert to_np_array(None) is None
+
+
+def test_to_np_array_wraps_zero_dim_array():
+    """A 0-d array is promoted to a 1-element 1-D array."""
+    result = to_np_array(np.array(5))
+
+    assert result.ndim == 1
+    assert np.array_equal(result, np.array([5]))
+
+
+def test_np_clip_preserves_nan():
+    """The clip overload leaves NaN untouched while clipping finite values."""
+    a = np.array([np.nan, 1.0, 5.0])
+
+    result = np_clip(a, 0, 3)(a, 0, 3)
+
+    assert np.isnan(result[0])
+    assert result[1] == pytest.approx(1.0)
+    assert result[2] == pytest.approx(3.0)
+
+
+def test_log_cosh_accepts_integer_dtype():
+    """Integer input is promoted to float before the log-cosh computation."""
+    result = log_cosh(np.array([0, 1, 2]))
+
+    assert np.allclose(result, np.log(np.cosh([0.0, 1.0, 2.0])))
+
+
+@pytest.mark.parametrize("dtype", [np.float16, np.float32])
+def test_log_cosh_preserves_low_precision_dtype(dtype):
+    """log_cosh runs in the input float precision and matches the reference."""
+    x = np.array([0.0, 1.0, 2.0], dtype=dtype)
+
+    result = log_cosh(x)
+
+    assert result.dtype == dtype
+    assert np.allclose(result, np.log(np.cosh(x.astype(np.float64))), atol=1e-2)

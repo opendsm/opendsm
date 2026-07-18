@@ -408,5 +408,32 @@ class TestSchulzeConfidence:
         assert conf == pytest.approx(0.0)
 
 
+class TestKPenalty:
+    """The low-k complexity penalty shifts ties toward higher k."""
+
+    def test_penalty_flips_tie_toward_higher_k(self):
+        """With equal scores, a positive penalty makes the higher-k candidate win."""
+        score_matrix = np.array([[0.5], [0.5]])
+        voter_names = ["v"]
+
+        no_penalty, _ = schulze_voting(
+            score_matrix, voter_names, candidate_k_values=[2, 5], k_penalty_strength=0.0,
+        )
+        with_penalty, _ = schulze_voting(
+            score_matrix, voter_names, candidate_k_values=[2, 5], k_penalty_strength=3.0,
+        )
+        assert no_penalty == 0
+        assert with_penalty == 1
+
+    def test_no_penalty_when_strength_zero(self):
+        """Strength 0 leaves the winner unchanged from the unpenalised vote."""
+        score_matrix = np.array([[0.2], [0.8]])
+        voter_names = ["v"]
+        winner, _ = schulze_voting(
+            score_matrix, voter_names, candidate_k_values=[2, 5], k_penalty_strength=0.0,
+        )
+        assert winner == 0
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

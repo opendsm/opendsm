@@ -79,7 +79,7 @@ class CorrectionCapSettings(BaseSettings):
 
     value: float = pydantic.Field(
         default=3.0,
-        description="maximum correction as a percentage of the treatment model value"
+        description="maximum correction as a multiple of the treatment model magnitude (cap = |mTr| * value)"
     )
 
     solar_threshold: Optional[float] = pydantic.Field(

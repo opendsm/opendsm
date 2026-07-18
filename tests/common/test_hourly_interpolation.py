@@ -18,8 +18,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from opendsm.common.hourly_interpolation import interpolate
+from opendsm.common.hourly_interpolation import (
+    interpolate,
+    _autocorr_fcn,
+    _AUTOCORR_FFT_LAG_THRESHOLD,
+)
 from opendsm.common.test_data import load_test_data
+
 
 
 # =============================================================================
@@ -67,6 +72,7 @@ def periodic_series():
     """Create periodic time series data for autocorrelation testing."""
     np.random.seed(42)
     t = np.arange(0, 100)
+
     return np.sin(2 * np.pi * t / 24) + 0.1 * np.random.randn(100)
 
 
@@ -442,6 +448,161 @@ class TestInterpolateVsLinear:
         # Autocorr should handle solar patterns better
         assert mae_autocorr < mae_linear, \
             f"Autocorr MAE ({mae_autocorr:.2f} W/m²) should be < Linear MAE ({mae_linear:.2f} W/m²)"
+
+
+# =============================================================================
+# _autocorr_fcn — characterization & correctness (masked loop vs FFT branch)
+# =============================================================================
+
+def _deterministic_acf_signal(n=2000):
+    """Reproducible gappy signal: daily + weekly cycles + slow ramp, fixed gaps."""
+    t = np.arange(n, dtype=float)
+    x = np.sin(2 * np.pi * t / 24) + 0.5 * np.sin(2 * np.pi * t / 168) + 0.1 * t / n
+    x[::37] = np.nan
+    x[100:115] = np.nan
+
+    return x
+
+
+def _naive_acf(x, lags):
+    """Reference ACF: masked mean/var, sum of valid lag products / n / var."""
+    xm = np.ma.masked_invalid(x)
+    mean = xm.mean()
+    var = xm.var()
+
+    if not np.isfinite(var) or var == 0:
+        var = 1.0
+
+    xc = xm - mean
+    n = len(x)
+    out = np.zeros(len(lags))
+
+    for i, lag in enumerate(lags):
+        if lag == 0:
+            out[i] = 1.0
+        elif lag < n:
+            out[i] = float(np.ma.filled(np.ma.sum(xc[lag:] * xc[:-lag]) / n / var, 0.0))
+
+    return out
+
+
+def _pos_corr(result):
+    """{lag: corr} for lags >= 0 from the mirrored _autocorr_fcn output."""
+    return {int(lag): float(corr) for lag, corr in result if lag >= 0}
+
+
+class TestAutocorrFcn:
+    """The masked-loop and FFT branches must agree and stay pinned to the original."""
+
+    # Pinned from the original masked-loop implementation on _deterministic_acf_signal().
+    REFERENCE = {
+        0: 1.0,
+        1: 0.9122603913,
+        2: 0.8362625721,
+        3: 0.7155700045,
+        4: 0.5588584332,
+        5: 0.37680267,
+        6: 0.1817630883,
+        7: -0.0130593771,
+        8: -0.1945236306,
+    }
+
+    def test_loop_branch_matches_pinned_reference(self):
+        """Few lags (<= threshold) take the masked loop and reproduce the pinned values."""
+        assert len(self.REFERENCE) <= _AUTOCORR_FFT_LAG_THRESHOLD
+        x = _deterministic_acf_signal()
+        corr = _pos_corr(_autocorr_fcn(x, np.arange(0, len(self.REFERENCE)), exclude_0=False))
+
+        for lag, expected in self.REFERENCE.items():
+            assert corr[lag] == pytest.approx(expected, abs=1e-8), f"lag {lag}"
+
+    def test_fft_branch_matches_pinned_reference(self):
+        """Many lags (> threshold) take the FFT path and reproduce the same pinned values."""
+        x = _deterministic_acf_signal()
+        corr = _pos_corr(
+            _autocorr_fcn(x, np.arange(0, _AUTOCORR_FFT_LAG_THRESHOLD + 50), exclude_0=False)
+        )
+
+        for lag, expected in self.REFERENCE.items():
+            assert corr[lag] == pytest.approx(expected, abs=1e-8), f"lag {lag}"
+
+    def test_loop_and_fft_branches_agree(self):
+        """The two branches return identical correlations on their shared lags."""
+        x = _deterministic_acf_signal()
+        few = _pos_corr(
+            _autocorr_fcn(x, np.arange(0, _AUTOCORR_FFT_LAG_THRESHOLD), exclude_0=False)
+        )
+        many = _pos_corr(
+            _autocorr_fcn(x, np.arange(0, _AUTOCORR_FFT_LAG_THRESHOLD + 100), exclude_0=False)
+        )
+
+        for lag in few:
+            assert few[lag] == pytest.approx(many[lag], abs=1e-10), f"lag {lag}"
+
+    @pytest.mark.parametrize("n_lags", [6, _AUTOCORR_FFT_LAG_THRESHOLD + 30])
+    def test_matches_naive_reference(self, n_lags):
+        """Both branches match an independent naive masked-loop reference."""
+        x = _deterministic_acf_signal()
+        lags = np.arange(0, n_lags)
+        got = _pos_corr(_autocorr_fcn(x, lags, exclude_0=False))
+        expected = _naive_acf(x, lags)
+
+        for lag in lags:
+            assert got[int(lag)] == pytest.approx(expected[lag], abs=1e-10), f"lag {lag}"
+
+    def test_recovers_ar1_theoretical_acf(self):
+        """AR(1) with phi=0.7 has ACF(k)=0.7**k; the FFT branch recovers it from data."""
+        rng = np.random.default_rng(0)
+        phi = 0.7
+        e = rng.standard_normal(20_000)
+        x = np.empty_like(e)
+        x[0] = e[0]
+
+        for i in range(1, len(e)):
+            x[i] = phi * x[i - 1] + e[i]
+
+        corr = _pos_corr(_autocorr_fcn(x, np.arange(0, 30), exclude_0=False))
+
+        for k in range(1, 6):
+            assert corr[k] == pytest.approx(phi ** k, abs=0.03), f"lag {k}"
+
+    def test_constant_input_is_zero_beyond_lag0(self):
+        """Constant input (var=0) is guarded: lag 0 = 1, all other lags = 0."""
+        x = np.full(500, 7.0)
+        corr = _pos_corr(_autocorr_fcn(x, np.arange(0, 6), exclude_0=False))
+
+        assert corr[0] == 1.0
+        assert all(corr[lag] == 0.0 for lag in range(1, 6))
+
+    def test_all_nan_input_is_finite(self):
+        """All-NaN input does not crash and yields finite correlations."""
+        x = np.full(200, np.nan)
+        result = _autocorr_fcn(x, np.arange(0, 6))
+
+        assert np.isfinite(result[:, 1]).all()
+
+    def test_lags_at_least_n_are_zero(self):
+        """Lags >= series length return 0 with no out-of-range access."""
+        x = np.array([1.0, 2.0, 3.0, 4.0])
+        corr = _pos_corr(_autocorr_fcn(x, np.arange(0, 6), exclude_0=False))
+
+        assert corr[4] == 0.0
+        assert corr[5] == 0.0
+
+    def test_exclude_0_drops_zero_lag_and_mirrors(self):
+        """exclude_0=True removes lag 0; correlations are symmetric in lag sign."""
+        x = _deterministic_acf_signal()
+        lags = np.arange(0, 5)
+        with_0 = _autocorr_fcn(x, lags, exclude_0=False)
+        without_0 = _autocorr_fcn(x, lags, exclude_0=True)
+
+        assert 0 in with_0[:, 0]
+        assert 0 not in without_0[:, 0]
+
+        signed = {int(lag): float(corr) for lag, corr in with_0}
+
+        for lag in range(1, 5):
+            assert signed[lag] == pytest.approx(signed[-lag], abs=1e-12), f"lag {lag}"
 
 
 # =============================================================================

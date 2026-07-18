@@ -12,6 +12,8 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+import sys
+
 import numpy as np
 import pytest
 from sklearn.datasets import make_blobs
@@ -1597,6 +1599,35 @@ class TestSubSeed:
         idx_a = np.array([10, 20, 30, 40])
         idx_b = np.array([11, 20, 30, 40])
         assert _sub_seed(42, idx_a) != _sub_seed(42, idx_b)
+
+
+class TestSparseEigshFallback:
+    """The sparse self-tuning path recovers via a dense eigendecomposition
+    when ARPACK fails to converge."""
+
+    def test_dense_fallback_on_eigsh_failure(self, monkeypatch):
+        spectral_mod = sys.modules[spectral.__module__]
+
+        rng = np.random.default_rng(0)
+        X = np.vstack([rng.normal(c, 0.4, (20, 4)) for c in (0, 6, 12)])
+
+        # Force the sparse branch on small data, then make ARPACK fail so the
+        # dense fallback path runs.
+        monkeypatch.setattr(spectral_mod, "_SELF_TUNING_SPARSE_THRESHOLD", 5)
+
+        def _arpack_fails(*args, **kwargs):
+            raise RuntimeError("ARPACK did not converge")
+
+        monkeypatch.setattr(spectral_mod, "_sparse_eigsh", _arpack_fails)
+
+        cs = _spectral_cs(SpectralSettings(
+            affinity="self_tuning",
+            n_cluster={"lower": 2, "upper": 4},
+        ))
+        result = spectral(X, cs)
+
+        assert len(result.labels) == len(X)
+        assert result.k >= 2
 
 
 if __name__ == '__main__':

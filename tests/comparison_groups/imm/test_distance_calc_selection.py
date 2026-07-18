@@ -12,6 +12,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+import logging
 import os
 import random
 
@@ -29,6 +30,7 @@ def _total_memory_gb():
 from opendsm.comparison_groups.individual_meter_matching.settings import Settings
 from opendsm.comparison_groups.individual_meter_matching.distance_calc_selection import (
     DistanceMatching,
+    DistanceMatchingError,
     _distances,
     _iter_chunks,
 )
@@ -474,3 +476,126 @@ def test_get_comparison_group_duplicated_flag():
     )
     assert len(cg) == 3
     assert cg["duplicated"].any()
+
+
+def test_no_duplicates_greedy_fills_all_treatments():
+    """Regression: no treatment is silently dropped when its nearest-candidate
+    block is exhausted by earlier assignments. Every treatment must be filled
+    via the full-pool fallback while the pool lasts.
+
+    All treatments and a 'close' pool block sit near 0, so every treatment's
+    candidate block is the same close meters. The first treatments consume them;
+    the rest must fall back to the 'far' pool rather than be dropped."""
+    rng = np.random.default_rng(0)
+    n_treatment = 20
+    n_match = 2
+
+    treatment = pd.DataFrame(
+        {"id": [f"t_{i}" for i in range(n_treatment)], "month_1": rng.normal(0, 0.01, n_treatment)}
+    ).set_index("id")
+    close = rng.normal(0, 0.01, 20)
+    far = rng.normal(100, 0.01, 980)
+    pool = pd.DataFrame(
+        {"id": [f"c_{i}" for i in range(1000)], "month_1": np.concatenate([close, far])}
+    ).set_index("id")
+
+    settings = Settings(
+        selection_method="minimize_meter_distance",
+        n_matches_per_treatment=n_match,
+        allow_duplicate_matches=False,
+        candidate_multiplier=None,  # isolate the matching logic from the prefilter
+    )
+    cg = DistanceMatching(settings=settings).get_comparison_group(treatment, pool)
+
+    assert cg["treatment"].nunique() == n_treatment
+    assert len(cg) == n_treatment * n_match
+    assert not cg["duplicated"].any()
+
+
+def test_prefilter_keeps_neighbors_for_multimodal_treatments():
+    """Regression: the per-treatment kNN prefilter preserves the true nearest
+    neighbours of treatments in different regions. A single-centroid prefilter
+    would keep the meters near the mean (~50) and drop each cluster's real
+    matches; per-treatment kNN keeps both, so matches stay within-cluster."""
+    treatment = pd.DataFrame(
+        {"id": ["a0", "a1", "b0", "b1"], "month_1": [0.0, 0.0, 100.0, 100.0]}
+    ).set_index("id")
+    pool_vals = [0.0] * 10 + [100.0] * 10 + [50.0] * 80  # decoys cluster at the centroid
+    pool = pd.DataFrame(
+        {"id": [f"c_{i}" for i in range(len(pool_vals))], "month_1": pool_vals}
+    ).set_index("id")
+
+    settings = Settings(
+        selection_method="minimize_meter_distance",
+        n_matches_per_treatment=1,
+        allow_duplicate_matches=False,
+        candidate_multiplier=2,  # n_treatment*k = 8 < pool of 100, so prefilter activates
+    )
+    cg = DistanceMatching(settings=settings).get_comparison_group(treatment, pool)
+
+    assert (cg["distance"] < 1.0).all()
+
+
+def test_n_match_reduction_warns(caplog):
+    """A pool too small to supply unique matches reduces n_match and warns."""
+    treatment = generate_group(4, make_random=True)
+    pool = generate_group(6, make_random=True, id_prefix="c")
+    settings = Settings(
+        selection_method="minimize_meter_distance",
+        n_matches_per_treatment=4,
+        allow_duplicate_matches=False,
+        candidate_multiplier=None,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        DistanceMatching(settings=settings).get_comparison_group(treatment, pool)
+
+    assert any("Reduced matches per treatment" in r.message for r in caplog.records)
+
+
+class TestMatchingEdgeCases:
+    """Empty pool, threshold-filters-all, single treatment, tie determinism."""
+
+    def _matcher(self, **overrides):
+        settings = Settings(selection_method="minimize_meter_distance", **overrides)
+
+        return DistanceMatching(settings=settings)
+
+    def test_empty_pool_raises(self):
+        """An empty comparison pool cannot supply matches."""
+        treatment = generate_group(5, make_random=True)
+        empty_pool = generate_group(5, make_random=True, id_prefix="c").iloc[:0]
+        with pytest.raises(DistanceMatchingError, match="empty"):
+            self._matcher(allow_duplicate_matches=True).get_comparison_group(treatment, empty_pool)
+
+    def test_max_distance_filters_all_raises(self):
+        """A threshold below every match distance leaves no comparison group."""
+        random.seed(1)
+        treatment = generate_group(5, make_random=True)
+        pool = generate_group(40, make_random=True, id_prefix="c")
+        matcher = self._matcher(allow_duplicate_matches=True, max_distance_threshold=1e-12)
+        with pytest.raises(DistanceMatchingError, match="filtered out all"):
+            matcher.get_comparison_group(treatment, pool)
+
+    def test_single_treatment_matches(self):
+        """A single treatment meter is matched to its nearest pool meters."""
+        random.seed(1)
+        treatment = generate_group(1, make_random=True)
+        pool = generate_group(20, make_random=True, id_prefix="c")
+        matcher = self._matcher(allow_duplicate_matches=True, n_matches_per_treatment=4)
+
+        df = matcher.get_comparison_group(treatment, pool)
+
+        assert set(df["treatment"].unique()) == set(treatment.index)
+        assert len(df) == 4
+
+    def test_tied_distances_are_deterministic(self):
+        """Identical (tied-distance) pool meters yield the same matches each run."""
+        treatment = generate_group(3, make_random=True)
+        tied_pool = generate_group(20, make_random=False, non_random_value=5.0, id_prefix="c")
+        matcher = self._matcher(allow_duplicate_matches=True, n_matches_per_treatment=3)
+
+        first = matcher.get_comparison_group(treatment, tied_pool)
+        second = matcher.get_comparison_group(treatment, tied_pool)
+
+        assert list(first["id"]) == list(second["id"])
