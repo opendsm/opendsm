@@ -92,9 +92,7 @@ def metered_savings(
         )
 
     prediction_index = reporting_meter_data.index
-    model_prediction = baseline_model.predict(
-        prediction_index, temperature_data, **predict_kwargs
-    )
+    model_prediction = baseline_model.predict(prediction_index, temperature_data, **predict_kwargs)
 
     predicted_baseline_usage = model_prediction.result
 
@@ -190,17 +188,13 @@ def modeled_savings(
         predict_kwargs = {}
 
     model_type = None  # generic
-    if isinstance(baseline_model, DailyModel) or isinstance(
-        reporting_model, DailyModel
-    ):
+    if isinstance(baseline_model, DailyModel) or isinstance(reporting_model, DailyModel):
         raise NotImplementedError(
             "Use predict() with daily and billing models to compute modeled savings."
         )
 
     def _predicted_usage(model):
-        model_prediction = model.predict(
-            prediction_index, temperature_data, **predict_kwargs
-        )
+        model_prediction = model.predict(prediction_index, temperature_data, **predict_kwargs)
         predicted_usage = model_prediction.result
         return predicted_usage
 

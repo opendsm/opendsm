@@ -19,7 +19,6 @@ import pytest
 from opendsm.eemeter import DailyBaselineData, DailyModel, DailyReportingData
 
 
-
 def _seasonal_temperature(year=2020, seed=1):
     """Hourly seasonal temperature swinging ~25..85 F across the year."""
     hours = pd.date_range(f"{year}-01-01", periods=365 * 24, freq="h", tz="America/Chicago")
@@ -107,9 +106,7 @@ def test_known_reduction_recovers_as_savings(heating_baseline, temperature):
     days = pd.date_range("2020-01-01", periods=365, freq="D", tz="America/Chicago")
     daily_temp = temperature.resample("D").mean().reindex(days)
     reduction_per_day = 5.0
-    reporting_meter = pd.Series(
-        _heating_load(daily_temp, seed=4) - reduction_per_day, index=days
-    )
+    reporting_meter = pd.Series(_heating_load(daily_temp, seed=4) - reduction_per_day, index=days)
     reporting = DailyReportingData.from_series(
         reporting_meter, temperature, is_electricity_data=True
     )

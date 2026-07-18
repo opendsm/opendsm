@@ -95,9 +95,7 @@ def plot(
 
                 mu, cov, a, b, phi = robust_confidence_ellipse(T, obs, std_sqr)
 
-                ell = mpl.patches.Ellipse(
-                    mu, 2 * a, 2 * b, np.degrees(phi), color=color, zorder=10
-                )
+                ell = mpl.patches.Ellipse(mu, 2 * a, 2 * b, np.degrees(phi), color=color, zorder=10)
                 ell.set_clip_box(ax.bbox)
                 ell.set_alpha(0.3)
                 ax.add_artist(ell)
@@ -120,8 +118,11 @@ def plot(
                 upper = meter_segment["predicted_unc_upper"].values
                 if not np.all(np.isnan(lower)):
                     ax.fill_between(
-                        T_seg, lower, upper,
-                        alpha=0.15, color=color,
+                        T_seg,
+                        lower,
+                        upper,
+                        alpha=0.15,
+                        color=color,
                     )
     else:
         ax.axhline(y=0, linestyle=(0, (5, 1)), linewidth=1.5, color=(0.4, 0.4, 0.4))
@@ -131,12 +132,8 @@ def plot(
 
     if not plot_outliers:
         # Ignores crazy points when plotting based on iqr
-        ylim = IQR_outlier(
-            meter_eval["observed"].values, sigma_threshold=1.0, quantile=0.025
-        )
-        ylim_idx = [
-            np.argmin(np.abs(x - meter_eval["observed"].values), axis=0) for x in ylim
-        ]
+        ylim = IQR_outlier(meter_eval["observed"].values, sigma_threshold=1.0, quantile=0.025)
+        ylim_idx = [np.argmin(np.abs(x - meter_eval["observed"].values), axis=0) for x in ylim]
         ylim = meter_eval["observed"].values[ylim_idx]
     else:
         ylim = np.quantile(meter_eval["observed"], [0, 1])

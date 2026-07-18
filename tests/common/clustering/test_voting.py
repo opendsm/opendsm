@@ -45,26 +45,26 @@ class TestBuildRankMatrix:
     def test_nan_in_abstain_mask_inf_not(self):
         """NaN score -> abstain_mask entry; inf score -> active worst, not in mask."""
         results = [
-            _proxy({'m': float('nan')}),  # candidate 0: abstain
-            _proxy({'m': float('inf')}),  # candidate 1: active worst
-            _proxy({'m': 1.0}),           # candidate 2: normal
+            _proxy({"m": float("nan")}),  # candidate 0: abstain
+            _proxy({"m": float("inf")}),  # candidate 1: active worst
+            _proxy({"m": 1.0}),  # candidate 2: normal
         ]
         score_matrix, voter_names, mask = build_rank_matrix(results)
         assert isinstance(score_matrix, np.ndarray)
         assert isinstance(voter_names, list)
         assert isinstance(mask, dict)
-        assert 0 in mask['m']     # NaN -> abstain
-        assert 1 not in mask['m'] # inf -> active worst, not abstain
+        assert 0 in mask["m"]  # NaN -> abstain
+        assert 1 not in mask["m"]  # inf -> active worst, not abstain
 
     def test_all_inf_column_present_in_raw_matrix(self):
         """All-inf columns are included in the raw score matrix (dropped later in voting)."""
         results = [
-            _proxy({'m': 1.0, 'n': float('inf')}),
-            _proxy({'m': 2.0, 'n': float('inf')}),
+            _proxy({"m": 1.0, "n": float("inf")}),
+            _proxy({"m": 2.0, "n": float("inf")}),
         ]
         score_matrix, voter_names, mask = build_rank_matrix(results)
-        assert 'm' in voter_names
-        assert 'n' in voter_names  # still present in raw output
+        assert "m" in voter_names
+        assert "n" in voter_names  # still present in raw output
 
 
 class TestAbstainSemantics:
@@ -86,21 +86,21 @@ class TestAbstainSemantics:
     def test_inf_score_participates_but_ranks_last(self):
         """inf score is an active worst vote: candidate participates, ranks last."""
         results = [
-            _proxy({'m': float('inf')}),  # candidate 0: active worst
-            _proxy({'m': 1.0}),           # candidate 1: best
+            _proxy({"m": float("inf")}),  # candidate 0: active worst
+            _proxy({"m": 1.0}),  # candidate 1: best
         ]
         score_matrix, voter_names, mask = build_rank_matrix(results)
-        assert 0 not in mask.get('m', set())
+        assert 0 not in mask.get("m", set())
         assert score_matrix[0, 0] > score_matrix[1, 0]
 
     def test_full_pipeline_nan_abstain_does_not_penalise_winner(self):
         """End-to-end: a voter with NaN on a candidate doesn't penalise that candidate."""
         results = [
-            _proxy({'m': 1.0, 'n': float('nan')}),  # candidate 0
-            _proxy({'m': 2.0, 'n': 0.5}),            # candidate 1
+            _proxy({"m": 1.0, "n": float("nan")}),  # candidate 0
+            _proxy({"m": 2.0, "n": 0.5}),  # candidate 1
         ]
         score_matrix, voter_names, _ = build_rank_matrix(results)
-        council = {'m': 1.0, 'n': 1.0}
+        council = {"m": 1.0, "n": 1.0}
         winner, conf = schulze_voting(score_matrix, voter_names, voter_weights=council)
         assert winner == 0
         assert conf == pytest.approx(1.0)
@@ -111,9 +111,11 @@ class TestSchulzePairwisePreference:
 
     @pytest.mark.parametrize("i", [0, 1, 2])
     def test_diagonal_is_zero(self, i):
-        proxies = [_proxy({'v1': 0.0, 'v2': 1.0}),
-                   _proxy({'v1': 1.0, 'v2': 0.0}),
-                   _proxy({'v1': 2.0, 'v2': 2.0})]
+        proxies = [
+            _proxy({"v1": 0.0, "v2": 1.0}),
+            _proxy({"v1": 1.0, "v2": 0.0}),
+            _proxy({"v1": 2.0, "v2": 2.0}),
+        ]
         score_matrix, voter_names, _ = build_rank_matrix(proxies)
         rank, weights, _, abstain, norm = _build_rank_arrays(score_matrix, voter_names)
         P = _schulze_pairwise_preference(rank, weights, abstain, normalized_scores=norm)
@@ -121,17 +123,18 @@ class TestSchulzePairwisePreference:
 
     def test_weighted_voters(self):
         """Higher-weight voter dominates pairwise outcome."""
-        proxies = [_proxy({'v1': 0.0, 'v2': 1.0}),
-                   _proxy({'v1': 1.0, 'v2': 0.0})]
+        proxies = [_proxy({"v1": 0.0, "v2": 1.0}), _proxy({"v1": 1.0, "v2": 0.0})]
         score_matrix, voter_names, _ = build_rank_matrix(proxies)
-        weights_dict = {'v1': 10.0, 'v2': 1.0}
-        rank, weights, _, abstain, norm = _build_rank_arrays(score_matrix, voter_names, weights_dict)
+        weights_dict = {"v1": 10.0, "v2": 1.0}
+        rank, weights, _, abstain, norm = _build_rank_arrays(
+            score_matrix, voter_names, weights_dict
+        )
         P = _schulze_pairwise_preference(rank, weights, abstain, normalized_scores=norm)
         assert P[0, 1] > P[1, 0]
 
     def test_tie_gives_zero_preference(self):
         """Identical scores -> zero margin -> no preference for either candidate."""
-        proxies = [_proxy({'v1': 1.0}), _proxy({'v1': 1.0})]  # tie
+        proxies = [_proxy({"v1": 1.0}), _proxy({"v1": 1.0})]  # tie
         score_matrix, voter_names, _ = build_rank_matrix(proxies)
         rank, weights, _, abstain, norm = _build_rank_arrays(score_matrix, voter_names)
         P = _schulze_pairwise_preference(rank, weights, abstain, normalized_scores=norm)
@@ -146,17 +149,18 @@ class TestSchulzePathStrength:
         """Candidate 0 beats 1 and 2; 1 beats 2. Path strengths reflect dominance."""
         n = 3
         P = np.zeros((n, n))
-        P[0, 1] = 2; P[1, 0] = 1
-        P[1, 2] = 2; P[2, 1] = 1
-        P[0, 2] = 3; P[2, 0] = 0
+        P[0, 1] = 2
+        P[1, 0] = 1
+        P[1, 2] = 2
+        P[2, 1] = 1
+        P[0, 2] = 3
+        P[2, 0] = 0
 
         P_r = _schulze_path_strength(P.copy())
 
         np.testing.assert_allclose(
             P_r,
-            [[1.0, 2.0, 3.0],
-             [1.0, 1.0, 2.0],
-             [1.0, 1.0, 1.0]],
+            [[1.0, 2.0, 3.0], [1.0, 1.0, 2.0], [1.0, 1.0, 1.0]],
             err_msg="Path strength regression values changed",
         )
 
@@ -167,9 +171,12 @@ class TestSchulzeRankStrength:
     def test_clear_winner_accumulates_positive_margin(self):
         n = 3
         P = np.zeros((n, n))
-        P[0, 1] = 10; P[1, 0] = 5
-        P[0, 2] = 10; P[2, 0] = 5
-        P[1, 2] = 6;  P[2, 1] = 6
+        P[0, 1] = 10
+        P[1, 0] = 5
+        P[0, 2] = 10
+        P[2, 0] = 5
+        P[1, 2] = 6
+        P[2, 1] = 6
 
         wins = _schulze_rank_strength(P)
 
@@ -189,119 +196,141 @@ class TestSchulzeVoting:
 
     def test_clear_majority_winner(self):
         """Candidate preferred by most voters wins."""
-        sm, vn = self._make([
-            {'v1': 2.0, 'v2': 2.0, 'v3': 1.0},   # candidate 0
-            {'v1': 1.0, 'v2': 1.0, 'v3': 2.0},   # candidate 1
-            {'v1': 0.0, 'v2': 0.0, 'v3': 0.0},   # candidate 2 -- lowest score = best
-            {'v1': 3.0, 'v2': 3.0, 'v3': 3.0},   # candidate 3
-        ])
+        sm, vn = self._make(
+            [
+                {"v1": 2.0, "v2": 2.0, "v3": 1.0},  # candidate 0
+                {"v1": 1.0, "v2": 1.0, "v3": 2.0},  # candidate 1
+                {"v1": 0.0, "v2": 0.0, "v3": 0.0},  # candidate 2 -- lowest score = best
+                {"v1": 3.0, "v2": 3.0, "v3": 3.0},  # candidate 3
+            ]
+        )
         assert schulze_voting(sm, vn)[0] == 2
 
     def test_condorcet_winner(self):
         """Candidate that beats all others head-to-head wins."""
-        sm, vn = self._make([
-            {'v1': 1.0, 'v2': 1.0, 'v3': 2.0},  # candidate 0
-            {'v1': 0.0, 'v2': 2.0, 'v3': 1.0},  # candidate 1
-            {'v1': 2.0, 'v2': 0.0, 'v3': 0.0},  # candidate 2 -- condorcet winner
-        ])
+        sm, vn = self._make(
+            [
+                {"v1": 1.0, "v2": 1.0, "v3": 2.0},  # candidate 0
+                {"v1": 0.0, "v2": 2.0, "v3": 1.0},  # candidate 1
+                {"v1": 2.0, "v2": 0.0, "v3": 0.0},  # candidate 2 -- condorcet winner
+            ]
+        )
         assert schulze_voting(sm, vn)[0] == 2
 
-    @pytest.mark.parametrize("weights,expected_winner", [
-        ({'v1': 10.0, 'v2': 1.0, 'v3': 1.0}, 0),
-        ({'v1': 1e10, 'v2': 1.0, 'v3': 1.0}, 0),
-    ])
+    @pytest.mark.parametrize(
+        "weights,expected_winner",
+        [
+            ({"v1": 10.0, "v2": 1.0, "v3": 1.0}, 0),
+            ({"v1": 1e10, "v2": 1.0, "v3": 1.0}, 0),
+        ],
+    )
     def test_weighted_voting(self, weights, expected_winner):
         """Voter with much higher weight dominates."""
-        sm, vn = self._make([
-            {'v1': 0.0, 'v2': 1.0, 'v3': 2.0},
-            {'v1': 1.0, 'v2': 0.0, 'v3': 1.0},
-            {'v1': 2.0, 'v2': 2.0, 'v3': 0.0},
-        ])
+        sm, vn = self._make(
+            [
+                {"v1": 0.0, "v2": 1.0, "v3": 2.0},
+                {"v1": 1.0, "v2": 0.0, "v3": 1.0},
+                {"v1": 2.0, "v2": 2.0, "v3": 0.0},
+            ]
+        )
         assert schulze_voting(sm, vn, voter_weights=weights)[0] == expected_winner
 
     def test_single_candidate(self):
-        sm, vn = self._make([{'v1': 0.0, 'v2': 0.0}])
+        sm, vn = self._make([{"v1": 0.0, "v2": 0.0}])
         winner, conf = schulze_voting(sm, vn)
         assert winner == 0
         assert conf == pytest.approx(1.0)
 
     def test_return_preference_df(self):
-        sm, vn = self._make([
-            {'v1': 0.0, 'v2': 1.0},
-            {'v1': 1.0, 'v2': 0.0},
-            {'v1': 2.0, 'v2': 2.0},
-        ])
+        sm, vn = self._make(
+            [
+                {"v1": 0.0, "v2": 1.0},
+                {"v1": 1.0, "v2": 0.0},
+                {"v1": 2.0, "v2": 2.0},
+            ]
+        )
         winner, conf, pref_df = schulze_voting(sm, vn, return_preference_df=True)
         assert isinstance(pref_df, pd.DataFrame)
-        assert 'wins' in pref_df.columns
-        assert winner == int(np.argmax(pref_df['wins'].to_numpy()))
+        assert "wins" in pref_df.columns
+        assert winner == int(np.argmax(pref_df["wins"].to_numpy()))
         assert isinstance(conf, float)
         assert conf == pytest.approx(0.0)
 
     def test_window_smoothing_changes_result(self):
         """Gaussian smoothing over candidate scores can shift the winner."""
-        sm, vn = self._make([
-            {'v1': 2.0, 'v2': 1.0, 'v3': 2.0},
-            {'v1': 1.0, 'v2': 0.0, 'v3': 1.0},
-            {'v1': 0.0, 'v2': 2.0, 'v3': 0.0},
-            {'v1': 3.0, 'v2': 3.0, 'v3': 3.0},
-            {'v1': 4.0, 'v2': 4.0, 'v3': 4.0},
-        ])
-        w_no, c_no         = schulze_voting(sm, vn, window_size=0)
-        w_smooth, c_smooth  = schulze_voting(sm, vn, window_size=2)
+        sm, vn = self._make(
+            [
+                {"v1": 2.0, "v2": 1.0, "v3": 2.0},
+                {"v1": 1.0, "v2": 0.0, "v3": 1.0},
+                {"v1": 0.0, "v2": 2.0, "v3": 0.0},
+                {"v1": 3.0, "v2": 3.0, "v3": 3.0},
+                {"v1": 4.0, "v2": 4.0, "v3": 4.0},
+            ]
+        )
+        w_no, c_no = schulze_voting(sm, vn, window_size=0)
+        w_smooth, c_smooth = schulze_voting(sm, vn, window_size=2)
         assert w_no == 2
         assert c_no == pytest.approx(0.02564, abs=1e-3)
         assert w_smooth == 0
         assert c_smooth == pytest.approx(0.0, abs=0.03)
 
     def test_none_voter_weights_equals_equal_weights(self):
-        sm, vn = self._make([
-            {'v1': 0.0, 'v2': 1.0, 'v3': 2.0},
-            {'v1': 1.0, 'v2': 0.0, 'v3': 1.0},
-            {'v1': 2.0, 'v2': 2.0, 'v3': 0.0},
-        ])
-        w_none, _  = schulze_voting(sm, vn, voter_weights=None)
-        w_equal, _ = schulze_voting(sm, vn, voter_weights={'v1': 1.0, 'v2': 1.0, 'v3': 1.0})
+        sm, vn = self._make(
+            [
+                {"v1": 0.0, "v2": 1.0, "v3": 2.0},
+                {"v1": 1.0, "v2": 0.0, "v3": 1.0},
+                {"v1": 2.0, "v2": 2.0, "v3": 0.0},
+            ]
+        )
+        w_none, _ = schulze_voting(sm, vn, voter_weights=None)
+        w_equal, _ = schulze_voting(sm, vn, voter_weights={"v1": 1.0, "v2": 1.0, "v3": 1.0})
         assert w_none == w_equal
 
     def test_weight_scale_invariant(self):
         """Scaling all weights by a constant doesn't change the winner."""
-        sm, vn = self._make([
-            {'v1': 0.0, 'v2': 1.0},
-            {'v1': 1.0, 'v2': 0.0},
-            {'v1': 2.0, 'v2': 2.0},
-        ])
-        w1, _ = schulze_voting(sm, vn, voter_weights={'v1': 0.3, 'v2': 0.7})
-        w2, _ = schulze_voting(sm, vn, voter_weights={'v1': 300.0, 'v2': 700.0})
+        sm, vn = self._make(
+            [
+                {"v1": 0.0, "v2": 1.0},
+                {"v1": 1.0, "v2": 0.0},
+                {"v1": 2.0, "v2": 2.0},
+            ]
+        )
+        w1, _ = schulze_voting(sm, vn, voter_weights={"v1": 0.3, "v2": 0.7})
+        w2, _ = schulze_voting(sm, vn, voter_weights={"v1": 300.0, "v2": 700.0})
         assert w1 == w2
 
     def test_cyclic_preferences_resolves(self):
         """Condorcet paradox still produces a winner with zero confidence."""
-        sm, vn = self._make([
-            {'v1': 0.0, 'v2': 1.0, 'v3': 2.0},
-            {'v1': 1.0, 'v2': 2.0, 'v3': 0.0},
-            {'v1': 2.0, 'v2': 0.0, 'v3': 1.0},
-        ])
+        sm, vn = self._make(
+            [
+                {"v1": 0.0, "v2": 1.0, "v3": 2.0},
+                {"v1": 1.0, "v2": 2.0, "v3": 0.0},
+                {"v1": 2.0, "v2": 0.0, "v3": 1.0},
+            ]
+        )
         winner, conf = schulze_voting(sm, vn)
         assert winner == 0
         assert conf == pytest.approx(0.0)
 
     def test_missing_voter_in_weights_defaults_to_zero(self):
         """Voter absent from weights dict gets weight 0 (silenced)."""
-        sm, vn = self._make([
-            {'v1': 0.0, 'v2': 1.0, 'v3': 2.0},
-            {'v1': 1.0, 'v2': 0.0, 'v3': 1.0},
-            {'v1': 2.0, 'v2': 2.0, 'v3': 0.0},
-        ])
-        w_partial, conf = schulze_voting(sm, vn, voter_weights={'v1': 2.0, 'v2': 1.0})
+        sm, vn = self._make(
+            [
+                {"v1": 0.0, "v2": 1.0, "v3": 2.0},
+                {"v1": 1.0, "v2": 0.0, "v3": 1.0},
+                {"v1": 2.0, "v2": 2.0, "v3": 0.0},
+            ]
+        )
+        w_partial, conf = schulze_voting(sm, vn, voter_weights={"v1": 2.0, "v2": 1.0})
         assert w_partial == 0
         assert conf == pytest.approx(0.2, abs=1e-6)
 
     def test_many_candidates(self):
         n = 50
         rng = np.random.default_rng(0)
-        scores_list = [{'v1': float(i), 'v2': float(n - 1 - i), 'v3': float(rng.integers(n))}
-                       for i in range(n)]
+        scores_list = [
+            {"v1": float(i), "v2": float(n - 1 - i), "v3": float(rng.integers(n))} for i in range(n)
+        ]
         sm, vn = self._make(scores_list)
         winner, conf = schulze_voting(sm, vn)
         assert winner == 23
@@ -320,7 +349,9 @@ class TestScoreMagnitudeNormalization:
         sm = np.array([[0.1], [0.3], [0.5], [100.0]], dtype=np.float64)
         _, _, _, _, norm = _build_rank_arrays(sm, ["v1"])
         np.testing.assert_allclose(
-            norm[:, 0], [0.25, 0.4167, 0.5833, 1.0], atol=1e-3,
+            norm[:, 0],
+            [0.25, 0.4167, 0.5833, 1.0],
+            atol=1e-3,
             err_msg="MAD-clipped normalization regression values changed",
         )
         # Also verify outlier doesn't compress the range
@@ -338,10 +369,13 @@ class TestScoreMagnitudeNormalization:
             err_msg="Multi-voter normalization regression values changed",
         )
 
-    @pytest.mark.parametrize("value,expected", [
-        (np.inf, 1.0),
-        (-np.inf, 0.0),
-    ])
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            (np.inf, 1.0),
+            (-np.inf, 0.0),
+        ],
+    )
     def test_inf_maps_to_boundary(self, value, expected):
         """Positive inf maps to 1.0 (worst); negative inf maps to 0.0 (best)."""
         sm = np.array([[value], [0.1], [0.5]], dtype=np.float64)
@@ -391,19 +425,25 @@ class TestSchulzeConfidence:
 
     def test_unanimous_agreement_gives_high_confidence(self):
         """All voters agree -> confidence = 0.5 (score-magnitude pairwise)."""
-        sm, vn, _ = self._make([
-            {"v1": 0.0, "v2": 0.0}, {"v1": 1.0, "v2": 1.0}, {"v1": 2.0, "v2": 2.0},
-        ])
+        sm, vn, _ = self._make(
+            [
+                {"v1": 0.0, "v2": 0.0},
+                {"v1": 1.0, "v2": 1.0},
+                {"v1": 2.0, "v2": 2.0},
+            ]
+        )
         _, conf = schulze_voting(sm, vn)
         assert conf == pytest.approx(0.5, abs=0.01)
 
     def test_perfect_cycle_gives_zero_confidence(self):
         """Condorcet cycle -> confidence = 0.0."""
-        sm, vn, _ = self._make([
-            {"v1": 0.0, "v2": 1.0, "v3": 2.0},
-            {"v1": 1.0, "v2": 2.0, "v3": 0.0},
-            {"v1": 2.0, "v2": 0.0, "v3": 1.0},
-        ])
+        sm, vn, _ = self._make(
+            [
+                {"v1": 0.0, "v2": 1.0, "v3": 2.0},
+                {"v1": 1.0, "v2": 2.0, "v3": 0.0},
+                {"v1": 2.0, "v2": 0.0, "v3": 1.0},
+            ]
+        )
         _, conf = schulze_voting(sm, vn)
         assert conf == pytest.approx(0.0)
 
@@ -417,10 +457,16 @@ class TestKPenalty:
         voter_names = ["v"]
 
         no_penalty, _ = schulze_voting(
-            score_matrix, voter_names, candidate_k_values=[2, 5], k_penalty_strength=0.0,
+            score_matrix,
+            voter_names,
+            candidate_k_values=[2, 5],
+            k_penalty_strength=0.0,
         )
         with_penalty, _ = schulze_voting(
-            score_matrix, voter_names, candidate_k_values=[2, 5], k_penalty_strength=3.0,
+            score_matrix,
+            voter_names,
+            candidate_k_values=[2, 5],
+            k_penalty_strength=3.0,
         )
         assert no_penalty == 0
         assert with_penalty == 1
@@ -430,10 +476,13 @@ class TestKPenalty:
         score_matrix = np.array([[0.2], [0.8]])
         voter_names = ["v"]
         winner, _ = schulze_voting(
-            score_matrix, voter_names, candidate_k_values=[2, 5], k_penalty_strength=0.0,
+            score_matrix,
+            voter_names,
+            candidate_k_values=[2, 5],
+            k_penalty_strength=0.0,
         )
         assert winner == 0
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

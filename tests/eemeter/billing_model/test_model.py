@@ -23,7 +23,6 @@ from opendsm.eemeter.models.billing.data import (
 from opendsm.eemeter.models.billing.model import BillingModel
 
 
-
 @pytest.fixture(scope="session")
 def baseline_data(comstock_monthly):
     df_b, _ = comstock_monthly
@@ -39,6 +38,7 @@ def fitted_model(baseline_data):
 # ---------------------------------------------------------------------------
 # failure paths (no fit required for the unfitted case)
 # ---------------------------------------------------------------------------
+
 
 def test_predict_before_fit_raises(baseline_data):
     """Predicting before fitting raises RuntimeError."""
@@ -69,6 +69,7 @@ def test_to_dict_sets_developer_mode(fitted_model):
 # aggregation arithmetic identity
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.slow
 def test_monthly_aggregation_reducers(fitted_model, baseline_data):
     """Monthly aggregation sums energy and combines uncertainty in quadrature.
@@ -83,8 +84,8 @@ def test_monthly_aggregation_reducers(fitted_model, baseline_data):
 
     expected_predicted = native["predicted"].resample("MS").sum()
     expected_observed = native["observed"].resample("MS").sum()
-    expected_unc = native["predicted_unc"].resample("MS").apply(
-        lambda x: np.sqrt(np.sum(np.square(x)))
+    expected_unc = (
+        native["predicted_unc"].resample("MS").apply(lambda x: np.sqrt(np.sum(np.square(x))))
     )
     expected_temp = native["temperature"].resample("MS").mean()
 

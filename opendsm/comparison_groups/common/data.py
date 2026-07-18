@@ -33,16 +33,17 @@ def is_datetime(x: pd.Series) -> bool:
 
 
 class Data:
-    def __init__(self, 
-        loadshape_df: Optional[pd.DataFrame] = None, 
-        time_series_df: Optional[pd.DataFrame] = None, 
-        features_df: Optional[pd.DataFrame] = None, 
-        settings: Optional[Data_Settings] = None
+    def __init__(
+        self,
+        loadshape_df: Optional[pd.DataFrame] = None,
+        time_series_df: Optional[pd.DataFrame] = None,
+        features_df: Optional[pd.DataFrame] = None,
+        settings: Optional[Data_Settings] = None,
     ):
         if settings is None:
             if loadshape_df is None:
                 settings = Data_Settings()
-            else: # if loadshape is provided, then apply appropriate settings
+            else:  # if loadshape is provided, then apply appropriate settings
                 settings = Data_Settings(agg_type=None, loadshape_type=None, time_period=None)
 
         self._settings = settings
@@ -55,16 +56,16 @@ class Data:
 
         # basic error checking
         if loadshape_df is None and time_series_df is None and features_df is None:
-            raise ValueError(
-                "A loadshape, time series, or features dataframe must be provided."
-            )
+            raise ValueError("A loadshape, time series, or features dataframe must be provided.")
 
         elif loadshape_df is not None and time_series_df is not None:
             raise ValueError(
                 "Both loadshape dataframe and time series dataframe are provided. Please provide only one."
             )
 
-        if self._settings.time_period is not None and (loadshape_df is not None or time_series_df is None):
+        if self._settings.time_period is not None and (
+            loadshape_df is not None or time_series_df is None
+        ):
             # Time period should only be set if a time series dataframe is provided
             raise ValueError(
                 "Time period is set, but no time series dataframe is provided. Please provide a time series dataframe."
@@ -73,10 +74,9 @@ class Data:
         # set the data
         self._set_data(loadshape_df, time_series_df, features_df)
 
-
     def extend(self, other):
         """
-            Extend the current Data instance with the Data instance(s) in other by concatenating the features and loadshape dataframes.
+        Extend the current Data instance with the Data instance(s) in other by concatenating the features and loadshape dataframes.
         """
         if not isinstance(other, list):
             other = [other]
@@ -92,7 +92,6 @@ class Data:
                     self._loadshape = pd.concat([self._loadshape, data_instance.loadshape])
             else:
                 raise TypeError("All elements in other must be instances of Data")
-            
 
     def _find_groupby_columns(self) -> list:
         """
@@ -114,27 +113,26 @@ class Data:
 
         return cols
 
-
     def _add_index_columns_from_datetime(self, df: pd.DataFrame) -> pd.DataFrame:
         # Add hour column
         if "hour" in self._settings.time_period:
-            df["hour"] = df['datetime'].dt.hour
+            df["hour"] = df["datetime"].dt.hour
 
         # Add month column
         if "month" in self._settings.time_period:
-            df["month"] = df['datetime'].dt.month
+            df["month"] = df["datetime"].dt.month
 
         # Add day_of_week column
         if "day_of_week" in self._settings.time_period:
-            df["day_of_week"] = df['datetime'].dt.dayofweek
+            df["day_of_week"] = df["datetime"].dt.dayofweek
 
         # Add day_of_year column
         if "day_of_year" in self._settings.time_period:
-            df["day_of_year"] = df['datetime'].dt.dayofyear
+            df["day_of_year"] = df["datetime"].dt.dayofyear
 
         # Add weekday_weekend column
         if "weekday_weekend" in self._settings.time_period:
-            df["weekday_weekend"] = df['datetime'].dt.dayofweek
+            df["weekday_weekend"] = df["datetime"].dt.dayofweek
 
             # Setting the ordering to weekday, weekend
             df["weekday_weekend"] = (
@@ -145,17 +143,18 @@ class Data:
 
         # Add season column
         if "season" in self._settings.time_period:
-            df["season"] = df['datetime'].dt.month.map(self._settings.season._num_dict).map(
-                self._settings.season._order
+            df["season"] = (
+                df["datetime"]
+                .dt.month.map(self._settings.season._num_dict)
+                .map(self._settings.season._order)
             )
 
         return df
 
-
     def _create_values_for_interpolation(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Interpolate missing values in the dataframe based on the settings.
-        
+
         - create a new dataframe with id's and correct time column
         - join on new df and old
         - interpolate nan values
@@ -164,31 +163,31 @@ class Data:
         """
 
         if self._settings.interpolate_missing:
-            unique_ids = df['id'].unique()
+            unique_ids = df["id"].unique()
             unique_time_counts = None
 
-            if self._settings.time_period is None: # loadshape type dataframe
+            if self._settings.time_period is None:  # loadshape type dataframe
                 unique_time_counts = df["time"].max()
 
-            else: # timeseries type dataframe
+            else:  # timeseries type dataframe
                 unique_time_counts = _const.time_period_row_counts[self._settings.time_period]
 
-
             time_values = range(1, unique_time_counts + 1)
-            # Create the expected dataframe having the correct number of timestamps for each id    
-            df_expected = pd.DataFrame({
-                'id': np.repeat(unique_ids, unique_time_counts),
-                'time': np.tile(time_values, len(unique_ids))
-            })
+            # Create the expected dataframe having the correct number of timestamps for each id
+            df_expected = pd.DataFrame(
+                {
+                    "id": np.repeat(unique_ids, unique_time_counts),
+                    "time": np.tile(time_values, len(unique_ids)),
+                }
+            )
 
             # Join the expected dataframe with the input dataframe
-            df = df_expected.merge(df, how='left', on=['id', 'time'])
+            df = df_expected.merge(df, how="left", on=["id", "time"])
 
         return df
 
-
     def _validate_unstacked_loadshape(self, df: pd.DataFrame) -> pd.DataFrame:
-        unstacked_cols = df.columns.drop('id')
+        unstacked_cols = df.columns.drop("id")
         unstacked_cols = sorted(map(int, unstacked_cols))
 
         # TODO : Add the ids that are missing values to the excluded_ids dataframe
@@ -197,21 +196,21 @@ class Data:
         # if unstacked_cols != expected_cols:
         #     if not self._settings.INTERPOLATE_MISSING or unstacked_cols.count() < expected_cols.count() * self._settings.MIN_DATA_PCT_REQUIRED:
         #             raise ValueError(f"Unique time counts per id don't have the minimum time counts required")
-            
 
         # Find the missing columns and add them to df with NaN as the default value
         expected_cols = df.columns.union(range(1, max(unstacked_cols) + 1))
-        df.reindex(columns= expected_cols, fill_value=np.nan)
+        df.reindex(columns=expected_cols, fill_value=np.nan)
 
         if self._settings.interpolate_missing:
             # Get non-id columns
-            non_id_cols = df.columns[df.columns != 'id']
+            non_id_cols = df.columns[df.columns != "id"]
 
             # Perform interpolation on non-id columns and update the original DataFrame
-            df[non_id_cols] = df[non_id_cols].interpolate(method="linear", limit_direction="both", axis=1)
+            df[non_id_cols] = df[non_id_cols].interpolate(
+                method="linear", limit_direction="both", axis=1
+            )
 
         return df
-
 
     def _validate_format_loadshape(self, df: pd.DataFrame) -> pd.DataFrame:
         # Reset index to remove any existing index
@@ -224,11 +223,15 @@ class Data:
 
         if missing_columns:
             # TODO : handle the case when index is the id. Then we don't need to check for id in the columns. But how to ensure we don't have wrong index?
-            if "loadshape" in missing_columns and "time" in missing_columns and "id" not in missing_columns:
+            if (
+                "loadshape" in missing_columns
+                and "time" in missing_columns
+                and "id" not in missing_columns
+            ):
                 # Handle loadshapes in unstacked version
                 return self._validate_unstacked_loadshape(df)
-            
-            else:  
+
+            else:
                 raise ValueError(f"Missing columns in loadshape_df: {missing_columns}")
 
         # Check if all values are present in the columns as required
@@ -238,7 +241,9 @@ class Data:
         subset_columns = expected_columns[:-1]
 
         # To eliminate duplicates, sort the values by loadshape and the keep the first (i.e. the lowest) value
-        df = df.sort_values(by='loadshape', key=abs).drop_duplicates(subset=subset_columns, keep="first")
+        df = df.sort_values(by="loadshape", key=abs).drop_duplicates(
+            subset=subset_columns, keep="first"
+        )
 
         # Check that the minimum time counts per id is consistent for the input loadshape_df
         unique_time_counts = df["time"].max()
@@ -277,9 +282,7 @@ class Data:
                         excluded_ids = pd.DataFrame(
                             {
                                 "id": [id],
-                                "reason": [
-                                    "missing minimum number of values in loadshape_df"
-                                ],
+                                "reason": ["missing minimum number of values in loadshape_df"],
                             }
                         )
 
@@ -290,8 +293,8 @@ class Data:
             df = self._create_values_for_interpolation(df)
 
             # Fill NaN values with interpolation
-            df['loadshape'] = (
-                df.groupby("id")['loadshape']
+            df["loadshape"] = (
+                df.groupby("id")["loadshape"]
                 .apply(lambda x: x.interpolate(method="linear", limit_direction="both"))
                 .reset_index(drop=True)
             )
@@ -322,7 +325,7 @@ class Data:
                     excluded_ids["reason"] = "null values in features_df"
                     self._excluded_ids = pd.concat([self._excluded_ids, excluded_ids])
 
-        df = df[ ~df["id"].isin(self._excluded_ids["id"])]
+        df = df[~df["id"].isin(self._excluded_ids["id"])]
 
         # pivot the loadshape_df to have the time as columns
         df = df.pivot(index="id", columns=["time"], values="loadshape")
@@ -339,7 +342,6 @@ class Data:
         df.columns = df.columns.astype(int)
 
         return df
-
 
     def _validate_format_features(self, df: pd.DataFrame) -> pd.DataFrame:
         # Reset index to remove any existing index
@@ -360,25 +362,18 @@ class Data:
         # remove any rows with missing values
         df = df.dropna()
 
-        df.drop_duplicates(keep="first" , inplace = True)
+        df.drop_duplicates(keep="first", inplace=True)
 
         # drop any ids that are in excluded_ids from loadshape (or init)
         df = df[~df["id"].isin(self._excluded_ids["id"])]
-        df = (
-            df.reset_index()
-            .set_index("id")
-            .drop(columns="index", axis=1, errors="ignore")
-        )
+        df = df.reset_index().set_index("id").drop(columns="index", axis=1, errors="ignore")
 
         # sort by id
         df = df.sort_index()
 
         return df
 
-
-    def _convert_timeseries_to_loadshape(
-        self, time_series_df: pd.DataFrame
-    ) -> pd.DataFrame:
+    def _convert_timeseries_to_loadshape(self, time_series_df: pd.DataFrame) -> pd.DataFrame:
         """
         Arguments:
             Time series dataframe with columns = [id, datetime, observed, observed_error, modeled, modeled_error
@@ -409,7 +404,9 @@ class Data:
 
         # Check that the datetime column is actually of type datetime
         if is_datetime(base_df["datetime"]):
-            base_df["datetime"] = pd.to_datetime(base_df["datetime"], utc=True) #TODO: should this be utc=True? should this be applied to all datetime types?
+            base_df["datetime"] = pd.to_datetime(
+                base_df["datetime"], utc=True
+            )  # TODO: should this be utc=True? should this be applied to all datetime types?
         else:
             raise ValueError("The 'datetime' column must be of datetime type")
 
@@ -420,28 +417,33 @@ class Data:
         subset_columns = expected_columns[:-1]
 
         # To eliminate duplicates, sort the values by loadshape and the keep the first (i.e. the lowest) value
-        base_df = base_df.sort_values(by=df_type, key=abs).drop_duplicates(subset=subset_columns, keep="first")
+        base_df = base_df.sort_values(by=df_type, key=abs).drop_duplicates(
+            subset=subset_columns, keep="first"
+        )
 
-        base_df = self._add_index_columns_from_datetime(base_df) # Add month / day_of_week / hour / etc columns
+        base_df = self._add_index_columns_from_datetime(
+            base_df
+        )  # Add month / day_of_week / hour / etc columns
 
         # Check that each id has a minimum granularity lower than requested time period, otherwise we cannot aggregate
         # get minimum time interval per id
         base_df["time_diff"] = base_df.groupby("id")["datetime"].diff()
-        min_time_diff_per_id = base_df.groupby("id")["time_diff"].min() / np.timedelta64(1, 'm')
+        min_time_diff_per_id = base_df.groupby("id")["time_diff"].min() / np.timedelta64(1, "m")
 
         # Get the ids that have a higher minimum granularity than defined
-        if self._settings.time_period != 'month':
+        if self._settings.time_period != "month":
             invalid_ids = min_time_diff_per_id[
-                min_time_diff_per_id > _const.min_granularity_per_time_period[self._settings.time_period]
+                min_time_diff_per_id
+                > _const.min_granularity_per_time_period[self._settings.time_period]
             ].index.tolist()
 
         else:
             # Check that every ID has 12 months available.
-            unique_month_counts_per_id = base_df.groupby('id')['month'].nunique()
+            unique_month_counts_per_id = base_df.groupby("id")["month"].nunique()
             invalid_ids = unique_month_counts_per_id[unique_month_counts_per_id < 12].index.tolist()
 
         # Remove the invalid ids from the base_df
-        base_df = base_df[~base_df["id"].isin(invalid_ids)]        
+        base_df = base_df[~base_df["id"].isin(invalid_ids)]
 
         # If there are any invalid ids, add them to the excluded_ids dataframe
         if invalid_ids:
@@ -451,9 +453,7 @@ class Data:
                     "reason": "Minimum time interval is more than the specified TimePeriod",
                 }
             )
-            self._excluded_ids = pd.concat(
-                [self._excluded_ids, invalid_ids_df], ignore_index=True
-            )
+            self._excluded_ids = pd.concat([self._excluded_ids, invalid_ids_df], ignore_index=True)
 
         # Set the index to datetime
         base_df = base_df.set_index("datetime")
@@ -477,7 +477,6 @@ class Data:
 
         return loadshape_df
 
-
     def _trim_data(self) -> None:
         """
         Trim the loadshape and features dataframes to the maximum size allowed by the settings.
@@ -498,24 +497,17 @@ class Data:
             self._excluded_ids = pd.concat([self._excluded_ids, excluded_ids_df])
 
         if (self._loadshape is not None) and (len(excluded_ids) > 0):
-            self._loadshape = self._loadshape[
-                ~self._loadshape.index.isin(self._excluded_ids["id"])
-            ]
+            self._loadshape = self._loadshape[~self._loadshape.index.isin(self._excluded_ids["id"])]
 
         if (self._features is not None) and (len(excluded_ids) > 0):
-            self._features = self._features[
-                ~self._features.index.isin(self._excluded_ids["id"])
-            ]
+            self._features = self._features[~self._features.index.isin(self._excluded_ids["id"])]
 
-
-    def _set_data(
-        self, loadshape_df=None, time_series_df=None, features_df=None
-    ) -> None:
+    def _set_data(self, loadshape_df=None, time_series_df=None, features_df=None) -> None:
         """
             Loadshape, timeseries and features dataframes are input. The loadshape and features dataframes are validated and formatted.
             The timeseries dataframe is converted to a loadshape dataframe and then validated and formatted.
 
-            Time period is only set if a timeseries dataframe is provided. If a loadshape dataframe is provided, 
+            Time period is only set if a timeseries dataframe is provided. If a loadshape dataframe is provided,
             the aggregation type, loadshape type and time period all must be set to None.
 
             Either loadshape or timeseries data is allowed, but not both. Atleast one of them must be provided as well.
@@ -542,7 +534,7 @@ class Data:
         """
 
         if loadshape_df is not None:
-            if self._loadshape is not None :
+            if self._loadshape is not None:
                 raise ValueError("Loadshape Data has already been set.")
             elif self._settings.loadshape_type is not None:
                 raise ValueError("Loadshape Type cannot be set for a loadshape dataframe.")
@@ -562,13 +554,11 @@ class Data:
 
         if loadshape_df is not None:
             # If loadshape still has id as one of its columns, set it as index
-            if 'id' in loadshape_df.columns:
-                loadshape_df.set_index('id', inplace=True)
+            if "id" in loadshape_df.columns:
+                loadshape_df.set_index("id", inplace=True)
 
             # drop any ids that are in the excluded_ids list
-            loadshape_df = loadshape_df[
-                ~loadshape_df.index.isin(self._excluded_ids["id"])
-            ]
+            loadshape_df = loadshape_df[~loadshape_df.index.isin(self._excluded_ids["id"])]
 
         # Empty or absent dataframes become None, not an empty dataframe
         if features_df is not None and not features_df.empty:
@@ -589,19 +579,19 @@ class Data:
     @property
     def settings(self):
         return self._settings.model_copy()
-    
+
     @property
     def loadshape(self):
         if self._loadshape is None:
             return None
-        else :
+        else:
             return self._loadshape.copy()
-    
+
     @property
     def features(self):
         if self._features is None:
             return None
-        else :
+        else:
             return self._features.copy()
 
     @property
@@ -617,5 +607,5 @@ class Data:
     def excluded_ids(self):
         if self._excluded_ids is None:
             return None
-        else :
+        else:
             return self._excluded_ids.copy()

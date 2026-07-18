@@ -46,9 +46,7 @@ class HourlyReportingData:
         min_granularity = compute_minimum_granularity(meter.dropna().index, "unknown")
 
         if meter.index.inferred_freq is None and min_granularity != "hourly":
-            raise ValueError(
-                f"Meter Data must be atleast hourly, but is {min_granularity}."
-            )
+            raise ValueError(f"Meter Data must be atleast hourly, but is {min_granularity}.")
         else:
             # TODO : Add the high frequency check for meter data
             meter = meter.resample("h").sum(min_count=1)
@@ -123,8 +121,6 @@ class HourlyBaselineData(HourlyReportingData):
         temperature_data = temperature_data.rename(
             columns={temperature_data.columns[0]: "temperature"}
         )
-        temperature_data.index = temperature_data.index.tz_convert(
-            meter_data.index.tzinfo
-        )
+        temperature_data.index = temperature_data.index.tz_convert(meter_data.index.tzinfo)
         df = pd.concat([meter_data, temperature_data], axis=1).dropna()
         return cls(df, is_electricity_data)

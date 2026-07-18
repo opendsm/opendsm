@@ -77,9 +77,7 @@ def create_caltrack_hourly_preliminary_design_matrix(
     return design_matrix
 
 
-def create_caltrack_billing_design_matrix(
-    meter_data, temperature_data, degc: bool = False
-):
+def create_caltrack_billing_design_matrix(meter_data, temperature_data, degc: bool = False):
     """A helper function which calls basic feature creation methods to create a
     design matrix suitable for use with CalTRACK Billing methods.
 
@@ -114,9 +112,7 @@ def create_caltrack_billing_design_matrix(
     return design_matrix
 
 
-def create_caltrack_daily_design_matrix(
-    meter_data, temperature_data, degc: bool = False
-):
+def create_caltrack_daily_design_matrix(meter_data, temperature_data, degc: bool = False):
     """A helper function which calls basic feature creation methods to create a
     design matrix suitable for use with CalTRACK daily methods.
 

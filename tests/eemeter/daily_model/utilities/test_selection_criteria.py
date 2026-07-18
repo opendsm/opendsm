@@ -63,9 +63,7 @@ def test_selection_criteria():
     TSS = 10.0
     N = 10
     num_coeffs = 2
-    result = selection_criteria(
-        loss, TSS, N, num_coeffs, model_selection_criteria="rmse"
-    )
+    result = selection_criteria(loss, TSS, N, num_coeffs, model_selection_criteria="rmse")
     expected = np.sqrt(loss / N)
     assert np.allclose(result, expected)
 
@@ -74,9 +72,7 @@ def test_selection_criteria():
     TSS = 10.0
     N = 10
     num_coeffs = 2
-    result = selection_criteria(
-        loss, TSS, N, num_coeffs, model_selection_criteria="rmse_adj"
-    )
+    result = selection_criteria(loss, TSS, N, num_coeffs, model_selection_criteria="rmse_adj")
     expected = np.sqrt(loss / (N - num_coeffs - 1))
     assert np.allclose(result, expected)
 
@@ -85,9 +81,7 @@ def test_selection_criteria():
     TSS = 10.0
     N = 10
     num_coeffs = 2
-    result = selection_criteria(
-        loss, TSS, N, num_coeffs, model_selection_criteria="r_squared"
-    )
+    result = selection_criteria(loss, TSS, N, num_coeffs, model_selection_criteria="r_squared")
     expected = (1 - (1 - loss / TSS)) * 10
     assert np.allclose(result, expected)
 
@@ -96,9 +90,7 @@ def test_selection_criteria():
     TSS = 10.0
     N = 10
     num_coeffs = 2
-    result = selection_criteria(
-        loss, TSS, N, num_coeffs, model_selection_criteria="r_squared_adj"
-    )
+    result = selection_criteria(loss, TSS, N, num_coeffs, model_selection_criteria="r_squared_adj")
     expected = 1.2857142857142856
     assert np.allclose(result, expected)
 
@@ -107,9 +99,7 @@ def test_selection_criteria():
     TSS = 10.0
     N = 10
     num_coeffs = 2
-    result = selection_criteria(
-        loss, TSS, N, num_coeffs, model_selection_criteria="fpe"
-    )
+    result = selection_criteria(loss, TSS, N, num_coeffs, model_selection_criteria="fpe")
     expected = 0.18571428571428572
     assert np.allclose(result, expected)
 
@@ -118,9 +108,7 @@ def test_selection_criteria():
     TSS = 10.0
     N = 10
     num_coeffs = 2
-    result = selection_criteria(
-        loss, TSS, N, num_coeffs, model_selection_criteria="aic"
-    )
+    result = selection_criteria(loss, TSS, N, num_coeffs, model_selection_criteria="aic")
     expected = 0.9352919734152998
     assert np.allclose(result, expected)
 
@@ -129,9 +117,7 @@ def test_selection_criteria():
     TSS = 10.0
     N = 10
     num_coeffs = 2
-    result = selection_criteria(
-        loss, TSS, N, num_coeffs, model_selection_criteria="aicc"
-    )
+    result = selection_criteria(loss, TSS, N, num_coeffs, model_selection_criteria="aicc")
     expected = 1.1067205448438713
     assert np.allclose(result, expected)
 
@@ -140,9 +126,7 @@ def test_selection_criteria():
     TSS = 10.0
     N = 10
     num_coeffs = 2
-    result = selection_criteria(
-        loss, TSS, N, num_coeffs, model_selection_criteria="caic"
-    )
+    result = selection_criteria(loss, TSS, N, num_coeffs, model_selection_criteria="caic")
     expected = 1.195808992014109
     assert np.allclose(result, expected)
 
@@ -151,9 +135,7 @@ def test_selection_criteria():
     TSS = 10.0
     N = 10
     num_coeffs = 2
-    result = selection_criteria(
-        loss, TSS, N, num_coeffs, model_selection_criteria="bic"
-    )
+    result = selection_criteria(loss, TSS, N, num_coeffs, model_selection_criteria="bic")
     expected = 0.9958089920141091
     assert np.allclose(result, expected)
 
@@ -162,9 +144,7 @@ def test_selection_criteria():
     TSS = 10.0
     N = 10
     num_coeffs = 2
-    result = selection_criteria(
-        loss, TSS, N, num_coeffs, model_selection_criteria="sabic"
-    )
+    result = selection_criteria(loss, TSS, N, num_coeffs, model_selection_criteria="sabic")
     expected = 0.3966625373033108
     assert np.allclose(result, expected)
 

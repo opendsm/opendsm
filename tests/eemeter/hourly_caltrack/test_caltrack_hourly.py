@@ -53,9 +53,7 @@ def segmented_data():
 def occupancy_lookup():
     index = pd.Categorical(range(168))
     occupancy = pd.Series([i % 2 == 0 for i in range(168)], index=index)
-    return pd.DataFrame(
-        {"dec-jan-feb-weighted": occupancy, "jan-feb-mar-weighted": occupancy}
-    )
+    return pd.DataFrame({"dec-jan-feb-weighted": occupancy, "jan-feb-mar-weighted": occupancy})
 
 
 @pytest.fixture
@@ -396,9 +394,7 @@ def test_fit_caltrack_hourly_model_nans_less_than_week_fit(
     )
 
     assert segmented_model_results.model.segment_models is not None
-    prediction = segmented_model_results.predict(
-        temps_extended.index, temps_extended
-    ).result
+    prediction = segmented_model_results.predict(temps_extended.index, temps_extended).result
     assert prediction.shape[0] == 168
     assert prediction.dropna().shape[0] == 4
 
@@ -448,9 +444,7 @@ def test_predict_caltrack_hourly_model_empty_models(
 def occupancy_lookup_zeroes():
     index = pd.Categorical(range(168))
     occupancy = pd.Series([False] * 168, index=index)
-    return pd.DataFrame(
-        {"dec-jan-feb-weighted": occupancy, "jan-feb-mar-weighted": occupancy}
-    )
+    return pd.DataFrame({"dec-jan-feb-weighted": occupancy, "jan-feb-mar-weighted": occupancy})
 
 
 @pytest.fixture
@@ -498,7 +492,9 @@ def test_json_hourly_with_zeros(comstock_hourly):
 
     baseline = HourlyCaltrackBaselineData.from_series(meter, temperature, is_electricity_data=True)
     assert baseline.df["observed"].isnull().all()
-    reporting = HourlyCaltrackReportingData.from_series(meter, temperature, is_electricity_data=True)
+    reporting = HourlyCaltrackReportingData.from_series(
+        meter, temperature, is_electricity_data=True
+    )
     assert reporting.df["observed"].isnull().all()
 
 
@@ -509,10 +505,14 @@ def test_json_caltrack_hourly(comstock_hourly):
     meter_r = df_r[["observed"]].rename(columns={"observed": "value"}).copy()
     temperature = df_b["temperature"]
 
-    baseline = HourlyCaltrackBaselineData.from_series(meter_b, temperature, is_electricity_data=True)
+    baseline = HourlyCaltrackBaselineData.from_series(
+        meter_b, temperature, is_electricity_data=True
+    )
     baseline_model = HourlyCaltrackModel().fit(baseline)
 
-    reporting = HourlyCaltrackReportingData.from_series(meter_r, df_r["temperature"], is_electricity_data=True)
+    reporting = HourlyCaltrackReportingData.from_series(
+        meter_r, df_r["temperature"], is_electricity_data=True
+    )
     result1 = baseline_model.predict(reporting)
 
     json_str = baseline_model.to_json()
@@ -535,7 +535,9 @@ def test_legacy_deserialization_hourly(request, comstock_hourly, snapshot):
     meter = df_r[["observed"]].rename(columns={"observed": "value"}).copy()
     temperature = df_r["temperature"]
 
-    reporting = HourlyCaltrackReportingData.from_series(meter, temperature, is_electricity_data=True)
+    reporting = HourlyCaltrackReportingData.from_series(
+        meter, temperature, is_electricity_data=True
+    )
     metered_savings_dataframe = baseline_model.predict(reporting)
     total_metered_savings = (
         metered_savings_dataframe["observed"] - metered_savings_dataframe["predicted"]

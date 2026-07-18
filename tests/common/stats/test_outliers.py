@@ -21,7 +21,6 @@ from opendsm.common.stats.outliers import (
 )
 
 
-
 def test_iqr_outlier_analytic_bounds():
     """Bounds match the closed form: [q1 - k·IQR, q3 + k·IQR], k=0.7413σ-0.5."""
     x = np.array([1.0, 2.0, 3.0, 4.0, 5.0])

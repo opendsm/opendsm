@@ -12,8 +12,10 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from opendsm.comparison_groups.stratified_sampling.create_comparison_groups import Stratified_Sampling
+from opendsm.comparison_groups.stratified_sampling.create_comparison_groups import (
+    Stratified_Sampling,
+)
 from opendsm.comparison_groups.stratified_sampling.settings import (
-    StratifiedSamplingSettings as SS_Settings, 
+    StratifiedSamplingSettings as SS_Settings,
     DistanceStratifiedSamplingSettings as DSS_Settings,
 )

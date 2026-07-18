@@ -59,15 +59,11 @@ class NormalizeSettings(BaseSettings):
     @pydantic.model_validator(mode="after")
     def _check_quantile(self):
         if self.method == NormalizeChoice.MIN_MAX_QUANTILE and self.quantile is None:
-            raise ValueError(
-                f"'quantile' must be specified when 'method' is '{self.method.value}'"
-            )
+            raise ValueError(f"'quantile' must be specified when 'method' is '{self.method.value}'")
         return self
 
     @pydantic.model_validator(mode="after")
     def _check_enable(self):
         if self.enabled and self.method is None:
-            raise ValueError(
-                "'method' must be specified if 'enabled' is True"
-            )
+            raise ValueError("'method' must be specified if 'enabled' is True")
         return self

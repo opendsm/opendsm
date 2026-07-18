@@ -19,7 +19,6 @@ from opendsm.common.base_settings import CustomField
 from opendsm.eemeter.models.daily.utilities.settings import DailyLegacySettings
 
 
-
 class BillingSettings(DailyLegacySettings):
     segment_minimum_count: int = CustomField(
         default=3,

@@ -44,17 +44,24 @@ from opendsm.common.stats.distribution_transform._bc_yj_shared import (
 # Scalar kernels
 # ---------------------------------------------------------------------------
 
+
 @numba.jit(nopython=True, error_model="numpy", cache=True)
 def _bc(x, lam, deriv):
     """Scalar Box-Cox value or x-derivative at a single point."""
     if not deriv:
-        if   (lam != 0): return (x**lam - 1) / lam
-        elif (lam == 0): return np.log(x)
-        else:            return np.nan
+        if lam != 0:
+            return (x**lam - 1) / lam
+        elif lam == 0:
+            return np.log(x)
+        else:
+            return np.nan
     else:
-        if   (lam != 0): return x**(lam - 1)
-        elif (lam == 0): return 1 / x
-        else:            return np.nan
+        if lam != 0:
+            return x ** (lam - 1)
+        elif lam == 0:
+            return 1 / x
+        else:
+            return np.nan
 
 
 @numba.jit(nopython=True, error_model="numpy", cache=True)
@@ -71,6 +78,7 @@ def _bc_inverse(y, lam):
 # ---------------------------------------------------------------------------
 # Vectorized transforms
 # ---------------------------------------------------------------------------
+
 
 @numba.jit(nopython=True, error_model="numpy", cache=True)
 def bc_transform(x, lam):
@@ -96,19 +104,26 @@ def _bc_rectified_transform(x, lam, Q):
     q1, q3 = Q[0], Q[1]
     n = len(x)
 
-    hq1 = _bc(q1, lam, _WANT_VALUE);  dq1 = _bc(q1, lam, _WANT_DERIV)
-    hq3 = _bc(q3, lam, _WANT_VALUE);  dq3 = _bc(q3, lam, _WANT_DERIV)
+    hq1 = _bc(q1, lam, _WANT_VALUE)
+    dq1 = _bc(q1, lam, _WANT_DERIV)
+    hq3 = _bc(q3, lam, _WANT_VALUE)
+    dq3 = _bc(q3, lam, _WANT_DERIV)
 
     h = np.empty_like(x)
 
     lo = 0
-    while lo < n and x[lo] < q1: lo += 1
+    while lo < n and x[lo] < q1:
+        lo += 1
     hi = lo
-    while hi < n and x[hi] < q3: hi += 1
+    while hi < n and x[hi] < q3:
+        hi += 1
 
-    for i in range(lo):      h[i] = hq1 + (x[i] - q1) * dq1
-    for i in range(lo, hi):  h[i] = _bc(x[i], lam, _WANT_VALUE)
-    for i in range(hi, n):   h[i] = hq3 + (x[i] - q3) * dq3
+    for i in range(lo):
+        h[i] = hq1 + (x[i] - q1) * dq1
+    for i in range(lo, hi):
+        h[i] = _bc(x[i], lam, _WANT_VALUE)
+    for i in range(hi, n):
+        h[i] = hq3 + (x[i] - q3) * dq3
 
     return h
 
@@ -116,6 +131,7 @@ def _bc_rectified_transform(x, lam, Q):
 # ---------------------------------------------------------------------------
 # Fitting kernels
 # ---------------------------------------------------------------------------
+
 
 @numba.jit(nopython=True, error_model="numpy", cache=True)
 def _bc_hg(x, lam):
@@ -128,7 +144,8 @@ def _bc_hg(x, lam):
     if -_LAM_EPS < lam < _LAM_EPS:
         l = np.log(x)
         return l, 0.5 * l * l
-    u = x ** lam;  l = np.log(x)
+    u = x**lam
+    l = np.log(x)
     h = (u - 1.0) / lam
     g = (u * (lam * l - 1.0) + 1.0) / (lam * lam)
     return h, g
@@ -137,13 +154,20 @@ def _bc_hg(x, lam):
 @numba.jit(nopython=True, error_model="numpy", cache=True)
 def _bc_var_dvar(x, lam, weight, W):
     """Weighted variance V and dV/dλ for BC in a single pass."""
-    S1 = 0.0;  S2 = 0.0;  S3 = 0.0;  S4 = 0.0
+    S1 = 0.0
+    S2 = 0.0
+    S3 = 0.0
+    S4 = 0.0
     for i in range(len(x)):
         h, g = _bc_hg(x[i], lam)
-        w = weight[i];  wh = w * h
-        S1 += wh;  S2 += wh * h;  S3 += w * g;  S4 += wh * g
+        w = weight[i]
+        wh = w * h
+        S1 += wh
+        S2 += wh * h
+        S3 += w * g
+        S4 += wh * g
     mu_w = S1 / W
-    V  = S2 / W - mu_w * mu_w
+    V = S2 / W - mu_w * mu_w
     dV = 2.0 * (S4 / W - mu_w * S3 / W)
     return V, dV
 
@@ -160,10 +184,13 @@ def _bc_apply(x_sorted, lam, idx):
 @numba.jit(nopython=True, error_model="numpy", cache=True)
 def _bc_mle_obj(x_sorted, lam, weight, W, J):
     """Weighted negative log-likelihood for BC: ½W·log V − (λ−1)·J."""
-    S1 = 0.0;  S2 = 0.0
+    S1 = 0.0
+    S2 = 0.0
     for i in range(len(x_sorted)):
-        h = _bc(x_sorted[i], lam, _WANT_VALUE);  wh = weight[i] * h
-        S1 += wh;  S2 += wh * h
+        h = _bc(x_sorted[i], lam, _WANT_VALUE)
+        wh = weight[i] * h
+        S1 += wh
+        S2 += wh * h
     mu_w = S1 / W
     V = S2 / W - mu_w * mu_w
     return 0.5 * np.log(max(V, 1e-300)) * W - (lam - 1) * J
@@ -172,29 +199,43 @@ def _bc_mle_obj(x_sorted, lam, weight, W, J):
 @numba.jit(nopython=True, error_model="numpy", cache=True)
 def _bc_tukey_loss(x, lam, Q, phi, inv_c):
     """Tukey bisquare loss for BC."""
-    q1, q3 = Q[0], Q[1];  n = len(x)
+    q1, q3 = Q[0], Q[1]
+    n = len(x)
 
-    hq1 = _bc(q1, lam, _WANT_VALUE);  dq1 = _bc(q1, lam, _WANT_DERIV)
-    hq3 = _bc(q3, lam, _WANT_VALUE);  dq3 = _bc(q3, lam, _WANT_DERIV)
+    hq1 = _bc(q1, lam, _WANT_VALUE)
+    dq1 = _bc(q1, lam, _WANT_DERIV)
+    hq3 = _bc(q3, lam, _WANT_VALUE)
+    dq3 = _bc(q3, lam, _WANT_DERIV)
 
     lo = 0
-    while lo < n and x[lo] < q1: lo += 1
+    while lo < n and x[lo] < q1:
+        lo += 1
     hi = lo
-    while hi < n and x[hi] < q3: hi += 1
+    while hi < n and x[hi] < q3:
+        hi += 1
 
     total = 0.0
     for i in range(lo):
         t = (hq1 + (x[i] - q1) * dq1 - phi[i]) * inv_c
-        if -1.0 < t < 1.0: s = 1.0 - t * t;  total += 1.0 - s * s * s
-        else:               total += 1.0
+        if -1.0 < t < 1.0:
+            s = 1.0 - t * t
+            total += 1.0 - s * s * s
+        else:
+            total += 1.0
     for i in range(lo, hi):
         t = (_bc(x[i], lam, _WANT_VALUE) - phi[i]) * inv_c
-        if -1.0 < t < 1.0: s = 1.0 - t * t;  total += 1.0 - s * s * s
-        else:               total += 1.0
+        if -1.0 < t < 1.0:
+            s = 1.0 - t * t
+            total += 1.0 - s * s * s
+        else:
+            total += 1.0
     for i in range(hi, n):
         t = (hq3 + (x[i] - q3) * dq3 - phi[i]) * inv_c
-        if -1.0 < t < 1.0: s = 1.0 - t * t;  total += 1.0 - s * s * s
-        else:               total += 1.0
+        if -1.0 < t < 1.0:
+            s = 1.0 - t * t
+            total += 1.0 - s * s * s
+        else:
+            total += 1.0
     return total
 
 
@@ -202,9 +243,10 @@ def _bc_tukey_loss(x, lam, Q, phi, inv_c):
 # Fitting algorithm
 # ---------------------------------------------------------------------------
 
+
 def _bc_initial_obj(x_sorted, Q):
     """Iteration-0 objective for BC: Tukey bisquare quantile-matching."""
-    phi   = _normal_scores(len(x_sorted))
+    phi = _normal_scores(len(x_sorted))
     inv_c = 1.0 / _TUKEY_C
 
     def obj_fn(lam):
@@ -217,7 +259,7 @@ def _bc_refinement_fns(x_sorted, lam_prev, Q, outlier_alpha):
     """Build BC refinement objective and gradient at the current lambda estimate."""
     h_rect = _bc_rectified_transform(x_sorted, lam_prev, Q)
     mu, sigma = robust_mu_sigma(h_rect, "huber_m_estimate", c=_C_HUBER, tol=1e-08)
-    mu    = float(np.asarray(mu).flat[0])
+    mu = float(np.asarray(mu).flat[0])
     sigma = float(np.asarray(sigma).flat[0])
     if sigma == 0.0:
         sigma = 1.0
@@ -259,6 +301,7 @@ def _fit_bc_lambda(x, **kwargs):
 # Class-based API
 # ---------------------------------------------------------------------------
 
+
 class BoxCox(PowerTransformMixin, TransformBase):
     """Per-dimension Box-Cox power transform with invertibility.
 
@@ -297,14 +340,18 @@ class BoxCox(PowerTransformMixin, TransformBase):
         if np.any(col_f <= 0):
             warnings.warn(
                 f"BoxCox: dim {d} has non-positive values; skipping.",
-                RuntimeWarning, stacklevel=5,
+                RuntimeWarning,
+                stacklevel=5,
             )
             self.skip_dims_[d] = True
             return
 
         log_col = np.log(col_f)
         mu_pre, sigma_pre = robust_mu_sigma(
-            log_col, "huber_m_estimate", c=_C_HUBER, tol=1e-08,
+            log_col,
+            "huber_m_estimate",
+            c=_C_HUBER,
+            tol=1e-08,
         )
         mu_pre = float(np.asarray(mu_pre).flat[0])
         sigma_pre = float(np.asarray(sigma_pre).flat[0])
@@ -325,7 +372,10 @@ class BoxCox(PowerTransformMixin, TransformBase):
             raw_bc, lam = _scipy_boxcox(col_std, lmbda=None)
 
         mu_post, sigma_post = robust_mu_sigma(
-            raw_bc, "huber_m_estimate", c=_C_HUBER, tol=1e-08,
+            raw_bc,
+            "huber_m_estimate",
+            c=_C_HUBER,
+            tol=1e-08,
         )
         mu_post = float(np.asarray(mu_post).flat[0])
         sigma_post = float(np.asarray(sigma_post).flat[0])

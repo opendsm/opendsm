@@ -49,6 +49,7 @@ from opendsm.eemeter.models.daily.utilities.ellipsoid_test import ellipsoid_spli
 from opendsm.eemeter.models.daily.utilities.selection_criteria import selection_criteria
 from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict
 
+
 class DailyModel:
     """
     A class to fit a model to the input meter data.
@@ -109,17 +110,13 @@ class DailyModel:
             "sh": "shoulder",
             "wi": "winter",
             "fw": [n + 1 for n in n_week],
-            "wd": [n + 1 for n in n_week if day_dict[n+1] == "weekday"],
-            "we": [n + 1 for n in n_week if day_dict[n+1] == "weekend"],
+            "wd": [n + 1 for n in n_week if day_dict[n + 1] == "weekday"],
+            "we": [n + 1 for n in n_week if day_dict[n + 1] == "weekend"],
         }
         self.verbose = verbose
         self.is_fitted = False
 
-    def _initialize_settings(
-        self,
-        model: str = "current",
-        settings: dict | None = None
-    ) -> None:
+    def _initialize_settings(self, model: str = "current", settings: dict | None = None) -> None:
 
         # Note: Model designates the base settings, it can be 'current' or 'legacy'
         #       Settings is to be a dictionary of settings to be changed
@@ -132,14 +129,10 @@ class DailyModel:
         elif model.replace(" ", "").replace("_", ".").lower() in ["legacy"]:
             self.settings = DailyLegacySettings(**settings)
         else:
-            raise Exception(
-                "Invalid 'settings' choice: must be 'current', 'default', or 'legacy'"
-            )
+            raise Exception("Invalid 'settings' choice: must be 'current', 'default', or 'legacy'")
 
     def fit(
-        self, 
-        baseline_data: DailyBaselineData, 
-        ignore_disqualification: bool = False
+        self, baseline_data: DailyBaselineData, ignore_disqualification: bool = False
     ) -> DailyModel:
         """Fit the model using baseline data.
 
@@ -276,9 +269,7 @@ class DailyModel:
                 index=eval_segment.index,
             )
             df_model["model_split"] = component_key
-            df_model["model_type"] = self.params.submodels[
-                component_key
-            ].model_type.value
+            df_model["model_type"] = self.params.submodels[component_key].model_type.value
 
             df_all_models.append(df_model)
 
@@ -305,7 +296,7 @@ class DailyModel:
             if cvrmse is not None:
                 if (0 <= cvrmse) and (cvrmse <= cvrmse_threshold):
                     return True
-                
+
             if pnrmse is not None:
                 # less than 0 is not possible, but just in case
                 if (0 <= pnrmse) and (pnrmse <= pnrmse_threshold):
@@ -326,7 +317,7 @@ class DailyModel:
             )
             model_fit_warning.warn()
             self.disqualification.append(model_fit_warning)
-            
+
     def to_dict(self) -> dict:
         """Returns a dictionary of model parameters.
 
@@ -377,9 +368,7 @@ class DailyModel:
                 )
             return warn_list
 
-        daily_model.disqualification = deserialize_warnings(
-            info.get("disqualification")
-        )
+        daily_model.disqualification = deserialize_warnings(info.get("disqualification"))
         daily_model.warnings = deserialize_warnings(info.get("warnings"))
         daily_model.baseline_timezone = info.get("baseline_timezone")
         if info.get("metrics") is not None:
@@ -530,7 +519,9 @@ class DailyModel:
 
         meter_data["season"] = meter_data.index.month.map(self.settings.season._num_dict)
         meter_data["day_of_week"] = meter_data.index.dayofweek + 1
-        meter_data["weekday_weekend"] = np.where(meter_data["day_of_week"] <= 5, "weekday", "weekend")
+        meter_data["weekday_weekend"] = np.where(
+            meter_data["day_of_week"] <= 5, "weekday", "weekend"
+        )
         meter_data = meter_data.sort_index()
         meter_data = meter_data[["season", "day_of_week", "weekday_weekend", *cols]]
 
@@ -644,9 +635,7 @@ class DailyModel:
             for days in self.day_options:
                 season_day_combo = []
                 for day in days:
-                    season_day_combo.append(
-                        list(itertools.product([day], self.seasonal_options))
-                    )
+                    season_day_combo.append(list(itertools.product([day], self.seasonal_options)))
 
                 combos_expanded = list(itertools.product(*season_day_combo))
                 for _ in range(max([len(item) for item in self.seasonal_options])):
@@ -792,9 +781,7 @@ class DailyModel:
         seasons = [self.combo_dictionary[key] for key in season_list]
         days = self.combo_dictionary[day_list]
 
-        meter_segment = meter[
-            meter["season"].isin(seasons) & meter["day_of_week"].isin(days)
-        ]
+        meter_segment = meter[meter["season"].isin(seasons) & meter["day_of_week"].isin(days)]
 
         return meter_segment
 
@@ -803,9 +790,7 @@ class DailyModel:
         Returns a sorted list of unique components from the combinations attribute.
         """
 
-        components = list(
-            set([i for item in self.combinations for i in item.split("__")])
-        )
+        components = list(set([i for item in self.combinations for i in item.split("__")]))
         components = sorted(components, key=lambda x: (len(x), x))
 
         return components
@@ -823,14 +808,12 @@ class DailyModel:
         if self.settings.alpha_final_type == "last":
             settings_update = {
                 "DEVELOPER_MODE": True,
-                "SILENT_DEVELOPER_MODE": True, 
+                "SILENT_DEVELOPER_MODE": True,
                 "ALPHA_FINAL_TYPE": None,
                 "FINAL_BOUNDS_SCALAR": None,
             }
 
-            self.component_settings = update_daily_settings(
-                self.settings, settings_update
-            )
+            self.component_settings = update_daily_settings(self.settings, settings_update)
         else:
             self.component_settings = self.settings
 
@@ -935,9 +918,9 @@ class DailyModel:
                 continue
 
             settings_update = {
-                "DEVELOPER_MODE": True, 
-                "SILENT_DEVELOPER_MODE": True, 
-                "REGULARIZATION_ALPHA": 0.0
+                "DEVELOPER_MODE": True,
+                "SILENT_DEVELOPER_MODE": True,
+                "REGULARIZATION_ALPHA": 0.0,
             }
             settings = update_daily_settings(self.settings, settings_update)
 
@@ -985,18 +968,18 @@ class DailyModel:
             num_coeffs += fit_component.num_coeffs
             obs.append(fit_component.obs)
             predicted.append(fit_component.model)
-        
-        obs = np.hstack(obs)   
-        predicted = np.hstack(predicted)
-        
-        df_meter = pd.DataFrame({
-            'observed': obs,
-            'predicted': predicted,
-        })
 
-        metrics = BaselineMetrics(
-            df=df_meter, num_model_params=num_coeffs
+        obs = np.hstack(obs)
+        predicted = np.hstack(predicted)
+
+        df_meter = pd.DataFrame(
+            {
+                "observed": obs,
+                "predicted": predicted,
+            }
         )
+
+        metrics = BaselineMetrics(df=df_meter, num_model_params=num_coeffs)
 
         wRMSE = np.sqrt(wSSE / N)
         metrics.wrmse = wRMSE
@@ -1032,9 +1015,7 @@ class DailyModel:
 
         if submodel.coefficients.model_key == "hdd_tidd_cdd_smooth":
             [hdd_bp, hdd_beta, pct_hdd_k, cdd_bp, cdd_beta, pct_cdd_k, intercept] = x
-            [hdd_bp, hdd_k, cdd_bp, cdd_k] = get_smooth_coeffs(
-                hdd_bp, pct_hdd_k, cdd_bp, pct_cdd_k
-            )
+            [hdd_bp, hdd_k, cdd_bp, cdd_k] = get_smooth_coeffs(hdd_bp, pct_hdd_k, cdd_bp, pct_cdd_k)
             x = [hdd_bp, hdd_beta, hdd_k, cdd_bp, cdd_beta, cdd_k, intercept]
 
         hdd_bp, cdd_bp, intercept = x[0], x[3], x[6]

@@ -26,10 +26,10 @@ from opendsm.common.metrics import (
 from opendsm.common.stats.basic import t_stat
 
 
-
 # ---------------------------------------------------------------------------
 # acf
 # ---------------------------------------------------------------------------
+
 
 def test_acf():
     """ACF per method on a linear ramp; pins each method's defined output."""
@@ -88,6 +88,7 @@ def test_acf_single_point_lag_zero():
 # ---------------------------------------------------------------------------
 # BaselineMetrics — analytic values on a hand-computed case
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def known_case():
@@ -182,6 +183,7 @@ def test_baseline_metrics_empty_dataframe_raises():
 # ColumnMetrics
 # ---------------------------------------------------------------------------
 
+
 def test_column_metrics_basic_statistics():
     """ColumnMetrics computes sum/mean/variance/std/median on a known series."""
     cm = ColumnMetrics(series=pd.Series([2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]))
@@ -215,6 +217,7 @@ def test_column_metrics_dispersion_descriptors_finite():
 # ---------------------------------------------------------------------------
 # BaselineMetrics — full property surface on a realistic case
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def realistic_baseline():
@@ -327,6 +330,7 @@ def test_baseline_metrics_from_dict_roundtrip(realistic_baseline):
 # ReportingMetrics — savings and ASHRAE uncertainty
 # ---------------------------------------------------------------------------
 
+
 def test_reporting_metrics_savings_is_predicted_minus_observed(realistic_baseline):
     """Savings equals the predicted-minus-observed sum over the reporting period."""
     reporting = realistic_baseline.df
@@ -371,9 +375,15 @@ def test_reporting_metrics_ashrae_frequency_factors(realistic_baseline):
     (here a single January, so M=1).
     """
     df = realistic_baseline.df
-    rm_h = ReportingMetrics(baseline_metrics=realistic_baseline, reporting_df=df, data_frequency="hourly")
-    rm_d = ReportingMetrics(baseline_metrics=realistic_baseline, reporting_df=df, data_frequency="daily")
-    rm_b = ReportingMetrics(baseline_metrics=realistic_baseline, reporting_df=df, data_frequency="billing")
+    rm_h = ReportingMetrics(
+        baseline_metrics=realistic_baseline, reporting_df=df, data_frequency="hourly"
+    )
+    rm_d = ReportingMetrics(
+        baseline_metrics=realistic_baseline, reporting_df=df, data_frequency="daily"
+    )
+    rm_b = ReportingMetrics(
+        baseline_metrics=realistic_baseline, reporting_df=df, data_frequency="billing"
+    )
 
     base = rm_h.total_savings_uncertainty / 1.26
     months = 1
@@ -389,7 +399,9 @@ def test_reporting_metrics_ashrae_frequency_factors(realistic_baseline):
 def test_reporting_metrics_fsu_and_per_point_definitions(realistic_baseline):
     """FSU = uncertainty / savings and per-point unc = uncertainty / √n."""
     df = realistic_baseline.df
-    rm = ReportingMetrics(baseline_metrics=realistic_baseline, reporting_df=df, data_frequency="hourly")
+    rm = ReportingMetrics(
+        baseline_metrics=realistic_baseline, reporting_df=df, data_frequency="hourly"
+    )
 
     assert rm.fsu == pytest.approx(rm.total_savings_uncertainty / rm.savings)
     assert rm.predicted_data_point_unc == pytest.approx(

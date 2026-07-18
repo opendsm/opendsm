@@ -146,7 +146,7 @@ class AdaptiveElasticNetRegressor:
 
                 # calculate weights
                 weights_update, _, alpha = adaptive_weights(
-                    resid[:,window_idx].flatten(),
+                    resid[:, window_idx].flatten(),
                     alpha="adaptive",
                     sigma=settings.sigma,
                     quantile=0.25,
@@ -169,25 +169,21 @@ class AdaptiveElasticNetRegressor:
                 if window_size > 0:
                     # get index of hour in window_idx
                     idx = window_idx.index(hour)
-                    hour_len = int(len(weights_update)/len(window_idx))
+                    hour_len = int(len(weights_update) / len(window_idx))
 
-                    weights_update = weights_update[idx*hour_len:(idx+1)*hour_len]
+                    weights_update = weights_update[idx * hour_len : (idx + 1) * hour_len]
 
                 weights[:, hour] *= weights_update
 
                 # update hour model from base model
-                self._hour_model.coef_ = self.base_model.coef_[hour,:]
+                self._hour_model.coef_ = self.base_model.coef_[hour, :]
                 self._hour_model.intercept_ = self.base_model.intercept_[hour]
 
                 # fit
-                self._hour_model.fit(
-                    X,
-                    y[:, hour],
-                    sample_weight=weights[:, hour]
-                )
+                self._hour_model.fit(X, y[:, hour], sample_weight=weights[:, hour])
 
                 # update base model from refit hour model
-                self.base_model.coef_[hour,:] = self._hour_model.coef_
+                self.base_model.coef_[hour, :] = self._hour_model.coef_
                 self.base_model.intercept_[hour] = self._hour_model.intercept_
 
         # save info to base_model

@@ -26,7 +26,6 @@ from opendsm.common import const as _const
 from opendsm.common.stats.adaptive_loss import LOSS_ALPHA_MIN as _LOSS_ALPHA_MIN
 
 
-
 class AdaptiveLossChoice(str, Enum):
     SSE = "sse"
     MAE = "mae"
@@ -37,9 +36,8 @@ class AdaptiveLossChoice(str, Enum):
 
 class TreatmentMatchSettings(BaseSettings):
     """aggregation type for loadshape"""
-    agg_type: _settings.AggregateMethod = pydantic.Field(
-        default=_settings.AggregateMethod.MEDIAN
-    )
+
+    agg_type: _settings.AggregateMethod = pydantic.Field(default=_settings.AggregateMethod.MEDIAN)
 
     """treatment meter match loss type"""
     adaptive_loss_alpha: Union[AdaptiveLossChoice, float] = pydantic.Field(
@@ -48,19 +46,18 @@ class TreatmentMatchSettings(BaseSettings):
 
     adaptive_loss_sigma: float = pydantic.Field(
         default=2.698,  # 1.5 IQR
-        gt= 0.0,
+        gt=0.0,
     )
 
-    adaptive_loss_c_algo: _const.CAlgoChoice = pydantic.Field(
-        default=_const.CAlgoChoice.IQR
-    )
+    adaptive_loss_c_algo: _const.CAlgoChoice = pydantic.Field(default=_const.CAlgoChoice.IQR)
 
     percent_cluster_minimum: float = pydantic.Field(
-        default=1E-6,
+        default=1e-6,
         ge=0.0,
     )
 
     """Check if valid settings for treatment meter match loss"""
+
     @pydantic.model_validator(mode="after")
     def _check_treatment_match_loss(self):
         self._adaptive_loss_alpha = self.adaptive_loss_alpha
@@ -74,13 +71,17 @@ class TreatmentMatchSettings(BaseSettings):
 
             elif self._adaptive_loss_alpha in ["mae", "l1"]:
                 self._adaptive_loss_alpha = 1.0
-                
+
             else:
-                raise ValueError("`treatment_match_loss` must be either ['SSE', 'MAE', 'L2', 'L1', 'adaptive'] or float")
-            
+                raise ValueError(
+                    "`treatment_match_loss` must be either ['SSE', 'MAE', 'L2', 'L1', 'adaptive'] or float"
+                )
+
         else:
             if self._adaptive_loss_alpha < _LOSS_ALPHA_MIN:
-                raise ValueError(f"`treatment_match_loss` must be greater than {_LOSS_ALPHA_MIN:.0f}")
+                raise ValueError(
+                    f"`treatment_match_loss` must be greater than {_LOSS_ALPHA_MIN:.0f}"
+                )
 
             if self._adaptive_loss_alpha > 2:
                 raise ValueError("`treatment_match_loss` must be less than 2")

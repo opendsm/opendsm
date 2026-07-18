@@ -88,9 +88,7 @@ def _bisect_k_medians_single(data, settings, seed):
     heap: list = []
     all_indices = np.arange(n)
 
-    init_priority = (
-        -_cluster_inertia(data, all_indices) if use_inertia else -float(n)
-    )
+    init_priority = -_cluster_inertia(data, all_indices) if use_inertia else -float(n)
     heapq.heappush(heap, (init_priority, tiebreak, all_indices, 0))
     tiebreak += 1
 
@@ -137,8 +135,7 @@ def _bisect_k_medians_single(data, settings, seed):
         for child_idx in (left_idx, right_idx):
             if len(child_idx) >= 2 * min_cs:
                 priority = (
-                    -_cluster_inertia(data, child_idx) if use_inertia
-                    else -float(len(child_idx))
+                    -_cluster_inertia(data, child_idx) if use_inertia else -float(len(child_idx))
                 )
                 heapq.heappush(heap, (priority, tiebreak, child_idx, 0))
                 tiebreak += 1
@@ -146,7 +143,8 @@ def _bisect_k_medians_single(data, settings, seed):
         if current_k >= n_lower:
             if refine and current_k >= 2:
                 refined = kmedians_refine(
-                    data, flat_labels,
+                    data,
+                    flat_labels,
                     max_iter=refine_max_iter,
                     min_cluster_size=min_cs,
                 )

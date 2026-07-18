@@ -34,6 +34,7 @@ from opendsm.common.utils import OoM
 # Numba kernels
 # ---------------------------------------------------------------------------
 
+
 @numba.jit(nopython=True, error_model="numpy", cache=True)
 def _bisymlog_forward(x, C, log_base_inv):
     """Vectorized bisymlog forward: sign(x) · log10(|x/C| + 1) / log10(base)."""
@@ -54,7 +55,7 @@ def _bisymlog_inverse(y, C, base):
     for i in range(len(y)):
         yi = y[i]
         if yi >= 0:
-            out[i] = C * (base ** yi - 1.0)
+            out[i] = C * (base**yi - 1.0)
         else:
             out[i] = -C * (base ** (-yi) - 1.0)
     return out
@@ -63,6 +64,7 @@ def _bisymlog_inverse(y, C, base):
 # ---------------------------------------------------------------------------
 # Class
 # ---------------------------------------------------------------------------
+
 
 class Bisymlog(TransformBase):
     """Per-dimension bi-symmetric logarithmic transform with invertibility.
@@ -83,8 +85,12 @@ class Bisymlog(TransformBase):
     """
 
     _HYPERPARAM_KEYS = (
-        "robust", "base", "heuristic_scaling_factor",
-        "rescale_quantile", "min_variance", "min_samples",
+        "robust",
+        "base",
+        "heuristic_scaling_factor",
+        "rescale_quantile",
+        "min_variance",
+        "min_samples",
     )
 
     def __init__(
@@ -139,11 +145,14 @@ class Bisymlog(TransformBase):
         log_base_inv = self._log_base_inv
 
         def obj(log_C):
-            C = 10 ** log_C
+            C = 10**log_C
             xt = _bisymlog_forward(x, C, log_base_inv)
             mu, sigma = robust_mu_sigma(
-                xt, "adaptive_weighted",
-                use_mean=False, rel_err=1e-4, abs_err=1e-4,
+                xt,
+                "adaptive_weighted",
+                use_mean=False,
+                rel_err=1e-4,
+                abs_err=1e-4,
             )
             xt = (xt - mu) / sigma
             bounds = IQR_outlier(xt, sigma_threshold=3, quantile=0.05)
@@ -151,7 +160,7 @@ class Bisymlog(TransformBase):
             return np.abs(skew(xt))
 
         res = minimize_scalar(obj, bounds=(-14, 6), method="bounded")
-        return 10 ** res.x
+        return 10**res.x
 
     # -- TransformBase hooks -------------------------------------------------
 
@@ -214,10 +223,12 @@ class Bisymlog(TransformBase):
 
     def _serialise_hyperparams(self):
         hp = super()._serialise_hyperparams()
-        hp.update({
-            "robust": self.robust,
-            "base": self.base,
-            "heuristic_scaling_factor": self.heuristic_scaling_factor,
-            "rescale_quantile": self.rescale_quantile,
-        })
+        hp.update(
+            {
+                "robust": self.robust,
+                "base": self.base,
+                "heuristic_scaling_factor": self.heuristic_scaling_factor,
+                "rescale_quantile": self.rescale_quantile,
+            }
+        )
         return hp

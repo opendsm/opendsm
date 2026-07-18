@@ -21,23 +21,28 @@ from typing import Any
 
 class BaseSettings(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(
-        frozen = True,
+        frozen=True,
         arbitrary_types_allowed=True,
-        str_to_lower = True,
-        str_strip_whitespace = True,
+        str_to_lower=True,
+        str_strip_whitespace=True,
     )
 
     """Make all property keys lowercase and strip whitespace"""
+
     @pydantic.model_validator(mode="before")
     def __lowercase_property_keys__(cls, values: Any) -> Any:
         def __lower__(value: Any) -> Any:
             if isinstance(value, dict):
-                return {k.lower().strip() if isinstance(k, str) else k: __lower__(v) for k, v in value.items()}
+                return {
+                    k.lower().strip() if isinstance(k, str) else k: __lower__(v)
+                    for k, v in value.items()
+                }
             return value
 
         return __lower__(values)
 
     """Make all property values lowercase and strip whitespace before validation"""
+
     @pydantic.field_validator("*", mode="before")
     def lowercase_values(cls, v):
         if isinstance(v, str):
@@ -47,10 +52,10 @@ class BaseSettings(pydantic.BaseModel):
 
 class MutableBaseSettings(BaseSettings):
     model_config = pydantic.ConfigDict(
-        frozen = False,
+        frozen=False,
         arbitrary_types_allowed=True,
-        str_to_lower = True,
-        str_strip_whitespace = True,
+        str_to_lower=True,
+        str_strip_whitespace=True,
     )
 
 

@@ -17,11 +17,7 @@ from __future__ import annotations
 import numpy as np
 
 
-def _get_num_cluster_min(
-    data_size: int, 
-    min_cluster_size: int, 
-    num_cluster_bound_lower: int
-):
+def _get_num_cluster_min(data_size: int, min_cluster_size: int, num_cluster_bound_lower: int):
     """
     returns lower bounds using data_size which is number models in cluster
     """
@@ -34,11 +30,7 @@ def _get_num_cluster_min(
     return n
 
 
-def _get_num_cluster_max(
-    data_size: int, 
-    min_cluster_size: int, 
-    num_cluster_bound_upper: int
-):
+def _get_num_cluster_max(data_size: int, min_cluster_size: int, num_cluster_bound_upper: int):
     """
     returns upper bounds using data_size which is number models in cluster
     """
@@ -57,11 +49,7 @@ def _get_num_cluster_max(
     with np.errstate(invalid="ignore", divide="ignore"):
         k = (n_set - n_min) * (
             np.log(
-                (
-                    ((n_max_set - min_clusters) / (2 * max_clusters - min_clusters) + 0.5)
-                    ** -1
-                    - 1
-                )
+                (((n_max_set - min_clusters) / (2 * max_clusters - min_clusters) + 0.5) ** -1 - 1)
                 ** -1
             )
         ) ** -1

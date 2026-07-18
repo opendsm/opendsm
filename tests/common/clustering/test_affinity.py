@@ -24,7 +24,6 @@ import pytest
 from opendsm.common.clustering.algorithms.spectral import _affinity as af
 
 
-
 def _two_blobs(n=50, d=5, sep=50.0, seed=0):
     """Two well-separated isotropic blobs."""
     rng = np.random.default_rng(seed)

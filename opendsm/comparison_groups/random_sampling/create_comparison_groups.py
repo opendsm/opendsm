@@ -27,7 +27,7 @@ class Random_Sampling(Comparison_Group_Algorithm):
     def __init__(self, settings: Optional[Settings] = None):
         if settings is None:
             settings = Settings()
-        
+
         self.settings = settings
 
     def _create_clusters_df(self, df_raw):
@@ -40,7 +40,6 @@ class Random_Sampling(Comparison_Group_Algorithm):
         clusters = clusters[["cluster", "weight"]]
 
         return clusters
-    
 
     def _create_treatment_weights_df(self, ids):
         coeffs = np.ones(len(ids))
@@ -49,7 +48,6 @@ class Random_Sampling(Comparison_Group_Algorithm):
         treatment_weights.index.name = "id"
 
         return treatment_weights
-    
 
     def get_comparison_group(self, treatment_data, comparison_pool_data, weights=None):
         settings = self.settings

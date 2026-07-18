@@ -22,14 +22,31 @@ from opendsm.common.stats.adaptive_loss_Z import (
 )
 
 
-
 # The numba De Boor evaluator must reproduce the scipy BSpline reference used
 # by the pure-Python ln_Z; the two are used interchangeably in hot loops.
 
+
 @pytest.mark.parametrize(
     "alpha",
-    [-100.0, -99.0, -50.0, -10.0, -2.0, -1.0, 0.0, 0.5, 1.0, 1.5, 1.9, 2.0,
-     2.1, 5.0, 50.0, 99.0, 99.9],
+    [
+        -100.0,
+        -99.0,
+        -50.0,
+        -10.0,
+        -2.0,
+        -1.0,
+        0.0,
+        0.5,
+        1.0,
+        1.5,
+        1.9,
+        2.0,
+        2.1,
+        5.0,
+        50.0,
+        99.0,
+        99.9,
+    ],
 )
 def test_ln_Z_numba_matches_bspline(alpha):
     """ln_Z_numba (De Boor) equals the scipy BSpline ln_Z across the knot range."""

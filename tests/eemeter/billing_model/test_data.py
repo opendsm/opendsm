@@ -115,9 +115,7 @@ def get_datetime_index_bimonthly_with_timezone():
 @pytest.fixture
 def get_datetime_index_daily_without_timezone():
     # Create a DateTimeIndex at daily intervals
-    datetime_index = pd.date_range(
-        start="2023-01-01", end="2024-01-01", inclusive="left", freq="D"
-    )
+    datetime_index = pd.date_range(start="2023-01-01", end="2024-01-01", inclusive="left", freq="D")
 
     return datetime_index
 
@@ -277,10 +275,12 @@ def test_billing_baseline_data_with_monthly_frequencies(get_datetime_index):
     )
     # DQ because only 12 days worth of temperature data is available
     assert len(cls.disqualification) == 2
-    assert set([dq.qualified_name for dq in cls.disqualification]) == set([
-        "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data",
-        "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
-    ])
+    assert set([dq.qualified_name for dq in cls.disqualification]) == set(
+        [
+            "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data",
+            "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
+        ]
+    )
 
 
 @pytest.mark.parametrize("get_datetime_index", [["2MS", True]], indirect=True)
@@ -438,7 +438,9 @@ def test_billing_baseline_data_with_specific_hourly_input(comstock_hourly, snaps
     assert cls.df is not None
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
     assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
-    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(
+        name="disqualification"
+    )
 
 
 def test_billing_baseline_data_with_specific_daily_input(comstock_daily, comstock_hourly, snapshot):
@@ -455,10 +457,14 @@ def test_billing_baseline_data_with_specific_daily_input(comstock_daily, comstoc
     assert cls.df is not None
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
     assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
-    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(
+        name="disqualification"
+    )
 
 
-def test_billing_baseline_data_with_specific_missing_daily_input(comstock_daily, comstock_hourly, snapshot):
+def test_billing_baseline_data_with_specific_missing_daily_input(
+    comstock_daily, comstock_hourly, snapshot
+):
     df_daily, _ = comstock_daily
     df_hourly, _ = comstock_hourly
 
@@ -473,10 +479,14 @@ def test_billing_baseline_data_with_specific_missing_daily_input(comstock_daily,
 
     assert cls.df is not None
     assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
-    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(
+        name="disqualification"
+    )
 
 
-def test_billing_baseline_data_with_specific_monthly_input(comstock_monthly, comstock_hourly, snapshot):
+def test_billing_baseline_data_with_specific_monthly_input(
+    comstock_monthly, comstock_hourly, snapshot
+):
     df_monthly, _ = comstock_monthly
     df_hourly, _ = comstock_hourly
 
@@ -490,12 +500,12 @@ def test_billing_baseline_data_with_specific_monthly_input(comstock_monthly, com
     assert cls.df is not None
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
     assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
-    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(
+        name="disqualification"
+    )
 
 
-@pytest.mark.parametrize(
-    "get_datetime_index", [["30min", True], ["h", True]], indirect=True
-)
+@pytest.mark.parametrize("get_datetime_index", [["30min", True], ["h", True]], indirect=True)
 def test_billing_reporting_data_with_missing_half_hourly_frequencies(
     get_datetime_index,
 ):

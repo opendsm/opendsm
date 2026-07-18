@@ -52,6 +52,7 @@ class FullModelSelection(str, Enum):
     C_HDD_TIDD = "c_hdd_tidd"
     TIDD = "tidd"
 
+
 # endregion
 
 
@@ -72,16 +73,19 @@ class Season_Definition(BaseSettings):
     options: list[str] = CustomField(default=["summer", "shoulder", "winter"])
 
     """Set dictionaries of seasons"""
+
     @pydantic.model_validator(mode="after")
     def set_numeric_dict(self) -> Season_Definition:
         season_dict = {}
         for month, num in _const.season_num.items():
             val = getattr(self, month.lower())
             if val not in self.options:
-                raise ValueError(f"SeasonDefinition: {val} is not a valid option. Valid options are {self.options}")
-            
+                raise ValueError(
+                    f"SeasonDefinition: {val} is not a valid option. Valid options are {self.options}"
+                )
+
             season_dict[num] = val
-        
+
         self._month_index = _const.season_num
         self._num_dict = season_dict
         self._order = {val: i for i, val in enumerate(self.options)}
@@ -101,22 +105,25 @@ class Weekday_Weekend_Definition(BaseSettings):
     options: list[str] = CustomField(default=["weekday", "weekend"])
 
     """Set dictionaries of weekday/weekend"""
+
     @pydantic.model_validator(mode="after")
     def set_numeric_dict(self) -> Weekday_Weekend_Definition:
         weekday_dict = {}
         for day, num in _const.weekday_num.items():
             val = getattr(self, day.lower())
             if val not in self.options:
-                raise ValueError(f"WeekdayWeekendDefinition: {val} is not a valid option. Valid options are {self.options}")
-            
+                raise ValueError(
+                    f"WeekdayWeekendDefinition: {val} is not a valid option. Valid options are {self.options}"
+                )
+
             weekday_dict[num] = val
-        
+
         self._day_index = _const.weekday_num
         self._num_dict = weekday_dict
         self._order = {val: i for i, val in enumerate(self.options)}
 
         return self
-    
+
 
 class Split_Selection_Definition(BaseSettings):
     criteria: ModelSelectionCriteria = CustomField(
@@ -180,20 +187,22 @@ class Split_Selection_Definition(BaseSettings):
         if self.reduce_splits_num_std is not None:
             if len(self.reduce_splits_num_std) != 2:
                 raise ValueError("`REDUCE_SPLITS_NUM_STD` must be a list of length 2")
-            
+
             if self.reduce_splits_num_std[0] <= 0 or self.reduce_splits_num_std[1] <= 0:
                 raise ValueError("`REDUCE_SPLITS_NUM_STD` entries must be > 0")
-            
+
         return self
 
 
-def _check_developer_mode(cls):  
+def _check_developer_mode(cls):
     for k, v in type(cls).model_fields.items():
         if isinstance(getattr(cls, k), BaseSettings):
             _check_developer_mode(getattr(cls, k))
 
         elif v.json_schema_extra["developer"] and getattr(cls, k) != v.default:
-            raise ValueError(f"Developer mode is not enabled. Cannot change {k} from default value.")
+            raise ValueError(
+                f"Developer mode is not enabled. Cannot change {k} from default value."
+            )
 
     return cls
 
@@ -382,26 +391,26 @@ class DailySettings(BaseSettings):
         description="Threshold for the PNRMSE to disqualify a model",
     )
 
-
     @pydantic.model_validator(mode="after")
     def _check_developer_mode(self):
         if self.developer_mode:
             if not self.silent_developer_mode:
-                print("Warning: Daily model is nonstandard and should be explicitly stated in any derived work")
+                print(
+                    "Warning: Daily model is nonstandard and should be explicitly stated in any derived work"
+                )
 
             return self
-        
+
         _check_developer_mode(self)
 
         return self
-
 
     @pydantic.model_validator(mode="after")
     def _check_alpha_final(self):
         if self.alpha_final is None:
             if self.alpha_final_type != None:
                 raise ValueError("`ALPHA_FINAL` must be set if `ALPHA_FINAL_TYPE` is not None")
-            
+
         elif isinstance(self.alpha_final, float):
             if (self.alpha_minimum > self.alpha_final) or (self.alpha_final > 2.0):
                 raise ValueError(
@@ -410,9 +419,7 @@ class DailySettings(BaseSettings):
 
         elif isinstance(self.alpha_final, str):
             if self.alpha_final != "adaptive":
-                raise ValueError(
-                    f"ALPHA_FINAL must be `adaptive` or `ALPHA_MINIMUM` <= float <= 2"
-            )
+                raise ValueError(f"ALPHA_FINAL must be `adaptive` or `ALPHA_MINIMUM` <= float <= 2")
 
         return self
 
@@ -421,30 +428,30 @@ class DailySettings(BaseSettings):
         if self.final_bounds_scalar is not None:
             if self.final_bounds_scalar <= 0:
                 raise ValueError("`FINAL_BOUNDS_SCALAR` must be > 0")
-            
+
             if self.alpha_final_type is None:
                 raise ValueError("`FINAL_BOUNDS_SCALAR` must be None if `ALPHA_FINAL` is None")
-            
+
         else:
             if self.alpha_final_type is not None:
                 raise ValueError("`FINAL_BOUNDS_SCALAR` must be > 0 if `ALPHA_FINAL` is not None")
 
         return self
 
-    
     @pydantic.model_validator(mode="after")
     def _check_initial_step_percentage(self):
         if self.initial_step_percentage is not None:
             if self.initial_step_percentage <= 0 or self.initial_step_percentage > 0.5:
                 raise ValueError("`INITIAL_STEP_PERCENTAGE` must be None or 0 < float <= 0.5")
-            
+
         else:
             if self.algorithm_choice[:5] in ["nlopt"]:
-                raise ValueError("`INITIAL_STEP_PERCENTAGE` must be specified if `ALGORITHM_CHOICE` is from Nlopt")
-            
+                raise ValueError(
+                    "`INITIAL_STEP_PERCENTAGE` must be specified if `ALGORITHM_CHOICE` is from Nlopt"
+                )
+
         return self
-            
-    
+
     def __repr__(self):
         text_all = []
         text_all.append(type(self).__name__)
@@ -474,9 +481,7 @@ class DailySettings(BaseSettings):
                         text_all.append(f"{'':>{key_max}s}   {str(k):>{k_max}s}: {v}")
 
                     else:
-                        text_all.append(
-                            f"{'':>{key_max}s}   {str(k):>{k_max}s}: {str(v):{v_max}s}"
-                        )
+                        text_all.append(f"{'':>{key_max}s}   {str(k):>{k_max}s}: {str(v):{v_max}s}")
 
             else:
                 if isinstance(val, str):
@@ -485,7 +490,7 @@ class DailySettings(BaseSettings):
                 text_all.append(f"{key:>{key_max}s}: {val}")
 
         return "\n".join(text_all)
-    
+
 
 class Split_Selection_Legacy_Definition(Split_Selection_Definition):
     allow_separate_summer: bool = CustomField(
@@ -562,7 +567,7 @@ def update_daily_settings(settings, update_dict):
 
     if isinstance(settings, DailyLegacySettings):
         return DailyLegacySettings(**settings_dict)
-     
+
     return DailySettings(**settings_dict)
 
 
@@ -572,6 +577,7 @@ def default_settings(**kwargs) -> DailySettings:
     Returns default settings.
     """
     return DailySettings(**kwargs)
+
 
 # TODO: deprecate
 def caltrack_legacy_settings(**kwargs) -> DailyLegacySettings:

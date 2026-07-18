@@ -61,6 +61,7 @@ def _wavelet_transform_wrapper(data, settings):
 # Fixtures
 # =============================================================================
 
+
 @pytest.fixture
 def simple_time_series_data():
     """Create simple time series data for testing.
@@ -77,10 +78,10 @@ def simple_time_series_data():
         t = np.linspace(0, 2 * np.pi, n_timepoints)
         if i < 15:
             # Morning peak pattern
-            pattern = 50 + 20 * np.sin(t - np.pi/4) + np.random.randn(n_timepoints) * 2
+            pattern = 50 + 20 * np.sin(t - np.pi / 4) + np.random.randn(n_timepoints) * 2
         elif i < 30:
             # Evening peak pattern
-            pattern = 50 + 20 * np.sin(t + np.pi/4) + np.random.randn(n_timepoints) * 2
+            pattern = 50 + 20 * np.sin(t + np.pi / 4) + np.random.randn(n_timepoints) * 2
         else:
             # Flat with noise
             pattern = 50 + np.random.randn(n_timepoints) * 5
@@ -125,6 +126,7 @@ def mixed_scale_data():
 # Tests for _safe_standardize
 # =============================================================================
 
+
 class TestSafeStandardize:
     """Comprehensive tests for _safe_standardize helper function."""
 
@@ -141,9 +143,7 @@ class TestSafeStandardize:
 
     def test_basic_standardization_array_scale(self):
         """Test basic standardization with array center and scale."""
-        data = np.array([[1.0, 2.0, 3.0],
-                        [4.0, 5.0, 6.0],
-                        [7.0, 8.0, 9.0]])
+        data = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
         center = np.array([4.0, 5.0, 6.0])
         scale = np.array([2.0, 2.0, 2.0])
 
@@ -165,8 +165,7 @@ class TestSafeStandardize:
 
     def test_zero_scale_array_single_column(self):
         """Test standardization with near-zero scale in one column."""
-        data = np.array([[1.0, 2.0, 3.0],
-                        [4.0, 5.0, 6.0]])
+        data = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
         center = np.array([2.0, 3.0, 4.0])
         scale = np.array([1.0, 1e-15, 1.0])  # Middle element near zero
 
@@ -179,8 +178,7 @@ class TestSafeStandardize:
 
     def test_zero_scale_array_all_columns(self):
         """Test standardization when all scales are near zero."""
-        data = np.array([[1.0, 2.0, 3.0],
-                        [4.0, 5.0, 6.0]])
+        data = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
         center = np.array([2.0, 3.0, 4.0])
         scale = np.array([1e-12, 1e-13, 1e-14])
 
@@ -267,6 +265,7 @@ class TestSafeStandardize:
 # Tests for normalize
 # =============================================================================
 
+
 class TestNormalize:
     """Comprehensive tests for normalize function."""
 
@@ -274,17 +273,22 @@ class TestNormalize:
 
     def test_standardize_global(self, simple_time_series_data):
         """Test standardization with global scope (axis=None, whole-array)."""
-        settings = NormalizeSettings(method=NormalizeChoice.STANDARDIZE, scope=NormalizeScope.GLOBAL)
+        settings = NormalizeSettings(
+            method=NormalizeChoice.STANDARDIZE, scope=NormalizeScope.GLOBAL
+        )
         result = normalize(simple_time_series_data, settings)
 
         assert result.shape == simple_time_series_data.shape
         np.testing.assert_almost_equal(np.mean(result), 0, decimal=10)
         np.testing.assert_almost_equal(np.std(result), 1, decimal=10)
 
-    @pytest.mark.parametrize("method,scope,center_fn", [
-        (NormalizeChoice.STANDARDIZE, NormalizeScope.SAMPLE, np.mean),
-        (NormalizeChoice.MED_MAD, NormalizeScope.SAMPLE, np.median),
-    ])
+    @pytest.mark.parametrize(
+        "method,scope,center_fn",
+        [
+            (NormalizeChoice.STANDARDIZE, NormalizeScope.SAMPLE, np.mean),
+            (NormalizeChoice.MED_MAD, NormalizeScope.SAMPLE, np.median),
+        ],
+    )
     def test_per_sample_centering(self, simple_time_series_data, method, scope, center_fn):
         """Test that per-sample normalization centers each row."""
         settings = NormalizeSettings(method=method, scope=scope)
@@ -332,11 +336,7 @@ class TestNormalize:
 
     def test_min_max_quantile_axis_1(self, simple_time_series_data):
         """Test min-max quantile normalization along axis 1."""
-        settings = NormalizeSettings(
-            method=NormalizeChoice.MIN_MAX_QUANTILE,
-            quantile=0.05,
-            axis=1
-        )
+        settings = NormalizeSettings(method=NormalizeChoice.MIN_MAX_QUANTILE, quantile=0.05, axis=1)
         result = normalize(simple_time_series_data, settings)
 
         # Values should be roughly in range [-1, 1]
@@ -350,11 +350,7 @@ class TestNormalize:
         Note: With quantile-based normalization, values outside the quantile
         range will naturally fall outside [-1, 1], which is expected behavior.
         """
-        settings = NormalizeSettings(
-            method=NormalizeChoice.MIN_MAX_QUANTILE,
-            quantile=0.1,
-            axis=0
-        )
+        settings = NormalizeSettings(method=NormalizeChoice.MIN_MAX_QUANTILE, quantile=0.1, axis=0)
         result = normalize(simple_time_series_data, settings)
 
         assert result.shape == simple_time_series_data.shape
@@ -392,9 +388,7 @@ class TestNormalize:
     def test_min_max_quantile_different_quantiles(self, simple_time_series_data, quantile):
         """Test different quantile values produce finite results."""
         settings = NormalizeSettings(
-            method=NormalizeChoice.MIN_MAX_QUANTILE,
-            quantile=quantile,
-            axis=1
+            method=NormalizeChoice.MIN_MAX_QUANTILE, quantile=quantile, axis=1
         )
         result = normalize(simple_time_series_data, settings)
 
@@ -407,11 +401,7 @@ class TestNormalize:
         data[3, :] = 5.0  # Constant row
         data[7, :] = -3.0  # Another constant row
 
-        settings = NormalizeSettings(
-            method=NormalizeChoice.MIN_MAX_QUANTILE,
-            quantile=0.05,
-            axis=1
-        )
+        settings = NormalizeSettings(method=NormalizeChoice.MIN_MAX_QUANTILE, quantile=0.05, axis=1)
         result = normalize(data, settings)
 
         # Constant rows should be set to midpoint 0
@@ -441,10 +431,13 @@ class TestNormalize:
 
     # --- Tests for axis=1 (row-wise normalization) ---
 
-    @pytest.mark.parametrize("method,center_fn", [
-        (NormalizeChoice.STANDARDIZE, np.mean),
-        (NormalizeChoice.MED_MAD, np.median),
-    ])
+    @pytest.mark.parametrize(
+        "method,center_fn",
+        [
+            (NormalizeChoice.STANDARDIZE, np.mean),
+            (NormalizeChoice.MED_MAD, np.median),
+        ],
+    )
     def test_axis_1_centering(self, simple_time_series_data, method, center_fn):
         """Test row-wise normalization centers each row for different methods."""
         settings = NormalizeSettings(method=method, axis=1)
@@ -462,11 +455,7 @@ class TestNormalize:
         np.random.seed(42)
         data = np.random.randn(10, 3) * [1, 10, 0.1]  # Different scales
 
-        settings = NormalizeSettings(
-            method=NormalizeChoice.MIN_MAX_QUANTILE,
-            quantile=0.25,
-            axis=0
-        )
+        settings = NormalizeSettings(method=NormalizeChoice.MIN_MAX_QUANTILE, quantile=0.25, axis=0)
         result = normalize(data, settings)
 
         assert result.shape == data.shape
@@ -488,17 +477,18 @@ class TestNormalize:
                 if np.any(upper_mask):
                     np.testing.assert_allclose(col_result[upper_mask], 1.0, rtol=1e-4, atol=1e-8)
 
-    @pytest.mark.parametrize("method,center_fn,spread_fn,spread_expected", [
-        (NormalizeChoice.STANDARDIZE, np.mean, np.std, 1.0),
-        (NormalizeChoice.MED_MAD, np.median, None, None),
-    ])
+    @pytest.mark.parametrize(
+        "method,center_fn,spread_fn,spread_expected",
+        [
+            (NormalizeChoice.STANDARDIZE, np.mean, np.std, 1.0),
+            (NormalizeChoice.MED_MAD, np.median, None, None),
+        ],
+    )
     def test_axis_1_with_mixed_scales(self, method, center_fn, spread_fn, spread_expected):
         """Test axis=1 normalization with rows of different scales."""
-        data = np.array([
-            [1.0, 2.0, 3.0, 4.0],
-            [100.0, 200.0, 300.0, 400.0],
-            [0.01, 0.02, 0.03, 0.04]
-        ])
+        data = np.array(
+            [[1.0, 2.0, 3.0, 4.0], [100.0, 200.0, 300.0, 400.0], [0.01, 0.02, 0.03, 0.04]]
+        )
 
         settings = NormalizeSettings(method=method, axis=1)
         result = normalize(data, settings)
@@ -520,11 +510,7 @@ class TestNormalize:
         np.random.seed(42)
         data = np.random.randn(3, 10) * [[1], [10], [0.1]]  # Different scales
 
-        settings = NormalizeSettings(
-            method=NormalizeChoice.MIN_MAX_QUANTILE,
-            quantile=0.25,
-            axis=1
-        )
+        settings = NormalizeSettings(method=NormalizeChoice.MIN_MAX_QUANTILE, quantile=0.25, axis=1)
         result = normalize(data, settings)
 
         assert result.shape == data.shape
@@ -550,6 +536,7 @@ class TestNormalize:
 # =============================================================================
 # Tests for FPCA transform
 # =============================================================================
+
 
 class TestFpcaError:
     """Tests for FpcaError exception."""
@@ -602,9 +589,12 @@ class TestFpcaBase:
         with pytest.raises(FpcaError, match="provided non finite values for fpca"):
             _fpca_base(x, data, min_var_ratio=0.90)
 
-    @pytest.mark.parametrize("x,y", [
-        (np.array([]), None),  # empty x, y filled by fixture
-    ])
+    @pytest.mark.parametrize(
+        "x,y",
+        [
+            (np.array([]), None),  # empty x, y filled by fixture
+        ],
+    )
     def test_fpca_base_empty_x(self, simple_time_series_data, x, y):
         """Test _fpca_base with empty x array."""
         with pytest.raises(FpcaError, match="provided empty values for fpca"):
@@ -653,7 +643,10 @@ class TestFpcaTransform:
         settings = ClusteringSettings(
             algorithm_selection="bisecting_kmeans",
             seed=42,
-            feature_transform={"fpca": {"enabled": True, "min_var_ratio": 0.90}, "wavelet": {"enabled": False}}
+            feature_transform={
+                "fpca": {"enabled": True, "min_var_ratio": 0.90},
+                "wavelet": {"enabled": False},
+            },
         )
 
         with warnings.catch_warnings():
@@ -676,7 +669,10 @@ class TestFpcaTransform:
                 settings = ClusteringSettings(
                     algorithm_selection="bisecting_kmeans",
                     seed=42,
-                    feature_transform={"fpca": {"enabled": True, "min_var_ratio": min_var_ratio}, "wavelet": {"enabled": False}}
+                    feature_transform={
+                        "fpca": {"enabled": True, "min_var_ratio": min_var_ratio},
+                        "wavelet": {"enabled": False},
+                    },
                 )
                 result = fpca_transform(simple_time_series_data, settings)
                 n_components.append(result.shape[1])
@@ -690,7 +686,10 @@ class TestFpcaTransform:
         settings = ClusteringSettings(
             algorithm_selection="bisecting_kmeans",
             seed=42,
-            feature_transform={"fpca": {"enabled": True, "min_var_ratio": 0.85}, "wavelet": {"enabled": False}}
+            feature_transform={
+                "fpca": {"enabled": True, "min_var_ratio": 0.85},
+                "wavelet": {"enabled": False},
+            },
         )
 
         with warnings.catch_warnings():
@@ -709,7 +708,10 @@ class TestFpcaTransform:
         settings = ClusteringSettings(
             algorithm_selection="bisecting_kmeans",
             seed=42,
-            feature_transform={"fpca": {"enabled": True, "min_var_ratio": 0.90}, "wavelet": {"enabled": False}}
+            feature_transform={
+                "fpca": {"enabled": True, "min_var_ratio": 0.90},
+                "wavelet": {"enabled": False},
+            },
         )
 
         with pytest.raises(FpcaError):
@@ -721,7 +723,10 @@ class TestFpcaTransform:
         settings = ClusteringSettings(
             algorithm_selection="bisecting_kmeans",
             seed=42,
-            feature_transform={"fpca": {"enabled": True, "min_var_ratio": 0.90}, "wavelet": {"enabled": False}}
+            feature_transform={
+                "fpca": {"enabled": True, "min_var_ratio": 0.90},
+                "wavelet": {"enabled": False},
+            },
         )
 
         with warnings.catch_warnings():
@@ -737,6 +742,7 @@ class TestFpcaTransform:
 # Tests for wavelet transform
 # =============================================================================
 
+
 class TestWaveletTransform:
     """Comprehensive tests for wavelet_transform function."""
 
@@ -745,7 +751,15 @@ class TestWaveletTransform:
         settings = ClusteringSettings(
             algorithm_selection="bisecting_kmeans",
             seed=42,
-            feature_transform={"fpca": {"enabled": False}, "wavelet": {"enabled": True, "wavelet_name": "db1", "pca_n_components": 5, "pca_scope": "global"}}
+            feature_transform={
+                "fpca": {"enabled": False},
+                "wavelet": {
+                    "enabled": True,
+                    "wavelet_name": "db1",
+                    "pca_n_components": 5,
+                    "pca_scope": "global",
+                },
+            },
         )
 
         result = _wavelet_transform_wrapper(simple_time_series_data, settings)
@@ -761,7 +775,16 @@ class TestWaveletTransform:
         settings = ClusteringSettings(
             algorithm_selection="bisecting_kmeans",
             seed=42,
-            feature_transform={"fpca": {"enabled": False}, "wavelet": {"enabled": True, "wavelet_name": wavelet_name, "pca_n_components": n_components, "include_scale_feature": False, "pca_scope": "global"}}
+            feature_transform={
+                "fpca": {"enabled": False},
+                "wavelet": {
+                    "enabled": True,
+                    "wavelet_name": wavelet_name,
+                    "pca_n_components": n_components,
+                    "include_scale_feature": False,
+                    "pca_scope": "global",
+                },
+            },
         )
 
         result = _wavelet_transform_wrapper(simple_time_series_data, settings)
@@ -774,7 +797,16 @@ class TestWaveletTransform:
         settings = ClusteringSettings(
             algorithm_selection="bisecting_kmeans",
             seed=42,
-            feature_transform={"fpca": {"enabled": False}, "wavelet": {"enabled": True, "wavelet_name": "db1", "pca_n_components": None, "pca_min_variance_ratio_explained": 0.90, "include_scale_feature": False}}
+            feature_transform={
+                "fpca": {"enabled": False},
+                "wavelet": {
+                    "enabled": True,
+                    "wavelet_name": "db1",
+                    "pca_n_components": None,
+                    "pca_min_variance_ratio_explained": 0.90,
+                    "include_scale_feature": False,
+                },
+            },
         )
 
         result = _wavelet_transform_wrapper(simple_time_series_data, settings)
@@ -787,7 +819,15 @@ class TestWaveletTransform:
         settings = ClusteringSettings(
             algorithm_selection="bisecting_kmeans",
             seed=42,
-            feature_transform={"fpca": {"enabled": False}, "wavelet": {"enabled": True, "wavelet_name": "db1", "pca_n_components": "mle", "include_scale_feature": False}}
+            feature_transform={
+                "fpca": {"enabled": False},
+                "wavelet": {
+                    "enabled": True,
+                    "wavelet_name": "db1",
+                    "pca_n_components": "mle",
+                    "include_scale_feature": False,
+                },
+            },
         )
 
         result = _wavelet_transform_wrapper(simple_time_series_data, settings)
@@ -802,7 +842,13 @@ class TestWaveletTransform:
             seed=42,
             feature_transform={
                 "fpca": {"enabled": False},
-                "wavelet": {"enabled": True, "wavelet_name": "db1", "pca_n_components": 5, "include_scale_feature": False, "pca_scope": "global"},
+                "wavelet": {
+                    "enabled": True,
+                    "wavelet_name": "db1",
+                    "pca_n_components": 5,
+                    "include_scale_feature": False,
+                    "pca_scope": "global",
+                },
                 "normalize": {"enabled": True, "method": "standardize"},
             },
         )
@@ -820,7 +866,16 @@ class TestWaveletTransform:
         settings = ClusteringSettings(
             algorithm_selection="bisecting_kmeans",
             seed=42,
-            feature_transform={"fpca": {"enabled": False}, "wavelet": {"enabled": True, "wavelet_name": "db1", "wavelet_n_levels": n_levels, "pca_n_components": 5, "include_scale_feature": False}}
+            feature_transform={
+                "fpca": {"enabled": False},
+                "wavelet": {
+                    "enabled": True,
+                    "wavelet_name": "db1",
+                    "wavelet_n_levels": n_levels,
+                    "pca_n_components": 5,
+                    "include_scale_feature": False,
+                },
+            },
         )
         result = _wavelet_transform_wrapper(simple_time_series_data, settings)
 
@@ -833,7 +888,16 @@ class TestWaveletTransform:
         settings = ClusteringSettings(
             algorithm_selection="bisecting_kmeans",
             seed=42,
-            feature_transform={"fpca": {"enabled": False}, "wavelet": {"enabled": True, "wavelet_name": "db1", "wavelet_mode": mode, "pca_n_components": 5, "include_scale_feature": False}}
+            feature_transform={
+                "fpca": {"enabled": False},
+                "wavelet": {
+                    "enabled": True,
+                    "wavelet_name": "db1",
+                    "wavelet_mode": mode,
+                    "pca_n_components": 5,
+                    "include_scale_feature": False,
+                },
+            },
         )
         result = _wavelet_transform_wrapper(simple_time_series_data, settings)
 
@@ -848,7 +912,14 @@ class TestWaveletTransform:
         settings = ClusteringSettings(
             algorithm_selection="bisecting_kmeans",
             seed=42,
-            feature_transform={"fpca": {"enabled": False}, "wavelet": {"enabled": True, "wavelet_name": "db1", "pca_n_components": n_components}}
+            feature_transform={
+                "fpca": {"enabled": False},
+                "wavelet": {
+                    "enabled": True,
+                    "wavelet_name": "db1",
+                    "pca_n_components": n_components,
+                },
+            },
         )
 
         result = _wavelet_transform_wrapper(dataset, settings)
@@ -861,13 +932,29 @@ class TestWaveletTransform:
         settings1 = ClusteringSettings(
             algorithm_selection="bisecting_kmeans",
             seed=42,
-            feature_transform={"fpca": {"enabled": False}, "wavelet": {"enabled": True, "wavelet_name": "db1", "pca_n_components": 5, "seed": 42}}
+            feature_transform={
+                "fpca": {"enabled": False},
+                "wavelet": {
+                    "enabled": True,
+                    "wavelet_name": "db1",
+                    "pca_n_components": 5,
+                    "seed": 42,
+                },
+            },
         )
 
         settings2 = ClusteringSettings(
             algorithm_selection="bisecting_kmeans",
             seed=42,
-            feature_transform={"fpca": {"enabled": False}, "wavelet": {"enabled": True, "wavelet_name": "db1", "pca_n_components": 5, "seed": 42}}
+            feature_transform={
+                "fpca": {"enabled": False},
+                "wavelet": {
+                    "enabled": True,
+                    "wavelet_name": "db1",
+                    "pca_n_components": 5,
+                    "seed": 42,
+                },
+            },
         )
 
         result1, _, _ = wavelet_transform(simple_time_series_data, settings1)
@@ -882,9 +969,17 @@ class TestWaveletTransform:
             seed=42,
             feature_transform={
                 "fpca": {"enabled": False},
-                "wavelet": {"enabled": True, "wavelet_name": "db1", "pca_n_components": 5, "pca_scope": "global"},
-                "normalize": {"enabled": True, "method": "standardize"},  # centering triggers magnitude
-            }
+                "wavelet": {
+                    "enabled": True,
+                    "wavelet_name": "db1",
+                    "pca_n_components": 5,
+                    "pca_scope": "global",
+                },
+                "normalize": {
+                    "enabled": True,
+                    "method": "standardize",
+                },  # centering triggers magnitude
+            },
         )
 
         result = transform_features(simple_time_series_data, settings).data
@@ -898,6 +993,7 @@ class TestWaveletTransform:
 # Tests for transform_features (main entry point)
 # =============================================================================
 
+
 class TestTransformFeatures:
     """Comprehensive tests for transform_features main function."""
 
@@ -908,8 +1004,11 @@ class TestTransformFeatures:
         settings = ClusteringSettings(
             algorithm_selection="bisecting_kmeans",
             seed=42,
-            feature_transform={"fpca": {"enabled": True, "min_var_ratio": 0.90}, "wavelet": {"enabled": False}},
-            normalize={"pre_transform": False, "post_transform": False, "method": None}
+            feature_transform={
+                "fpca": {"enabled": True, "min_var_ratio": 0.90},
+                "wavelet": {"enabled": False},
+            },
+            normalize={"pre_transform": False, "post_transform": False, "method": None},
         )
 
         with warnings.catch_warnings():
@@ -924,13 +1023,16 @@ class TestTransformFeatures:
         settings = ClusteringSettings(
             algorithm_selection="bisecting_kmeans",
             seed=42,
-            feature_transform={"fpca": {"enabled": True, "min_var_ratio": 0.90}, "wavelet": {"enabled": False}},
+            feature_transform={
+                "fpca": {"enabled": True, "min_var_ratio": 0.90},
+                "wavelet": {"enabled": False},
+            },
             normalize={
                 "pre_transform": True,
                 "post_transform": False,
                 "method": "standardize",
-                "axis": 0  # Use axis=0 for proper broadcasting
-            }
+                "axis": 0,  # Use axis=0 for proper broadcasting
+            },
         )
 
         with warnings.catch_warnings():
@@ -947,8 +1049,11 @@ class TestTransformFeatures:
         settings = ClusteringSettings(
             algorithm_selection="bisecting_kmeans",
             seed=42,
-            feature_transform={"fpca": {"enabled": False}, "wavelet": {"enabled": True, "wavelet_name": "db1", "pca_n_components": 5}},
-            normalize={"pre_transform": False, "post_transform": False, "method": None}
+            feature_transform={
+                "fpca": {"enabled": False},
+                "wavelet": {"enabled": True, "wavelet_name": "db1", "pca_n_components": 5},
+            },
+            normalize={"pre_transform": False, "post_transform": False, "method": None},
         )
 
         result = transform_features(simple_time_series_data, settings).data
@@ -961,14 +1066,17 @@ class TestTransformFeatures:
         settings = ClusteringSettings(
             algorithm_selection="bisecting_kmeans",
             seed=42,
-            feature_transform={"fpca": {"enabled": False}, "wavelet": {"enabled": True, "wavelet_name": "db1", "pca_n_components": 5}},
+            feature_transform={
+                "fpca": {"enabled": False},
+                "wavelet": {"enabled": True, "wavelet_name": "db1", "pca_n_components": 5},
+            },
             normalize={
                 "pre_transform": True,
                 "post_transform": False,
                 "method": "min_max_quantile",
                 "quantile": 0.05,
-                "axis": 1  # MIN_MAX_QUANTILE works with axis=1
-            }
+                "axis": 1,  # MIN_MAX_QUANTILE works with axis=1
+            },
         )
 
         result = transform_features(simple_time_series_data, settings).data
@@ -985,7 +1093,7 @@ class TestTransformFeatures:
                 "fpca": {"enabled": False},
                 "wavelet": {"enabled": True, "wavelet_name": "db1", "pca_n_components": 5},
                 "normalize": {"enabled": True, "method": "standardize"},
-            }
+            },
         )
 
         result = transform_features(simple_time_series_data, settings).data
@@ -1002,8 +1110,13 @@ class TestTransformFeatures:
             seed=42,
             feature_transform={
                 "fpca": {"enabled": False},
-                "wavelet": {"enabled": True, "wavelet_name": "db1", "pca_n_components": 10, "pca_scope": "global"},
-            }
+                "wavelet": {
+                    "enabled": True,
+                    "wavelet_name": "db1",
+                    "pca_n_components": 10,
+                    "pca_scope": "global",
+                },
+            },
         )
 
         result = transform_features(large_dataset, settings).data
@@ -1021,7 +1134,12 @@ class TestTransformFeatures:
             seed=42,
             feature_transform={
                 "fpca": {"enabled": False},
-                "wavelet": {"enabled": True, "wavelet_name": "db1", "pca_n_components": 5, "seed": 42},
+                "wavelet": {
+                    "enabled": True,
+                    "wavelet_name": "db1",
+                    "pca_n_components": 5,
+                    "seed": 42,
+                },
             },
         )
 
@@ -1038,6 +1156,7 @@ class TestTransformFeatures:
 # =============================================================================
 # Wavelet DWT internals: roundtrip, energy localisation, auto-cap, passthrough
 # =============================================================================
+
 
 def _sinusoid_signals(n=40, t_points=64, noise=0.05, seed=0):
     """A low-frequency sinusoid replicated across rows with light noise."""
@@ -1145,8 +1264,9 @@ class TestFpcaKnownRecovery:
         rng = np.random.default_rng(0)
         t = np.linspace(0, 4 * np.pi, 24)
         x = np.arange(24)
-        structured = np.array([np.sin(t) * rng.uniform(0.8, 1.2) + rng.normal(0, 0.05, 24)
-                               for _ in range(40)])
+        structured = np.array(
+            [np.sin(t) * rng.uniform(0.8, 1.2) + rng.normal(0, 0.05, 24) for _ in range(40)]
+        )
         noise = rng.normal(0, 1, (40, 24))
 
         with warnings.catch_warnings():
@@ -1157,5 +1277,5 @@ class TestFpcaKnownRecovery:
         assert n_structured < n_noise
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v', '--tb=short'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v", "--tb=short"])

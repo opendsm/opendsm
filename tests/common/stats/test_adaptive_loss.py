@@ -36,18 +36,17 @@ from opendsm.common.stats.adaptive_loss import (
 )
 
 
-
 # ---------------------------------------------------------------------------
 # generalized_loss_fcn — analytic values at the named alpha regimes
 # ---------------------------------------------------------------------------
 
 # At x=2: x^2=4. Each entry is the closed form of the loss family member.
 _LOSS_AT_X2 = {
-    2.0: 0.5 * 4.0,                       # L2
-    1.0: np.sqrt(4.0 + 1.0) - 1.0,        # smoothed L1 (pseudo-Huber)
-    0.0: np.log(0.5 * 4.0 + 1.0),         # Charbonnier: log(3)
-    -2.0: 2 * 4.0 / (4.0 + 4.0),          # Cauchy/Lorentzian: 1.0
-    -200.0: 1.0 - np.exp(-0.5 * 4.0),     # Welsch/Leclerc (alpha <= alpha_min)
+    2.0: 0.5 * 4.0,  # L2
+    1.0: np.sqrt(4.0 + 1.0) - 1.0,  # smoothed L1 (pseudo-Huber)
+    0.0: np.log(0.5 * 4.0 + 1.0),  # Charbonnier: log(3)
+    -2.0: 2 * 4.0 / (4.0 + 4.0),  # Cauchy/Lorentzian: 1.0
+    -200.0: 1.0 - np.exp(-0.5 * 4.0),  # Welsch/Leclerc (alpha <= alpha_min)
 }
 
 
@@ -93,6 +92,7 @@ def test_generalized_loss_derivative_matches_finite_difference(alpha, scale):
 # generalized_loss_weights — downweighting behavior
 # ---------------------------------------------------------------------------
 
+
 def test_weights_all_one_at_alpha_2():
     """L2 loss (alpha=2) weights every observation equally at 1.0."""
     x = np.array([0.0, 0.5, 1.0, 5.0, -10.0])
@@ -127,6 +127,7 @@ def test_weights_min_weight_floor_is_respected():
 # alpha_scaled — bounded, monotone reparametrization of alpha
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("alpha_max", [2.0, 100.0])
 def test_alpha_scaled_monotone_increasing(alpha_max):
     """alpha_scaled maps the unit interval monotonically onto alpha space."""
@@ -149,6 +150,7 @@ def test_alpha_scaled_bounds_and_clipping(alpha_max):
 # _numba_brent_alpha — matches scipy's bounded Brent on the same objective
 # ---------------------------------------------------------------------------
 
+
 def test_numba_brent_matches_scipy_bounded():
     """The hand-ported Brent minimizer reproduces scipy's bounded result."""
     rng = np.random.default_rng(7)
@@ -169,6 +171,7 @@ def test_numba_brent_matches_scipy_bounded():
 # ---------------------------------------------------------------------------
 # penalized_loss_fcn — partition-function penalty and the failure path
 # ---------------------------------------------------------------------------
+
 
 def test_penalized_loss_adds_partition_penalty():
     """The penalty raises the bare loss by ln_Z(alpha) at every point."""
@@ -200,6 +203,7 @@ def test_penalized_loss_raises_on_nonfinite_input():
 # ---------------------------------------------------------------------------
 # adaptive_loss_fcn — optimization vs fixed alpha
 # ---------------------------------------------------------------------------
+
 
 def test_adaptive_loss_fcn_fixed_alpha_passthrough():
     """A fixed alpha is returned unchanged alongside its loss."""
@@ -234,6 +238,7 @@ def test_adaptive_loss_fcn_outliers_push_alpha_negative():
 # adaptive_weights — pinned regression values (deterministic) + properties
 # ---------------------------------------------------------------------------
 
+
 def test_adaptive_weights_no_standardization():
     """Pinned weights/scale/alpha for a clean ramp (adaptive selects L2)."""
     x = np.array([1, 2, 3, 4, 5])
@@ -265,9 +270,7 @@ def test_adaptive_weights_handles_nonfinite():
 
     weights, C, alpha = adaptive_weights(x)
 
-    assert np.allclose(
-        weights, np.array([1, 1, 0.99993282, 0.99994308, 0.99993282]), atol=1e-3
-    )
+    assert np.allclose(weights, np.array([1, 1, 0.99993282, 0.99994308, 0.99993282]), atol=1e-3)
     assert np.isfinite(weights).all()
 
 
@@ -285,6 +288,7 @@ def test_adaptive_weights_outlier_gets_near_zero_weight():
 # ---------------------------------------------------------------------------
 # remove_outliers
 # ---------------------------------------------------------------------------
+
 
 def test_remove_outliers_keeps_clean_data():
     """Clean data passes through with all indices retained."""
@@ -320,6 +324,7 @@ def test_remove_outliers_identical_values_returns_all():
 # rolling helpers — shapes and window-as-proportion
 # ---------------------------------------------------------------------------
 
+
 def test_rolling_IQR_outlier_shape_and_window_proportion():
     """Returns (2, n) lower/upper thresholds; window<=1 is a fraction of n."""
     x = np.arange(100.0)
@@ -345,6 +350,7 @@ def test_rolling_C_returns_per_point_scale():
 # ---------------------------------------------------------------------------
 # KernelWeightCache — local adaptive weighting over a covariate
 # ---------------------------------------------------------------------------
+
 
 def test_kernel_cache_degenerate_returns_unit_weights():
     """Fewer than 3 points (no geometry) → unit weights, alpha=2."""
@@ -405,6 +411,7 @@ def test_kernel_cache_return_local_scale_shape():
 # ---------------------------------------------------------------------------
 # get_C — robust scale estimate, and sliding_window validation
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("algo", ["iqr_legacy", "iqr", "mad", "stdev"])
 def test_get_C_positive_for_each_algo(algo):

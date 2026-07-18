@@ -22,7 +22,6 @@ from opendsm.comparison_groups.individual_meter_matching.settings import Setting
 from opendsm.comparison_groups.individual_meter_matching.highs_settings import HiGHS_Settings
 
 
-
 class TestIMMSettings:
     """IMM Settings field bounds and cross-field validation."""
 
@@ -47,11 +46,14 @@ class TestIMMSettings:
         )
         assert settings.allow_duplicate_matches is True
 
-    @pytest.mark.parametrize("field,value", [
-        ("n_matches_per_treatment", 0),
-        ("n_pool_meters_per_chunk", 0),
-        ("candidate_multiplier", 1),
-    ])
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("n_matches_per_treatment", 0),
+            ("n_pool_meters_per_chunk", 0),
+            ("candidate_multiplier", 1),
+        ],
+    )
     def test_below_minimum_raises(self, field, value):
         """Count fields enforce their lower bounds."""
         with pytest.raises(ValidationError):

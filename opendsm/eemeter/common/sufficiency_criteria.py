@@ -47,10 +47,10 @@ def _round_sig(x, sig=4):
 
 class SufficiencyCriteria(BaseSettings):
     model_config = pydantic.ConfigDict(
-        frozen = False,
+        frozen=False,
         arbitrary_types_allowed=True,
-        str_to_lower = True,
-        str_strip_whitespace = True,
+        str_to_lower=True,
+        str_strip_whitespace=True,
     )
 
     data: pd.DataFrame
@@ -93,9 +93,7 @@ class SufficiencyCriteria(BaseSettings):
         non_null_data = self.data.dropna()
         data_start = non_null_data.index.min()
         data_end = non_null_data.index.max()
-        n_days_data = (
-            data_end - data_start
-        ).days + 1  # TODO confirm. no longer using last row nan
+        n_days_data = (data_end - data_start).days + 1  # TODO confirm. no longer using last row nan
 
         n_days_start_gap = 0
         if requested_start is not None:
@@ -190,8 +188,7 @@ class SufficiencyCriteria(BaseSettings):
             self.disqualification.append(
                 EEMeterWarning(
                     qualified_name=(
-                        "eemeter.sufficiency_criteria"
-                        f".extra_data_{err}_requested_{gap_type}_date"
+                        f"eemeter.sufficiency_criteria.extra_data_{err}_requested_{gap_type}_date"
                     ),
                     description=f"Extra data found {err} requested {gap_type} date.",
                     data={
@@ -262,14 +259,14 @@ class SufficiencyCriteria(BaseSettings):
                 EEMeterWarning(
                     qualified_name=f"eemeter.sufficiency_criteria.insufficient_unique_{col}_values",
                     description=(
-                        f"Less than {min_pct_unique*100:.0f}% of {name} values are unique. "
+                        f"Less than {min_pct_unique * 100:.0f}% of {name} values are unique. "
                         f"Data contains too many repeated values."
                     ),
                     data={
                         "n_unique_values": n_unique,
                         "n_total_values": n_total,
-                        "unique_percentage": round(unique_percentage*100, 1),
-                        "min_required_percentage": round(min_pct_unique*100, 1),
+                        "unique_percentage": round(unique_percentage * 100, 1),
+                        "min_required_percentage": round(min_pct_unique * 100, 1),
                     },
                 )
             )
@@ -297,8 +294,7 @@ class SufficiencyCriteria(BaseSettings):
             self.disqualification.append(
                 EEMeterWarning(
                     qualified_name=(
-                        "eemeter.sufficiency_criteria"
-                        f".too_many_days_with_missing_{col}_data"
+                        f"eemeter.sufficiency_criteria.too_many_days_with_missing_{col}_data"
                     ),
                     description=f"Too many days in data have missing {name} data.",
                     data={
@@ -308,7 +304,9 @@ class SufficiencyCriteria(BaseSettings):
                 )
             )
 
-    def _check_valid_monthly_coverage(self, col: Literal["temperature", "ghi", "observed", "joint"]):
+    def _check_valid_monthly_coverage(
+        self, col: Literal["temperature", "ghi", "observed", "joint"]
+    ):
         if self._should_skip_col(col):
             return
 
@@ -319,9 +317,7 @@ class SufficiencyCriteria(BaseSettings):
         min_pct = self._col_settings(col).min_pct_monthly_coverage
 
         non_null_pct_per_month = (
-            self.data[col]
-            .groupby(self.data.index.month)
-            .apply(lambda x: x.notna().mean())
+            self.data[col].groupby(self.data.index.month).apply(lambda x: x.notna().mean())
         )
 
         if (non_null_pct_per_month < min_pct).any():
@@ -329,7 +325,7 @@ class SufficiencyCriteria(BaseSettings):
                 EEMeterWarning(
                     qualified_name=f"eemeter.sufficiency_criteria.missing_monthly_{col}_data",
                     description=(
-                        f"More than {(1-min_pct)*100:.0f}% of the monthly {name} data is missing."
+                        f"More than {(1 - min_pct) * 100:.0f}% of the monthly {name} data is missing."
                     ),
                     data={
                         "lowest_monthly_coverage": _round_sig(non_null_pct_per_month.min()),
@@ -379,7 +375,7 @@ class SufficiencyCriteria(BaseSettings):
                 EEMeterWarning(
                     qualified_name="eemeter.sufficiency_criteria.missing_high_frequency_observed_data",
                     description=(
-                        f"More than {(1-min_pct)*100:.0f}% of the high frequency Observed data is missing."
+                        f"More than {(1 - min_pct) * 100:.0f}% of the high frequency Observed data is missing."
                     ),
                     data=low_coverage.index.to_list(),
                 )
@@ -477,9 +473,7 @@ class DailySufficiencyCriteria(SufficiencyCriteria):
         super().__init__(*args, **kwargs)
 
     def _check_season_weekday_weekend_availability(self):
-        raise NotImplementedError(
-            "90% of season and weekday/weekend check not implemented yet"
-        )
+        raise NotImplementedError("90% of season and weekday/weekend check not implemented yet")
 
     def check_sufficiency_baseline(self):
         super().check_sufficiency_baseline()
@@ -577,9 +571,7 @@ class BillingSufficiencyCriteria(SufficiencyCriteria):
             data["unestimated_value"] = (
                 data[:-1].value[(data[:-1].estimated == False)].reindex(data.index)
             )
-            data["estimated_value"] = (
-                data[:-1].value[(data[:-1].estimated)].reindex(data.index)
-            )
+            data["estimated_value"] = data[:-1].value[(data[:-1].estimated)].reindex(data.index)
             prev_row = None
             prev_index = None
             for index, row in data[:-1].iterrows():

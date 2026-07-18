@@ -46,7 +46,6 @@ import scipy.sparse.csgraph
 import sklearn.neighbors
 
 
-
 _EPS = 1e-12
 _CORE_CLIP = 1e12
 
@@ -57,7 +56,9 @@ class _DistanceSource(Protocol):
     def within_cluster(self, cid: int) -> np.ndarray: ...
 
     def between_clusters(
-        self, ci: int, cj: int,
+        self,
+        ci: int,
+        cj: int,
         local_i: np.ndarray,
         local_j: np.ndarray,
     ) -> np.ndarray: ...
@@ -80,12 +81,13 @@ class _FullMatrixSource:
         return self._dists[np.ix_(self._members[cid], self._members[cid])]
 
     def between_clusters(
-        self, ci: int, cj: int,
+        self,
+        ci: int,
+        cj: int,
         local_i: np.ndarray,
         local_j: np.ndarray,
     ) -> np.ndarray:
         return self._dists[np.ix_(self._members[ci][local_i], self._members[cj][local_j])]
-
 
 
 @numba.jit(nopython=True, cache=True)
@@ -113,7 +115,7 @@ def _core_distances(dists, n_features):
             s = 0.0
         elif s > CLIP:
             s = CLIP
-        core[i, 0] = s ** inv_d
+        core[i, 0] = s**inv_d
     return core
 
 
@@ -143,7 +145,7 @@ def _mst_internal_nodes(
     mst += mst.T
     if internal.size == 0:
         return np.arange(n_nodes), mst
-    
+
     return internal, mst
 
 
@@ -177,12 +179,13 @@ def _dbcv_core(
 ) -> float:
     """Core DBCV computation on pre-validated, noise-free inputs."""
     dscs = np.zeros(n_clusters, dtype=float)
-    internal_local: list[np.ndarray] = [None] * n_clusters      # type: ignore[list-item]
-    internal_core: list[np.ndarray] = [None] * n_clusters    # type: ignore[list-item]
+    internal_local: list[np.ndarray] = [None] * n_clusters  # type: ignore[list-item]
+    internal_core: list[np.ndarray] = [None] * n_clusters  # type: ignore[list-item]
 
     for cid in range(n_clusters):
         dsc, core_i, local_i = _cluster_sparseness(
-            dist.within_cluster(cid), n_features,
+            dist.within_cluster(cid),
+            n_features,
         )
         dscs[cid] = dsc
         internal_local[cid] = local_i
@@ -256,12 +259,14 @@ def dbcv(
         return 0.0
 
     _, y_dense, cluster_sizes = np.unique(
-        inverse[non_noise_inds], return_inverse=True, return_counts=True,
+        inverse[non_noise_inds],
+        return_inverse=True,
+        return_counts=True,
     )
     n_clusters = cluster_sizes.size
 
     # Build cluster member lists
-    order = np.argsort(y_dense, kind='stable')
+    order = np.argsort(y_dense, kind="stable")
     splits = np.searchsorted(y_dense[order], np.arange(1, n_clusters))
     cluster_members = np.split(order, splits)
 
@@ -274,7 +279,7 @@ def dbcv(
             nn_dists, _ = nn.kneighbors(return_distance=True)
             if np.any(nn_dists < 1e-9):
                 raise ValueError("Duplicated samples have been found in X.")
-            
+
         pairwise = scipy.spatial.distance.cdist(X, X, metric=metric)
         np.maximum(pairwise, _EPS, out=pairwise)
         np.fill_diagonal(pairwise, np.inf)

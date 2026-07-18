@@ -27,11 +27,9 @@ _SENTINEL = object()
 # Normalization helpers
 # ---------------------------------------------------------------------------
 
+
 def _safe_standardize(
-    data: np.ndarray,
-    center: np.ndarray,
-    scale: np.ndarray,
-    threshold: float = 1e-10
+    data: np.ndarray, center: np.ndarray, scale: np.ndarray, threshold: float = 1e-10
 ) -> np.ndarray:
     """Safely standardize data by centering and scaling.
 
@@ -178,7 +176,7 @@ def normalize(
             data = np.where(
                 const_mask,
                 (a + b) / 2,
-                (b - a) * (data - min_val) / (max_val - min_val + 1e-16) + a
+                (b - a) * (data - min_val) / (max_val - min_val + 1e-16) + a,
             )
 
     return data
@@ -187,6 +185,7 @@ def normalize(
 # ---------------------------------------------------------------------------
 # Magnitude features (pre-transform supplemental information)
 # ---------------------------------------------------------------------------
+
 
 def compute_magnitude_features(
     original_data: np.ndarray,

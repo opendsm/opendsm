@@ -19,7 +19,6 @@ import pandas as pd
 from numba.extending import overload
 
 
-
 MIN_POS_SYSTEM_VALUE = (np.finfo(float).tiny * (1e20)) ** (1 / 2)
 MAX_POS_SYSTEM_VALUE = (np.finfo(float).max * (1e-20)) ** (1 / 2)
 LN_MIN_POS_SYSTEM_VALUE = np.log(MIN_POS_SYSTEM_VALUE)
@@ -145,7 +144,7 @@ def safe_divide(num, den, min_denominator=1e-3, return_all=True):
     # Where valid, perform division
     valid_mask = ~invalid_mask
     # Use numpy errstate to suppress divide by zero warnings and replace with nan
-    with np.errstate(divide='ignore', invalid='ignore'):
+    with np.errstate(divide="ignore", invalid="ignore"):
         if num.ndim > 0 and den.ndim > 0:
             temp_result = np.divide(num[valid_mask], den[valid_mask])
             temp_result[np.isinf(temp_result)] = np.nan
@@ -171,7 +170,11 @@ def safe_divide(num, den, min_denominator=1e-3, return_all=True):
     result = np.where(np.isfinite(result), result, np.nan)
 
     # If input was scalar, return scalar
-    if input_num_type not in (np.ndarray, list, pd.Series) and input_den_type not in (np.ndarray, list, pd.Series):
+    if input_num_type not in (np.ndarray, list, pd.Series) and input_den_type not in (
+        np.ndarray,
+        list,
+        pd.Series,
+    ):
         if invalid_mask:
             return np.nan
         else:
@@ -246,7 +249,7 @@ def RoundToSigFigs(x, p):
 
 def sigmoid(x, x0=0, k=1):
     # https://stackoverflow.com/questions/51976461/optimal-way-of-defining-a-numerically-stable-sigmoid-function-for-a-list-in-pyth
-    
+
     def _positive_sigmoid(x):
         return 1 / (1 + np.exp(-x))
 
@@ -279,6 +282,7 @@ def sigmoid(x, x0=0, k=1):
 
     return res
 
+
 def log_cosh(x):
     # log(cosh(x)) = log(e^x + e^-x) - log(2).
     # For x > 0, we can rewrite this as x + log(1 + e^(-2 * x)) - log(2).
@@ -300,7 +304,7 @@ def log_cosh(x):
     # from scipy.special import zeta
     # n = 1
     # 1/((-1)**(n-1) * (2**(2*n) - 1)*np.abs(zeta(2*n)) / (n * np.pi**(2*n)))
-    
+
     # Handle scalar inputs
     isscalar = False
     if np.isscalar(x):
@@ -310,19 +314,19 @@ def log_cosh(x):
     # Convert integer types to float types
     if np.issubdtype(x.dtype, np.integer):
         precision = np.iinfo(x.dtype).bits
-        x = x.astype(np.dtype(f'float{precision}'))
-    
+        x = x.astype(np.dtype(f"float{precision}"))
+
     # Set bounds for taylor series approximation based on data type
     if x.dtype == np.float16:
-        bound = 5.5E-2
+        bound = 5.5e-2
     elif x.dtype == np.float32:
-        bound = 1E-1
+        bound = 1e-1
     elif x.dtype == np.float64:
-        bound = 8E-9
+        bound = 8e-9
     elif x.dtype == np.float128:
-        bound = 1E-8
+        bound = 1e-8
     else:
-        bound = 45 * np.power(np.finfo(x.dtype).tiny, 1 / 6.)
+        bound = 45 * np.power(np.finfo(x.dtype).tiny, 1 / 6.0)
 
     abs_x = np.abs(x)
 
@@ -333,7 +337,13 @@ def log_cosh(x):
 
     # For small x, log(cosh(x)) = x**2 / 2 - x**4 / 12 + x**6 / 45 - ...
     x_t = x[idx_taylor]
-    res[idx_taylor] = x_t**2 / 2. - x_t**4 / 12. + x_t**6 / 45. - x_t**8 / 148.23529411764702 + x_t**10 / 457.2580645161289
+    res[idx_taylor] = (
+        x_t**2 / 2.0
+        - x_t**4 / 12.0
+        + x_t**6 / 45.0
+        - x_t**8 / 148.23529411764702
+        + x_t**10 / 457.2580645161289
+    )
 
     # for large x, use logcosh
     _abs_x = abs_x[idx_logcosh]

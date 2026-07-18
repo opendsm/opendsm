@@ -66,7 +66,9 @@ def _distances(ls_t, ls_cp, weights=None, dist_metric="euclidean", n_meters_per_
         ls_t = ls_t * weights
 
     dist = [
-        cdist(ls_t, chunk * weights if weights is not None else chunk, metric=dist_metric).astype(np.float32)
+        cdist(ls_t, chunk * weights if weights is not None else chunk, metric=dist_metric).astype(
+            np.float32
+        )
         for chunk in _iter_chunks(ls_cp, n_meters_per_chunk)
     ]
 
@@ -133,7 +135,9 @@ def _prefilter_pool(ls_t, ls_cp, per_treatment_k, n_meters_per_chunk, dist_metri
     return candidate_idx
 
 
-def highs_fit_comparison_group_loadshape(t_ls, cp_ls, coef_sum=1, solver="highs", settings=None, verbose=False):
+def highs_fit_comparison_group_loadshape(
+    t_ls, cp_ls, coef_sum=1, solver="highs", settings=None, verbose=False
+):
     """Fit comparison pool load shapes to a target using constrained least squares.
 
     Solves a least-squares problem over the comparison pool to find a convex
@@ -165,8 +169,8 @@ def highs_fit_comparison_group_loadshape(t_ls, cp_ls, coef_sum=1, solver="highs"
     if settings is None:
         if coef_sum == 1:
             settings = _highs_settings.HiGHS_Settings(
-                primal_feasibility_tolerance=1E-4,
-                dual_feasibility_tolerance=1E-4,
+                primal_feasibility_tolerance=1e-4,
+                dual_feasibility_tolerance=1e-4,
             )
         else:
             settings = _highs_settings.HiGHS_Settings(
@@ -175,7 +179,7 @@ def highs_fit_comparison_group_loadshape(t_ls, cp_ls, coef_sum=1, solver="highs"
             )
         settings = {k.lower(): v for k, v in dict(settings).items()}
 
-    _MIN_X = 1E-6 if coef_sum == 1 else 5E-3
+    _MIN_X = 1e-6 if coef_sum == 1 else 5e-3
 
     num_pool_meters = cp_ls.shape[0]
 
@@ -189,7 +193,9 @@ def highs_fit_comparison_group_loadshape(t_ls, cp_ls, coef_sum=1, solver="highs"
     lb = np.zeros(num_pool_meters)
     ub = np.ones(num_pool_meters)
 
-    x_opt = solve_ls(R, t_ls, G=-eye, h=h, A=A, b=b, lb=lb, ub=ub, solver=solver, verbose=verbose, **settings)
+    x_opt = solve_ls(
+        R, t_ls, G=-eye, h=h, A=A, b=b, lb=lb, ub=ub, solver=solver, verbose=verbose, **settings
+    )
 
     x_opt[x_opt < 0] = 0
     x_opt[x_opt > 1] = 1
@@ -357,7 +363,11 @@ class DistanceMatching:
             logger.warning(
                 "Reduced matches per treatment from %d to %d: a pool of %d cannot supply "
                 "%d unique matches for %d treatments.",
-                requested_n_match, n_match, n_pool, requested_n_match, n_treatment,
+                requested_n_match,
+                n_match,
+                n_pool,
+                requested_n_match,
+                n_treatment,
             )
 
         if selection_method == "minimize_meter_distance":
@@ -368,7 +378,12 @@ class DistanceMatching:
             ls_t_mean = np.mean(ls_t.values, axis=0) * coef_sum
 
             x_opt = highs_fit_comparison_group_loadshape(
-                ls_t_mean, ls_cp.values, coef_sum=coef_sum, solver="highs", settings=None, verbose=False
+                ls_t_mean,
+                ls_cp.values,
+                coef_sum=coef_sum,
+                solver="highs",
+                settings=None,
+                verbose=False,
             )
 
             x_opt_idx = np.argsort(x_opt)[::-1][:coef_sum]
@@ -432,11 +447,13 @@ class DistanceMatching:
                 treatments = ls_t_chunk.index[t_indices]
                 dists = dist_chunk[t_indices, cp_indices]
 
-                chunk_df = pd.DataFrame({
-                    "id": ids,
-                    "treatment": treatments,
-                    "distance": dists,
-                })
+                chunk_df = pd.DataFrame(
+                    {
+                        "id": ids,
+                        "treatment": treatments,
+                        "distance": dists,
+                    }
+                )
                 all_data.append(chunk_df)
                 del dist_chunk
 
@@ -456,14 +473,22 @@ class DistanceMatching:
                 if n_actual == 0:
                     continue
                 cp_arr = np.array(matches)
-                all_data.append(pd.DataFrame({
-                    "id": ls_cp.index[cp_arr],
-                    "treatment": ls_t.index[t_idx],
-                    "distance": distances[t_idx, cp_arr],
-                }))
+                all_data.append(
+                    pd.DataFrame(
+                        {
+                            "id": ls_cp.index[cp_arr],
+                            "treatment": ls_t.index[t_idx],
+                            "distance": distances[t_idx, cp_arr],
+                        }
+                    )
+                )
 
             del distances
-            df = pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame(columns=["id", "treatment", "distance"])
+            df = (
+                pd.concat(all_data, ignore_index=True)
+                if all_data
+                else pd.DataFrame(columns=["id", "treatment", "distance"])
+            )
 
         # check that the distance is less than the threshold
         if max_distance_threshold is not None:

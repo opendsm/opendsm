@@ -18,7 +18,6 @@ from opendsm.comparison_groups.random_sampling.create_comparison_groups import R
 from opendsm.comparison_groups.random_sampling.settings import Settings
 
 
-
 def test_n_meters_total_samples_exact_count(cg_loadshape_data):
     treatment_data, comparison_pool_data = cg_loadshape_data
     rs = Random_Sampling(Settings(n_meters_total=10, n_meters_per_treatment=None, seed=1))
@@ -47,8 +46,12 @@ def test_seed_makes_sample_reproducible(cg_loadshape_data):
     treatment_data, comparison_pool_data = cg_loadshape_data
     settings = Settings(n_meters_total=10, n_meters_per_treatment=None, seed=7)
 
-    clusters_1, _ = Random_Sampling(settings).get_comparison_group(treatment_data, comparison_pool_data)
-    clusters_2, _ = Random_Sampling(settings).get_comparison_group(treatment_data, comparison_pool_data)
+    clusters_1, _ = Random_Sampling(settings).get_comparison_group(
+        treatment_data, comparison_pool_data
+    )
+    clusters_2, _ = Random_Sampling(settings).get_comparison_group(
+        treatment_data, comparison_pool_data
+    )
 
     assert list(clusters_1.index) == list(clusters_2.index)
 

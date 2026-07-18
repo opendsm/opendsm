@@ -56,7 +56,7 @@ def get_slope(x, y, x_bp, intercept, alpha=2):
                 obj = np.sqrt(np.sum(resid**2))
             else:
                 # obj = np.sum(np.abs(resid)) # MAE
-                obj = np.sum(log_cosh(resid))                   
+                obj = np.sum(log_cosh(resid))
 
             return obj
 

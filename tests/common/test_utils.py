@@ -25,7 +25,6 @@ from opendsm.common.utils import (
 )
 
 
-
 def test_np_clip():
     # Test case 1: Test with a scalar input
     a = 5
@@ -170,9 +169,7 @@ def test_safe_divide_mixed_array_and_scalar():
 
 def test_safe_divide_return_all_false_drops_invalid():
     """return_all=False returns only the valid quotients, dropping masked entries."""
-    result = safe_divide(
-        np.array([10.0, 10.0, 6.0]), np.array([2.0, 0.0, 3.0]), return_all=False
-    )
+    result = safe_divide(np.array([10.0, 10.0, 6.0]), np.array([2.0, 0.0, 3.0]), return_all=False)
 
     assert np.allclose(result, [5.0, 2.0])
 

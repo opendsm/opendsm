@@ -26,7 +26,6 @@ from opendsm.eemeter.common.sufficiency_criteria import (
 )
 
 
-
 def _daily_frame(n_days=365, start="2020-01-01"):
     """A clean daily aggregated frame that passes every sufficiency rule.
 
@@ -74,6 +73,7 @@ def _warning_names(sc):
 # no_data
 # ---------------------------------------------------------------------------
 
+
 def test_no_data_disqualifies_when_all_nan():
     """An all-NaN frame is disqualified as no_data."""
     df = _daily_frame()
@@ -98,6 +98,7 @@ def test_no_data_passes_on_clean_frame():
 # ---------------------------------------------------------------------------
 # baseline_day_length  (min 329, max 366 for daily)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("n_days", [328, 367])
 def test_baseline_day_length_disqualifies_out_of_range(n_days):
@@ -131,6 +132,7 @@ def test_baseline_day_length_skipped_for_reporting_data():
 # ---------------------------------------------------------------------------
 # negative_observed_values  (gas only)
 # ---------------------------------------------------------------------------
+
 
 def test_negative_observed_disqualifies_gas():
     """Negative observed values disqualify gas data."""
@@ -167,6 +169,7 @@ def test_negative_observed_passes_clean_gas():
 # unique_values  (observed needs >= 10% unique)
 # ---------------------------------------------------------------------------
 
+
 def test_unique_values_disqualifies_repeated_observed():
     """A constant observed series fails the 10%-unique floor with the right payload."""
     df = _daily_frame()
@@ -197,6 +200,7 @@ def test_unique_values_passes_varied_observed():
 # valid_days_percentage  (>= 90% daily coverage)
 # ---------------------------------------------------------------------------
 
+
 def test_valid_days_percentage_disqualifies_low_temperature_coverage():
     """Too many days below the per-period temperature coverage fail the rule."""
     df = _daily_frame()
@@ -207,7 +211,9 @@ def test_valid_days_percentage_disqualifies_low_temperature_coverage():
 
     sc._check_valid_days_percentage(col="temperature")
 
-    assert "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data" in _dq_names(sc)
+    assert "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data" in _dq_names(
+        sc
+    )
 
 
 def test_valid_days_percentage_disqualifies_low_observed_coverage():
@@ -239,6 +245,7 @@ def test_valid_days_percentage_passes_full_coverage(col):
 # valid_monthly_coverage  (>= 90% of each month present)
 # ---------------------------------------------------------------------------
 
+
 def test_valid_monthly_coverage_disqualifies_sparse_month():
     """A month with mostly-missing temperature fails the monthly-coverage rule."""
     df = _daily_frame()
@@ -263,6 +270,7 @@ def test_valid_monthly_coverage_passes_full_year():
 # ---------------------------------------------------------------------------
 # extreme_values  (warning, outside 3x IQR)
 # ---------------------------------------------------------------------------
+
 
 def test_extreme_values_warns_on_outlier():
     """A single value outside 3x IQR raises an extreme-values warning counting one."""
@@ -291,6 +299,7 @@ def test_extreme_values_quiet_on_clean_data():
 # n_days_boundary_gap  (extra data beyond the requested window)
 # ---------------------------------------------------------------------------
 
+
 def test_boundary_gap_disqualifies_extra_data_before_start():
     """Data extending before the requested start date is flagged."""
     df = _daily_frame()
@@ -317,6 +326,7 @@ def test_boundary_gap_passes_when_aligned():
 # ---------------------------------------------------------------------------
 # billing off-cycle reads  (period must be within [min_days, max_days])
 # ---------------------------------------------------------------------------
+
 
 def _billing_criteria(df):
     sc = BillingSufficiencyCriteria(
@@ -356,6 +366,7 @@ def test_billing_regular_monthly_cadence_passes():
 # ---------------------------------------------------------------------------
 # baseline orchestration  (the public gate must invoke each wired rule)
 # ---------------------------------------------------------------------------
+
 
 def _frame_all_nan():
     df = _daily_frame()

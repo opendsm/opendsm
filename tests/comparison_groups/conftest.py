@@ -20,7 +20,6 @@ from opendsm.comparison_groups.common import Data, Data_Settings
 from opendsm.comparison_groups.common import const as _const
 
 
-
 def _hour_loadshape_data(df_baseline, meter_ids):
     settings = Data_Settings(
         agg_type=_const.AggType.MEAN,
@@ -95,7 +94,7 @@ def cg_clustering_data(_comstock_hourly_all):
 
 @pytest.fixture
 def col_name():
-    return 'col1'
+    return "col1"
 
 
 @pytest.fixture
@@ -115,13 +114,7 @@ def df_treatment(col_name):
 
 @pytest.fixture
 def df_pool(col_name):
-    return pd.DataFrame(
-        [
-            {"id": f"id_pool_{x}", col_name: x}
-            for x in np.arange(0, 20, 0.01)
-        ]
-    )
-
+    return pd.DataFrame([{"id": f"id_pool_{x}", col_name: x} for x in np.arange(0, 20, 0.01)])
 
 
 @pytest.fixture
@@ -131,7 +124,7 @@ def df_equiv(df_treatment, df_pool):
             {
                 "id": dim_project_site_meter_id,
                 "month": month,
-                "baseline_predicted_usage": month*i,
+                "baseline_predicted_usage": month * i,
             }
             for month in range(1, 13)
             for i, dim_project_site_meter_id in enumerate(df_treatment["id"].values)

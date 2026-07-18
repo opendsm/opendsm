@@ -42,21 +42,32 @@ from opendsm.common.stats.distribution_transform._bc_yj_shared import (
 # Scalar kernels
 # ---------------------------------------------------------------------------
 
+
 @numba.jit(nopython=True, error_model="numpy", cache=True)
 def _yj(x, lam, deriv):
     """Scalar Yeo-Johnson value or x-derivative at a single point."""
     if not deriv:
-        if   (lam != 0) and (x >= 0): return ((1 + x)**lam - 1) / lam
-        elif (lam == 0) and (x >= 0): return np.log(1 + x)
-        elif (lam != 2) and (x <  0): return -((1 - x)**(2 - lam) - 1) / (2 - lam)
-        elif (lam == 2) and (x <  0): return -np.log(1 - x)
-        else:                          return np.nan
+        if (lam != 0) and (x >= 0):
+            return ((1 + x) ** lam - 1) / lam
+        elif (lam == 0) and (x >= 0):
+            return np.log(1 + x)
+        elif (lam != 2) and (x < 0):
+            return -((1 - x) ** (2 - lam) - 1) / (2 - lam)
+        elif (lam == 2) and (x < 0):
+            return -np.log(1 - x)
+        else:
+            return np.nan
     else:
-        if   (lam != 0) and (x >= 0): return (x + 1)**(lam - 1)
-        elif (lam == 0) and (x >= 0): return 1 / (1 + x)
-        elif (lam != 2) and (x <  0): return (1 - x)**(1 - lam)
-        elif (lam == 2) and (x <  0): return 1 / (1 - x)
-        else:                          return np.nan
+        if (lam != 0) and (x >= 0):
+            return (x + 1) ** (lam - 1)
+        elif (lam == 0) and (x >= 0):
+            return 1 / (1 + x)
+        elif (lam != 2) and (x < 0):
+            return (1 - x) ** (1 - lam)
+        elif (lam == 2) and (x < 0):
+            return 1 / (1 - x)
+        else:
+            return np.nan
 
 
 @numba.jit(nopython=True, error_model="numpy", cache=True)
@@ -83,6 +94,7 @@ def _yj_inverse(y, lam):
 # Vectorized transforms
 # ---------------------------------------------------------------------------
 
+
 @numba.jit(nopython=True, error_model="numpy", cache=True)
 def yj_transform(x, lam):
     """Forward Yeo-Johnson transform of array x."""
@@ -107,19 +119,26 @@ def _yj_rectified_transform(x, lam, Q):
     q1, q3 = Q[0], Q[1]
     n = len(x)
 
-    hq1 = _yj(q1, lam, _WANT_VALUE);  dq1 = _yj(q1, lam, _WANT_DERIV)
-    hq3 = _yj(q3, lam, _WANT_VALUE);  dq3 = _yj(q3, lam, _WANT_DERIV)
+    hq1 = _yj(q1, lam, _WANT_VALUE)
+    dq1 = _yj(q1, lam, _WANT_DERIV)
+    hq3 = _yj(q3, lam, _WANT_VALUE)
+    dq3 = _yj(q3, lam, _WANT_DERIV)
 
     h = np.empty_like(x)
 
     lo = 0
-    while lo < n and x[lo] < q1: lo += 1
+    while lo < n and x[lo] < q1:
+        lo += 1
     hi = lo
-    while hi < n and x[hi] < q3: hi += 1
+    while hi < n and x[hi] < q3:
+        hi += 1
 
-    for i in range(lo):      h[i] = hq1 + (x[i] - q1) * dq1
-    for i in range(lo, hi):  h[i] = _yj(x[i], lam, _WANT_VALUE)
-    for i in range(hi, n):   h[i] = hq3 + (x[i] - q3) * dq3
+    for i in range(lo):
+        h[i] = hq1 + (x[i] - q1) * dq1
+    for i in range(lo, hi):
+        h[i] = _yj(x[i], lam, _WANT_VALUE)
+    for i in range(hi, n):
+        h[i] = hq3 + (x[i] - q3) * dq3
 
     return h
 
@@ -128,6 +147,7 @@ def _yj_rectified_transform(x, lam, Q):
 # Fitting kernels
 # ---------------------------------------------------------------------------
 
+
 @numba.jit(nopython=True, error_model="numpy", cache=True)
 def _yj_hg(x, lam):
     """Scalar YJ(x,λ) and ∂YJ/∂λ, sharing pow/log intermediates."""
@@ -135,16 +155,20 @@ def _yj_hg(x, lam):
         if -_LAM_EPS < lam < _LAM_EPS:
             l = np.log(1.0 + x)
             return l, 0.5 * l * l
-        v = 1.0 + x;  u = v ** lam;  l = np.log(v)
+        v = 1.0 + x
+        u = v**lam
+        l = np.log(v)
         h = (u - 1.0) / lam
         g = (u * (lam * l - 1.0) + 1.0) / (lam * lam)
         return h, g
     else:
-        p = 2.0 - lam;  v = 1.0 - x
+        p = 2.0 - lam
+        v = 1.0 - x
         if -_LAM_EPS < p < _LAM_EPS:
             l = np.log(v)
             return -l, 0.5 * l * l
-        u = v ** p;  l = np.log(v)
+        u = v**p
+        l = np.log(v)
         h = -(u - 1.0) / p
         g = (l * u * p - u + 1.0) / (p * p)
         return h, g
@@ -153,13 +177,20 @@ def _yj_hg(x, lam):
 @numba.jit(nopython=True, error_model="numpy", cache=True)
 def _yj_var_dvar(x, lam, weight, W):
     """Weighted variance V and dV/dλ in a single pass."""
-    S1 = 0.0;  S2 = 0.0;  S3 = 0.0;  S4 = 0.0
+    S1 = 0.0
+    S2 = 0.0
+    S3 = 0.0
+    S4 = 0.0
     for i in range(len(x)):
         h, g = _yj_hg(x[i], lam)
-        w = weight[i];  wh = w * h
-        S1 += wh;  S2 += wh * h;  S3 += w * g;  S4 += wh * g
+        w = weight[i]
+        wh = w * h
+        S1 += wh
+        S2 += wh * h
+        S3 += w * g
+        S4 += wh * g
     mu_w = S1 / W
-    V  = S2 / W - mu_w * mu_w
+    V = S2 / W - mu_w * mu_w
     dV = 2.0 * (S4 / W - mu_w * S3 / W)
     return V, dV
 
@@ -176,21 +207,28 @@ def _yj_apply(x_sorted, lam, idx):
 @numba.jit(nopython=True, error_model="numpy", cache=True)
 def _yj_log_jacobian(x_sorted, weight):
     """Weighted YJ log-Jacobian: Σwᵢ·sign(xᵢ)·log(1 + |xᵢ|)."""
-    J = 0.0;  i = 0;  n = len(x_sorted)
+    J = 0.0
+    i = 0
+    n = len(x_sorted)
     while i < n and x_sorted[i] < 0.0:
-        J -= weight[i] * np.log(1.0 - x_sorted[i]);  i += 1
+        J -= weight[i] * np.log(1.0 - x_sorted[i])
+        i += 1
     while i < n:
-        J += weight[i] * np.log(1.0 + x_sorted[i]);  i += 1
+        J += weight[i] * np.log(1.0 + x_sorted[i])
+        i += 1
     return J
 
 
 @numba.jit(nopython=True, error_model="numpy", cache=True)
 def _yj_mle_obj(x_sorted, lam, weight, W, J):
     """Weighted negative log-likelihood for YJ: ½W·log V − (λ−1)·J."""
-    S1 = 0.0;  S2 = 0.0
+    S1 = 0.0
+    S2 = 0.0
     for i in range(len(x_sorted)):
-        h = _yj(x_sorted[i], lam, _WANT_VALUE);  wh = weight[i] * h
-        S1 += wh;  S2 += wh * h
+        h = _yj(x_sorted[i], lam, _WANT_VALUE)
+        wh = weight[i] * h
+        S1 += wh
+        S2 += wh * h
     mu_w = S1 / W
     V = S2 / W - mu_w * mu_w
     return 0.5 * np.log(max(V, 1e-300)) * W - (lam - 1) * J
@@ -199,29 +237,43 @@ def _yj_mle_obj(x_sorted, lam, weight, W, J):
 @numba.jit(nopython=True, error_model="numpy", cache=True)
 def _yj_tukey_loss(x, lam, Q, phi, inv_c):
     """Tukey bisquare loss for YJ."""
-    q1, q3 = Q[0], Q[1];  n = len(x)
+    q1, q3 = Q[0], Q[1]
+    n = len(x)
 
-    hq1 = _yj(q1, lam, _WANT_VALUE);  dq1 = _yj(q1, lam, _WANT_DERIV)
-    hq3 = _yj(q3, lam, _WANT_VALUE);  dq3 = _yj(q3, lam, _WANT_DERIV)
+    hq1 = _yj(q1, lam, _WANT_VALUE)
+    dq1 = _yj(q1, lam, _WANT_DERIV)
+    hq3 = _yj(q3, lam, _WANT_VALUE)
+    dq3 = _yj(q3, lam, _WANT_DERIV)
 
     lo = 0
-    while lo < n and x[lo] < q1: lo += 1
+    while lo < n and x[lo] < q1:
+        lo += 1
     hi = lo
-    while hi < n and x[hi] < q3: hi += 1
+    while hi < n and x[hi] < q3:
+        hi += 1
 
     total = 0.0
     for i in range(lo):
         t = (hq1 + (x[i] - q1) * dq1 - phi[i]) * inv_c
-        if -1.0 < t < 1.0: s = 1.0 - t * t;  total += 1.0 - s * s * s
-        else:               total += 1.0
+        if -1.0 < t < 1.0:
+            s = 1.0 - t * t
+            total += 1.0 - s * s * s
+        else:
+            total += 1.0
     for i in range(lo, hi):
         t = (_yj(x[i], lam, _WANT_VALUE) - phi[i]) * inv_c
-        if -1.0 < t < 1.0: s = 1.0 - t * t;  total += 1.0 - s * s * s
-        else:               total += 1.0
+        if -1.0 < t < 1.0:
+            s = 1.0 - t * t
+            total += 1.0 - s * s * s
+        else:
+            total += 1.0
     for i in range(hi, n):
         t = (hq3 + (x[i] - q3) * dq3 - phi[i]) * inv_c
-        if -1.0 < t < 1.0: s = 1.0 - t * t;  total += 1.0 - s * s * s
-        else:               total += 1.0
+        if -1.0 < t < 1.0:
+            s = 1.0 - t * t
+            total += 1.0 - s * s * s
+        else:
+            total += 1.0
     return total
 
 
@@ -229,9 +281,10 @@ def _yj_tukey_loss(x, lam, Q, phi, inv_c):
 # Fitting algorithm
 # ---------------------------------------------------------------------------
 
+
 def _yj_initial_obj(x_sorted, Q):
     """Iteration-0 objective for YJ: Tukey bisquare quantile-matching."""
-    phi   = _normal_scores(len(x_sorted))
+    phi = _normal_scores(len(x_sorted))
     inv_c = 1.0 / _TUKEY_C
 
     def obj_fn(lam):
@@ -244,7 +297,7 @@ def _yj_refinement_fns(x_sorted, lam_prev, Q, outlier_alpha):
     """Build YJ refinement objective and gradient at the current lambda estimate."""
     h_rect = _yj_rectified_transform(x_sorted, lam_prev, Q)
     mu, sigma = robust_mu_sigma(h_rect, "huber_m_estimate", c=_C_HUBER, tol=1e-08)
-    mu    = float(np.asarray(mu).flat[0])
+    mu = float(np.asarray(mu).flat[0])
     sigma = float(np.asarray(sigma).flat[0])
     if sigma == 0.0:
         sigma = 1.0
@@ -286,6 +339,7 @@ def _fit_yj_lambda(x, **kwargs):
 # Class-based API
 # ---------------------------------------------------------------------------
 
+
 class YeoJohnson(PowerTransformMixin, TransformBase):
     """Per-dimension Yeo-Johnson power transform with invertibility.
 
@@ -319,7 +373,10 @@ class YeoJohnson(PowerTransformMixin, TransformBase):
 
     def _fit_dim(self, d, col_f, fm, X, return_transformed, out):
         mu_pre, sigma_pre = robust_mu_sigma(
-            col_f, "huber_m_estimate", c=_C_HUBER, tol=1e-08,
+            col_f,
+            "huber_m_estimate",
+            c=_C_HUBER,
+            tol=1e-08,
         )
         mu_pre = float(np.asarray(mu_pre).flat[0])
         sigma_pre = float(np.asarray(sigma_pre).flat[0])
@@ -340,7 +397,10 @@ class YeoJohnson(PowerTransformMixin, TransformBase):
             raw_yj, lam = _scipy_yeojohnson(col_std, lmbda=None)
 
         mu_post, sigma_post = robust_mu_sigma(
-            raw_yj, "huber_m_estimate", c=_C_HUBER, tol=1e-08,
+            raw_yj,
+            "huber_m_estimate",
+            c=_C_HUBER,
+            tol=1e-08,
         )
         mu_post = float(np.asarray(mu_post).flat[0])
         sigma_post = float(np.asarray(sigma_post).flat[0])

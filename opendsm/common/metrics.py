@@ -34,7 +34,6 @@ from opendsm.common.pydantic_utils import (
 )
 
 
-
 _MIN_DENOMINATOR: float = 1e-3
 
 
@@ -49,6 +48,7 @@ class ColumnMetrics(ArbitraryPydanticModel):
     series : pd.Series
         Input data series for metric calculations.
     """
+
     series: pd.Series = pydantic.Field(
         exclude=True,
         repr=False,
@@ -218,6 +218,7 @@ def A_n(x: np.ndarray, n: float) -> float:
         Proportion of values <= n
     """
     return np.mean(x <= n)
+
 
 class BaselineMetrics(ArbitraryPydanticModel):
     """Comprehensive baseline model evaluation metrics.
@@ -757,9 +758,7 @@ class BaselineMetrics(ArbitraryPydanticModel):
         float
             Autocorrelation-corrected and adjusted CVRMSE value.
         """
-        return safe_divide(
-            self.rmse_autocorr_adj, self.observed.mean, _MIN_DENOMINATOR
-        )
+        return safe_divide(self.rmse_autocorr_adj, self.observed.mean, _MIN_DENOMINATOR)
 
     @computed_field_cached_property()
     def pnrmse(self) -> float:
@@ -816,9 +815,7 @@ class BaselineMetrics(ArbitraryPydanticModel):
         float
             Autocorrelation-corrected and adjusted PNRMSE value.
         """
-        return safe_divide(
-            self.rmse_autocorr_adj, self.observed.iqr, _MIN_DENOMINATOR
-        )
+        return safe_divide(self.rmse_autocorr_adj, self.observed.iqr, _MIN_DENOMINATOR)
 
     @computed_field_cached_property()
     def r_squared(self) -> float:
@@ -985,7 +982,7 @@ class BaselineMetrics(ArbitraryPydanticModel):
         df = self._df
 
         num = self.sse
-        den = np.sum((df["observed"].values - self.observed.mean)**2)
+        den = np.sum((df["observed"].values - self.observed.mean) ** 2)
 
         return 1 - safe_divide(num, den, _MIN_DENOMINATOR)
 
@@ -1025,7 +1022,7 @@ class BaselineMetrics(ArbitraryPydanticModel):
         if not np.isfinite(r) or not np.isfinite(bias_ratio) or not np.isfinite(variability_ratio):
             return None
 
-        result = 1 - np.sqrt((r - 1)**2 + (bias_ratio - 1)**2 + (variability_ratio - 1)**2)
+        result = 1 - np.sqrt((r - 1) ** 2 + (bias_ratio - 1) ** 2 + (variability_ratio - 1) ** 2)
 
         if not np.isfinite(result):
             return None
@@ -1101,7 +1098,7 @@ class BaselineMetrics(ArbitraryPydanticModel):
         mean_obs = self.observed.mean
         pred_shifted = df["predicted"].values - mean_obs
         obs_shifted = df["observed"].values - mean_obs
-        den = np.sum((np.abs(pred_shifted) + np.abs(obs_shifted))**2)
+        den = np.sum((np.abs(pred_shifted) + np.abs(obs_shifted)) ** 2)
 
         return 1 - safe_divide(num, den, _MIN_DENOMINATOR)
 
@@ -1129,7 +1126,7 @@ class BaselineMetrics(ArbitraryPydanticModel):
             return 1 - safe_divide(num, den, _MIN_DENOMINATOR)
 
         return safe_divide(den, num, _MIN_DENOMINATOR) - 1
-    
+
     @computed_field_cached_property()
     def pearson_r(self) -> float:
         """Calculate Pearson correlation coefficient.
@@ -1196,7 +1193,7 @@ class BaselineMetrics(ArbitraryPydanticModel):
             return "bad"
         else:
             return "very bad"
-        
+
     @computed_field_cached_property()
     def explained_variance_score(self) -> float:
         """Calculate the explained variance score.
@@ -1214,7 +1211,7 @@ class BaselineMetrics(ArbitraryPydanticModel):
         den = self.observed.variance
 
         return 1 - safe_divide(num, den, _MIN_DENOMINATOR)
-    
+
 
 def BaselineMetricsFromDict(input_dict: dict) -> BaselineMetrics:
     """Construct a BaselineMetrics instance from a dictionary.
@@ -1254,6 +1251,7 @@ class ModelChoice(str, Enum):
     BILLING : str
         Billing period data frequency.
     """
+
     HOURLY = "hourly"
     HOURLYSOLAR = "hourly"
     DAILY = "daily"
@@ -1267,6 +1265,7 @@ class ReportingMetrics(pydantic.BaseModel):
     for a reporting period based on baseline model metrics and reporting data.
     Follows ASHRAE Guideline 14 methodology.
     """
+
     model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
 
     baseline_metrics: Union[BaselineMetrics, pydantic.BaseModel] = pydantic.Field(
@@ -1482,7 +1481,7 @@ class ReportingMetrics(pydantic.BaseModel):
             return None
 
         return self.total_savings_uncertainty / np.sqrt(self.n)
-    
+
 
 class AutocorrelationMethod(Enum):
     """Methods for computing autocorrelation function.
@@ -1496,6 +1495,7 @@ class AutocorrelationMethod(Enum):
     STATIONARY_STATS_FFT : str
         Compute over entire series using FFT for efficiency.
     """
+
     MOVING_STATS = "moving_stats"
     STATIONARY_CORRELATE = "stationary_correlate"
     STATIONARY_STATS_FFT = "stationary_stats_fft"
@@ -1504,7 +1504,7 @@ class AutocorrelationMethod(Enum):
 def acf(
     x: np.ndarray,
     lag_n: Optional[int] = None,
-    ac_type: AutocorrelationMethod = AutocorrelationMethod.MOVING_STATS
+    ac_type: AutocorrelationMethod = AutocorrelationMethod.MOVING_STATS,
 ) -> np.ndarray:
     """Compute the autocorrelation function (ACF) of a time series.
 
@@ -1552,7 +1552,7 @@ def acf(
         xc = x - mean
 
         if ac_type == AutocorrelationMethod.STATIONARY_CORRELATE.value:
-            corr = np.correlate(xc, xc, "full")[(n - 1):] / var / n
+            corr = np.correlate(xc, xc, "full")[(n - 1) :] / var / n
 
         elif ac_type == AutocorrelationMethod.STATIONARY_STATS_FFT.value:
             # zero-pad to >= 2n-1 so the circular correlation from the FFT
@@ -1561,6 +1561,6 @@ def acf(
             sf = cf.conjugate() * cf
             corr = np.fft.ifft(sf).real[:n] / var / n
 
-        corr = corr[:len(lags)]
+        corr = corr[: len(lags)]
 
     return corr

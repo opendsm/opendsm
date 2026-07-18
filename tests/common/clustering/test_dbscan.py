@@ -28,7 +28,6 @@ from opendsm.common.clustering.settings import ClusteringSettings
 from opendsm.common.clustering.algorithms.dbscan import dbscan
 
 
-
 def _dcs(**dbscan_settings):
     """ClusteringSettings selecting DBSCAN with the given sub-settings."""
     cs = ClusteringSettings(algorithm_selection="dbscan", seed=42, dbscan=dbscan_settings)

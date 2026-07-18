@@ -82,10 +82,12 @@ class Settings(BaseSettings):
         if self.allow_duplicate_matches:
             if self.selection_method != SelectionMethod.MINIMIZE_METER_DISTANCE:
                 distance = SelectionMethod.MINIMIZE_METER_DISTANCE.value
-                raise ValueError(f"If `allow_duplicate_matches` is True then `selection_method` must be '{distance}'")
+                raise ValueError(
+                    f"If `allow_duplicate_matches` is True then `selection_method` must be '{distance}'"
+                )
 
         return self
-    
+
 
 if __name__ == "__main__":
     s = Settings()

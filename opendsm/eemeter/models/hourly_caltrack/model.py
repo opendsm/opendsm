@@ -81,9 +81,7 @@ class CalTRACKHourlyModelResults(object):
         with that data expressed as daily averages.
     """
 
-    def __init__(
-        self, status, method_name, model=None, warnings=[], metadata=None, settings=None
-    ):
+    def __init__(self, status, method_name, model=None, warnings=[], metadata=None, settings=None):
         self.status = status
         self.method_name = method_name
 
@@ -118,11 +116,7 @@ class CalTRACKHourlyModelResults(object):
             return None if obj is None else obj.json()
 
         def _json_or_none_in_dict(obj):
-            return (
-                None
-                if obj is None
-                else {key: _json_or_none(val) for key, val in obj.items()}
-            )
+            return None if obj is None else {key: _json_or_none(val) for key, val in obj.items()}
 
         data = {
             "status": self.status,
@@ -165,15 +159,13 @@ class CalTRACKHourlyModelResults(object):
         if d:
             c.avgs_metrics = ModelMetrics.from_json(d)  # pragma: no cover
             c.avgs_metrics = {
-                segment_name: ModelMetrics.from_json(seg_d)
-                for segment_name, seg_d in d.items()
+                segment_name: ModelMetrics.from_json(seg_d) for segment_name, seg_d in d.items()
             }
         d = data.get("totals_metrics")
         if d:
             c.totals_metrics = ModelMetrics.from_json(d)  # pragma: no cover
             c.totals_metrics = {
-                segment_name: ModelMetrics.from_json(seg_d)
-                for segment_name, seg_d in d.items()
+                segment_name: ModelMetrics.from_json(seg_d) for segment_name, seg_d in d.items()
             }
         return c
 
@@ -287,9 +279,7 @@ class CalTRACKHourlyModel(SegmentedModel):
         data.update(
             {
                 "occupancy_lookup": self.occupancy_lookup.to_json(orient="split"),
-                "occupied_temperature_bins": self.occupied_temperature_bins.to_json(
-                    orient="split"
-                ),
+                "occupied_temperature_bins": self.occupied_temperature_bins.to_json(orient="split"),
                 "unoccupied_temperature_bins": self.unoccupied_temperature_bins.to_json(
                     orient="split"
                 ),
@@ -306,24 +296,16 @@ class CalTRACKHourlyModel(SegmentedModel):
         of :any:`json.loads`.
         """
 
-        segment_models = [
-            CalTRACKSegmentModel.from_json(s) for s in data.get("segment_models")
-        ]
+        segment_models = [CalTRACKSegmentModel.from_json(s) for s in data.get("segment_models")]
 
-        occupancy_lookup = pd.read_json(
-            StringIO(data.get("occupancy_lookup")), orient="split"
-        )
+        occupancy_lookup = pd.read_json(StringIO(data.get("occupancy_lookup")), orient="split")
         occupancy_lookup.index = occupancy_lookup.index.astype("category")
 
         c = cls(
             segment_models,
             occupancy_lookup,
-            pd.read_json(
-                StringIO(data.get("occupied_temperature_bins")), orient="split"
-            ),
-            pd.read_json(
-                StringIO(data.get("unoccupied_temperature_bins")), orient="split"
-            ),
+            pd.read_json(StringIO(data.get("occupied_temperature_bins")), orient="split"),
+            pd.read_json(StringIO(data.get("unoccupied_temperature_bins")), orient="split"),
             data.get("segment_type"),
         )
 
@@ -388,10 +370,7 @@ def caltrack_hourly_fit_feature_processor(
     )
     occupied_temperature_bin_features[occupancy_feature == 0] = 0
     occupied_temperature_bin_features.rename(
-        columns={
-            c: "{}_occupied".format(c)
-            for c in occupied_temperature_bin_features.columns
-        },
+        columns={c: "{}_occupied".format(c) for c in occupied_temperature_bin_features.columns},
         inplace=True,
     )
     unoccupied_temperature_bin_features = compute_temperature_bin_features(
@@ -399,10 +378,7 @@ def caltrack_hourly_fit_feature_processor(
     )
     unoccupied_temperature_bin_features[occupancy_feature == 1] = 0
     unoccupied_temperature_bin_features.rename(
-        columns={
-            c: "{}_unoccupied".format(c)
-            for c in unoccupied_temperature_bin_features.columns
-        },
+        columns={c: "{}_unoccupied".format(c) for c in unoccupied_temperature_bin_features.columns},
         inplace=True,
     )
 
@@ -459,9 +435,7 @@ def caltrack_hourly_prediction_feature_processor(
 
     # occupancy feature
     occupancy = occupancy_lookup[segment_name]
-    occupancy_feature = compute_occupancy_feature(
-        hour_of_week_feature.hour_of_week, occupancy
-    )
+    occupancy_feature = compute_occupancy_feature(hour_of_week_feature.hour_of_week, occupancy)
 
     # get temperature bin features
     temperatures = segmented_data
@@ -480,10 +454,7 @@ def caltrack_hourly_prediction_feature_processor(
     )
     occupied_temperature_bin_features[occupancy_feature == 0] = 0
     occupied_temperature_bin_features.rename(
-        columns={
-            c: "{}_occupied".format(c)
-            for c in occupied_temperature_bin_features.columns
-        },
+        columns={c: "{}_occupied".format(c) for c in occupied_temperature_bin_features.columns},
         inplace=True,
     )
     unoccupied_temperature_bin_features = compute_temperature_bin_features(
@@ -491,10 +462,7 @@ def caltrack_hourly_prediction_feature_processor(
     )
     unoccupied_temperature_bin_features[occupancy_feature == 1] = 0
     unoccupied_temperature_bin_features.rename(
-        columns={
-            c: "{}_unoccupied".format(c)
-            for c in unoccupied_temperature_bin_features.columns
-        },
+        columns={c: "{}_unoccupied".format(c) for c in unoccupied_temperature_bin_features.columns},
         inplace=True,
     )
 
@@ -546,9 +514,7 @@ def fit_caltrack_hourly_model_segment(segment_name, segment_data):
 
         def _get_hourly_model_formula(data):
             return "meter_value ~ C(hour_of_week) - 1{}".format(
-                "".join(
-                    [" + {}".format(c) for c in data.columns if c.startswith("bin")]
-                )
+                "".join([" + {}".format(c) for c in data.columns if c.startswith("bin")])
             )
 
         formula = _get_hourly_model_formula(segment_data)
@@ -614,9 +580,7 @@ def fit_caltrack_hourly_model(
         segmented_design_matrices, fit_caltrack_hourly_model_segment
     )
     all_warnings = [
-        warning
-        for segment_model in segment_models
-        for warning in segment_model.warnings
+        warning for segment_model in segment_models for warning in segment_model.warnings
     ]
 
     model = CalTRACKHourlyModel(

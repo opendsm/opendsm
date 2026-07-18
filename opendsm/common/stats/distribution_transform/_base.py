@@ -77,9 +77,7 @@ class TransformBase(ABC):
         X, is_1d = self._to_2d(X)
         if not reset and self.n_features_ is not None:
             if X.shape[1] != self.n_features_:
-                raise ValueError(
-                    f"Expected {self.n_features_} features, got {X.shape[1]}"
-                )
+                raise ValueError(f"Expected {self.n_features_} features, got {X.shape[1]}")
         return X, is_1d
 
     # ------------------------------------------------------------------
@@ -171,7 +169,8 @@ class TransformBase(ABC):
                     warnings.warn(
                         f"{type(self).__name__}: fitting failed for dim {d} "
                         f"({type(e).__name__}: {e}); passing through.",
-                        RuntimeWarning, stacklevel=4,
+                        RuntimeWarning,
+                        stacklevel=4,
                     )
                     self.skip_dims_[d] = True
         finally:
@@ -280,9 +279,11 @@ class PowerTransformMixin:
 
     def _serialise_hyperparams(self):
         hp = super()._serialise_hyperparams()
-        hp.update({
-            "robust": self.robust,
-            "Q_perc": self.Q_perc,
-            "outlier_alpha": self.outlier_alpha,
-        })
+        hp.update(
+            {
+                "robust": self.robust,
+                "Q_perc": self.Q_perc,
+                "outlier_alpha": self.outlier_alpha,
+            }
+        )
         return hp

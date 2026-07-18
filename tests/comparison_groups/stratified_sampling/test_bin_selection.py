@@ -15,13 +15,14 @@
 import pytest
 
 from opendsm.comparison_groups.stratified_sampling.sampling import StratifiedSampler, BinnedData
-from opendsm.comparison_groups.stratified_sampling.bin_selection import StratifiedSamplingBinSelector
+from opendsm.comparison_groups.stratified_sampling.bin_selection import (
+    StratifiedSamplingBinSelector,
+)
 from opendsm.comparison_groups.stratified_sampling.bins import ModelSamplingException
 
 
-
 def test_stratified_sampling_fit_and_sample_records_equivalence(
-    df_treatment, df_pool,  col_name, equivalence_feature_ids, equivalence_feature_matrix
+    df_treatment, df_pool, col_name, equivalence_feature_ids, equivalence_feature_matrix
 ):
     stratified_sampling_obj = StratifiedSampler()
     df_pool["col2"] = df_pool[col_name]
@@ -29,45 +30,45 @@ def test_stratified_sampling_fit_and_sample_records_equivalence(
     stratified_sampling_obj.add_column(col_name)
     stratified_sampling_obj.add_column("col2")
     ## attempting to estimate both n_bins and n_samples
-    StratifiedSamplingBinSelector(stratified_sampling_obj,
+    StratifiedSamplingBinSelector(
+        stratified_sampling_obj,
         df_treatment,
         df_pool,
-        
         min_n_bins=4,
         max_n_bins=6,
         random_seed=1,
-        equivalence_method='chisquare',
-        equivalence_feature_ids = equivalence_feature_ids,
-        equivalence_feature_matrix = equivalence_feature_matrix
+        equivalence_method="chisquare",
+        equivalence_feature_ids=equivalence_feature_ids,
+        equivalence_feature_matrix=equivalence_feature_matrix,
     )
     output = stratified_sampling_obj.data_sample.df
     bins_df = stratified_sampling_obj.diagnostics().count_bins()
 
 
 def test_stratified_sampling_fit_and_sample_records_equivalence_too_many_bins(
-    df_treatment, df_pool,  col_name, equivalence_feature_ids, equivalence_feature_matrix
+    df_treatment, df_pool, col_name, equivalence_feature_ids, equivalence_feature_matrix
 ):
     stratified_sampling_obj = StratifiedSampler()
 
     stratified_sampling_obj.add_column(col_name)
     ## attempting to estimate both n_bins and n_samples
     with pytest.raises(ModelSamplingException):
-        model_w_selected_bins = StratifiedSamplingBinSelector(stratified_sampling_obj,
+        model_w_selected_bins = StratifiedSamplingBinSelector(
+            stratified_sampling_obj,
             df_treatment,
             df_pool,
-
             min_n_bins=1000,
             max_n_bins=1002,
             random_seed=1,
-            equivalence_method='chisquare',
+            equivalence_method="chisquare",
             relax_n_samples_approx_constraint=False,
-            equivalence_feature_ids = equivalence_feature_ids,
-            equivalence_feature_matrix = equivalence_feature_matrix
+            equivalence_feature_ids=equivalence_feature_ids,
+            equivalence_feature_matrix=equivalence_feature_matrix,
         )
 
 
 def test_stratified_sampling_fit_and_sample_records_equivalence_idempotent_check(
-    df_treatment, df_pool,  col_name, equivalence_feature_ids, equivalence_feature_matrix
+    df_treatment, df_pool, col_name, equivalence_feature_ids, equivalence_feature_matrix
 ):
     df_treatment["col2"] = df_treatment[col_name] * 2
     df_treatment["col3"] = df_treatment[col_name] * 3
@@ -80,15 +81,16 @@ def test_stratified_sampling_fit_and_sample_records_equivalence_idempotent_check
     stratified_sampling_obj.add_column("col2")
     stratified_sampling_obj.add_column("col3")
 
-    StratifiedSamplingBinSelector(stratified_sampling_obj,
+    StratifiedSamplingBinSelector(
+        stratified_sampling_obj,
         df_treatment,
         df_pool,
         min_n_bins=2,
         max_n_bins=3,
         random_seed=1,
-        equivalence_method='chisquare',
-        equivalence_feature_ids = equivalence_feature_ids,
-        equivalence_feature_matrix = equivalence_feature_matrix
+        equivalence_method="chisquare",
+        equivalence_feature_ids=equivalence_feature_ids,
+        equivalence_feature_matrix=equivalence_feature_matrix,
     )
     sample1 = stratified_sampling_obj.data_sample.df.index.values
 
@@ -96,22 +98,23 @@ def test_stratified_sampling_fit_and_sample_records_equivalence_idempotent_check
     stratified_sampling_obj.add_column(col_name)
     stratified_sampling_obj.add_column("col2")
     stratified_sampling_obj.add_column("col3")
-    StratifiedSamplingBinSelector(stratified_sampling_obj,
+    StratifiedSamplingBinSelector(
+        stratified_sampling_obj,
         df_treatment,
         df_pool,
         min_n_bins=2,
         max_n_bins=3,
         random_seed=1,
-        equivalence_method='chisquare',
-        equivalence_feature_ids = equivalence_feature_ids,
-        equivalence_feature_matrix = equivalence_feature_matrix
+        equivalence_method="chisquare",
+        equivalence_feature_ids=equivalence_feature_ids,
+        equivalence_feature_matrix=equivalence_feature_matrix,
     )
     sample2 = stratified_sampling_obj.data_sample.df.index.values
     assert set(sample1) == set(sample2)
 
 
 def test_stratified_sampling_fit_and_sample_records_equivalence_euclidean_idempotent_check(
-    df_treatment, df_pool,  col_name, equivalence_feature_ids, equivalence_feature_matrix
+    df_treatment, df_pool, col_name, equivalence_feature_ids, equivalence_feature_matrix
 ):
     df_treatment["col2"] = df_treatment[col_name] * 2
     df_treatment["col3"] = df_treatment[col_name] * 3
@@ -124,16 +127,16 @@ def test_stratified_sampling_fit_and_sample_records_equivalence_euclidean_idempo
     stratified_sampling_obj.add_column("col2")
     stratified_sampling_obj.add_column("col3")
 
-    StratifiedSamplingBinSelector(stratified_sampling_obj,
+    StratifiedSamplingBinSelector(
+        stratified_sampling_obj,
         df_treatment,
         df_pool,
-        
         min_n_bins=2,
         max_n_bins=3,
         random_seed=1,
-        equivalence_method='euclidean',
-        equivalence_feature_ids = equivalence_feature_ids,
-        equivalence_feature_matrix = equivalence_feature_matrix
+        equivalence_method="euclidean",
+        equivalence_feature_ids=equivalence_feature_ids,
+        equivalence_feature_matrix=equivalence_feature_matrix,
     )
     sample1 = stratified_sampling_obj.data_sample.df.index.values
 
@@ -141,22 +144,23 @@ def test_stratified_sampling_fit_and_sample_records_equivalence_euclidean_idempo
     stratified_sampling_obj.add_column(col_name)
     stratified_sampling_obj.add_column("col2")
     stratified_sampling_obj.add_column("col3")
-    StratifiedSamplingBinSelector(stratified_sampling_obj,
+    StratifiedSamplingBinSelector(
+        stratified_sampling_obj,
         df_treatment,
         df_pool,
         min_n_bins=2,
         max_n_bins=3,
         random_seed=1,
-        equivalence_method='euclidean',
-        equivalence_feature_ids = equivalence_feature_ids,
-        equivalence_feature_matrix = equivalence_feature_matrix
+        equivalence_method="euclidean",
+        equivalence_feature_ids=equivalence_feature_ids,
+        equivalence_feature_matrix=equivalence_feature_matrix,
     )
     sample2 = stratified_sampling_obj.data_sample.df.index.values
     assert set(sample1) == set(sample2)
 
 
 def test_stratified_sampling_fit_and_sample_records_equivalence_euclidean_idempotent_check(
-    df_treatment, df_pool,  col_name, equivalence_feature_ids, equivalence_feature_matrix
+    df_treatment, df_pool, col_name, equivalence_feature_ids, equivalence_feature_matrix
 ):
     df_treatment["col2"] = df_treatment[col_name] * 2
     df_treatment["col3"] = df_treatment[col_name] * 3
@@ -169,15 +173,16 @@ def test_stratified_sampling_fit_and_sample_records_equivalence_euclidean_idempo
     stratified_sampling_obj.add_column("col2")
     stratified_sampling_obj.add_column("col3")
 
-    StratifiedSamplingBinSelector(stratified_sampling_obj,
+    StratifiedSamplingBinSelector(
+        stratified_sampling_obj,
         df_treatment,
         df_pool,
         min_n_bins=2,
         max_n_bins=3,
         random_seed=1,
-        equivalence_method='euclidean',
-        equivalence_feature_ids = equivalence_feature_ids,
-        equivalence_feature_matrix = equivalence_feature_matrix
+        equivalence_method="euclidean",
+        equivalence_feature_ids=equivalence_feature_ids,
+        equivalence_feature_matrix=equivalence_feature_matrix,
     )
     sample1 = stratified_sampling_obj.data_sample.df.index.values
 
@@ -185,22 +190,23 @@ def test_stratified_sampling_fit_and_sample_records_equivalence_euclidean_idempo
     stratified_sampling_obj.add_column(col_name)
     stratified_sampling_obj.add_column("col2")
     stratified_sampling_obj.add_column("col3")
-    StratifiedSamplingBinSelector(stratified_sampling_obj,
+    StratifiedSamplingBinSelector(
+        stratified_sampling_obj,
         df_treatment,
         df_pool,
         min_n_bins=2,
         max_n_bins=3,
         random_seed=1,
-        equivalence_method='euclidean',
-        equivalence_feature_ids = equivalence_feature_ids,
-        equivalence_feature_matrix = equivalence_feature_matrix        
+        equivalence_method="euclidean",
+        equivalence_feature_ids=equivalence_feature_ids,
+        equivalence_feature_matrix=equivalence_feature_matrix,
     )
     sample2 = stratified_sampling_obj.data_sample.df.index.values
     assert set(sample1) == set(sample2)
 
 
 def test_plot_records_based_equiv_average(
-    df_treatment, df_pool,  col_name, equivalence_feature_ids, equivalence_feature_matrix
+    df_treatment, df_pool, col_name, equivalence_feature_ids, equivalence_feature_matrix
 ):
     df_treatment["col2"] = df_treatment[col_name] * 2
     df_treatment["col3"] = df_treatment[col_name] * 3
@@ -213,22 +219,23 @@ def test_plot_records_based_equiv_average(
     stratified_sampling_obj.add_column("col2")
     stratified_sampling_obj.add_column("col3")
 
-    bin_selection = StratifiedSamplingBinSelector(stratified_sampling_obj,
+    bin_selection = StratifiedSamplingBinSelector(
+        stratified_sampling_obj,
         df_treatment,
         df_pool,
         min_n_bins=2,
         max_n_bins=3,
         random_seed=1,
-        equivalence_method='euclidean',
-        equivalence_feature_ids = equivalence_feature_ids,
-        equivalence_feature_matrix = equivalence_feature_matrix
+        equivalence_method="euclidean",
+        equivalence_feature_ids=equivalence_feature_ids,
+        equivalence_feature_matrix=equivalence_feature_matrix,
     )
     bin_selection.plot_records_based_equiv_average(plot=False)
     bin_selection.results_as_json()
 
 
 def test_plot_records_based_equiv_average_chisquare(
-    df_treatment, df_pool,  col_name, equivalence_feature_ids, equivalence_feature_matrix
+    df_treatment, df_pool, col_name, equivalence_feature_ids, equivalence_feature_matrix
 ):
     df_treatment["col2"] = df_treatment[col_name] * 2
     df_treatment["col3"] = df_treatment[col_name] * 3
@@ -241,19 +248,20 @@ def test_plot_records_based_equiv_average_chisquare(
     stratified_sampling_obj.add_column("col2")
     stratified_sampling_obj.add_column("col3")
 
-    bin_selection = StratifiedSamplingBinSelector(stratified_sampling_obj,
+    bin_selection = StratifiedSamplingBinSelector(
+        stratified_sampling_obj,
         df_treatment,
         df_pool,
         min_n_bins=2,
         max_n_bins=3,
         random_seed=1,
-        equivalence_method='chisquare',
-        equivalence_feature_ids = equivalence_feature_ids,
-        equivalence_feature_matrix = equivalence_feature_matrix
+        equivalence_method="chisquare",
+        equivalence_feature_ids=equivalence_feature_ids,
+        equivalence_feature_matrix=equivalence_feature_matrix,
     )
     bin_selection.plot_records_based_equiv_average(plot=False)
     results = bin_selection.results_as_json()
-    assert 'bins_selected_str' in list(results['n_bin_results'][0].keys())
+    assert "bins_selected_str" in list(results["n_bin_results"][0].keys())
 
 
 def test_selected_bin_minimizes_distance(
@@ -269,8 +277,12 @@ def test_selected_bin_minimizes_distance(
     stratified_sampling_obj.add_column("col2")
 
     bin_selection = StratifiedSamplingBinSelector(
-        stratified_sampling_obj, df_treatment, df_pool,
-        min_n_bins=2, max_n_bins=4, random_seed=1,
+        stratified_sampling_obj,
+        df_treatment,
+        df_pool,
+        min_n_bins=2,
+        max_n_bins=4,
+        random_seed=1,
         equivalence_method="euclidean",
         equivalence_feature_ids=equivalence_feature_ids,
         equivalence_feature_matrix=equivalence_feature_matrix,

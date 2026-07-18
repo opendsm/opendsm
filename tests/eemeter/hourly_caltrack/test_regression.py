@@ -35,9 +35,7 @@ def caltrack_baseline_preliminary(comstock_hourly):
     df_b, _ = comstock_hourly
     meter_data = df_b["observed"].rename("value").to_frame()
 
-    return create_caltrack_hourly_preliminary_design_matrix(
-        meter_data, df_b["temperature"]
-    )
+    return create_caltrack_hourly_preliminary_design_matrix(meter_data, df_b["temperature"])
 
 
 @pytest.fixture(scope="session")

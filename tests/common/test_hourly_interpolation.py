@@ -26,10 +26,10 @@ from opendsm.common.hourly_interpolation import (
 from opendsm.common.test_data import load_test_data
 
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
+
 
 @pytest.fixture
 def real_hourly_data():
@@ -91,6 +91,7 @@ def series_with_nans():
 # Tests for interpolate
 # =============================================================================
 
+
 class TestInterpolate:
     """Tests for interpolate function."""
 
@@ -104,8 +105,7 @@ class TestInterpolate:
 
         # Original values should be unchanged
         np.testing.assert_array_equal(
-            result["temperature"].values,
-            df_original["temperature"].values
+            result["temperature"].values, df_original["temperature"].values
         )
         # Interpolation flag should exist and be all False
         assert "interpolated_temperature" in result.columns
@@ -187,9 +187,7 @@ class TestInterpolate:
     def test_interpolate_handles_all_nan_column(self):
         """Test that interpolate handles column with all NaN values."""
         dates = pd.date_range("2023-01-01", periods=100, freq="h")
-        df = pd.DataFrame({
-            "temperature": np.full(100, np.nan)
-        }, index=dates)
+        df = pd.DataFrame({"temperature": np.full(100, np.nan)}, index=dates)
 
         result = interpolate(df, columns=["temperature"])
 
@@ -202,6 +200,7 @@ class TestInterpolate:
 # =============================================================================
 # Integration tests
 # =============================================================================
+
 
 class TestInterpolateIntegration:
     """Integration tests for complete interpolation pipeline."""
@@ -325,6 +324,7 @@ class TestInterpolateIntegration:
 # Comparison tests: autocorr interpolation vs linear interpolation
 # =============================================================================
 
+
 class TestInterpolateVsLinear:
     """Tests demonstrating autocorr interpolation outperforms linear on real data."""
 
@@ -363,13 +363,15 @@ class TestInterpolateVsLinear:
         mae_linear = np.mean(np.abs(linear_values - original_values))
 
         # For large gaps (24+ hours), autocorr should outperform linear
-        assert mae_autocorr < mae_linear, \
+        assert mae_autocorr < mae_linear, (
             f"Autocorr MAE ({mae_autocorr:.2f}°F) should be < Linear MAE ({mae_linear:.2f}°F) for large gaps"
+        )
 
         # Calculate improvement percentage
         improvement = (mae_linear - mae_autocorr) / mae_linear * 100
-        assert improvement > 5, \
+        assert improvement > 5, (
             f"Autocorr should improve accuracy by >5% on large gaps, got {improvement:.1f}%"
+        )
 
     def test_autocorr_handles_energy_consumption_patterns_better(self):
         """Test autocorr captures energy consumption patterns that linear misses."""
@@ -407,11 +409,13 @@ class TestInterpolateVsLinear:
         rmse_linear = np.sqrt(np.mean((linear_values - original_values) ** 2))
 
         # Autocorr should outperform linear on both metrics
-        assert mae_autocorr < mae_linear, \
+        assert mae_autocorr < mae_linear, (
             f"Autocorr MAE ({mae_autocorr:.2f}) should be < Linear MAE ({mae_linear:.2f})"
+        )
 
-        assert rmse_autocorr < rmse_linear, \
+        assert rmse_autocorr < rmse_linear, (
             f"Autocorr RMSE ({rmse_autocorr:.2f}) should be < Linear RMSE ({rmse_linear:.2f})"
+        )
 
     def test_ghi_solar_irradiance_patterns_autocorr_vs_linear(self):
         """Test autocorr handles solar irradiance patterns better than linear."""
@@ -423,7 +427,7 @@ class TestInterpolateVsLinear:
         original_ghi = df["ghi"].copy()
 
         # Create gap during daylight hours (when solar patterns are important)
-        gap_start = 24 * 3 + 8   # Day 3, 8am
+        gap_start = 24 * 3 + 8  # Day 3, 8am
         gap_end = gap_start + 10  # 10-hour gap during daylight
         df.loc[df.index[gap_start:gap_end], "ghi"] = np.nan
 
@@ -446,13 +450,15 @@ class TestInterpolateVsLinear:
         mae_linear = np.mean(np.abs(linear_values - original_values))
 
         # Autocorr should handle solar patterns better
-        assert mae_autocorr < mae_linear, \
+        assert mae_autocorr < mae_linear, (
             f"Autocorr MAE ({mae_autocorr:.2f} W/m²) should be < Linear MAE ({mae_linear:.2f} W/m²)"
+        )
 
 
 # =============================================================================
 # _autocorr_fcn — characterization & correctness (masked loop vs FFT branch)
 # =============================================================================
+
 
 def _deterministic_acf_signal(n=2000):
     """Reproducible gappy signal: daily + weekly cycles + slow ramp, fixed gaps."""
@@ -564,7 +570,7 @@ class TestAutocorrFcn:
         corr = _pos_corr(_autocorr_fcn(x, np.arange(0, 30), exclude_0=False))
 
         for k in range(1, 6):
-            assert corr[k] == pytest.approx(phi ** k, abs=0.03), f"lag {k}"
+            assert corr[k] == pytest.approx(phi**k, abs=0.03), f"lag {k}"
 
     def test_constant_input_is_zero_beyond_lag0(self):
         """Constant input (var=0) is guarded: lag 0 = 1, all other lags = 0."""
@@ -609,5 +615,5 @@ class TestAutocorrFcn:
 # Run tests
 # =============================================================================
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v', '--tb=short'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v", "--tb=short"])

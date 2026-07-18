@@ -67,9 +67,9 @@ class ClusteringSettings(BaseSettings):
     distance_metric: DistanceMetric = pydantic.Field(
         default=DistanceMetric.EUCLIDEAN,
         description="Distance metric for all clustering algorithms and scoring indices. "
-                    "Algorithms use sqeuclidean internally for argmin when metric is euclidean "
-                    "(monotonic optimization). Non-Euclidean metrics (manhattan, cosine) use "
-                    "the exact metric throughout.",
+        "Algorithms use sqeuclidean internally for argmin when metric is euclidean "
+        "(monotonic optimization). Non-Euclidean metrics (manhattan, cosine) use "
+        "the exact metric throughout.",
     )
 
     min_cluster_size: int = pydantic.Field(
@@ -81,13 +81,13 @@ class ClusteringSettings(BaseSettings):
     small_cluster_mode: SmallClusterMode = pydantic.Field(
         default=SmallClusterMode.KEEP,
         description="How to handle clusters smaller than min_cluster_size. "
-                    "OUTLIER: relabel as -1 and exclude from scoring — suitable for "
-                    "centroid-based and spectral algorithms. "
-                    "KEEP: skip the merge step entirely and preserve pre-existing -1 noise labels — "
-                    "recommended for density-based algorithms (HDBSCAN, DBSCAN) where -1 has "
-                    "genuine noise semantics and algorithm-produced singletons are valid clusters. "
-                    "ABSORB: reassign small-cluster points to the nearest large-cluster centroid. "
-                    "See SmallClusterMode for full semantics.",
+        "OUTLIER: relabel as -1 and exclude from scoring — suitable for "
+        "centroid-based and spectral algorithms. "
+        "KEEP: skip the merge step entirely and preserve pre-existing -1 noise labels — "
+        "recommended for density-based algorithms (HDBSCAN, DBSCAN) where -1 has "
+        "genuine noise semantics and algorithm-produced singletons are valid clusters. "
+        "ABSORB: reassign small-cluster points to the nearest large-cluster centroid. "
+        "See SmallClusterMode for full semantics.",
     )
 
     feature_transform: FeatureTransformSettings = pydantic.Field(
@@ -170,13 +170,9 @@ class ClusteringSettings(BaseSettings):
         description="seed for random state assignment",
     )
 
-    _seed: int | None = pydantic.PrivateAttr(
-        default=None
-    )
+    _seed: int | None = pydantic.PrivateAttr(default=None)
 
-    _outlier_mad_threshold: float | None = pydantic.PrivateAttr(
-        default=None
-    )
+    _outlier_mad_threshold: float | None = pydantic.PrivateAttr(default=None)
 
     @property
     def _argmin_metric(self) -> str:

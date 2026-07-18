@@ -45,6 +45,7 @@ class TransformResult(NamedTuple):
         readings. Null tests detect whether the original data has
         genuine cluster structure.
     """
+
     data: np.ndarray
     null_test_data: np.ndarray
 
@@ -103,7 +104,9 @@ def transform_features(
     # null tests need — flat meters get noise amplified, normal meters
     # get structure compressed. Global normalization preserves inter-sample
     # distance structure while putting features on a common scale.
-    null_test_data = normalize(original_data, norm, axis=0) if norm.enabled else original_data.copy()
+    null_test_data = (
+        normalize(original_data, norm, axis=0) if norm.enabled else original_data.copy()
+    )
 
     # Apply main transform (wavelet or FPCA)
     explained_ratio = 1.0
@@ -134,7 +137,9 @@ def transform_features(
     # 1. Pre-normalized raw features, weighted by information lost in PCA.
     # Only append when a transform is active AND wasn't skipped (otherwise
     # data IS the pre-normalized features and appending would duplicate).
-    transform_active = (settings.feature_transform.fpca.enabled or wt.enabled) and not wavelet_skipped
+    transform_active = (
+        settings.feature_transform.fpca.enabled or wt.enabled
+    ) and not wavelet_skipped
     if transform_active and explained_ratio < 1.0:
         raw_weight = np.sqrt(1.0 - explained_ratio)
         raw_post = normalize(pre_normalized, norm, axis=0) if norm.enabled else pre_normalized
@@ -161,8 +166,7 @@ def transform_features(
         row_means = np.mean(original_data, axis=1)
         med_row = np.median(row_means)
         if med_row > 0:
-            iqr_row = (np.percentile(row_means, 75)
-                       - np.percentile(row_means, 25))
+            iqr_row = np.percentile(row_means, 75) - np.percentile(row_means, 25)
             robust_cv = iqr_row / med_row
         else:
             robust_cv = 0.0

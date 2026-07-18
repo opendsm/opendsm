@@ -24,7 +24,6 @@ from opendsm.eemeter.common.exceptions import (
 )
 
 
-
 @pytest.fixture
 def daily_series(comstock_daily):
     """(meter_df, temperature_series) extracted from ComStock daily baseline."""
@@ -104,13 +103,9 @@ def test_timezone_behavior(daily_series):
     with pytest.raises(ValueError):
         model.predict(reporting_data_no_meter_utc)
 
-    reporting_data = DailyReportingData.from_series(
-        meter, temp, is_electricity_data=True
-    )
+    reporting_data = DailyReportingData.from_series(meter, temp, is_electricity_data=True)
     res1 = model.predict(reporting_data)
-    reporting_data_no_meter = DailyReportingData.from_series(
-        None, temp, tzinfo=meter.index.tz
-    )
+    reporting_data_no_meter = DailyReportingData.from_series(None, temp, tzinfo=meter.index.tz)
     res2 = model.predict(reporting_data_no_meter)
     assert round((res1["temperature"] - res2["temperature"]).sum(), 2) == 0
     assert round((res1["predicted"] - res2["predicted"]).sum(), 2) == 0

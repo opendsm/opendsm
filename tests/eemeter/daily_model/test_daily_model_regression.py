@@ -50,25 +50,17 @@ def daily_model_fit(daily_baseline_data):
 
 @pytest.mark.slow
 @pytest.mark.regression
-def test_daily_baseline_predict_regression(
-    daily_model_fit, daily_baseline_data, snapshot
-):
+def test_daily_baseline_predict_regression(daily_model_fit, daily_baseline_data, snapshot):
     """Fit on baseline -> predict on same data. Catches any change to fit + predict."""
     result = daily_model_fit.predict(daily_baseline_data)
 
-    assert regression_block(result, freq="daily") == snapshot(
-        name=f"regression{SNAP_SUFFIX}"
-    )
+    assert regression_block(result, freq="daily") == snapshot(name=f"regression{SNAP_SUFFIX}")
 
 
 @pytest.mark.slow
 @pytest.mark.regression
-def test_daily_reporting_predict_regression(
-    daily_model_fit, daily_reporting_data, snapshot
-):
+def test_daily_reporting_predict_regression(daily_model_fit, daily_reporting_data, snapshot):
     """Fit on baseline -> predict on reporting. Catches any change that affects out-of-sample predict."""
     result = daily_model_fit.predict(daily_reporting_data)
 
-    assert regression_block(result, freq="daily") == snapshot(
-        name=f"regression{SNAP_SUFFIX}"
-    )
+    assert regression_block(result, freq="daily") == snapshot(name=f"regression{SNAP_SUFFIX}")

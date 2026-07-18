@@ -43,7 +43,9 @@ class DistanceProvider:
 
     def get(self) -> np.ndarray:
         if self._dist is None:
-            self._dist = squareform(pdist(self._data.astype(np.float32, copy=False))).astype(np.float32)
+            self._dist = squareform(pdist(self._data.astype(np.float32, copy=False))).astype(
+                np.float32
+            )
         return self._dist
 
     def get_submatrix(self, kept: np.ndarray) -> np.ndarray:
@@ -128,7 +130,10 @@ class LabelStore(ArbitraryPydanticModel):
         """
         # Always compute the full-data merged labels (for output).
         full_merged, _, _, full_coverage = prepare_labels(
-            labels, self.data, self.score_settings, self.n_cluster_lower,
+            labels,
+            self.data,
+            self.score_settings,
+            self.n_cluster_lower,
             min_cluster_size=self.min_cluster_size,
             small_cluster_mode=self.small_cluster_mode,
         )
@@ -143,7 +148,10 @@ class LabelStore(ArbitraryPydanticModel):
             scoring_data = self.data
 
         merged, data_clean, labels_clean, coverage = prepare_labels(
-            scoring_labels, scoring_data, self.score_settings, self.n_cluster_lower,
+            scoring_labels,
+            scoring_data,
+            self.score_settings,
+            self.n_cluster_lower,
             min_cluster_size=self.min_cluster_size,
             small_cluster_mode=self.small_cluster_mode,
         )
@@ -166,7 +174,9 @@ class LabelStore(ArbitraryPydanticModel):
             kept = np.where(merged != -1)[0]
             key = kept.tobytes()
             if key not in self._submatrix_cache:
-                self._submatrix_cache[key] = DistanceProvider(data_clean.astype(np.float32, copy=False))
+                self._submatrix_cache[key] = DistanceProvider(
+                    data_clean.astype(np.float32, copy=False)
+                )
                 self._submatrix_cache[key]._dist = self._distance_provider.get_submatrix(kept)
             lm._dist_provider = self._submatrix_cache[key]
         # Store the full-data merged labels for output (not the subsampled ones).
@@ -196,7 +206,9 @@ class LabelStore(ArbitraryPydanticModel):
         """Batch construction from a dict of k → label array(s)."""
         if score_settings is None:
             score_settings = ScoreSettings()
-        obj = cls(data=data, score_settings=score_settings, seed=seed, n_cluster_lower=n_cluster_lower)
+        obj = cls(
+            data=data, score_settings=score_settings, seed=seed, n_cluster_lower=n_cluster_lower
+        )
         for k, labels in k_to_labels.items():
             label_list = labels if isinstance(labels, list) else [labels]
             for lbl in label_list:
@@ -293,7 +305,8 @@ class ClusteringResult(LabelStore):
         grouped agreement — see :func:`cross_k_metrics.has_cluster_structure`.
         """
         return _cross_k.has_cluster_structure(
-            self.cross_k_metrics, alpha=self.score_settings.null_test_alpha,
+            self.cross_k_metrics,
+            alpha=self.score_settings.null_test_alpha,
         )
 
     @property
@@ -407,8 +420,7 @@ class ClusteringResult(LabelStore):
             for lm in lms:
                 lm_to_k[id(lm)] = k
         council_candidates = [
-            c if c is None or lm_to_k.get(id(c), 0) >= 2 else None
-            for c in candidates
+            c if c is None or lm_to_k.get(id(c), 0) >= 2 else None for c in candidates
         ]
 
         council = dict(self.score_settings.weights)
@@ -424,20 +436,21 @@ class ClusteringResult(LabelStore):
                 if c is None:
                     continue
                 k = lm_to_k.get(id(c), 0)
-                score = self._eigengap_scores.get(k, float('nan'))
+                score = self._eigengap_scores.get(k, float("nan"))
                 if extra_scores_list[i] is None:
                     extra_scores_list[i] = {eigengap_name: score}
                 else:
                     extra_scores_list[i][eigengap_name] = score
 
         candidate_k_values = [
-            lm_to_k.get(id(c), 1) if c is not None else 1
-            for c in council_candidates
+            lm_to_k.get(id(c), 1) if c is not None else 1 for c in council_candidates
         ]
 
         k_pen = self.score_settings.k_penalty
         winner_idx, confidence = _selection.select_best_across_k(
-            council_candidates, council, self.score_settings.window_size,
+            council_candidates,
+            council,
+            self.score_settings.window_size,
             extra_scores_list=extra_scores_list,
             candidate_k_values=candidate_k_values,
             k_penalty_strength=k_pen.strength if k_pen.enabled else 0.0,
@@ -476,7 +489,7 @@ class ClusteringResult(LabelStore):
             scores: dict[str, float] = {}
             for metric in active_cross_k:
                 idx_dict: dict[int, float] = getattr(ckm, metric, {})
-                scores[metric] = idx_dict.get(k, float('nan'))
+                scores[metric] = idx_dict.get(k, float("nan"))
             k_to_extra[k] = scores
 
         lm_to_k: dict[int, int] = {}

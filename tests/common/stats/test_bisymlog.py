@@ -9,23 +9,25 @@ from opendsm.common.stats.distribution_transform.bisymlog import (
     _bisymlog_inverse,
 )
 
-pytestmark = pytest.mark.filterwarnings(
-    "ignore::numba.core.errors.NumbaExperimentalFeatureWarning"
-)
+pytestmark = pytest.mark.filterwarnings("ignore::numba.core.errors.NumbaExperimentalFeatureWarning")
 
 LOG10_INV = 1.0 / np.log10(10)  # = 1.0 for base 10
 
 
 # ── Numba kernels ────────────────────────────────────────────────────────
 
+
 class TestKernels:
-    @pytest.mark.parametrize("x_val, expected", [
-        (0.0, 0.0),
-        (9.0, 1.0),               # log10(9/1 + 1) = log10(10) = 1
-        (-9.0, -1.0),
-        (1.0, np.log10(2)),
-        (-1.0, -np.log10(2)),
-    ])
+    @pytest.mark.parametrize(
+        "x_val, expected",
+        [
+            (0.0, 0.0),
+            (9.0, 1.0),  # log10(9/1 + 1) = log10(10) = 1
+            (-9.0, -1.0),
+            (1.0, np.log10(2)),
+            (-1.0, -np.log10(2)),
+        ],
+    )
     def test_forward_known_c1(self, x_val, expected):
         out = _bisymlog_forward(np.array([x_val]), 1.0, LOG10_INV)
         assert np.isclose(out[0], expected)
@@ -55,6 +57,7 @@ class TestKernels:
 
 # ── Heuristic C ──────────────────────────────────────────────────────────
 
+
 class TestHeuristicC:
     def test_constant_returns_none(self):
         assert Bisymlog._heuristic_C(np.ones(50)) is None
@@ -69,6 +72,7 @@ class TestHeuristicC:
 
 
 # ── Class API ────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def lognormal_1d():

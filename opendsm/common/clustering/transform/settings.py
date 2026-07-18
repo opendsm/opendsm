@@ -22,37 +22,37 @@ class TransformChoice(str, Enum):
 
 class WaveletSelection(str, Enum):
     # Daubechies — filter length 2N; use DB1–DB6 for 24h (T=24), DB8+ for 168h+
-    HAAR    = "haar"     # alias for db1
-    DB1     = "db1"      # length 2;  piecewise-constant
-    DB2     = "db2"      # length 4
-    DB3     = "db3"      # length 6
-    DB4     = "db4"      # length 8
-    DB6     = "db6"      # length 12; good balance for smooth 24h profiles
-    DB8     = "db8"      # length 16
-    DB10    = "db10"     # length 20
-    DB12    = "db12"     # length 24; max safe length for T=24
-    DB16    = "db16"     # length 32
-    DB26    = "db26"     # length 52
-    DB29    = "db29"     # length 58
+    HAAR = "haar"  # alias for db1
+    DB1 = "db1"  # length 2;  piecewise-constant
+    DB2 = "db2"  # length 4
+    DB3 = "db3"  # length 6
+    DB4 = "db4"  # length 8
+    DB6 = "db6"  # length 12; good balance for smooth 24h profiles
+    DB8 = "db8"  # length 16
+    DB10 = "db10"  # length 20
+    DB12 = "db12"  # length 24; max safe length for T=24
+    DB16 = "db16"  # length 32
+    DB26 = "db26"  # length 52
+    DB29 = "db29"  # length 58
     # Symlets — near-symmetric; filter length 2N; same length guidance as DB
-    SYM2    = "sym2"     # length 4
-    SYM4    = "sym4"     # length 8
-    SYM6    = "sym6"     # length 12
-    SYM8    = "sym8"     # length 16
-    SYM10   = "sym10"    # length 20
-    SYM11   = "sym11"    # length 22
+    SYM2 = "sym2"  # length 4
+    SYM4 = "sym4"  # length 8
+    SYM6 = "sym6"  # length 12
+    SYM8 = "sym8"  # length 16
+    SYM10 = "sym10"  # length 20
+    SYM11 = "sym11"  # length 22
     # Coiflets — near-symmetric; filter length 6N
-    COIF1   = "coif1"    # length 6
-    COIF2   = "coif2"    # length 12
-    COIF3   = "coif3"    # length 18
-    COIF4   = "coif4"    # length 24; max safe for T=24
-    COIF6   = "coif6"    # length 36
-    COIF17  = "coif17"   # length 102; best error/speed mix for 504h+
+    COIF1 = "coif1"  # length 6
+    COIF2 = "coif2"  # length 12
+    COIF3 = "coif3"  # length 18
+    COIF4 = "coif4"  # length 24; max safe for T=24
+    COIF6 = "coif6"  # length 36
+    COIF17 = "coif17"  # length 102; best error/speed mix for 504h+
     # Biorthogonal / reverse biorthogonal
     BIOR1_1 = "bior1.1"
     RBIO1_1 = "rbio1.1"
     # Discrete Meyer — good frequency localisation
-    DMEY    = "dmey"
+    DMEY = "dmey"
 
 
 class MagnitudeFeature(str, Enum):
@@ -188,9 +188,7 @@ class WaveletTransformSettings(BaseSettings):
         ge=0,
     )
 
-    _seed: int | None = pydantic.PrivateAttr(
-        default=None
-    )
+    _seed: int | None = pydantic.PrivateAttr(default=None)
 
     @pydantic.model_validator(mode="after")
     def _check_seed(self):
@@ -211,9 +209,7 @@ class WaveletTransformSettings(BaseSettings):
 
         all_modes = pywt.Modes.modes
         if self.wavelet_mode not in all_modes:
-            raise ValueError(
-                f"'wavelet_mode' must be a valid mode in PyWavelets: \n{all_modes}"
-            )
+            raise ValueError(f"'wavelet_mode' must be a valid mode in PyWavelets: \n{all_modes}")
 
         return self
 
@@ -232,15 +228,11 @@ class WaveletTransformSettings(BaseSettings):
 
             if isinstance(self.pca_n_components, int):
                 if self.pca_n_components < 1:
-                    raise ValueError(
-                        "'pca_n_components' must be >= 1"
-                    )
+                    raise ValueError("'pca_n_components' must be >= 1")
 
         if self.pca_min_variance_ratio_explained is not None:
             if not 0.5 <= self.pca_min_variance_ratio_explained <= 1:
-                raise ValueError(
-                    "'pca_min_variance_ratio_explained' must be between 0.5 and 1"
-                )
+                raise ValueError("'pca_min_variance_ratio_explained' must be between 0.5 and 1")
 
         return self
 
@@ -267,9 +259,7 @@ class FeatureTransformSettings(BaseSettings):
     @pydantic.model_validator(mode="after")
     def _check_exclusive_transforms(self):
         if self.fpca.enabled and self.wavelet.enabled:
-            raise ValueError(
-                "Only one of fpca or wavelet can be enabled at a time"
-            )
+            raise ValueError("Only one of fpca or wavelet can be enabled at a time")
         return self
 
     @pydantic.model_validator(mode="after")

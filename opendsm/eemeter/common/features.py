@@ -136,8 +136,7 @@ def compute_time_features(index, hour_of_week=True, day_of_week=True, hour_of_da
     """
     if index.freq != "h":
         raise ValueError(
-            "index must have hourly frequency (freq='H')."
-            " Found: {}".format(index.freq)
+            "index must have hourly frequency (freq='H'). Found: {}".format(index.freq)
         )
 
     dow_feature = pd.Series(index.dayofweek, index=index, name="day_of_week")
@@ -237,9 +236,7 @@ def _degree_day_columns(
                     daily_temps = daily_temps["mean"].iloc[0:0]
                 else:
                     # CalTRACK 2.2.2.3
-                    daily_temps = daily_temps["mean"][
-                        daily_temps["count"] > n_limit_daily
-                    ]
+                    daily_temps = daily_temps["mean"][daily_temps["count"] > n_limit_daily]
                 n_days_kept = daily_temps.shape[0]
                 count_cols = {
                     "n_days_kept": n_days_kept,
@@ -270,14 +267,12 @@ def _degree_day_columns(
 
                 # CalTrack 3.3.4.1.1
                 cdd_cols = {
-                    "cdd_%s" % bp: np.maximum(mean_temp - bp, 0)
-                    for bp in cooling_balance_points
+                    "cdd_%s" % bp: np.maximum(mean_temp - bp, 0) for bp in cooling_balance_points
                 }
 
                 # CalTrack 3.3.5.1.1
                 hdd_cols = {
-                    "hdd_%s" % bp: np.maximum(bp - mean_temp, 0)
-                    for bp in heating_balance_points
+                    "hdd_%s" % bp: np.maximum(bp - mean_temp, 0) for bp in heating_balance_points
                 }
 
             columns = count_cols
@@ -379,8 +374,9 @@ def compute_temperature_features(
     """
     if temperature_data.index.freq != "h":
         raise ValueError(
-            "temperature_data.index must have hourly frequency (freq='H')."
-            " Found: {}".format(temperature_data.index.freq)
+            "temperature_data.index must have hourly frequency (freq='H'). Found: {}".format(
+                temperature_data.index.freq
+            )
         )
 
     if not temperature_data.index.tz:
@@ -483,14 +479,10 @@ def compute_temperature_features(
                 use_mean_daily_values=use_mean_daily_values,
             )
         )
-        temp_agg_column_renames.update(
-            {("temp", "degree_day_columns"): "degree_day_columns"}
-        )
+        temp_agg_column_renames.update({("temp", "degree_day_columns"): "degree_day_columns"})
 
         if data_quality:
-            temp_agg_funcs.extend(
-                [("not_null", "count"), ("null", lambda x: x.isnull().sum())]
-            )
+            temp_agg_funcs.extend([("not_null", "count"), ("null", lambda x: x.isnull().sum())])
             temp_agg_column_renames.update(
                 {
                     ("temp", "not_null"): "temperature_not_null",
@@ -535,7 +527,7 @@ def compute_temperature_features(
     if not keep_partial_nan_rows:
         df = overwrite_partial_rows_with_nan(df)
 
-    if df.dropna(how='all').empty:
+    if df.dropna(how="all").empty:
         raise ValueError("All rows are NaN.")
 
     # nan last row
@@ -569,9 +561,7 @@ def _estimate_hour_of_week_occupancy(model_data, threshold):
         return int(ratio_positive_residuals > threshold)
 
     return (
-        model_data_with_residuals.groupby(["hour_of_week"], observed=False)[
-            ["residuals"]
-        ]
+        model_data_with_residuals.groupby(["hour_of_week"], observed=False)[["residuals"]]
         .apply(_is_high_usage)
         .rename("occupancy")
         .reindex(index)
@@ -611,9 +601,7 @@ def estimate_hour_of_week_occupancy(data, segmentation=None, threshold=0.65):
     occupancy_lookups = {}
     segmented_datasets = iterate_segmented_dataset(data, segmentation)
     for segment_name, segmented_data in segmented_datasets:
-        hour_of_week_occupancy = _estimate_hour_of_week_occupancy(
-            segmented_data, threshold
-        )
+        hour_of_week_occupancy = _estimate_hour_of_week_occupancy(segmented_data, threshold)
         column = "occupancy" if segment_name is None else segment_name
         occupancy_lookups[column] = hour_of_week_occupancy
     # make sure columns stay in same order
@@ -628,9 +616,7 @@ def _fit_temperature_bins(temperature_data, default_bins, min_temperature_count)
             pd.Interval(bin_left, bin_right, closed="right")
             for bin_left, bin_right in zip(bins, bins[1:])
         ]
-        temp_bins = pd.cut(temperature_data, bins=bins).cat.set_categories(
-            bin_intervals
-        )
+        temp_bins = pd.cut(temperature_data, bins=bins).cat.set_categories(bin_intervals)
         return (
             pd.DataFrame({"temp": temperature_data, "bin": temp_bins})
             .groupby("bin", observed=False)["temp"]
@@ -753,13 +739,9 @@ def fit_temperature_bins(
                 occupancy = occupancy_lookup["occupancy"]
             else:
                 occupancy = occupancy_lookup[segment_name]
-            occupancy_features = compute_occupancy_feature(
-                time_features.hour_of_week, occupancy
-            )
+            occupancy_features = compute_occupancy_feature(time_features.hour_of_week, occupancy)
             occupied_temperatures = segmented_data.temperature_mean[occupancy_features]
-            unoccupied_temperatures = segmented_data.temperature_mean[
-                ~occupancy_features
-            ]
+            unoccupied_temperatures = segmented_data.temperature_mean[~occupancy_features]
             occupied_segmented_bins[segment_name] = _fit_temperature_bins(
                 occupied_temperatures, default_bins, min_temperature_count
             )
@@ -772,11 +754,7 @@ def fit_temperature_bins(
             unoccupied_bins = unoccupied_segmented_bins[None]
             return (
                 pd.DataFrame(
-                    {
-                        "keep_bin_endpoint": [
-                            endpoint in occupied_bins for endpoint in default_bins
-                        ]
-                    },
+                    {"keep_bin_endpoint": [endpoint in occupied_bins for endpoint in default_bins]},
                     index=pd.Series(default_bins, name="bin_endpoints"),
                 ),
                 pd.DataFrame(
@@ -848,15 +826,11 @@ def compute_temperature_bin_features(temperatures, bin_endpoints):
 
         if i == 0:
             temps_in_bin = _expand_and_fill(temperatures[in_bin])
-            temps_out_of_bin = _expand_and_fill(
-                pd.Series(right_bin, index=not_in_bin_index)
-            )
+            temps_out_of_bin = _expand_and_fill(pd.Series(right_bin, index=not_in_bin_index))
             bin_values = temps_in_bin + temps_out_of_bin
         else:
             temps_in_bin = _expand_and_fill(temperatures[in_bin] - left_bin)
-            temps_gt_bin = _expand_and_fill(
-                pd.Series(right_bin - left_bin, index=gt_bin_index)
-            )
+            temps_gt_bin = _expand_and_fill(pd.Series(right_bin - left_bin, index=gt_bin_index))
             bin_values = temps_in_bin + temps_gt_bin
         bins[bin_name] = _mask_nans(bin_values)
     return pd.DataFrame(bins)

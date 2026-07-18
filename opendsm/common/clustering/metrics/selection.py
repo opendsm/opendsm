@@ -63,7 +63,7 @@ def _compute_composite_score(
     # Outlier-fraction penalty: divide finite scores by coverage so labelings
     # that discard many samples rank worse.  coverage=1.0 → no effect.
     # _coverage is set to 1.0 when outlier_fraction_penalty=False.
-    coverage = getattr(lm, '_coverage', 1.0)
+    coverage = getattr(lm, "_coverage", 1.0)
     if coverage < 1.0 - 1e-10:
         for metric in score:
             val = score[metric]
@@ -189,7 +189,10 @@ def select_best_across_k(
 
     score_matrix, voter_names, abstain_mask = _voting.build_rank_matrix(proxies)
     return _voting.schulze_voting(
-        score_matrix, voter_names, voter_weights=council, window_size=window_size,
+        score_matrix,
+        voter_names,
+        voter_weights=council,
+        window_size=window_size,
         candidate_k_values=candidate_k_values,
         k_penalty_strength=k_penalty_strength,
         k_penalty_rate=k_penalty_rate,

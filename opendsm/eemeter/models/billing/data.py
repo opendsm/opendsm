@@ -33,7 +33,6 @@ from opendsm.eemeter.models.daily.data import _DailyData
 from opendsm.eemeter.common.warnings import EEMeterWarning
 
 
-
 """TODO there is still a ton of unecessarily duplicated code between billing+daily.
     we should be able to perform a few transforms within the billing baseclass, and then call super() for the rest
 
@@ -136,9 +135,7 @@ class _BillingData(_DailyData):
 
         return meter_value_df
 
-    def _compute_temperature_features(
-        self, df: pd.DataFrame, meter_index: pd.DatetimeIndex
-    ):
+    def _compute_temperature_features(self, df: pd.DataFrame, meter_index: pd.DatetimeIndex):
         """
         Compute temperature features for the given DataFrame and meter index.
         1. The frequency of the temperature data is inferred and set to hourly if not already. If frequency is not inferred or its lower than hourly, a warning is added.
@@ -202,9 +199,7 @@ class _BillingData(_DailyData):
                     )
 
                 # Set missing high frequency data to NaN
-                temperature_features.loc[
-                    temperature_features.coverage > 0.5, "value"
-                ] = (
+                temperature_features.loc[temperature_features.coverage > 0.5, "value"] = (
                     temperature_features[temperature_features.coverage > 0.5].value
                     / temperature_features[temperature_features.coverage > 0.5].coverage
                 )
@@ -216,16 +211,12 @@ class _BillingData(_DailyData):
                 )
 
                 if "coverage" in temperature_features.columns:
-                    temperature_features = temperature_features.drop(
-                        columns=["coverage"]
-                    )
+                    temperature_features = temperature_features.drop(columns=["coverage"])
             else:
                 temperature_features = temp_series.to_frame(name="temperature_mean")
 
             temperature_features["temperature_null"] = temp_series.isnull().astype(int)
-            temperature_features["temperature_not_null"] = temp_series.notnull().astype(
-                int
-            )
+            temperature_features["temperature_not_null"] = temp_series.notnull().astype(int)
             temperature_features["n_days_kept"] = 0  # unused
             temperature_features["n_days_dropped"] = 0  # unused
         else:
@@ -243,8 +234,7 @@ class _BillingData(_DailyData):
             # TODO this check causes weird behavior with very sparse temp data.
             # will still get DQ'd, but final df receives non-nan temperatures
             median_samples = (
-                temperature_features.temperature_not_null
-                + temperature_features.temperature_null
+                temperature_features.temperature_not_null + temperature_features.temperature_null
             ).median()
             if median_samples > 1:
                 invalid_temperature_rows = (
@@ -272,9 +262,7 @@ class _BillingData(_DailyData):
                             ],
                         )
                     )
-                    temperature_features.loc[
-                        invalid_temperature_rows, "temperature_mean"
-                    ] = np.nan
+                    temperature_features.loc[invalid_temperature_rows, "temperature_mean"] = np.nan
 
         temp = temperature_features["temperature_mean"].rename("temperature")
         features = temperature_features.drop(columns=["temperature_mean"])
@@ -300,7 +288,7 @@ class _BillingData(_DailyData):
         # create vector where value increases at each observed change
         group = []
         for i in range(1, len(obs_change_idx)):
-            idx_range = obs_change_idx[i] - obs_change_idx[i-1]
+            idx_range = obs_change_idx[i] - obs_change_idx[i - 1]
 
             group.extend([i] * idx_range)
 
@@ -312,13 +300,19 @@ class _BillingData(_DailyData):
         df_temp = df.reset_index()
         df_temp = df_temp.rename(columns={"index": "datetime"})
 
-        df_grouped = df_temp.groupby("group").agg({
-            "datetime": "first",
-            "season": "first",
-            "weekday_weekend": "first",
-            "temperature": "mean",
-            "observed": "mean",
-        }).set_index("datetime")
+        df_grouped = (
+            df_temp.groupby("group")
+            .agg(
+                {
+                    "datetime": "first",
+                    "season": "first",
+                    "weekday_weekend": "first",
+                    "temperature": "mean",
+                    "observed": "mean",
+                }
+            )
+            .set_index("datetime")
+        )
 
         # create days column for number of days between current and previous index
         df_grouped["days"] = df_grouped.index.to_series().diff().dt.days
@@ -373,7 +367,7 @@ class BillingBaselineData(_BillingData):
 
         """
         bsc = BillingSufficiencyCriteria(
-            data=sufficiency_df, 
+            data=sufficiency_df,
             is_electricity_data=self.is_electricity_data,
             is_reporting_data=False,
             settings=self.settings.sufficiency,
@@ -411,12 +405,7 @@ class BillingReportingData(_BillingData):
         warnings (list[EEMeterWarning]): A list of ssues with the data, but none that will severely reduce the quality of the model built.
     """
 
-    def __init__(
-        self,
-        df: pd.DataFrame, 
-        is_electricity_data: bool, 
-        settings: dict | None = None
-    ):
+    def __init__(self, df: pd.DataFrame, is_electricity_data: bool, settings: dict | None = None):
         df = df.copy()
         if "observed" not in df.columns:
             df["observed"] = np.nan
@@ -448,20 +437,18 @@ class BillingReportingData(_BillingData):
                 "When passing meter data to BillingReportingData, convert its DatetimeIndex to local timezone first; `tzinfo` param should only be used in the absence of reporting meter data."
             )
         if is_electricity_data is None and meter_data is not None:
-            raise ValueError(
-                "Must specify is_electricity_data when passing meter data."
-            )
+            raise ValueError("Must specify is_electricity_data when passing meter data.")
         if meter_data is None:
-            meter_data = pd.DataFrame(
-                {"observed": np.nan}, index=temperature_data.index
-            )
+            meter_data = pd.DataFrame({"observed": np.nan}, index=temperature_data.index)
             if tzinfo:
                 meter_data = meter_data.tz_convert(tzinfo)
         if meter_data.empty:
             raise ValueError(
                 "Pass meter_data=None to explicitly create a temperature-only reporting data instance."
             )
-        return super().from_series(meter_data, temperature_data, is_electricity_data, settings=settings)
+        return super().from_series(
+            meter_data, temperature_data, is_electricity_data, settings=settings
+        )
 
     def _check_data_sufficiency(self, sufficiency_df):
         """
@@ -480,7 +467,7 @@ class BillingReportingData(_BillingData):
 
         """
         bsc = BillingSufficiencyCriteria(
-            data=sufficiency_df, 
+            data=sufficiency_df,
             is_electricity_data=self.is_electricity_data,
             is_reporting_data=True,
             settings=self.settings.sufficiency,

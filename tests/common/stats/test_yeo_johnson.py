@@ -14,36 +14,43 @@ from opendsm.common.stats.distribution_transform.yeo_johnson import (
     YeoJohnson,
 )
 from opendsm.common.stats.distribution_transform._bc_yj_shared import (
-    _WANT_VALUE, _WANT_DERIV, _LAM_EPS,
+    _WANT_VALUE,
+    _WANT_DERIV,
+    _LAM_EPS,
 )
 
-pytestmark = pytest.mark.filterwarnings(
-    "ignore::numba.core.errors.NumbaExperimentalFeatureWarning"
-)
+pytestmark = pytest.mark.filterwarnings("ignore::numba.core.errors.NumbaExperimentalFeatureWarning")
 
 RNG = np.random.default_rng
 
 
 # ── Scalar _yj forward ──────────────────────────────────────────────────
 
+
 class TestYJScalar:
-    @pytest.mark.parametrize("x, lam, expected", [
-        (0.0, 1.0, 0.0),
-        (3.0, 1.0, 3.0),                          # identity
-        (1.0, 0.0, np.log(2)),                     # log(1+x)
-        (0.0, 0.0, 0.0),
-        (-1.0, 2.0, -np.log(2)),                   # -log(1-x)
-        (-0.5, 2.0, -np.log(1.5)),
-        (2.0, 2.0, (9 - 1) / 2),                   # ((1+2)^2-1)/2 = 4
-    ])
+    @pytest.mark.parametrize(
+        "x, lam, expected",
+        [
+            (0.0, 1.0, 0.0),
+            (3.0, 1.0, 3.0),  # identity
+            (1.0, 0.0, np.log(2)),  # log(1+x)
+            (0.0, 0.0, 0.0),
+            (-1.0, 2.0, -np.log(2)),  # -log(1-x)
+            (-0.5, 2.0, -np.log(1.5)),
+            (2.0, 2.0, (9 - 1) / 2),  # ((1+2)^2-1)/2 = 4
+        ],
+    )
     def test_forward_known(self, x, lam, expected):
         assert np.isclose(_yj(x, lam, _WANT_VALUE), expected, atol=1e-12)
 
-    @pytest.mark.parametrize("x, lam, expected", [
-        (3.0, 2.0, 4.0),       # (3+1)^(2-1) = 4
-        (0.0, 0.5, 1.0),       # (0+1)^(-0.5) = 1
-        (-0.5, 1.0, 1.0),      # (1-(-0.5))^(1-1) = 1.5^0 = 1
-    ])
+    @pytest.mark.parametrize(
+        "x, lam, expected",
+        [
+            (3.0, 2.0, 4.0),  # (3+1)^(2-1) = 4
+            (0.0, 0.5, 1.0),  # (0+1)^(-0.5) = 1
+            (-0.5, 1.0, 1.0),  # (1-(-0.5))^(1-1) = 1.5^0 = 1
+        ],
+    )
     def test_derivative_known(self, x, lam, expected):
         assert np.isclose(_yj(x, lam, _WANT_DERIV), expected, atol=1e-12)
 
@@ -53,6 +60,7 @@ class TestYJScalar:
 
 
 # ── Scalar _yj_inverse ──────────────────────────────────────────────────
+
 
 class TestYJInverse:
     @pytest.mark.parametrize("lam", [0.0, 0.5, 1.0, 1.5, 2.0])
@@ -76,6 +84,7 @@ class TestYJInverse:
 
 # ── Vectorised transforms ───────────────────────────────────────────────
 
+
 class TestVectorised:
     @pytest.mark.parametrize("lam", [0.0, 0.7, 1.0, 1.5, 2.0])
     def test_array_roundtrip(self, lam):
@@ -89,6 +98,7 @@ class TestVectorised:
 
 
 # ── Rectified transform ─────────────────────────────────────────────────
+
 
 class TestRectified:
     @pytest.fixture
@@ -116,6 +126,7 @@ class TestRectified:
 
 # ── _yj_hg ───────────────────────────────────────────────────────────────
 
+
 class TestYJHG:
     def test_at_lambda_zero(self):
         h, g = _yj_hg(3.0, 0.0)
@@ -128,6 +139,7 @@ class TestYJHG:
 
 
 # ── _fit_yj_lambda ──────────────────────────────────────────────────────
+
 
 class TestFitYJLambda:
     def test_normal_lambda_near_one(self):
@@ -170,14 +182,17 @@ class TestFitYJLambda:
 
 # ── YeoJohnson class ────────────────────────────────────────────────────
 
+
 @pytest.fixture
 def sample_2d():
     rng = RNG(42)
-    return np.column_stack([
-        rng.standard_normal(200),
-        rng.lognormal(2, 1.5, 200),
-        rng.standard_normal(200) * 0.3,
-    ])
+    return np.column_stack(
+        [
+            rng.standard_normal(200),
+            rng.lognormal(2, 1.5, 200),
+            rng.standard_normal(200) * 0.3,
+        ]
+    )
 
 
 class TestYeoJohnsonClass:

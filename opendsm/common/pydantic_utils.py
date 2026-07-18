@@ -35,9 +35,7 @@ class PydanticDf(pydantic.BaseModel):
         if self.column_types is not None:
             expected_columns = list(self.column_types.keys())
             if not set(self.df.columns) == set(expected_columns):
-                raise ValueError(
-                    f"Expected columns {expected_columns} but got {self.df.columns}"
-                )
+                raise ValueError(f"Expected columns {expected_columns} but got {self.df.columns}")
 
             for col, col_type in self.column_types.items():
                 if col_type is None or col_type is Any:
@@ -65,7 +63,7 @@ class ArbitraryPydanticModel(pydantic.BaseModel):
         data = serializer(self)
         # Only convert to strings when serializing to JSON (mode='json')
         # For Python dicts (mode='python'), keep native float('nan') values
-        if info.mode == 'json':
+        if info.mode == "json":
             return self._convert_special_floats_to_str(data)
         return data
 
@@ -78,9 +76,13 @@ class ArbitraryPydanticModel(pydantic.BaseModel):
             elif math.isinf(obj):
                 return "inf" if obj > 0 else "-inf"
         elif isinstance(obj, dict):
-            return {k: ArbitraryPydanticModel._convert_special_floats_to_str(v) for k, v in obj.items()}
+            return {
+                k: ArbitraryPydanticModel._convert_special_floats_to_str(v) for k, v in obj.items()
+            }
         elif isinstance(obj, (list, tuple)):
-            return type(obj)(ArbitraryPydanticModel._convert_special_floats_to_str(item) for item in obj)
+            return type(obj)(
+                ArbitraryPydanticModel._convert_special_floats_to_str(item) for item in obj
+            )
         return obj
 
     @pydantic.model_validator(mode="before")
@@ -104,11 +106,15 @@ class ArbitraryPydanticModel(pydantic.BaseModel):
             elif obj == "-inf":
                 return float("-inf")
         elif isinstance(obj, dict):
-            return {k: ArbitraryPydanticModel._convert_str_to_special_floats(v) for k, v in obj.items()}
+            return {
+                k: ArbitraryPydanticModel._convert_str_to_special_floats(v) for k, v in obj.items()
+            }
         elif isinstance(obj, list):
             return [ArbitraryPydanticModel._convert_str_to_special_floats(item) for item in obj]
         elif isinstance(obj, tuple):
-            return tuple(ArbitraryPydanticModel._convert_str_to_special_floats(item) for item in obj)
+            return tuple(
+                ArbitraryPydanticModel._convert_str_to_special_floats(item) for item in obj
+            )
         return obj
 
 

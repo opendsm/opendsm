@@ -35,12 +35,8 @@ import warnings
 
 # these happen during native code execution and segfault pytest when filterwarnings is set to error
 warnings.filterwarnings("ignore", module="importlib._bootstrap")
-warnings.filterwarnings(
-    "ignore", "builtin type swigvarlink has no __module__ attribute"
-)
-warnings.filterwarnings(
-    "ignore", "builtin type SwigPyPacked has no __module__ attribute"
-)
+warnings.filterwarnings("ignore", "builtin type swigvarlink has no __module__ attribute")
+warnings.filterwarnings("ignore", "builtin type SwigPyPacked has no __module__ attribute")
 
 if platform.system() == "Windows":
     # numba JIT breaks on Windows with int32/int64 return types
@@ -73,6 +69,7 @@ __all__ = [
     "comparison_groups",
     "test_data",
 ]
+
 
 def __dir__():
     return __all__

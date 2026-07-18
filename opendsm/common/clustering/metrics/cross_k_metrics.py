@@ -53,9 +53,9 @@ class CrossKMetrics(ArbitraryPydanticModel):
     n_scored_by_k: dict[int, int] = pydantic.Field(
         default_factory=dict,
         description="Number of scored (non-outlier) samples per k. "
-                    "Used to normalize WCSS for fair comparison against "
-                    "null references that use all n samples. Empty dict "
-                    "means all k use n_samples (no outlier removal).",
+        "Used to normalize WCSS for fair comparison against "
+        "null references that use all n samples. Empty dict "
+        "means all k use n_samples (no outlier removal).",
     )
 
     k_values: list[int] = pydantic.Field(
@@ -75,10 +75,10 @@ class CrossKMetrics(ArbitraryPydanticModel):
         exclude=True,
         repr=False,
         description="Original (untransformed) data for null tests (gap "
-                    "statistic, Hopkins, SigClust, spectral gap). Using raw "
-                    "data prevents transform artifacts (variance cap, wavelet "
-                    "normalization) from creating false cluster structure. "
-                    "None disables data-dependent null tests.",
+        "statistic, Hopkins, SigClust, spectral gap). Using raw "
+        "data prevents transform artifacts (variance cap, wavelet "
+        "normalization) from creating false cluster structure. "
+        "None disables data-dependent null tests.",
     )
 
     seed: int = pydantic.Field(default=42)
@@ -114,7 +114,7 @@ class CrossKMetrics(ArbitraryPydanticModel):
 
         This is the single source of truth for valid cross-k metric names.
         """
-        return sorted(name for name in dir(cls) if name.endswith('_index'))
+        return sorted(name for name in dir(cls) if name.endswith("_index"))
 
     # ------------------------------------------------------------------
     # Shared data statistics (cached, used by multiple null tests)
@@ -151,13 +151,12 @@ class CrossKMetrics(ArbitraryPydanticModel):
 
     # ------------------------------------------------------------------
     # Helpers
-    # ------------------------------------------------------------------  
+    # ------------------------------------------------------------------
 
     @staticmethod
-    def _max_eigengap(data: np.ndarray, k_nn: int, n_eig: int,
-                      seed: int = 42) -> float:
+    def _max_eigengap(data: np.ndarray, k_nn: int, n_eig: int, seed: int = 42) -> float:
         """Max consecutive eigengap of the normalized Laplacian from a k-NN graph."""
-        nn = NearestNeighbors(n_neighbors=k_nn + 1, algorithm='auto')
+        nn = NearestNeighbors(n_neighbors=k_nn + 1, algorithm="auto")
         nn.fit(data)
         dist, idx = nn.kneighbors(data)
 
@@ -185,8 +184,7 @@ class CrossKMetrics(ArbitraryPydanticModel):
         else:
             # Seeded v0 for deterministic ARPACK convergence
             v0 = np.random.default_rng(seed).standard_normal(n)
-            eigvals = eigsh(L_sym, k=n_eig, which='SM',
-                            return_eigenvectors=False, v0=v0)
+            eigvals = eigsh(L_sym, k=n_eig, which="SM", return_eigenvectors=False, v0=v0)
             eigvals = np.sort(np.real(eigvals))
 
         diffs = np.diff(eigvals[1:]) if len(eigvals) > 2 else np.diff(eigvals)
@@ -210,7 +208,7 @@ class CrossKMetrics(ArbitraryPydanticModel):
         Returns NaN if data is unavailable.
         """
         if self.raw_data is None:
-            return float('nan')
+            return float("nan")
 
         wcss = self.wcss_by_k
         n, d = self.raw_data.shape
@@ -225,10 +223,9 @@ class CrossKMetrics(ArbitraryPydanticModel):
         # different sample counts between observed (outlier-removed) and
         # null (all n).  In log space: log(WCSS/n) = log(WCSS) - log(n).
         n_scored = self.n_scored_by_k
-        log_wcss_obs = np.array([
-            np.log(max(wcss[k], 1e-20)) - np.log(n_scored.get(k, n))
-            for k in k_vals
-        ])
+        log_wcss_obs = np.array(
+            [np.log(max(wcss[k], 1e-20)) - np.log(n_scored.get(k, n)) for k in k_vals]
+        )
 
         rng = np.random.default_rng(self.seed + 0)
         lo, _, spread = self._bbox
@@ -244,8 +241,7 @@ class CrossKMetrics(ArbitraryPydanticModel):
             ref_data *= spread
             ref_data += lo
             for j, k in enumerate(k_vals):
-                km = _KM(n_clusters=k, n_init=1, max_iter=20,
-                         random_state=self.seed + b)
+                km = _KM(n_clusters=k, n_init=1, max_iter=20, random_state=self.seed + b)
                 km.fit(ref_data)
                 log_wcss_refs[b, j] = np.log(max(km.inertia_, 1e-20)) - np.log(n)
 
@@ -277,7 +273,7 @@ class CrossKMetrics(ArbitraryPydanticModel):
         problem where ``u**d`` and ``w**d`` converge for large d.
         """
         if self.raw_data is None:
-            return float('nan')
+            return float("nan")
 
         n, d = self.raw_data.shape
         data = self.raw_data
@@ -297,7 +293,7 @@ class CrossKMetrics(ArbitraryPydanticModel):
 
         m = min(max(10, n // 5), n - 1)
         if m < 2 or n < 3:
-            return float('nan')
+            return float("nan")
 
         rng = np.random.default_rng(self.seed + 1)
 
@@ -307,7 +303,7 @@ class CrossKMetrics(ArbitraryPydanticModel):
         random_points = (rng.random((m, d)) * spread + lo).astype(data.dtype)
 
         # Single NN tree with k=2 serves both queries
-        nn = NearestNeighbors(n_neighbors=2, algorithm='auto')
+        nn = NearestNeighbors(n_neighbors=2, algorithm="auto")
         nn.fit(data)
 
         # Random → data: nearest neighbor (k=1)
@@ -320,12 +316,12 @@ class CrossKMetrics(ArbitraryPydanticModel):
         w = w_dist[:, 1]  # second closest = true nearest
 
         # Raise to power d so H follows Beta(m, m) under the uniform null.
-        u_d = u ** d
-        w_d = w ** d
+        u_d = u**d
+        w_d = w**d
 
         denom = u_d.sum() + w_d.sum()
         if denom < 1e-20:
-            return float('nan')
+            return float("nan")
 
         H = float(u_d.sum() / denom)
 
@@ -364,11 +360,11 @@ class CrossKMetrics(ArbitraryPydanticModel):
         Returns NaN if data is unavailable, n < 4, or no valid k.
         """
         if self.raw_data is None:
-            return float('nan')
+            return float("nan")
 
         n, d = self.raw_data.shape
         if n < 4:
-            return float('nan')
+            return float("nan")
 
         # Work entirely in standardized space for consistent CI comparison.
         data_std = self._standardized_data
@@ -379,16 +375,18 @@ class CrossKMetrics(ArbitraryPydanticModel):
         # at all scales).
         all_k_vals = sorted(k for k in self.wcss_by_k if 2 <= k < n)
         if not all_k_vals:
-            return float('nan')
+            return float("nan")
         k_vals = self._sparse_k_vals(all_k_vals)
         if not k_vals:
-            return float('nan')
+            return float("nan")
 
         obs_wcss_1 = max(float(np.var(data_std, axis=0).sum() * n), self._eps)
         obs_cis = np.empty(len(k_vals))
         for j, k in enumerate(k_vals):
             km = _KM(
-                n_clusters=k, n_init=2, max_iter=50,
+                n_clusters=k,
+                n_init=2,
+                max_iter=50,
                 random_state=self.seed,
             )
             km.fit(data_std)
@@ -407,7 +405,9 @@ class CrossKMetrics(ArbitraryPydanticModel):
             ref_wcss_1 = max(float(np.var(ref, axis=0).sum() * n), self._eps)
             for j, k in enumerate(k_vals):
                 km = _KM(
-                    n_clusters=k, n_init=1, max_iter=30,
+                    n_clusters=k,
+                    n_init=1,
+                    max_iter=30,
                     random_state=self.seed + b,
                 )
                 km.fit(ref)
@@ -449,11 +449,11 @@ class CrossKMetrics(ArbitraryPydanticModel):
         Returns NaN if data is unavailable or n < 4.
         """
         if self.raw_data is None:
-            return float('nan')
+            return float("nan")
 
         n, d = self.raw_data.shape
         if n < 4:
-            return float('nan')
+            return float("nan")
 
         # Use standardized data so k-NN distances reflect shape
         # differences across all features, not just magnitude.
@@ -472,8 +472,7 @@ class CrossKMetrics(ArbitraryPydanticModel):
         null_gaps = np.empty(n_ref)
         for b in range(n_ref):
             ref = rng.normal(size=(n, d)) * sqrt_eig
-            null_gaps[b] = self._max_eigengap(ref, k_nn, n_eig,
-                                              seed=self.seed + 4 + b)
+            null_gaps[b] = self._max_eigengap(ref, k_nn, n_eig, seed=self.seed + 4 + b)
 
         mean_null = null_gaps.mean()
         std_null = null_gaps.std(ddof=1)
@@ -514,10 +513,7 @@ class CrossKMetrics(ArbitraryPydanticModel):
         diff: dict[int, float] = {}
         for k in ks:
             if (k - 1) in wcss:
-                diff[k] = (
-                    (k - 1) ** (2.0 / p) * wcss[k - 1]
-                    - k ** (2.0 / p) * wcss[k]
-                )
+                diff[k] = (k - 1) ** (2.0 / p) * wcss[k - 1] - k ** (2.0 / p) * wcss[k]
 
         result: dict[int, float] = {}
         for k in ks:
@@ -584,8 +580,8 @@ class CrossKMetrics(ArbitraryPydanticModel):
                 else:
                     # Normal case (WCSS is monotone non-increasing, so
                     # w_km1 >= w_k; W^{-p/2} is monotone decreasing in W).
-                    d_k = w_k ** exp
-                    d_km1 = w_km1 ** exp if w_km1 > self._eps else np.inf
+                    d_k = w_k**exp
+                    d_km1 = w_km1**exp if w_km1 > self._eps else np.inf
                     val = d_k - d_km1
                 val *= -1
                 result[k] = val
@@ -619,7 +615,6 @@ class CrossKMetrics(ArbitraryPydanticModel):
             else:
                 result[k] = np.nan
         return result
-
 
     @computed_field_cached_property()
     def xu_index(self) -> dict[int, float]:
@@ -669,10 +664,8 @@ def has_cluster_structure(ckm: CrossKMetrics, alpha: float = 0.05) -> bool:
     are computable.
     """
 
-    dist_pvals = [p for p in (ckm.gap_statistic, ckm.hopkins_test)
-                  if not np.isnan(p)]
-    model_pvals = [p for p in (ckm.sigclust_test, ckm.spectral_gap_test)
-                   if not np.isnan(p)]
+    dist_pvals = [p for p in (ckm.gap_statistic, ckm.hopkins_test) if not np.isnan(p)]
+    model_pvals = [p for p in (ckm.sigclust_test, ckm.spectral_gap_test) if not np.isnan(p)]
 
     if not dist_pvals or not model_pvals:
         all_pvals = dist_pvals + model_pvals
@@ -683,4 +676,3 @@ def has_cluster_structure(ckm: CrossKMetrics, alpha: float = 0.05) -> bool:
     dist_sig = any(p < alpha for p in dist_pvals)
     model_sig = any(p < alpha for p in model_pvals)
     return dist_sig and model_sig
-

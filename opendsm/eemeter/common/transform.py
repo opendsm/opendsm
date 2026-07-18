@@ -117,16 +117,12 @@ def as_freq(
     """
     # TODO(philngo): make sure this complies with CalTRACK 2.2.2.1
     if not isinstance(data_series, pd.Series):
-        raise ValueError(
-            "expected series, got object with class {}".format(data_series.__class__)
-        )
+        raise ValueError("expected series, got object with class {}".format(data_series.__class__))
     if data_series.empty:
         return data_series
     series = remove_duplicates(data_series)
     target_freq = pd.Timedelta(atomic_freq)
-    timedeltas = (series.index[1:] - series.index[:-1]).append(
-        pd.TimedeltaIndex([pd.NaT])
-    )
+    timedeltas = (series.index[1:] - series.index[:-1]).append(pd.TimedeltaIndex([pd.NaT]))
 
     if series_type == "cumulative":
         spread_factor = target_freq.total_seconds() / timedeltas.total_seconds()
@@ -145,9 +141,7 @@ def as_freq(
         # this adds a null at the end using the target frequency
         last_index = pd.date_range(resampled.index[-1], freq=freq, periods=2)[1:]
         resampled = (
-            pd.concat([resampled, pd.Series(np.nan, index=last_index)])
-            .resample(freq)
-            .mean()
+            pd.concat([resampled, pd.Series(np.nan, index=last_index)]).resample(freq).mean()
         )
     if include_coverage:
         n_total = resampled.resample(atomic_freq).count().resample(freq).count()
@@ -184,18 +178,14 @@ def day_counts(index):
     return pd.Series(timedelta_days, index=index)
 
 
-def _make_baseline_warnings(
-    end_inf, start_inf, data_start, data_end, start_limit, end_limit
-):
+def _make_baseline_warnings(end_inf, start_inf, data_start, data_end, start_limit, end_limit):
     warnings = []
     # warn if there is a gap at end
     if not end_inf and data_end < end_limit:
         warnings.append(
             EEMeterWarning(
                 qualified_name="eemeter.get_baseline_data.gap_at_baseline_end",
-                description=(
-                    "Data does not have coverage at requested baseline end date."
-                ),
+                description=("Data does not have coverage at requested baseline end date."),
                 data={
                     "requested_end": end_limit.isoformat(),
                     "data_end": data_end.isoformat(),
@@ -207,9 +197,7 @@ def _make_baseline_warnings(
         warnings.append(
             EEMeterWarning(
                 qualified_name="eemeter.get_baseline_data.gap_at_baseline_start",
-                description=(
-                    "Data does not have coverage at requested baseline start date."
-                ),
+                description=("Data does not have coverage at requested baseline start date."),
                 data={
                     "requested_start": start_limit.isoformat(),
                     "data_start": data_start.isoformat(),
@@ -320,9 +308,7 @@ def get_baseline_data(
         # adjust start limit to get a selection closest to max_days
         # also consider ffill for get_loc method - always picks previous
         try:
-            loc = data_before_end_limit.index.get_indexer(
-                [start_target], method="nearest"
-            )[0]
+            loc = data_before_end_limit.index.get_indexer([start_target], method="nearest")[0]
         except (KeyError, IndexError):  # pragma: no cover
             baseline_data = data_before_end_limit
             start_limit = start_target
@@ -344,24 +330,18 @@ def get_baseline_data(
     data_start = data.index.min()
     return (
         baseline_data,
-        _make_baseline_warnings(
-            end_inf, start_inf, data_start, data_end, start_limit, end_limit
-        ),
+        _make_baseline_warnings(end_inf, start_inf, data_start, data_end, start_limit, end_limit),
     )
 
 
-def _make_reporting_warnings(
-    end_inf, start_inf, data_start, data_end, start_limit, end_limit
-):
+def _make_reporting_warnings(end_inf, start_inf, data_start, data_end, start_limit, end_limit):
     warnings = []
     # warn if there is a gap at end
     if not end_inf and data_end < end_limit:
         warnings.append(
             EEMeterWarning(
                 qualified_name="eemeter.get_reporting_data.gap_at_reporting_end",
-                description=(
-                    "Data does not have coverage at requested reporting end date."
-                ),
+                description=("Data does not have coverage at requested reporting end date."),
                 data={
                     "requested_end": end_limit.isoformat(),
                     "data_end": data_end.isoformat(),
@@ -373,9 +353,7 @@ def _make_reporting_warnings(
         warnings.append(
             EEMeterWarning(
                 qualified_name="eemeter.get_reporting_data.gap_at_reporting_start",
-                description=(
-                    "Data does not have coverage at requested reporting start date."
-                ),
+                description=("Data does not have coverage at requested reporting start date."),
                 data={
                     "requested_start": start_limit.isoformat(),
                     "data_start": data_start.isoformat(),
@@ -441,9 +419,7 @@ def get_reporting_data(
     if max_days is not None:
         if end is not None:
             raise ValueError(  # pragma: no cover
-                "If max_days is set, end cannot be set: end={}, max_days={}.".format(
-                    end, max_days
-                )
+                "If max_days is set, end cannot be set: end={}, max_days={}.".format(end, max_days)
             )
 
     start_inf = False
@@ -474,9 +450,7 @@ def get_reporting_data(
         # adjust start limit to get a selection closest to max_days
         # also consider bfill for get_loc method - always picks next
         try:
-            loc = data_after_start_limit.index.get_indexer(
-                [end_target], method="nearest"
-            )[0]
+            loc = data_after_start_limit.index.get_indexer([end_target], method="nearest")[0]
         except (KeyError, IndexError):  # pragma: no cover
             reporting_data = data_after_start_limit
             end_limit = end_target
@@ -498,9 +472,7 @@ def get_reporting_data(
     data_start = data.index.min()
     return (
         reporting_data,
-        _make_reporting_warnings(
-            end_inf, start_inf, data_start, data_end, start_limit, end_limit
-        ),
+        _make_reporting_warnings(end_inf, start_inf, data_start, data_end, start_limit, end_limit),
     )
 
 
@@ -558,8 +530,7 @@ class Term(object):
 
     def __repr__(self):
         return (
-            "Term(label={}, target_term_length_days={}, actual_term_length_days={},"
-            " complete={})"
+            "Term(label={}, target_term_length_days={}, actual_term_length_days={}, complete={})"
         ).format(
             self.label,
             self.target_term_length_days,
@@ -612,9 +583,7 @@ def get_terms(index, term_lengths, term_labels=None, start=None, method="strict"
         raise ValueError("get_terms requires a sorted index")
 
     if term_labels is None:
-        term_labels = [
-            "term_{:03d}".format(i + 1) for i, term_length in enumerate(term_lengths)
-        ]
+        term_labels = ["term_{:03d}".format(i + 1) for i, term_length in enumerate(term_lengths)]
 
     elif len(term_labels) != len(term_lengths):
         raise ValueError(
@@ -629,16 +598,13 @@ def get_terms(index, term_lengths, term_labels=None, start=None, method="strict"
         prev_start = start
 
     term_end_targets = [
-        prev_start + timedelta(days=sum(term_lengths[: i + 1]))
-        for i in range(len(term_lengths))
+        prev_start + timedelta(days=sum(term_lengths[: i + 1])) for i in range(len(term_lengths))
     ]
 
     terms = []
     remaining_index = index[index >= prev_start]
 
-    for label, target_term_length, end_target in zip(
-        term_labels, term_lengths, term_end_targets
-    ):
+    for label, target_term_length, end_target in zip(term_labels, term_lengths, term_end_targets):
         if len(remaining_index) <= 1:
             break
 
@@ -733,9 +699,7 @@ def clean_caltrack_billing_data(data, source_interval):
             data["unestimated_value"] = (
                 data[:-1].value[(data[:-1].estimated == False)].reindex(data.index)
             )
-            data["estimated_value"] = (
-                data[:-1].value[(data[:-1].estimated)].reindex(data.index)
-            )
+            data["estimated_value"] = data[:-1].value[(data[:-1].estimated)].reindex(data.index)
             for i, (index, row) in enumerate(data[:-1].iterrows()):
                 # ensures there is a prev_row and previous row value is null
                 if i > 0 and pd.isnull(prev_row["unestimated_value"]):
@@ -820,8 +784,7 @@ def add_freq(idx, freq=None):
     idx.freq = pd.tseries.frequencies.to_offset(freq)
     if idx.freq is None:
         raise AttributeError(
-            "no discernible frequency found to `idx`.  Specify"
-            " a frequency string with `freq`."
+            "no discernible frequency found to `idx`.  Specify a frequency string with `freq`."
         )
     return idx
 

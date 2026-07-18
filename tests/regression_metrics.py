@@ -35,11 +35,18 @@ from scipy.stats import pearsonr
 
 
 _MONTH_TO_SEASON = {
-    1: "winter", 2: "winter",
-    3: "shoulder", 4: "shoulder", 5: "shoulder",
-    6: "summer", 7: "summer", 8: "summer", 9: "summer",
+    1: "winter",
+    2: "winter",
+    3: "shoulder",
+    4: "shoulder",
+    5: "shoulder",
+    6: "summer",
+    7: "summer",
+    8: "summer",
+    9: "summer",
     10: "shoulder",
-    11: "winter", 12: "winter",
+    11: "winter",
+    12: "winter",
 }
 
 # Fixed Fahrenheit edges; refined around the comfort range where most
@@ -144,14 +151,17 @@ def _time_groups(index: pd.DatetimeIndex, freq: str):
         # zero-pad how so cell labels sort numerically in the snapshot
         how = pd.Series(
             [f"how{(d * 24 + h):03d}" for d, h in zip(index.dayofweek, index.hour)],
-            index=index, name="how",
+            index=index,
+            name="how",
         )
 
         return [season, how]
 
     if freq == "daily":
         dow = pd.Series(
-            [f"dow{d}" for d in index.dayofweek], index=index, name="dow",
+            [f"dow{d}" for d in index.dayofweek],
+            index=index,
+            name="dow",
         )
 
         return [season, dow]

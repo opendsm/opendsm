@@ -2,19 +2,19 @@
 # -*- coding: utf-8 -*-
 """
 
-   Copyright 2014-2025 OpenDSM contributors
+Copyright 2014-2025 OpenDSM contributors
 
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-       http://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 """
 
@@ -26,6 +26,7 @@ from scipy.ndimage import gaussian_filter1d
 
 
 # ── internal numpy helpers ────────────────────────────────────────────────────
+
 
 def _build_rank_arrays(
     score_matrix: np.ndarray,
@@ -70,13 +71,13 @@ def _build_rank_arrays(
     if not keep.any():
         return None, None, [], None, None
 
-    filled       = filled[:, keep]
+    filled = filled[:, keep]
     abstain_bool = abstain_bool[:, keep]
-    raw_w        = raw_w[keep]
-    kept_names   = [v for v, k in zip(voter_names, keep) if k]
+    raw_w = raw_w[keep]
+    kept_names = [v for v, k in zip(voter_names, keep) if k]
 
     # Normalise weights to sum to the number of active voters (matches old code)
-    m       = raw_w.size
+    m = raw_w.size
     total_w = raw_w.sum()
     weights = raw_w * (m / total_w) if (total_w > 0 and total_w != m) else raw_w
 
@@ -102,8 +103,7 @@ def _build_rank_arrays(
         finite_mask = np.isfinite(col)
         n_finite = int(finite_mask.sum())
         if n_finite < 2:
-            normalized[:, v] = np.where(col == -np.inf, 0.0,
-                               np.where(col == np.inf, 1.0, 0.5))
+            normalized[:, v] = np.where(col == -np.inf, 0.0, np.where(col == np.inf, 1.0, 0.5))
             continue
         finite_vals = col[finite_mask]
         med = np.median(finite_vals)
@@ -117,12 +117,14 @@ def _build_rank_arrays(
         if spread > 0:
             clipped = np.clip(col, lo, hi)
             normalized[:, v] = np.where(
-                finite_mask, (clipped - lo) / spread,
+                finite_mask,
+                (clipped - lo) / spread,
                 np.where(col == -np.inf, 0.0, 1.0),
             )
         else:
             normalized[:, v] = np.where(
-                finite_mask, 0.5,
+                finite_mask,
+                0.5,
                 np.where(col == -np.inf, 0.0, 1.0),
             )
 
@@ -163,17 +165,17 @@ def _schulze_pairwise_preference(
     if normalized_scores is not None:
         # Score-magnitude-aware: P[i,j,v] = max(0, norm_score_j - norm_score_i)
         # i.e. how much better i is than j on voter v, scaled by score gap.
-        s_i = normalized_scores[:, None, :]          # (n_cand, 1, m)
-        s_j = normalized_scores[None, :, :]          # (1, n_cand, m)
-        margin = np.maximum(s_j - s_i, 0.0)         # positive when i is better (lower score)
+        s_i = normalized_scores[:, None, :]  # (n_cand, 1, m)
+        s_j = normalized_scores[None, :, :]  # (1, n_cand, m)
+        margin = np.maximum(s_j - s_i, 0.0)  # positive when i is better (lower score)
         margin = np.where(ab, 0.0, margin)
-        P = margin @ weights                         # (n_cand, n_cand)
+        P = margin @ weights  # (n_cand, n_cand)
     else:
-        r_i = rank_of_candidate[:, None, :]          # (n_cand, 1, m)
-        r_j = rank_of_candidate[None, :, :]          # (1, n_cand, m)
+        r_i = rank_of_candidate[:, None, :]  # (n_cand, 1, m)
+        r_j = rank_of_candidate[None, :, :]  # (1, n_cand, m)
         i_beats = ((r_i < r_j) & ~ab).astype(np.float64)
-        i_ties  = ((r_i == r_j) & ~ab).astype(np.float64)
-        P = (i_beats + 0.5 * i_ties) @ weights      # (n_cand, n_cand)
+        i_ties = ((r_i == r_j) & ~ab).astype(np.float64)
+        P = (i_beats + 0.5 * i_ties) @ weights  # (n_cand, n_cand)
 
     np.fill_diagonal(P, 0.0)
     return P
@@ -203,6 +205,7 @@ def _schulze_rank_strength(P: np.ndarray) -> np.ndarray:
 
 
 # ── public API ────────────────────────────────────────────────────────────────
+
 
 def build_rank_matrix(
     proxies: list,
@@ -289,8 +292,7 @@ def schulze_voting(
     # shifted toward 1, making it harder for low-k candidates to win.
     # f(k) = 1 - strength / k^rate: asymptotically approaches 1 as k grows.
     # penalized = 1 - f(k) * (1 - normalized)
-    if (candidate_k_values is not None and normalized is not None
-            and k_penalty_strength > 0):
+    if candidate_k_values is not None and normalized is not None and k_penalty_strength > 0:
         k_arr = np.array(candidate_k_values[:n_cand], dtype=np.float64)
         penalty = k_penalty_strength / np.maximum(k_arr, 1.0) ** k_penalty_rate
         f_k = 1.0 - np.clip(penalty, 0.0, 1.0)
@@ -302,7 +304,9 @@ def schulze_voting(
         candidate_wins = np.zeros(n_cand)
     else:
         P = _schulze_pairwise_preference(
-            rank_of_candidate, weights, abstain_bool,
+            rank_of_candidate,
+            weights,
+            abstain_bool,
             normalized_scores=normalized,
         )
         P = _schulze_path_strength(P)
@@ -328,15 +332,13 @@ def schulze_voting(
     #    while still winning overall (Condorcet paradox), making
     #    pairwise confidence negative.
     if n_cand > 1 and rank_of_candidate is not None:
-        winner_k = (candidate_k_values[winner_idx]
-                    if candidate_k_values is not None else None)
+        winner_k = candidate_k_values[winner_idx] if candidate_k_values is not None else None
         ranked = np.argsort(candidate_wins)[::-1]
         runner_up_idx = None
         for r_idx in ranked:
             if r_idx == winner_idx:
                 continue
-            r_k = (candidate_k_values[r_idx]
-                   if candidate_k_values is not None else None)
+            r_k = candidate_k_values[r_idx] if candidate_k_values is not None else None
             if winner_k is None or r_k is None or r_k != winner_k:
                 runner_up_idx = int(r_idx)
                 break

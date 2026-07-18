@@ -40,6 +40,7 @@ from .conftest import make_clustering_settings
 # Fixtures
 # =============================================================================
 
+
 @pytest.fixture
 def simple_data():
     """Create simple synthetic data for clustering."""
@@ -74,10 +75,10 @@ def time_series_dataframe():
         t = np.linspace(0, 2 * np.pi, n_timepoints)
         if i < 20:
             # Morning peak
-            pattern = 50 + 20 * np.sin(t - np.pi/4) + np.random.randn(n_timepoints) * 2
+            pattern = 50 + 20 * np.sin(t - np.pi / 4) + np.random.randn(n_timepoints) * 2
         elif i < 40:
             # Evening peak
-            pattern = 50 + 20 * np.sin(t + np.pi/4) + np.random.randn(n_timepoints) * 2
+            pattern = 50 + 20 * np.sin(t + np.pi / 4) + np.random.randn(n_timepoints) * 2
         else:
             # Flat with noise
             pattern = 50 + np.random.randn(n_timepoints) * 5
@@ -105,15 +106,20 @@ def cluster_labels_with_outliers():
 # Tests for _build_label_remap (formerly cluster_reorder)
 # =============================================================================
 
+
 class TestClusterReorder:
     """Tests for cluster_reorder function."""
 
-    @pytest.mark.parametrize("reverse, expected_smallest_map, expected_smallest_count_at", [
-        (False, 0, 0),   # ascending: smallest cluster (size 10) maps to 0
-        (True, 2, 2),    # descending: smallest cluster (size 10) maps to 2
-    ])
-    def test_reorder_by_size(self, cluster_labels_simple, reverse,
-                             expected_smallest_map, expected_smallest_count_at):
+    @pytest.mark.parametrize(
+        "reverse, expected_smallest_map, expected_smallest_count_at",
+        [
+            (False, 0, 0),  # ascending: smallest cluster (size 10) maps to 0
+            (True, 2, 2),  # descending: smallest cluster (size 10) maps to 2
+        ],
+    )
+    def test_reorder_by_size(
+        self, cluster_labels_simple, reverse, expected_smallest_map, expected_smallest_count_at
+    ):
         """Test cluster reordering by size in ascending and descending order.
 
         cluster_labels_simple has 20 in cluster 0, 20 in cluster 1, 10 in cluster 2.
@@ -125,8 +131,8 @@ class TestClusterReorder:
                 "enable": True,
                 "method": "size",
                 "aggregation": "mean",
-                "reverse": reverse
-            }
+                "reverse": reverse,
+            },
         )
 
         cluster_map = _build_label_remap(cluster_labels_simple, settings)
@@ -173,8 +179,8 @@ class TestClusterReorder:
                 "enable": True,
                 "method": "peak",
                 "aggregation": aggregation,
-                "reverse": False
-            }
+                "reverse": False,
+            },
         )
 
         with pytest.raises(NotImplementedError):
@@ -189,8 +195,8 @@ class TestClusterReorder:
                 "enable": True,
                 "method": "size",
                 "aggregation": "mean",
-                "reverse": False
-            }
+                "reverse": False,
+            },
         )
 
         cluster_map = _build_label_remap(cluster_labels_with_outliers, settings)
@@ -204,20 +210,24 @@ class TestClusterReorder:
 # Tests for _cluster_features
 # =============================================================================
 
+
 class TestClusterFeaturesInternal:
     """Tests for _cluster_features internal function."""
 
-    @pytest.mark.parametrize("algorithm, algo_settings_key", [
-        (ClusterAlgorithms.BISECTING_KMEANS, "bisecting_kmeans"),
-        (ClusterAlgorithms.SPECTRAL, "spectral"),
-        (ClusterAlgorithms.BIRCH, "birch"),
-    ])
+    @pytest.mark.parametrize(
+        "algorithm, algo_settings_key",
+        [
+            (ClusterAlgorithms.BISECTING_KMEANS, "bisecting_kmeans"),
+            (ClusterAlgorithms.SPECTRAL, "spectral"),
+            (ClusterAlgorithms.BIRCH, "birch"),
+        ],
+    )
     def test_algorithm_clustering(self, simple_data, algorithm, algo_settings_key):
         """Test clustering with each supported algorithm."""
         settings = ClusteringSettings(
             algorithm_selection=algorithm,
             seed=42,
-            **{algo_settings_key: {"n_cluster": {"lower": 2, "upper": 5}}}
+            **{algo_settings_key: {"n_cluster": {"lower": 2, "upper": 5}}},
         )
 
         lbl = _cluster_features(simple_data, settings)
@@ -239,7 +249,7 @@ class TestClusterFeaturesInternal:
             small_cluster_mode="outlier",
             spectral={
                 "n_cluster": {"lower": 2, "upper": 20},
-            }
+            },
         )
 
         lbl = _cluster_features(small_data, settings)
@@ -254,21 +264,17 @@ class TestClusterFeaturesInternal:
 # Tests for cluster_features (main entry point)
 # =============================================================================
 
+
 def _wavelet_spectral_settings(**overrides):
     """Helper to build common wavelet+spectral ClusteringSettings."""
     defaults = dict(
         transform_selection="wavelet",
-        feature_transform={"wavelet": {
-            "wavelet_name": "db1",
-            "pca_n_components": 5
-        }},
-        spectral={
-            "n_cluster": {"lower": 2, "upper": 5}
-        },
+        feature_transform={"wavelet": {"wavelet_name": "db1", "pca_n_components": 5}},
+        spectral={"n_cluster": {"lower": 2, "upper": 5}},
         cluster_sort={
             "enable": True,
             "method": "size",
-        }
+        },
     )
     defaults.update(overrides)
     return make_clustering_settings("spectral", seed=42, **defaults)
@@ -289,12 +295,7 @@ class TestClusterFeatures:
     def test_clustering_with_sorting(self, time_series_dataframe):
         """Test clustering with cluster sorting enabled."""
         settings = _wavelet_spectral_settings(
-            cluster_sort={
-                "enable": True,
-                "method": "size",
-                "aggregation": "mean",
-                "reverse": False
-            }
+            cluster_sort={"enable": True, "method": "size", "aggregation": "mean", "reverse": False}
         )
         labels = cluster_features(time_series_dataframe, settings)
 
@@ -310,7 +311,7 @@ class TestClusterFeatures:
             seed=42,
             spectral={
                 "n_cluster": {"lower": 10, "upper": 20}  # Lower bound > data size
-            }
+            },
         )
 
         labels = cluster_features(small_df, settings)
@@ -322,21 +323,20 @@ class TestClusterFeatures:
     def test_clustering_with_normalization(self, simple_dataframe):
         """Test clustering with pre-transform normalization."""
         settings = _wavelet_spectral_settings(
-            normalize={
-                "pre_transform": True,
-                "method": "standardize",
-                "axis": 0
-            }
+            normalize={"pre_transform": True, "method": "standardize", "axis": 0}
         )
         labels = cluster_features(simple_dataframe, settings)
 
         assert labels.shape[0] == simple_dataframe.shape[0]
         assert len(np.unique(labels)) >= 2
 
-    @pytest.mark.parametrize("algorithm", [
-        ClusterAlgorithms.BISECTING_KMEANS,
-        ClusterAlgorithms.SPECTRAL,
-    ])
+    @pytest.mark.parametrize(
+        "algorithm",
+        [
+            ClusterAlgorithms.BISECTING_KMEANS,
+            ClusterAlgorithms.SPECTRAL,
+        ],
+    )
     def test_clustering_different_algorithms(self, simple_dataframe, algorithm):
         """Test clustering with different algorithms."""
         algo_name = algorithm.value
@@ -344,15 +344,12 @@ class TestClusterFeatures:
             algorithm_selection=algorithm,
             seed=42,
             transform_selection="wavelet",
-            wavelet_transform={
-                "wavelet_name": "db1",
-                "pca_n_components": 5
-            },
+            wavelet_transform={"wavelet_name": "db1", "pca_n_components": 5},
             cluster_sort={
                 "enable": True,
                 "method": "size",
             },
-            **{algo_name: {"n_cluster": {"lower": 2, "upper": 5}}}
+            **{algo_name: {"n_cluster": {"lower": 2, "upper": 5}}},
         )
 
         labels = cluster_features(simple_dataframe, settings)
@@ -366,16 +363,12 @@ class TestClusterFeatures:
             algorithm_selection=ClusterAlgorithms.SPECTRAL,
             seed=42,
             transform_selection="fpca",
-            feature_transform={"fpca": {
-                "min_var_ratio": 0.90
-            }},
-            spectral={
-                "n_cluster": {"lower": 2, "upper": 5}
-            },
+            feature_transform={"fpca": {"min_var_ratio": 0.90}},
+            spectral={"n_cluster": {"lower": 2, "upper": 5}},
             cluster_sort={
                 "enable": True,
                 "method": "size",
-            }
+            },
         )
 
         # Suppress deprecation warning for Fourier class
@@ -389,11 +382,9 @@ class TestClusterFeatures:
     def test_reproducibility_with_seed(self, simple_dataframe):
         """Test that clustering is reproducible with same seed."""
         settings = _wavelet_spectral_settings(
-            feature_transform={"wavelet": {
-                "wavelet_name": "db1",
-                "pca_n_components": 5,
-                "seed": 42
-            }}
+            feature_transform={
+                "wavelet": {"wavelet_name": "db1", "pca_n_components": 5, "seed": 42}
+            }
         )
 
         labels1 = cluster_features(simple_dataframe, settings)
@@ -409,13 +400,10 @@ class TestClusterFeatures:
         settings = _wavelet_spectral_settings(
             min_cluster_size=3,
             small_cluster_mode="outlier",
-            feature_transform={"wavelet": {
-                "wavelet_name": "db1",
-                "pca_n_components": 2
-            }},
+            feature_transform={"wavelet": {"wavelet_name": "db1", "pca_n_components": 2}},
             spectral={
                 "n_cluster": {"lower": 2, "upper": 3},
-            }
+            },
         )
 
         labels = cluster_features(small_df, settings)
@@ -437,6 +425,7 @@ class TestClusterFeatures:
 # Integration tests
 # =============================================================================
 
+
 class TestClusteringIntegration:
     """Integration tests for complete clustering pipeline."""
 
@@ -449,14 +438,16 @@ class TestClusteringIntegration:
                 "pre_transform": True,
                 "method": "min_max_quantile",
                 "quantile": 0.05,
-                "axis": 1
+                "axis": 1,
             },
             transform_selection="wavelet",
-            feature_transform={"wavelet": {
-                "wavelet_name": "db1",
-                "pca_n_components": 8,
-                "include_scale_feature": True
-            }},
+            feature_transform={
+                "wavelet": {
+                    "wavelet_name": "db1",
+                    "pca_n_components": 8,
+                    "include_scale_feature": True,
+                }
+            },
             min_cluster_size=5,
             small_cluster_mode="outlier",
             bisecting_kmeans={
@@ -466,8 +457,8 @@ class TestClusteringIntegration:
                 "enable": True,
                 "method": "size",
                 "aggregation": "mean",
-                "reverse": False
-            }
+                "reverse": False,
+            },
         )
 
         labels = cluster_features(time_series_dataframe, settings)
@@ -482,18 +473,14 @@ class TestClusteringIntegration:
             algorithm_selection=ClusterAlgorithms.SPECTRAL,
             seed=123,
             transform_selection="wavelet",
-            feature_transform={"wavelet": {
-                "wavelet_name": "db1",
-                "pca_n_components": 5,
-                "seed": 123
-            }},
-            spectral={
-                "n_cluster": {"lower": 2, "upper": 4}
+            feature_transform={
+                "wavelet": {"wavelet_name": "db1", "pca_n_components": 5, "seed": 123}
             },
+            spectral={"n_cluster": {"lower": 2, "upper": 4}},
             cluster_sort={
                 "enable": True,
                 "method": "size",
-            }
+            },
         )
 
         labels_first = cluster_features(simple_dataframe, settings)
@@ -517,41 +504,71 @@ class TestClusteringIntegration:
             seed=42,
             outlier_removal_sigma=None,
             transform_selection="wavelet",
-            feature_transform={"wavelet": {
-                "wavelet_name": "db1",
-                "pca_n_components": 3,
-                "seed": 42
-            }},
-            spectral={
-                "n_cluster": {"lower": 2, "upper": 4}
+            feature_transform={
+                "wavelet": {"wavelet_name": "db1", "pca_n_components": 3, "seed": 42}
             },
+            spectral={"n_cluster": {"lower": 2, "upper": 4}},
             cluster_sort={
                 "enable": True,
                 "method": "size",
                 "reverse": False,
-            }
+            },
         )
 
         labels = cluster_features(df, settings)
 
         # Expected output - saved baseline for version consistency
-        expected_labels = np.array([
-            1, 2, 2, 2, 2, 1, 2, 0, 1, 1, 1, 0, 0, 2, 2, 1, 1, 0, 2, 2,
-            0, 1, 0, 1, 2, 0, 2, 2, 0, 1
-        ])
+        expected_labels = np.array(
+            [
+                1,
+                2,
+                2,
+                2,
+                2,
+                1,
+                2,
+                0,
+                1,
+                1,
+                1,
+                0,
+                0,
+                2,
+                2,
+                1,
+                1,
+                0,
+                2,
+                2,
+                0,
+                1,
+                0,
+                1,
+                2,
+                0,
+                2,
+                2,
+                0,
+                1,
+            ]
+        )
 
         # Verify exact match against baseline
-        np.testing.assert_array_equal(labels, expected_labels,
+        np.testing.assert_array_equal(
+            labels,
+            expected_labels,
             err_msg="Spectral clustering output does not match saved baseline. "
-                    "This indicates a breaking change in the algorithm.")
+            "This indicates a breaking change in the algorithm.",
+        )
 
         # Verify cluster properties
         unique_labels, counts = np.unique(labels, return_counts=True)
         assert len(unique_labels) == 3
         expected_counts = {0: 8, 1: 10, 2: 12}
         for label, count in zip(unique_labels, counts):
-            assert count == expected_counts[label], \
+            assert count == expected_counts[label], (
                 f"Cluster {label}: expected {expected_counts[label]} samples, got {count}"
+            )
 
     def test_exact_output_bisecting_kmeans_baseline(self):
         """Test exact output for bisecting k-means against saved baseline.
@@ -571,11 +588,9 @@ class TestClusteringIntegration:
             min_cluster_size=3,
             small_cluster_mode="outlier",
             transform_selection="wavelet",
-            feature_transform={"wavelet": {
-                "wavelet_name": "db1",
-                "pca_n_components": 4,
-                "seed": 123
-            }},
+            feature_transform={
+                "wavelet": {"wavelet_name": "db1", "pca_n_components": 4, "seed": 123}
+            },
             bisecting_kmeans={
                 "n_cluster": {"lower": 3, "upper": 5},
             },
@@ -583,40 +598,87 @@ class TestClusteringIntegration:
                 "enable": True,
                 "method": "size",
                 "reverse": False,
-            }
+            },
         )
 
         labels = cluster_features(df, settings)
 
         # Expected output - saved baseline for version consistency
-        expected_labels = np.array([
-            1, 0, 1, 2, 0, 3, 1, 3, 3, 3, 2, 0, 2, 3, 2, 3, 2, 2, 1, 2,
-            3, 2, 3, 1, 3, 2, 2, 2, 3, 1, 2, 2, 2, 3, 3, 1, 3, 3, 0, 3
-        ])
+        expected_labels = np.array(
+            [
+                1,
+                0,
+                1,
+                2,
+                0,
+                3,
+                1,
+                3,
+                3,
+                3,
+                2,
+                0,
+                2,
+                3,
+                2,
+                3,
+                2,
+                2,
+                1,
+                2,
+                3,
+                2,
+                3,
+                1,
+                3,
+                2,
+                2,
+                2,
+                3,
+                1,
+                2,
+                2,
+                2,
+                3,
+                3,
+                1,
+                3,
+                3,
+                0,
+                3,
+            ]
+        )
 
         # Verify exact match against baseline
-        np.testing.assert_array_equal(labels, expected_labels,
+        np.testing.assert_array_equal(
+            labels,
+            expected_labels,
             err_msg="Bisecting K-means output does not match saved baseline. "
-                    "This indicates a breaking change in the algorithm.")
+            "This indicates a breaking change in the algorithm.",
+        )
 
         # Verify cluster properties
         unique_labels, counts = np.unique(labels, return_counts=True)
         assert len(unique_labels) == 4
         expected_counts = {0: 4, 1: 7, 2: 14, 3: 15}
         for label, count in zip(unique_labels, counts):
-            assert count == expected_counts[label], \
+            assert count == expected_counts[label], (
                 f"Cluster {label}: expected {expected_counts[label]} samples, got {count}"
+            )
 
 
 class TestMergeSmallClustersNoMutation:
     """assign_small_clusters_outlier must not mutate the input array."""
 
-    @pytest.mark.parametrize("labels, min_size, check_result", [
-        # Basic: input unchanged after call
-        (np.array([0, 0, 0, 1, 2, 2, 2, 2]), 2, None),
-        # All small: input unchanged after call
-        (np.array([0, 1, 2, 3]), 2, None),
-    ])
+    @pytest.mark.parametrize(
+        "labels, min_size, check_result",
+        [
+            # Basic: input unchanged after call
+            (np.array([0, 0, 0, 1, 2, 2, 2, 2]), 2, None),
+            # All small: input unchanged after call
+            (np.array([0, 1, 2, 3]), 2, None),
+        ],
+    )
     def test_input_array_unchanged(self, labels, min_size, check_result):
         original = labels.copy()
         assign_small_clusters_outlier(labels, min_cluster_size=min_size)
@@ -648,8 +710,12 @@ from opendsm.common.clustering.metrics.settings import ScoreSettings, SmallClust
 class TestPrepareLabelsModes:
     """Tests for prepare_labels with different SmallClusterMode values and edge cases."""
 
-    def _make_settings(self, mode: SmallClusterMode, min_cluster_size: int | None = None,
-                       max_non_outlier_cluster_count: int = 200) -> tuple[ScoreSettings, int, SmallClusterMode]:
+    def _make_settings(
+        self,
+        mode: SmallClusterMode,
+        min_cluster_size: int | None = None,
+        max_non_outlier_cluster_count: int = 200,
+    ) -> tuple[ScoreSettings, int, SmallClusterMode]:
         if min_cluster_size is None:
             min_cluster_size = 1 if mode == SmallClusterMode.KEEP else 2
         return (
@@ -664,17 +730,25 @@ class TestPrepareLabelsModes:
         """Small cluster points are absorbed into the nearest large cluster centroid."""
         # Cluster 0: 5 points near origin, cluster 1: 5 points near [10,...],
         # cluster 2: 1 point (small) near [10,...] -- should absorb into cluster 1's centroid.
-        data = np.vstack([
-            np.zeros((5, 2)),                      # cluster 0 at origin
-            np.full((5, 2), 10.0),                  # cluster 1 at (10,10)
-            np.full((1, 2), 9.5),                   # cluster 2 (small) near cluster 1
-        ])
-        labels = np.array([0]*5 + [1]*5 + [2]*1)
-        score_settings, min_cs, scm = self._make_settings(SmallClusterMode.ABSORB, min_cluster_size=3)
+        data = np.vstack(
+            [
+                np.zeros((5, 2)),  # cluster 0 at origin
+                np.full((5, 2), 10.0),  # cluster 1 at (10,10)
+                np.full((1, 2), 9.5),  # cluster 2 (small) near cluster 1
+            ]
+        )
+        labels = np.array([0] * 5 + [1] * 5 + [2] * 1)
+        score_settings, min_cs, scm = self._make_settings(
+            SmallClusterMode.ABSORB, min_cluster_size=3
+        )
 
         merged, data_clean, labels_clean, coverage = prepare_labels(
-            labels, data, score_settings, n_cluster_lower=None,
-            min_cluster_size=min_cs, small_cluster_mode=scm,
+            labels,
+            data,
+            score_settings,
+            n_cluster_lower=None,
+            min_cluster_size=min_cs,
+            small_cluster_mode=scm,
         )
 
         # The small-cluster point should have been absorbed, not turned into -1
@@ -692,12 +766,18 @@ class TestPrepareLabelsModes:
     def test_absorb_no_small_clusters(self):
         """ABSORB with no small clusters returns all clusters unchanged."""
         data = np.vstack([np.zeros((5, 2)), np.full((5, 2), 10.0)])
-        labels = np.array([0]*5 + [1]*5)
-        score_settings, min_cs, scm = self._make_settings(SmallClusterMode.ABSORB, min_cluster_size=3)
+        labels = np.array([0] * 5 + [1] * 5)
+        score_settings, min_cs, scm = self._make_settings(
+            SmallClusterMode.ABSORB, min_cluster_size=3
+        )
 
         merged, data_clean, labels_clean, coverage = prepare_labels(
-            labels, data, score_settings, n_cluster_lower=None,
-            min_cluster_size=min_cs, small_cluster_mode=scm,
+            labels,
+            data,
+            score_settings,
+            n_cluster_lower=None,
+            min_cluster_size=min_cs,
+            small_cluster_mode=scm,
         )
 
         assert len(np.unique(merged)) == 2
@@ -706,17 +786,25 @@ class TestPrepareLabelsModes:
 
     def test_absorb_preserves_existing_outliers(self):
         """ABSORB leaves pre-existing -1 outliers unchanged."""
-        data = np.vstack([
-            np.zeros((5, 2)),
-            np.full((5, 2), 10.0),
-            np.full((1, 2), 100.0),   # outlier point
-        ])
-        labels = np.array([0]*5 + [1]*5 + [-1])
-        score_settings, min_cs, scm = self._make_settings(SmallClusterMode.ABSORB, min_cluster_size=3)
+        data = np.vstack(
+            [
+                np.zeros((5, 2)),
+                np.full((5, 2), 10.0),
+                np.full((1, 2), 100.0),  # outlier point
+            ]
+        )
+        labels = np.array([0] * 5 + [1] * 5 + [-1])
+        score_settings, min_cs, scm = self._make_settings(
+            SmallClusterMode.ABSORB, min_cluster_size=3
+        )
 
         merged, data_clean, labels_clean, coverage = prepare_labels(
-            labels, data, score_settings, n_cluster_lower=None,
-            min_cluster_size=min_cs, small_cluster_mode=scm,
+            labels,
+            data,
+            score_settings,
+            n_cluster_lower=None,
+            min_cluster_size=min_cs,
+            small_cluster_mode=scm,
         )
 
         # The -1 outlier should remain -1
@@ -727,17 +815,23 @@ class TestPrepareLabelsModes:
 
     def test_keep_preserves_small_clusters(self):
         """KEEP mode keeps all clusters regardless of size."""
-        data = np.vstack([
-            np.zeros((5, 2)),
-            np.full((5, 2), 10.0),
-            np.full((1, 2), 20.0),   # cluster of size 1 -- below min_cluster_size
-        ])
-        labels = np.array([0]*5 + [1]*5 + [2]*1)
+        data = np.vstack(
+            [
+                np.zeros((5, 2)),
+                np.full((5, 2), 10.0),
+                np.full((1, 2), 20.0),  # cluster of size 1 -- below min_cluster_size
+            ]
+        )
+        labels = np.array([0] * 5 + [1] * 5 + [2] * 1)
         score_settings, min_cs, scm = self._make_settings(SmallClusterMode.KEEP, min_cluster_size=1)
 
         merged, data_clean, labels_clean, coverage = prepare_labels(
-            labels, data, score_settings, n_cluster_lower=None,
-            min_cluster_size=min_cs, small_cluster_mode=scm,
+            labels,
+            data,
+            score_settings,
+            n_cluster_lower=None,
+            min_cluster_size=min_cs,
+            small_cluster_mode=scm,
         )
 
         # All 3 clusters should be preserved (no outlier creation)
@@ -749,17 +843,23 @@ class TestPrepareLabelsModes:
 
     def test_keep_preserves_existing_outliers(self):
         """KEEP mode preserves pre-existing -1 noise labels."""
-        data = np.vstack([
-            np.zeros((5, 2)),
-            np.full((5, 2), 10.0),
-            np.full((2, 2), 50.0),   # noise points
-        ])
-        labels = np.array([0]*5 + [1]*5 + [-1]*2)
+        data = np.vstack(
+            [
+                np.zeros((5, 2)),
+                np.full((5, 2), 10.0),
+                np.full((2, 2), 50.0),  # noise points
+            ]
+        )
+        labels = np.array([0] * 5 + [1] * 5 + [-1] * 2)
         score_settings, min_cs, scm = self._make_settings(SmallClusterMode.KEEP, min_cluster_size=1)
 
         merged, data_clean, labels_clean, coverage = prepare_labels(
-            labels, data, score_settings, n_cluster_lower=None,
-            min_cluster_size=min_cs, small_cluster_mode=scm,
+            labels,
+            data,
+            score_settings,
+            n_cluster_lower=None,
+            min_cluster_size=min_cs,
+            small_cluster_mode=scm,
         )
 
         # Pre-existing -1 values remain
@@ -771,12 +871,16 @@ class TestPrepareLabelsModes:
         """KEEP mode reindexes labels to be contiguous from 0."""
         data = np.ones((9, 2))  # data values don't matter for KEEP
         # Gap in label IDs: 0, 3, 7
-        labels = np.array([0]*3 + [3]*3 + [7]*3)
+        labels = np.array([0] * 3 + [3] * 3 + [7] * 3)
         score_settings, min_cs, scm = self._make_settings(SmallClusterMode.KEEP, min_cluster_size=1)
 
         merged, data_clean, labels_clean, coverage = prepare_labels(
-            labels, data, score_settings, n_cluster_lower=None,
-            min_cluster_size=min_cs, small_cluster_mode=scm,
+            labels,
+            data,
+            score_settings,
+            n_cluster_lower=None,
+            min_cluster_size=min_cs,
+            small_cluster_mode=scm,
         )
 
         unique = np.unique(merged)
@@ -787,12 +891,16 @@ class TestPrepareLabelsModes:
     def test_all_outliers_returns_none(self):
         """When all points are outliers, n_clusters < 1 so data_clean is None."""
         data = np.ones((5, 2))
-        labels = np.array([-1]*5)
+        labels = np.array([-1] * 5)
         score_settings, min_cs, scm = self._make_settings(SmallClusterMode.KEEP, min_cluster_size=1)
 
         merged, data_clean, labels_clean, coverage = prepare_labels(
-            labels, data, score_settings, n_cluster_lower=None,
-            min_cluster_size=min_cs, small_cluster_mode=scm,
+            labels,
+            data,
+            score_settings,
+            n_cluster_lower=None,
+            min_cluster_size=min_cs,
+            small_cluster_mode=scm,
         )
 
         assert data_clean is None
@@ -804,11 +912,17 @@ class TestPrepareLabelsModes:
         becomes -1 and data_clean should be None."""
         data = np.vstack([np.zeros((2, 2)), np.ones((2, 2))])
         labels = np.array([0, 0, 1, 1])
-        score_settings, min_cs, scm = self._make_settings(SmallClusterMode.OUTLIER, min_cluster_size=3)
+        score_settings, min_cs, scm = self._make_settings(
+            SmallClusterMode.OUTLIER, min_cluster_size=3
+        )
 
         merged, data_clean, labels_clean, coverage = prepare_labels(
-            labels, data, score_settings, n_cluster_lower=None,
-            min_cluster_size=min_cs, small_cluster_mode=scm,
+            labels,
+            data,
+            score_settings,
+            n_cluster_lower=None,
+            min_cluster_size=min_cs,
+            small_cluster_mode=scm,
         )
 
         assert np.all(merged == -1)
@@ -829,8 +943,12 @@ class TestPrepareLabelsModes:
         )
 
         merged, data_clean, labels_clean, coverage = prepare_labels(
-            labels, data, score_settings, n_cluster_lower=None,
-            min_cluster_size=min_cs, small_cluster_mode=scm,
+            labels,
+            data,
+            score_settings,
+            n_cluster_lower=None,
+            min_cluster_size=min_cs,
+            small_cluster_mode=scm,
         )
 
         assert data_clean is None
@@ -849,8 +967,12 @@ class TestPrepareLabelsModes:
         )
 
         merged, data_clean, labels_clean, coverage = prepare_labels(
-            labels, data, score_settings, n_cluster_lower=None,
-            min_cluster_size=min_cs, small_cluster_mode=scm,
+            labels,
+            data,
+            score_settings,
+            n_cluster_lower=None,
+            min_cluster_size=min_cs,
+            small_cluster_mode=scm,
         )
 
         assert data_clean is not None
@@ -861,12 +983,16 @@ class TestPrepareLabelsModes:
     def test_below_n_cluster_lower_returns_none(self):
         """When n_clusters < n_cluster_lower, data_clean is None."""
         data = np.vstack([np.zeros((5, 2)), np.ones((5, 2))])
-        labels = np.array([0]*5 + [1]*5)
+        labels = np.array([0] * 5 + [1] * 5)
         score_settings, min_cs, scm = self._make_settings(SmallClusterMode.KEEP, min_cluster_size=1)
 
         merged, data_clean, labels_clean, coverage = prepare_labels(
-            labels, data, score_settings, n_cluster_lower=5,
-            min_cluster_size=min_cs, small_cluster_mode=scm,
+            labels,
+            data,
+            score_settings,
+            n_cluster_lower=5,
+            min_cluster_size=min_cs,
+            small_cluster_mode=scm,
         )
 
         assert data_clean is None
@@ -916,7 +1042,9 @@ class TestOutlierRemovalMAD:
         # Use a high enough MAD threshold (10) that only the extreme outliers
         # are flagged, not the tails of the tight clusters.
         result = remove_outliers_mad(
-            data, labels, mad_threshold=10.0,
+            data,
+            labels,
+            mad_threshold=10.0,
             small_cluster_mode=SmallClusterMode.KEEP,
         )
 
@@ -939,7 +1067,9 @@ class TestOutlierRemovalMAD:
         labels = np.array([0] * n_per + [1] * n_per + [2] * n_per)
 
         result = remove_outliers_mad(
-            data, labels, mad_threshold=_sigma_to_mad_threshold(10.0),
+            data,
+            labels,
+            mad_threshold=_sigma_to_mad_threshold(10.0),
             small_cluster_mode=SmallClusterMode.KEEP,
         )
 
@@ -951,7 +1081,9 @@ class TestOutlierRemovalMAD:
         data, labels = self._make_three_clusters_with_outliers(rng)
 
         result = remove_outliers_mad(
-            data, labels, mad_threshold=10.0,
+            data,
+            labels,
+            mad_threshold=10.0,
             small_cluster_mode=SmallClusterMode.OUTLIER,
         )
 
@@ -966,7 +1098,9 @@ class TestOutlierRemovalMAD:
         data, labels = self._make_three_clusters_with_outliers(rng)
 
         result = remove_outliers_mad(
-            data, labels, mad_threshold=10.0,
+            data,
+            labels,
+            mad_threshold=10.0,
             small_cluster_mode=SmallClusterMode.ABSORB,
         )
 
@@ -990,7 +1124,9 @@ class TestOutlierRemovalMAD:
         labels = np.array([0] * 30 + [1] * 3)
 
         result = remove_outliers_mad(
-            data, labels, mad_threshold=_sigma_to_mad_threshold(3.0),
+            data,
+            labels,
+            mad_threshold=_sigma_to_mad_threshold(3.0),
             small_cluster_mode=SmallClusterMode.OUTLIER,
         )
 
@@ -1008,7 +1144,9 @@ class TestOutlierRemovalMAD:
         labels = np.array([0] * n_per + [1] * n_per)
 
         result = remove_outliers_mad(
-            data, labels, mad_threshold=_sigma_to_mad_threshold(100.0),
+            data,
+            labels,
+            mad_threshold=_sigma_to_mad_threshold(100.0),
             small_cluster_mode=SmallClusterMode.KEEP,
         )
 
@@ -1025,7 +1163,9 @@ class TestOutlierRemovalMAD:
         labels = np.array([0] * n_per + [1] * n_per)
 
         result = remove_outliers_mad(
-            data, labels, mad_threshold=_sigma_to_mad_threshold(10.0),
+            data,
+            labels,
+            mad_threshold=_sigma_to_mad_threshold(10.0),
             small_cluster_mode=SmallClusterMode.KEEP,
         )
 
@@ -1042,7 +1182,9 @@ class TestOutlierRemovalMAD:
         labels = np.array([0] * n_per + [1] * n_per)
 
         result = remove_outliers_mad(
-            data, labels, mad_threshold=_sigma_to_mad_threshold(1.5),
+            data,
+            labels,
+            mad_threshold=_sigma_to_mad_threshold(1.5),
             small_cluster_mode=SmallClusterMode.OUTLIER,
         )
 
@@ -1057,7 +1199,9 @@ class TestOutlierRemovalMAD:
         data, labels = self._make_three_clusters_with_outliers(rng)
 
         result = remove_outliers_mad(
-            data, labels, mad_threshold=10.0,
+            data,
+            labels,
+            mad_threshold=10.0,
             small_cluster_mode=SmallClusterMode.KEEP,
         )
 
@@ -1082,7 +1226,9 @@ class TestOutlierRemovalMAD:
 
         # Use mad_threshold=3.0 directly (3 MAD units)
         result = remove_outliers_mad(
-            data, labels, mad_threshold=3.0,
+            data,
+            labels,
+            mad_threshold=3.0,
             small_cluster_mode=SmallClusterMode.OUTLIER,
             n_pcs=1,
         )
@@ -1147,7 +1293,8 @@ class TestDBSCANHDBSCAN:
 
         # min_samples=1 triggers the relabeling branch
         settings = make_clustering_settings(
-            "hdbscan", seed=42,
+            "hdbscan",
+            seed=42,
             hdbscan={"min_samples": 1},
         )
         labels = cluster_features(df, settings)
@@ -1163,7 +1310,8 @@ class TestDBSCANHDBSCAN:
         """Basic smoke test: DBSCAN should produce valid cluster labels."""
         df = self._make_two_clusters_df()
         settings = make_clustering_settings(
-            "dbscan", seed=42,
+            "dbscan",
+            seed=42,
             dbscan={"epsilon": 2.0, "min_samples": 3},
         )
         labels = cluster_features(df, settings)
@@ -1177,7 +1325,8 @@ class TestDBSCANHDBSCAN:
         """Code quality regression: DBSCAN runs cleanly (unused seed was removed)."""
         df = self._make_two_clusters_df()
         settings = make_clustering_settings(
-            "dbscan", seed=42,
+            "dbscan",
+            seed=42,
             dbscan={"epsilon": 2.0, "min_samples": 3},
         )
         # This should complete without any errors — the previously unused
@@ -1200,16 +1349,20 @@ class TestLabelOpsEdgeCases:
         This exercises the early-return guard at line 102 of label_ops.py
         (``if len(large_ids) == 0: return clusters.copy()``).
         """
-        data = np.array([
-            [0.0, 0.0],
-            [1.0, 1.0],
-            [10.0, 10.0],
-            [11.0, 11.0],
-        ])
+        data = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 1.0],
+                [10.0, 10.0],
+                [11.0, 11.0],
+            ]
+        )
         labels = np.array([0, 0, 1, 1])  # two clusters of size 2
 
         result = assign_small_clusters_nearest(
-            labels, data, min_cluster_size=5,
+            labels,
+            data,
+            min_cluster_size=5,
         )
 
         # No large clusters exist, so the function should return a copy of the
@@ -1218,15 +1371,19 @@ class TestLabelOpsEdgeCases:
 
     def test_assign_small_clusters_all_outliers(self):
         """All-outlier input (-1 labels) should be handled gracefully."""
-        data = np.array([
-            [0.0, 0.0],
-            [1.0, 1.0],
-            [2.0, 2.0],
-        ])
+        data = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 1.0],
+                [2.0, 2.0],
+            ]
+        )
         labels = np.array([-1, -1, -1])
 
         result = assign_small_clusters_nearest(
-            labels, data, min_cluster_size=2,
+            labels,
+            data,
+            min_cluster_size=2,
         )
 
         # No valid clusters at all — early return with original labels
@@ -1236,6 +1393,7 @@ class TestLabelOpsEdgeCases:
 # =============================================================================
 # Run tests
 # =============================================================================
+
 
 class TestClusterFeaturesContract:
     """Public-API contract of cluster_features (DataFrame -> label array)."""
@@ -1279,7 +1437,8 @@ class TestClusterFeaturesContract:
     def test_lower_bound_above_n_returns_identity(self, two_shape_df):
         """When n_cluster_lower >= n_samples the pipeline returns identity labels."""
         settings = make_clustering_settings(
-            "kmedians", kmedians={"n_cluster": {"lower": 100, "upper": 100}},
+            "kmedians",
+            kmedians={"n_cluster": {"lower": 100, "upper": 100}},
         )
         labels = cluster_features(two_shape_df, settings)
         assert np.array_equal(labels, np.arange(len(two_shape_df)))
@@ -1325,5 +1484,5 @@ class TestClusterFeaturesDegenerateColumns:
         assert np.all(np.isfinite(labels))
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v', '--tb=short'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v", "--tb=short"])

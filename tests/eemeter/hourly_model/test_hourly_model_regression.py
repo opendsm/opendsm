@@ -43,18 +43,14 @@ def hourly_reporting_data(comstock_hourly):
 def hourly_nonsolar_fit(hourly_baseline_data):
     settings = HourlyNonSolarSettings(seed=42)
 
-    return HourlyModel(settings=settings).fit(
-        hourly_baseline_data, ignore_disqualification=True
-    )
+    return HourlyModel(settings=settings).fit(hourly_baseline_data, ignore_disqualification=True)
 
 
 @pytest.fixture(scope="session")
 def hourly_solar_fit(hourly_baseline_data):
     settings = HourlySolarSettings(seed=42)
 
-    return HourlyModel(settings=settings).fit(
-        hourly_baseline_data, ignore_disqualification=True
-    )
+    return HourlyModel(settings=settings).fit(hourly_baseline_data, ignore_disqualification=True)
 
 
 @pytest.mark.slow
@@ -62,9 +58,7 @@ def hourly_solar_fit(hourly_baseline_data):
 def test_hourly_nonsolar_baseline_predict_regression(
     hourly_nonsolar_fit, hourly_baseline_data, snapshot
 ):
-    result = hourly_nonsolar_fit.predict(
-        hourly_baseline_data, ignore_disqualification=True
-    )
+    result = hourly_nonsolar_fit.predict(hourly_baseline_data, ignore_disqualification=True)
 
     assert regression_block(result, freq="hourly") == snapshot(name="regression")
 
@@ -74,21 +68,15 @@ def test_hourly_nonsolar_baseline_predict_regression(
 def test_hourly_nonsolar_reporting_predict_regression(
     hourly_nonsolar_fit, hourly_reporting_data, snapshot
 ):
-    result = hourly_nonsolar_fit.predict(
-        hourly_reporting_data, ignore_disqualification=True
-    )
+    result = hourly_nonsolar_fit.predict(hourly_reporting_data, ignore_disqualification=True)
 
     assert regression_block(result, freq="hourly") == snapshot(name="regression")
 
 
 @pytest.mark.slow
 @pytest.mark.regression
-def test_hourly_solar_baseline_predict_regression(
-    hourly_solar_fit, hourly_baseline_data, snapshot
-):
-    result = hourly_solar_fit.predict(
-        hourly_baseline_data, ignore_disqualification=True
-    )
+def test_hourly_solar_baseline_predict_regression(hourly_solar_fit, hourly_baseline_data, snapshot):
+    result = hourly_solar_fit.predict(hourly_baseline_data, ignore_disqualification=True)
 
     assert regression_block(result, freq="hourly") == snapshot(name="regression")
 
@@ -98,8 +86,6 @@ def test_hourly_solar_baseline_predict_regression(
 def test_hourly_solar_reporting_predict_regression(
     hourly_solar_fit, hourly_reporting_data, snapshot
 ):
-    result = hourly_solar_fit.predict(
-        hourly_reporting_data, ignore_disqualification=True
-    )
+    result = hourly_solar_fit.predict(hourly_reporting_data, ignore_disqualification=True)
 
     assert regression_block(result, freq="hourly") == snapshot(name="regression")

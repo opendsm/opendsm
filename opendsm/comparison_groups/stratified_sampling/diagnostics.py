@@ -67,7 +67,7 @@ class DiagnosticPlotter:
             )
             .reset_index()
         )
-        
+
         variables = list(df_quantile["variable"].unique())
         fig = Figure(figsize=(6, 3 * len(variables)))
         axes = fig.subplots(len(variables), 1, squeeze=False)
@@ -91,8 +91,12 @@ class DiagnosticPlotter:
                     facecolor = "orange"
 
                 ax.text(
-                    0.01, 0.98, f"{row['t_p']}\n{row['ks_p']}",
-                    transform=ax.transAxes, va="top", ha="left",
+                    0.01,
+                    0.98,
+                    f"{row['t_p']}\n{row['ks_p']}",
+                    transform=ax.transAxes,
+                    va="top",
+                    ha="left",
                     bbox={"facecolor": facecolor, "alpha": 0.5},
                 )
 
@@ -105,7 +109,7 @@ class DiagnosticPlotter:
             cols = self.default_cols
         col_pairs = combinations(cols, 2)
         plots = [self._scatter(df, p[0], p[1]) for p in col_pairs]
-        
+
         return [p for p in plots]
 
     def _scatter(self, df, col_x, col_y):
@@ -138,7 +142,9 @@ class DiagnosticPlotter:
                         (rect["x_min"], rect["y_min"]),
                         rect["x_max"] - rect["x_min"],
                         rect["y_max"] - rect["y_min"],
-                        fill=False, edgecolor="black", linewidth=0.2,
+                        fill=False,
+                        edgecolor="black",
+                        linewidth=0.2,
                     )
                 )
 
@@ -229,16 +235,12 @@ class StratifiedSamplingDiagnostics(DiagnosticPlotter):
             self.pool_label,
             "sample",
         ]
-        df_sample = (
-            self.data_sample.df if self.data_sample is not None else pd.DataFrame()
-        )
+        df_sample = self.data_sample.df if self.data_sample is not None else pd.DataFrame()
         self.labeled_dfs = [df_treatment, df_pool, df_sample]
 
         def _concat_dfs(dfs_to_concat, concat_col, concat_values):
             if len(dfs_to_concat) != len(concat_values):
-                raise ValueError(
-                    "dfs_to_concat should be the same length as concat_values"
-                )
+                raise ValueError("dfs_to_concat should be the same length as concat_values")
             return pd.concat(
                 [
                     df.assign(**{concat_col: value})
@@ -247,9 +249,7 @@ class StratifiedSamplingDiagnostics(DiagnosticPlotter):
                 sort=False,
             )
 
-        self.df_all = _concat_dfs(
-            self.labeled_dfs, "population", self.available_equiv_labels
-        )
+        self.df_all = _concat_dfs(self.labeled_dfs, "population", self.available_equiv_labels)
 
     def histogram(self, cols=None):
         return super().histogram(self.df_all, cols)
@@ -262,25 +262,13 @@ class StratifiedSamplingDiagnostics(DiagnosticPlotter):
         return super().quantile(self.df_all, df_equiv, cols=cols)
 
     def _check_equiv_labels(self, equiv_label_x, equiv_label_y):
-        if (
-            equiv_label_x is not None
-            and equiv_label_x not in self.available_equiv_labels
-        ):
-            raise ValueError(
-                f"equiv_label_x must be one of: {self.available_equiv_labels}"
-            )
-        if (
-            equiv_label_y is not None
-            and equiv_label_y not in self.available_equiv_labels
-        ):
-            raise ValueError(
-                f"equiv_label_y must be one of: {self.available_equiv_labels}"
-            )
+        if equiv_label_x is not None and equiv_label_x not in self.available_equiv_labels:
+            raise ValueError(f"equiv_label_x must be one of: {self.available_equiv_labels}")
+        if equiv_label_y is not None and equiv_label_y not in self.available_equiv_labels:
+            raise ValueError(f"equiv_label_y must be one of: {self.available_equiv_labels}")
         equiv_label_x = equiv_label_x if equiv_label_x else self.treatment_label
         equiv_label_y = (
-            equiv_label_y
-            if equiv_label_y
-            else ("sample" if self.data_sample else self.pool_label)
+            equiv_label_y if equiv_label_y else ("sample" if self.data_sample else self.pool_label)
         )
         return equiv_label_x, equiv_label_y
 
@@ -296,25 +284,13 @@ class StratifiedSamplingDiagnostics(DiagnosticPlotter):
             Second label to measure equivalence against (defaults to sample if available,
              otherwise defaults to full pool set)
         """
-        if (
-            equiv_label_x is not None
-            and equiv_label_x not in self.available_equiv_labels
-        ):
-            raise ValueError(
-                f"equiv_label_x must be one of: {self.available_equiv_labels}"
-            )
-        if (
-            equiv_label_y is not None
-            and equiv_label_y not in self.available_equiv_labels
-        ):
-            raise ValueError(
-                f"equiv_label_y must be one of: {self.available_equiv_labels}"
-            )
+        if equiv_label_x is not None and equiv_label_x not in self.available_equiv_labels:
+            raise ValueError(f"equiv_label_x must be one of: {self.available_equiv_labels}")
+        if equiv_label_y is not None and equiv_label_y not in self.available_equiv_labels:
+            raise ValueError(f"equiv_label_y must be one of: {self.available_equiv_labels}")
         equiv_label_x = equiv_label_x if equiv_label_x else self.treatment_label
         equiv_label_y = (
-            equiv_label_y
-            if equiv_label_y
-            else ("sample" if self.data_sample else self.pool_label)
+            equiv_label_y if equiv_label_y else ("sample" if self.data_sample else self.pool_label)
         )
         cols = cols if cols else self.default_cols
 
@@ -325,7 +301,7 @@ class StratifiedSamplingDiagnostics(DiagnosticPlotter):
                 lambda x: t_and_ks_test(
                     x[x["population"] == equiv_label_x].value.dropna(),
                     x[x["population"] == equiv_label_y].value.dropna(),
-                ), 
+                ),
                 include_groups=False,
             )
             .reset_index()

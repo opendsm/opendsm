@@ -38,7 +38,8 @@ from opendsm.common.clustering.metrics.settings import (
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
-@pytest.fixture(scope='module')
+
+@pytest.fixture(scope="module")
 def well_separated_lm():
     """Three tight, well-separated clusters — all active indices should be finite."""
     rng = np.random.default_rng(0)
@@ -48,14 +49,14 @@ def well_separated_lm():
     return SingleKMetrics(data=X, labels=labels)
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope="module")
 def all_singletons_lm():
     """Every cluster has exactly one point — no within-cluster distances."""
     X = np.array([[0.0, 0.0], [5.0, 0.0], [0.0, 5.0]])
     return SingleKMetrics(data=X, labels=np.array([0, 1, 2]))
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope="module")
 def coincident_lm():
     """All points at the origin — within and between distances both zero."""
     X = np.zeros((10, 2))
@@ -63,7 +64,7 @@ def coincident_lm():
     return SingleKMetrics(data=X, labels=labels)
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope="module")
 def ckm_simple():
     """CrossKMetrics with hand-checkable WCSS values (p=2, n=30)."""
     return CrossKMetrics(
@@ -74,7 +75,7 @@ def ckm_simple():
     )
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope="module")
 def well_separated_data():
     """Three tight clusters — raw (X, labels) for use in Labels tests."""
     rng = np.random.default_rng(1)
@@ -86,25 +87,36 @@ def well_separated_data():
 
 # ── SingleKMetrics ────────────────────────────────────────────────────────────
 
+
 class TestSingleKMetricsAvailableIndices:
-    @pytest.mark.parametrize('cls', [SingleKMetrics, CrossKMetrics])
+    @pytest.mark.parametrize("cls", [SingleKMetrics, CrossKMetrics])
     def test_returns_list_of_index_names(self, cls):
         indices = cls.available_indices()
         assert isinstance(indices, list)
-        assert all(name.endswith('_index') for name in indices)
+        assert all(name.endswith("_index") for name in indices)
 
     def test_contains_default_council_members(self):
         indices = set(SingleKMetrics.available_indices())
         for name in [
-            'calinski_harabasz_index', 'c_index', 'gamma_index',
-            'point_biserial_index', 'silhouette_median_index', 'davies_bouldin_index',
+            "calinski_harabasz_index",
+            "c_index",
+            "gamma_index",
+            "point_biserial_index",
+            "silhouette_median_index",
+            "davies_bouldin_index",
         ]:
             assert name in indices
 
-    @pytest.mark.parametrize('name', [
-        'krzanowski_lai_index', 'hartigan_index', 'distortion_jump_index',
-        'log_wcss_acceleration_index', 'xu_index',
-    ])
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "krzanowski_lai_index",
+            "hartigan_index",
+            "distortion_jump_index",
+            "log_wcss_acceleration_index",
+            "xu_index",
+        ],
+    )
     def test_contains_cross_k_indices(self, name):
         assert name in set(CrossKMetrics.available_indices())
 
@@ -112,20 +124,26 @@ class TestSingleKMetricsAvailableIndices:
 class TestSingleKMetricsNanSemantics:
     """Structurally undefined cases return NaN (abstain), not 0 or inf."""
 
-    @pytest.mark.parametrize('index', [
-        'c_index',
-        'gamma_index',
-        'point_biserial_index',
-    ])
+    @pytest.mark.parametrize(
+        "index",
+        [
+            "c_index",
+            "gamma_index",
+            "point_biserial_index",
+        ],
+    )
     def test_singleton_nan(self, all_singletons_lm, index):
         """No within-cluster pairs/distances -> ratio/correlation undefined -> NaN."""
         assert np.isnan(getattr(all_singletons_lm, index))
 
-    @pytest.mark.parametrize('index', [
-        'point_biserial_index',
-        'duda_hart_index',
-        'mcclain_rao_index',
-    ])
+    @pytest.mark.parametrize(
+        "index",
+        [
+            "point_biserial_index",
+            "duda_hart_index",
+            "mcclain_rao_index",
+        ],
+    )
     def test_coincident_nan(self, coincident_lm, index):
         """All pairwise distances zero -> undefined -> NaN."""
         assert np.isnan(getattr(coincident_lm, index))
@@ -138,6 +156,7 @@ class TestSingleKMetricsNanSemantics:
 
 # ── CrossKMetrics ─────────────────────────────────────────────────────────────
 
+
 class TestCrossKMetricsBoundaryNaN:
     """Indices that need k+/-1 return NaN at boundary k values."""
 
@@ -145,10 +164,13 @@ class TestCrossKMetricsBoundaryNaN:
         """Hartigan needs k+1; k_max=4 has no k=5 -> NaN."""
         assert np.isnan(ckm_simple.hartigan_index[4])
 
-    @pytest.mark.parametrize('index', [
-        'krzanowski_lai_index',
-        'log_wcss_acceleration_index',
-    ])
+    @pytest.mark.parametrize(
+        "index",
+        [
+            "krzanowski_lai_index",
+            "log_wcss_acceleration_index",
+        ],
+    )
     def test_boundary_nan_at_both_ends(self, ckm_simple, index):
         """KL and log-WCSS-accel need both k-1 and k+1; boundaries -> NaN."""
         vals = getattr(ckm_simple, index)
@@ -159,7 +181,7 @@ class TestCrossKMetricsBoundaryNaN:
         """Distortion jump needs k-1; k_min=2 has no k=1 -> NaN."""
         assert np.isnan(ckm_simple.distortion_jump_index[2])
 
-    @pytest.mark.parametrize('k', [2, 3, 4])
+    @pytest.mark.parametrize("k", [2, 3, 4])
     def test_xu_finite_for_all_k(self, ckm_simple, k):
         """Xu index needs only WCSS at k itself -> always finite."""
         assert np.isfinite(ckm_simple.xu_index[k])
@@ -197,6 +219,7 @@ class TestCrossKMetricsExactValues:
 
 # ── Labels container ──────────────────────────────────────────────────────────
 
+
 class TestLabelsContainer:
     def test_add_and_labels_property(self, well_separated_data):
         X, labels_k3 = well_separated_data
@@ -232,7 +255,7 @@ class TestLabelsContainer:
         lbl = ClusteringResult.from_labels(X, {2: labels_k2, 3: labels_k3, 4: labels_k4})
 
         ckm = lbl.cross_k_metrics
-        assert np.isnan(ckm.hartigan_index[4])   # k_max has no k+1
+        assert np.isnan(ckm.hartigan_index[4])  # k_max has no k+1
         assert np.isfinite(ckm.hartigan_index[2])
 
     def test_cache_invalidated_on_add(self, well_separated_data):
@@ -256,27 +279,30 @@ class TestLabelsContainer:
 
 # ── selection helpers ─────────────────────────────────────────────────────────
 
+
 class TestBuildScoreProxy:
     def test_none_lm_gives_inf_for_single_k_metrics(self):
         """Invalid lm -> all-inf per-k scores (active worst vote)."""
-        council = {'calinski_harabasz_index': 1.0}
+        council = {"calinski_harabasz_index": 1.0}
         proxy = selection._compute_composite_score(None, council)
-        assert proxy.score['calinski_harabasz_index'] == np.inf
+        assert proxy.score["calinski_harabasz_index"] == np.inf
 
     def test_extra_scores_override_inf_for_none_lm(self):
         """Cross-k extra scores injected even when lm is None."""
-        council = {'calinski_harabasz_index': 1.0, 'hartigan_index': 1.0}
-        proxy = selection._compute_composite_score(None, council, extra_scores={'hartigan_index': 5.0})
-        assert proxy.score['calinski_harabasz_index'] == np.inf  # default for None lm
-        assert proxy.score['hartigan_index'] == pytest.approx(5.0)
+        council = {"calinski_harabasz_index": 1.0, "hartigan_index": 1.0}
+        proxy = selection._compute_composite_score(
+            None, council, extra_scores={"hartigan_index": 5.0}
+        )
+        assert proxy.score["calinski_harabasz_index"] == np.inf  # default for None lm
+        assert proxy.score["hartigan_index"] == pytest.approx(5.0)
 
     def test_uncomputable_metric_gives_nan(self, well_separated_data):
         """Metric that raises AttributeError -> NaN (abstain), not inf."""
         X, labels = well_separated_data
         lm = SingleKMetrics(data=X, labels=labels)
-        council = {'nonexistent_metric': 1.0}
+        council = {"nonexistent_metric": 1.0}
         proxy = selection._compute_composite_score(lm, council)
-        assert np.isnan(proxy.score['nonexistent_metric'])
+        assert np.isnan(proxy.score["nonexistent_metric"])
 
     def test_extra_scores_not_overridden_by_lm_attribute(self, well_separated_data):
         """Extra scores take precedence over the lm's own attribute value."""
@@ -284,19 +310,19 @@ class TestBuildScoreProxy:
         lm = SingleKMetrics(data=X, labels=labels)
         real_val = lm.calinski_harabasz_index
         injected_val = -999.0
-        council = {'calinski_harabasz_index': 1.0}
+        council = {"calinski_harabasz_index": 1.0}
         proxy = selection._compute_composite_score(
-            lm, council, extra_scores={'calinski_harabasz_index': injected_val}
+            lm, council, extra_scores={"calinski_harabasz_index": injected_val}
         )
-        assert proxy.score['calinski_harabasz_index'] == pytest.approx(injected_val)
-        assert proxy.score['calinski_harabasz_index'] != pytest.approx(real_val)
+        assert proxy.score["calinski_harabasz_index"] == pytest.approx(injected_val)
+        assert proxy.score["calinski_harabasz_index"] != pytest.approx(real_val)
 
 
 class TestSelectBestWithinK:
     def test_single_lm_returns_it(self, well_separated_data):
         X, labels = well_separated_data
         lm = SingleKMetrics(data=X, labels=labels)
-        council = {'calinski_harabasz_index': 1.0}
+        council = {"calinski_harabasz_index": 1.0}
         result = selection.select_best_within_k([lm], council)
         assert result is lm
 
@@ -306,10 +332,12 @@ class TestSelectBestWithinK:
         rng = np.random.default_rng(42)
         labels_good = np.repeat([0, 1, 2], 15)
         labels_bad = rng.integers(0, 3, size=45)
-        labels_bad[0] = 0; labels_bad[1] = 1; labels_bad[2] = 2
+        labels_bad[0] = 0
+        labels_bad[1] = 1
+        labels_bad[2] = 2
         lm_good = SingleKMetrics(data=X, labels=labels_good)
         lm_bad = SingleKMetrics(data=X, labels=labels_bad)
-        council = {'calinski_harabasz_index': 1.0, 'silhouette_median_index': 1.0}
+        council = {"calinski_harabasz_index": 1.0, "silhouette_median_index": 1.0}
         result = selection.select_best_within_k([lm_good, lm_bad], council)
         assert result is lm_good
 
@@ -317,7 +345,7 @@ class TestSelectBestWithinK:
         """When all voters abstain (all NaN), falls back to WCSS min."""
         X, labels = well_separated_data
         lm = SingleKMetrics(data=X, labels=labels)
-        council = {'nonexistent_a': 1.0, 'nonexistent_b': 1.0}
+        council = {"nonexistent_a": 1.0, "nonexistent_b": 1.0}
         result = selection.select_best_within_k([lm], council)
         assert result is lm
 
@@ -328,7 +356,7 @@ class TestSelectBestAcrossK:
         labels_k2 = np.repeat([0, 1], [22, 23])
         lm2 = SingleKMetrics(data=X, labels=labels_k2)
         lm3 = SingleKMetrics(data=X, labels=labels_k3)
-        council = {'calinski_harabasz_index': 1.0}
+        council = {"calinski_harabasz_index": 1.0}
         idx, conf = selection.select_best_across_k([lm2, lm3], council, window_size=0)
         assert idx in [0, 1]
         assert 0.0 <= conf <= 1.0
@@ -340,10 +368,10 @@ class TestSelectBestAcrossK:
         lm2 = SingleKMetrics(data=X, labels=labels_k2)
         lm3 = SingleKMetrics(data=X, labels=labels_k3)
 
-        council = {'hartigan_index': 1.0}
+        council = {"hartigan_index": 1.0}
         extra = [
-            {'hartigan_index': 0.001},   # k=2: excellent
-            {'hartigan_index': 1000.0},  # k=3: terrible
+            {"hartigan_index": 0.001},  # k=2: excellent
+            {"hartigan_index": 1000.0},  # k=3: terrible
         ]
         idx, _ = selection.select_best_across_k(
             [lm2, lm3], council, window_size=0, extra_scores_list=extra
@@ -354,27 +382,27 @@ class TestSelectBestAcrossK:
         """None entries (invalid labelings) don't win over valid candidates."""
         X, labels = well_separated_data
         lm = SingleKMetrics(data=X, labels=labels)
-        council = {'calinski_harabasz_index': 1.0}
-        idx, _ = selection.select_best_across_k(
-            [None, lm, None], council, window_size=0
-        )
+        council = {"calinski_harabasz_index": 1.0}
+        idx, _ = selection.select_best_across_k([None, lm, None], council, window_size=0)
         assert idx == 1  # the only valid candidate
 
 
 # ── ScoreSettings validation ──────────────────────────────────────────────────
 
+
 class TestScoreSettingsValidation:
     def test_unknown_metric_raises(self):
         with pytest.raises(ValueError, match="Unknown metric"):
-            ScoreSettings(weights={'nonexistent_index': 1.0})
+            ScoreSettings(weights={"nonexistent_index": 1.0})
 
     def test_cross_k_metrics_accepted(self):
         """Cross-k metric names pass validation."""
-        s = ScoreSettings(weights={'calinski_harabasz_index': 1.0, 'hartigan_index': 1.0})
-        assert s.weights['hartigan_index'] == 1.0
+        s = ScoreSettings(weights={"calinski_harabasz_index": 1.0, "hartigan_index": 1.0})
+        assert s.weights["hartigan_index"] == 1.0
 
     def test_all_zero_weights_raises(self):
         from opendsm.common.clustering.metrics.settings import _DEFAULT_SCORE_WEIGHTS
+
         all_zero = {k: 0.0 for k in _DEFAULT_SCORE_WEIGHTS}
         with pytest.raises(ValueError, match="At least one scoring weight"):
             ScoreSettings(weights=all_zero)
@@ -419,8 +447,10 @@ class TestScoreSettingsMaxScoringSamples:
 
 # ── Exact-value helpers (float64 naive references) ────────────────────────────
 
+
 def _D64(data: np.ndarray) -> np.ndarray:
     from scipy.spatial.distance import squareform, pdist
+
     return squareform(pdist(data.astype(np.float64)))
 
 
@@ -513,13 +543,14 @@ def _ref_wcss(data: np.ndarray, labels: np.ndarray) -> float:
 
 def _ref_davies_bouldin(data: np.ndarray, labels: np.ndarray) -> float:
     from scipy.spatial.distance import squareform, pdist, cdist
+
     d64 = data.astype(np.float64)
     unique = np.unique(labels)
     k = len(unique)
     centroids, idx = _means64(d64, labels)
     s = np.array([cdist(d64[idx[lbl]], centroids[[i]]).mean() for i, lbl in enumerate(unique)])
     inter = squareform(pdist(centroids))
-    with np.errstate(divide='ignore', invalid='ignore'):
+    with np.errstate(divide="ignore", invalid="ignore"):
         sim = (s[:, None] + s[None, :]) / inter
     np.fill_diagonal(sim, 0)
     sim = np.nan_to_num(sim, nan=0.0, posinf=0.0)
@@ -532,8 +563,10 @@ def _ref_calinski_harabasz(data: np.ndarray, labels: np.ndarray) -> float:
     k = len(unique)
     WCSS = _ref_wcss(data, labels)
     grand = d64.mean(axis=0)
-    BCSS = sum(len(d64[labels == lbl]) * float(np.sum((d64[labels == lbl].mean(axis=0) - grand) ** 2))
-               for lbl in unique)
+    BCSS = sum(
+        len(d64[labels == lbl]) * float(np.sum((d64[labels == lbl].mean(axis=0) - grand) ** 2))
+        for lbl in unique
+    )
     if WCSS < 1e-10:
         return -np.inf
     return -((BCSS / WCSS) * ((n - k) / (k - 1.0)))
@@ -570,7 +603,7 @@ def _ref_gamma(data: np.ndarray, labels: np.ndarray) -> float:
         if len(ii) > 1:
             sub = D[np.ix_(ii, ii)]
             within.extend(sub[np.triu_indices_from(sub, k=1)].tolist())
-        for lj in unique[i + 1:]:
+        for lj in unique[i + 1 :]:
             ij = np.where(labels == lj)[0]
             between.extend(D[np.ix_(ii, ij)].ravel().tolist())
     within, between = np.array(within), np.array(between)
@@ -578,8 +611,8 @@ def _ref_gamma(data: np.ndarray, labels: np.ndarray) -> float:
         return np.nan
     nb = len(between)
     bs = np.sort(between)
-    r = np.searchsorted(bs, within, side='right')
-    l = np.searchsorted(bs, within, side='left')
+    r = np.searchsorted(bs, within, side="right")
+    l = np.searchsorted(bs, within, side="left")
     s_plus = int(np.sum(nb - r))
     s_minus = int(np.sum(l))
     denom = s_plus + s_minus
@@ -597,7 +630,7 @@ def _ref_point_biserial(data: np.ndarray, labels: np.ndarray) -> float:
         if len(ii) > 1:
             sub = D[np.ix_(ii, ii)]
             within.extend(sub[np.triu_indices_from(sub, k=1)].tolist())
-        for lj in unique[i + 1:]:
+        for lj in unique[i + 1 :]:
             ij = np.where(labels == lj)[0]
             between.extend(D[np.ix_(ii, ij)].ravel().tolist())
     within, between = np.array(within), np.array(between)
@@ -609,7 +642,7 @@ def _ref_point_biserial(data: np.ndarray, labels: np.ndarray) -> float:
     std = np.std(np.concatenate([within, between]))
     if std < 1e-10:
         return np.nan
-    return -(float((m_b - m_w) / std) * np.sqrt(n_w * n_b / (n_t ** 2)))
+    return -(float((m_b - m_w) / std) * np.sqrt(n_w * n_b / (n_t**2)))
 
 
 def _ref_mcclain_rao(data: np.ndarray, labels: np.ndarray) -> float:
@@ -621,7 +654,7 @@ def _ref_mcclain_rao(data: np.ndarray, labels: np.ndarray) -> float:
         if len(ii) > 1:
             sub = D[np.ix_(ii, ii)]
             within.extend(sub[np.triu_indices_from(sub, k=1)].tolist())
-        for lj in unique[i + 1:]:
+        for lj in unique[i + 1 :]:
             ij = np.where(labels == lj)[0]
             between.extend(D[np.ix_(ii, ij)].ravel().tolist())
     within, between = np.array(within), np.array(between)
@@ -667,13 +700,14 @@ def _ref_scott_symons(data: np.ndarray, labels: np.ndarray) -> float:
 
 def _ref_xie_beni(data: np.ndarray, labels: np.ndarray) -> float:
     from scipy.spatial.distance import pdist
+
     d64 = data.astype(np.float64)
     WCSS = _ref_wcss(data, labels)
     n = len(d64)
     centroids, _ = _means64(d64, labels)
     if len(centroids) < 2:
         return np.inf
-    d_sq = pdist(centroids, metric='sqeuclidean')
+    d_sq = pdist(centroids, metric="sqeuclidean")
     d_min_sq = float(np.min(d_sq))
     if d_min_sq < 1e-10:
         return np.inf
@@ -683,6 +717,7 @@ def _ref_xie_beni(data: np.ndarray, labels: np.ndarray) -> float:
 def _ref_duda_hart(data: np.ndarray, labels: np.ndarray) -> float:
     D = _D64(data)
     from scipy.spatial.distance import cdist
+
     d64 = data.astype(np.float64)
     unique = np.unique(labels)
     centroids, idx = _means64(d64, labels)
@@ -699,6 +734,7 @@ def _ref_duda_hart(data: np.ndarray, labels: np.ndarray) -> float:
 
 def _ref_simplified_silhouette(data: np.ndarray, labels: np.ndarray) -> float:
     from scipy.spatial.distance import cdist
+
     d64 = data.astype(np.float64)
     unique = np.unique(labels)
     centroids, idx = _means64(d64, labels)
@@ -716,6 +752,7 @@ def _ref_simplified_silhouette(data: np.ndarray, labels: np.ndarray) -> float:
 
 def _ref_cop(data: np.ndarray, labels: np.ndarray) -> float:
     from scipy.spatial.distance import cdist
+
     d64 = data.astype(np.float64)
     unique = np.unique(labels)
     centroids, idx = _means64(d64, labels)
@@ -732,6 +769,7 @@ def _ref_cop(data: np.ndarray, labels: np.ndarray) -> float:
 
 def _ref_generalized_dunn(data: np.ndarray, labels: np.ndarray) -> float:
     from scipy.spatial.distance import cdist
+
     d64 = data.astype(np.float64)
     unique = np.unique(labels)
     centroids, idx = _means64(d64, labels)
@@ -748,6 +786,7 @@ def _ref_generalized_dunn(data: np.ndarray, labels: np.ndarray) -> float:
 
 def _ref_i_index(data: np.ndarray, labels: np.ndarray) -> float:
     from scipy.spatial.distance import cdist, pdist
+
     d64 = data.astype(np.float64)
     unique = np.unique(labels)
     centroids, idx = _means64(d64, labels)
@@ -773,8 +812,10 @@ def _ref_wb(data: np.ndarray, labels: np.ndarray) -> float:
     k = len(unique)
     WCSS = _ref_wcss(data, labels)
     grand = d64.mean(axis=0)
-    BCSS = sum(len(d64[labels == lbl]) * float(np.sum((d64[labels == lbl].mean(axis=0) - grand) ** 2))
-               for lbl in unique)
+    BCSS = sum(
+        len(d64[labels == lbl]) * float(np.sum((d64[labels == lbl].mean(axis=0) - grand) ** 2))
+        for lbl in unique
+    )
     if BCSS < 1e-10:
         return np.inf
     return float(k * WCSS / BCSS)
@@ -786,9 +827,13 @@ def _ref_det_ratio(data: np.ndarray, labels: np.ndarray) -> float:
     grand = d64.mean(axis=0)
     centered = d64 - grand
     T = centered.T @ centered
-    W = sum(((d64[labels == lbl] - d64[labels == lbl].mean(axis=0)).T @
-             (d64[labels == lbl] - d64[labels == lbl].mean(axis=0)))
-            for lbl in unique)
+    W = sum(
+        (
+            (d64[labels == lbl] - d64[labels == lbl].mean(axis=0)).T
+            @ (d64[labels == lbl] - d64[labels == lbl].mean(axis=0))
+        )
+        for lbl in unique
+    )
     det_T = np.linalg.det(T)
     det_W = np.linalg.det(W)
     if abs(det_W) < 1e-10:
@@ -801,8 +846,10 @@ def _ref_log_ss_ratio(data: np.ndarray, labels: np.ndarray) -> float:
     unique = np.unique(labels)
     grand = d64.mean(axis=0)
     WCSS = _ref_wcss(data, labels)
-    BCSS = sum(len(d64[labels == lbl]) * float(np.sum((d64[labels == lbl].mean(axis=0) - grand) ** 2))
-               for lbl in unique)
+    BCSS = sum(
+        len(d64[labels == lbl]) * float(np.sum((d64[labels == lbl].mean(axis=0) - grand) ** 2))
+        for lbl in unique
+    )
     if WCSS < 1e-10:
         return np.inf
     if BCSS < 1e-10:
@@ -815,7 +862,7 @@ _AV_ATOL = 5e-3
 _AV_RTOL = 5e-3
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope="module")
 def exact_lm():
     """(data_f32, labels, lm) with k=4 tight clusters for exact-value tests."""
     rng = np.random.default_rng(99)
@@ -836,19 +883,22 @@ class TestSingleKMetricsExactValues:
 
     # ── intermediate optimised-path arrays ───────────────────────────────────
 
-    @pytest.mark.parametrize('attr,ref_fn', [
-        ('_labeled_mean_distance_intra_cluster', _ref_mean_intra),
-        ('_labeled_median_distance_intra_cluster', _ref_median_intra),
-        ('_labeled_mean_distance_to_nearest_cluster', _ref_mean_nearest),
-        ('_labeled_median_distance_to_nearest_cluster', _ref_median_nearest),
-    ])
+    @pytest.mark.parametrize(
+        "attr,ref_fn",
+        [
+            ("_labeled_mean_distance_intra_cluster", _ref_mean_intra),
+            ("_labeled_median_distance_intra_cluster", _ref_median_intra),
+            ("_labeled_mean_distance_to_nearest_cluster", _ref_mean_nearest),
+            ("_labeled_median_distance_to_nearest_cluster", _ref_median_nearest),
+        ],
+    )
     def test_intermediate_arrays_match_naive(self, exact_lm, attr, ref_fn):
         data, labels, lm = exact_lm
         ref = ref_fn(data, labels)
         for lbl in np.unique(labels):
             np.testing.assert_allclose(
-                getattr(lm, attr)[lbl], ref[lbl],
-                atol=_AV_ATOL, rtol=_AV_RTOL)
+                getattr(lm, attr)[lbl], ref[lbl], atol=_AV_ATOL, rtol=_AV_RTOL
+            )
 
     # ── silhouette variants ───────────────────────────────────────────────────
 
@@ -856,37 +906,40 @@ class TestSingleKMetricsExactValues:
         data, labels, lm = exact_lm
         ref_i = _ref_mean_intra(data, labels)
         ref_n = _ref_mean_nearest(data, labels)
-        ref = -np.mean(_ref_sil_coeffs(ref_i, ref_n, labels, 'mean'))
+        ref = -np.mean(_ref_sil_coeffs(ref_i, ref_n, labels, "mean"))
         np.testing.assert_allclose(lm.silhouette_index, ref, atol=_AV_ATOL, rtol=_AV_RTOL)
 
     def test_silhouette_median_index(self, exact_lm):
         data, labels, lm = exact_lm
         ref_i = _ref_median_intra(data, labels)
         ref_n = _ref_median_nearest(data, labels)
-        ref = -np.median(_ref_sil_coeffs(ref_i, ref_n, labels, 'median'))
+        ref = -np.median(_ref_sil_coeffs(ref_i, ref_n, labels, "median"))
         np.testing.assert_allclose(lm.silhouette_median_index, ref, atol=_AV_ATOL, rtol=_AV_RTOL)
 
     def test_simplified_silhouette_index(self, exact_lm):
         data, labels, lm = exact_lm
         np.testing.assert_allclose(
-            lm.simplified_silhouette_index, _ref_simplified_silhouette(data, labels),
-            atol=_AV_ATOL, rtol=_AV_RTOL)
+            lm.simplified_silhouette_index,
+            _ref_simplified_silhouette(data, labels),
+            atol=_AV_ATOL,
+            rtol=_AV_RTOL,
+        )
 
     # ── davies-bouldin ────────────────────────────────────────────────────────
 
     def test_davies_bouldin_index(self, exact_lm):
         data, labels, lm = exact_lm
         np.testing.assert_allclose(
-            lm.davies_bouldin_index, _ref_davies_bouldin(data, labels),
-            atol=_AV_ATOL, rtol=_AV_RTOL)
+            lm.davies_bouldin_index, _ref_davies_bouldin(data, labels), atol=_AV_ATOL, rtol=_AV_RTOL
+        )
 
     # ── WCSS-derived indices ──────────────────────────────────────────────────
 
     def test_sum_of_squared_errors_index(self, exact_lm):
         data, labels, lm = exact_lm
         np.testing.assert_allclose(
-            lm.sum_of_squared_errors_index, _ref_wcss(data, labels),
-            atol=1.0, rtol=_AV_RTOL)  # larger atol: float32 accum on n=100
+            lm.sum_of_squared_errors_index, _ref_wcss(data, labels), atol=1.0, rtol=_AV_RTOL
+        )  # larger atol: float32 accum on n=100
 
     def test_mean_squared_error_index(self, exact_lm):
         data, labels, lm = exact_lm
@@ -901,13 +954,17 @@ class TestSingleKMetricsExactValues:
     def test_trace_w_equals_sse(self, exact_lm):
         _, _, lm = exact_lm
         np.testing.assert_allclose(
-            lm.trace_w_index, lm.sum_of_squared_errors_index, atol=1e-4, rtol=1e-4)
+            lm.trace_w_index, lm.sum_of_squared_errors_index, atol=1e-4, rtol=1e-4
+        )
 
     def test_calinski_harabasz_index(self, exact_lm):
         data, labels, lm = exact_lm
         np.testing.assert_allclose(
-            lm.calinski_harabasz_index, _ref_calinski_harabasz(data, labels),
-            atol=1.0, rtol=_AV_RTOL)
+            lm.calinski_harabasz_index,
+            _ref_calinski_harabasz(data, labels),
+            atol=1.0,
+            rtol=_AV_RTOL,
+        )
 
     def test_variance_ratio_criterion_equals_ch(self, exact_lm):
         _, _, lm = exact_lm
@@ -916,47 +973,49 @@ class TestSingleKMetricsExactValues:
     def test_log_ss_ratio_index(self, exact_lm):
         data, labels, lm = exact_lm
         np.testing.assert_allclose(
-            lm.log_ss_ratio_index, _ref_log_ss_ratio(data, labels),
-            atol=_AV_ATOL, rtol=_AV_RTOL)
+            lm.log_ss_ratio_index, _ref_log_ss_ratio(data, labels), atol=_AV_ATOL, rtol=_AV_RTOL
+        )
 
     def test_wb_index(self, exact_lm):
         data, labels, lm = exact_lm
-        np.testing.assert_allclose(
-            lm.wb_index, _ref_wb(data, labels), atol=0.01, rtol=_AV_RTOL)
+        np.testing.assert_allclose(lm.wb_index, _ref_wb(data, labels), atol=0.01, rtol=_AV_RTOL)
 
     def test_banfeld_raftery_index(self, exact_lm):
         data, labels, lm = exact_lm
         np.testing.assert_allclose(
-            lm.banfeld_raftery_index, _ref_banfeld_raftery(data, labels),
-            atol=0.1, rtol=_AV_RTOL)
+            lm.banfeld_raftery_index, _ref_banfeld_raftery(data, labels), atol=0.1, rtol=_AV_RTOL
+        )
 
     def test_scott_symons_index(self, exact_lm):
         data, labels, lm = exact_lm
         np.testing.assert_allclose(
-            lm.scott_symons_index, _ref_scott_symons(data, labels),
-            atol=0.5, rtol=_AV_RTOL)
+            lm.scott_symons_index, _ref_scott_symons(data, labels), atol=0.5, rtol=_AV_RTOL
+        )
 
     # ── pairwise-distance indices ─────────────────────────────────────────────
 
-    @pytest.mark.parametrize('index,ref_fn', [
-        ('c_index', _ref_c_index),
-        ('gamma_index', _ref_gamma),
-        ('point_biserial_index', _ref_point_biserial),
-        ('mcclain_rao_index', _ref_mcclain_rao),
-        ('xie_beni_index', _ref_xie_beni),
-        ('duda_hart_index', _ref_duda_hart),
-        ('cop_index', _ref_cop),
-        ('generalized_dunn_index', _ref_generalized_dunn),
-    ])
+    @pytest.mark.parametrize(
+        "index,ref_fn",
+        [
+            ("c_index", _ref_c_index),
+            ("gamma_index", _ref_gamma),
+            ("point_biserial_index", _ref_point_biserial),
+            ("mcclain_rao_index", _ref_mcclain_rao),
+            ("xie_beni_index", _ref_xie_beni),
+            ("duda_hart_index", _ref_duda_hart),
+            ("cop_index", _ref_cop),
+            ("generalized_dunn_index", _ref_generalized_dunn),
+        ],
+    )
     def test_pairwise_index(self, exact_lm, index, ref_fn):
         data, labels, lm = exact_lm
         np.testing.assert_allclose(
-            getattr(lm, index), ref_fn(data, labels), atol=_AV_ATOL, rtol=_AV_RTOL)
+            getattr(lm, index), ref_fn(data, labels), atol=_AV_ATOL, rtol=_AV_RTOL
+        )
 
     def test_i_index(self, exact_lm):
         data, labels, lm = exact_lm
-        np.testing.assert_allclose(
-            lm.i_index, _ref_i_index(data, labels), atol=0.1, rtol=_AV_RTOL)
+        np.testing.assert_allclose(lm.i_index, _ref_i_index(data, labels), atol=0.1, rtol=_AV_RTOL)
 
     # ── matrix/determinant indices ────────────────────────────────────────────
 
@@ -964,7 +1023,8 @@ class TestSingleKMetricsExactValues:
         data, labels, lm = exact_lm
         ref_raw = _ref_det_ratio(data, labels)
         np.testing.assert_allclose(
-            lm.det_ratio_index, -ref_raw, atol=max(1.0, abs(ref_raw) * 0.02), rtol=0.05)
+            lm.det_ratio_index, -ref_raw, atol=max(1.0, abs(ref_raw) * 0.02), rtol=0.05
+        )
 
     def test_log_det_ratio_index(self, exact_lm):
         data, labels, lm = exact_lm
@@ -974,22 +1034,28 @@ class TestSingleKMetricsExactValues:
 
     # ── indices with finiteness/sign checks only (no naive reference) ─────────
 
-    @pytest.mark.parametrize('index,sign_upper', [
-        ('trace_wb_index', 0),                              # maximize -> negated -> negative
-        ('dunn_index', 0),                                   # maximize -> negated -> negative
-        ('density_based_clustering_validation_index', 0),    # maximize -> negated -> non-positive
-    ])
+    @pytest.mark.parametrize(
+        "index,sign_upper",
+        [
+            ("trace_wb_index", 0),  # maximize -> negated -> negative
+            ("dunn_index", 0),  # maximize -> negated -> negative
+            ("density_based_clustering_validation_index", 0),  # maximize -> negated -> non-positive
+        ],
+    )
     def test_finite_and_negative(self, exact_lm, index, sign_upper):
         _, _, lm = exact_lm
         val = getattr(lm, index)
         assert np.isfinite(val), f"{index} should be finite, got {val}"
         assert val <= sign_upper, f"{index} should be <= {sign_upper}, got {val}"
 
-    @pytest.mark.parametrize('index', [
-        's_dbw_index',
-        'sd_validity_index',
-        'negentropy_index',
-    ])
+    @pytest.mark.parametrize(
+        "index",
+        [
+            "s_dbw_index",
+            "sd_validity_index",
+            "negentropy_index",
+        ],
+    )
     def test_finite_and_nonnegative(self, exact_lm, index):
         """Minimize-direction indices: finite and non-negative for valid clusters."""
         _, _, lm = exact_lm
@@ -1009,19 +1075,23 @@ class TestDefaultSettings:
         """Default scoring weights activate exactly pb+smed+wb+xb (4-member council)."""
         settings = ScoreSettings()
         active = sorted(k for k, v in settings.weights.items() if v > 0)
-        expected = sorted([
-            'point_biserial_index',
-            'silhouette_median_index',
-            'wb_index',
-            'xie_beni_index',
-        ])
+        expected = sorted(
+            [
+                "point_biserial_index",
+                "silhouette_median_index",
+                "wb_index",
+                "xie_beni_index",
+            ]
+        )
         assert active == expected, f"Default council changed: {active}"
 
     def test_default_normalization_method(self):
         """Default normalization is med_mad."""
         from opendsm.common.clustering.transform.normalize_settings import (
-            NormalizeSettings, NormalizeChoice,
+            NormalizeSettings,
+            NormalizeChoice,
         )
+
         settings = NormalizeSettings()
         assert settings.method == NormalizeChoice.MED_MAD
 
@@ -1141,8 +1211,11 @@ class TestScoringSubsample:
         data, _ = self._make_data(200)
         settings = ScoreSettings(max_scoring_samples=50)
         result = ClusteringResult(
-            data=data, score_settings=settings, seed=0,
-            min_cluster_size=100, small_cluster_mode="outlier",
+            data=data,
+            score_settings=settings,
+            seed=0,
+            min_cluster_size=100,
+            small_cluster_mode="outlier",
         )
         labels = np.repeat(np.arange(10), 20)
         lm = result.add(10, labels)
@@ -1170,6 +1243,7 @@ class TestSelectionEdgeCases:
 
         class _BadMetric:
             """Mock whose metric attributes always raise."""
+
             def __init__(self, wcss):
                 self._WCSS = wcss
 
@@ -1178,19 +1252,17 @@ class TestSelectionEdgeCases:
                 raise AttributeError(f"{name} not available")
 
         lm_a = _BadMetric(wcss=100.0)
-        lm_b = _BadMetric(wcss=50.0)   # lowest WCSS → should be selected
+        lm_b = _BadMetric(wcss=50.0)  # lowest WCSS → should be selected
         lm_c = _BadMetric(wcss=200.0)
 
         council = {
-            'silhouette_index': 1.0,
-            'davies_bouldin_index': 1.0,
-            'xie_beni_index': 1.0,
+            "silhouette_index": 1.0,
+            "davies_bouldin_index": 1.0,
+            "xie_beni_index": 1.0,
         }
 
         result = selection.select_best_within_k([lm_a, lm_b, lm_c], council)
-        assert result is lm_b, (
-            f"Expected candidate with _WCSS=50, got _WCSS={result._WCSS}"
-        )
+        assert result is lm_b, f"Expected candidate with _WCSS=50, got _WCSS={result._WCSS}"
 
     # ── 2. _compute_composite_score: coverage < 1.0 penalty ─────────────────
 
@@ -1198,46 +1270,46 @@ class TestSelectionEdgeCases:
         """When _coverage < 1.0 on lm, finite scores are divided by coverage."""
         import types as _types
 
-        council = {'metric_a': 1.0, 'metric_b': 1.0, 'metric_c': 1.0}
+        council = {"metric_a": 1.0, "metric_b": 1.0, "metric_c": 1.0}
 
         # Mock lm with known metric values and a coverage < 1.0
         lm = _types.SimpleNamespace(
-            metric_a=2.0,       # finite → should be divided by coverage
-            metric_b=np.inf,    # inf → should NOT be divided
-            metric_c=-np.inf,   # -inf → should NOT be divided
+            metric_a=2.0,  # finite → should be divided by coverage
+            metric_b=np.inf,  # inf → should NOT be divided
+            metric_c=-np.inf,  # -inf → should NOT be divided
             _coverage=0.5,
         )
 
         ns = selection._compute_composite_score(lm, council)
 
         # finite score 2.0 / 0.5 = 4.0
-        assert ns.score['metric_a'] == pytest.approx(4.0), (
+        assert ns.score["metric_a"] == pytest.approx(4.0), (
             f"Expected 2.0/0.5=4.0, got {ns.score['metric_a']}"
         )
         # inf values should pass through unchanged
-        assert ns.score['metric_b'] == np.inf
-        assert ns.score['metric_c'] == -np.inf
+        assert ns.score["metric_b"] == np.inf
+        assert ns.score["metric_c"] == -np.inf
 
     def test_composite_score_no_penalty_at_full_coverage(self):
         """When _coverage is 1.0 (or absent), finite scores are unchanged."""
         import types as _types
 
-        council = {'metric_a': 1.0}
+        council = {"metric_a": 1.0}
         lm = _types.SimpleNamespace(metric_a=3.0, _coverage=1.0)
 
         ns = selection._compute_composite_score(lm, council)
-        assert ns.score['metric_a'] == pytest.approx(3.0)
+        assert ns.score["metric_a"] == pytest.approx(3.0)
 
     def test_composite_score_coverage_absent_means_no_penalty(self):
         """When _coverage attribute is missing, getattr defaults to 1.0."""
         import types as _types
 
-        council = {'metric_a': 1.0}
+        council = {"metric_a": 1.0}
         lm = _types.SimpleNamespace(metric_a=7.0)
         # no _coverage attribute → getattr(lm, '_coverage', 1.0) returns 1.0
 
         ns = selection._compute_composite_score(lm, council)
-        assert ns.score['metric_a'] == pytest.approx(7.0)
+        assert ns.score["metric_a"] == pytest.approx(7.0)
 
     # ── 3. _compute_composite_score: getattr raises → NaN (abstain) ─────────
 
@@ -1246,6 +1318,7 @@ class TestSelectionEdgeCases:
 
         class _PartialMetric:
             """Mock where one metric works and another raises."""
+
             def __init__(self):
                 self._coverage = 1.0
 
@@ -1257,13 +1330,13 @@ class TestSelectionEdgeCases:
             def bad_metric(self):
                 raise RuntimeError("computation failed")
 
-        council = {'good_metric': 1.0, 'bad_metric': 1.0}
+        council = {"good_metric": 1.0, "bad_metric": 1.0}
         lm = _PartialMetric()
 
         ns = selection._compute_composite_score(lm, council)
 
-        assert ns.score['good_metric'] == pytest.approx(5.0)
-        assert np.isnan(ns.score['bad_metric']), (
+        assert ns.score["good_metric"] == pytest.approx(5.0)
+        assert np.isnan(ns.score["bad_metric"]), (
             f"Expected NaN for failing metric, got {ns.score['bad_metric']}"
         )
 
@@ -1275,22 +1348,21 @@ class TestSelectionEdgeCases:
                 self._coverage = 1.0
 
             def __getattr__(self, name):
-                if name.startswith('_'):
+                if name.startswith("_"):
                     raise AttributeError(name)
                 raise ValueError(f"{name} is broken")
 
-        council = {'alpha': 1.0, 'beta': 1.0}
+        council = {"alpha": 1.0, "beta": 1.0}
         lm = _AllBad()
 
         ns = selection._compute_composite_score(lm, council)
 
         for metric in council:
-            assert np.isnan(ns.score[metric]), (
-                f"Expected NaN for {metric}, got {ns.score[metric]}"
-            )
+            assert np.isnan(ns.score[metric]), f"Expected NaN for {metric}, got {ns.score[metric]}"
 
 
 # ── Singleton index behavior ─────────────────────────────────────────────────
+
 
 class TestSingletonIndexBehavior:
     """Verify that singleton clusters are handled correctly by all indices."""
@@ -1299,11 +1371,13 @@ class TestSingletonIndexBehavior:
     def singleton_lm(self):
         """k=3 labeling with 5+1+1: clusters 1 and 2 are singletons."""
         rng = np.random.default_rng(42)
-        X = np.vstack([
-            rng.normal([0.0, 0.0], 0.4, (5, 2)),
-            np.array([[20.0, 20.0]]),
-            np.array([[30.0, 30.0]]),
-        ])
+        X = np.vstack(
+            [
+                rng.normal([0.0, 0.0], 0.4, (5, 2)),
+                np.array([[20.0, 20.0]]),
+                np.array([[30.0, 30.0]]),
+            ]
+        )
         labels = np.array([0, 0, 0, 0, 0, 1, 2])
         return SingleKMetrics(data=X, labels=labels)
 
@@ -1311,7 +1385,8 @@ class TestSingletonIndexBehavior:
         """Points in singleton clusters should have s_i = 0 (neutral)."""
         coeffs = singleton_lm._silhouette_coefficients()
         np.testing.assert_array_equal(
-            coeffs[-2:], [0.0, 0.0],
+            coeffs[-2:],
+            [0.0, 0.0],
             err_msg="Singleton cluster points should have silhouette coefficient 0",
         )
         # Non-singleton points should have positive silhouette (well-separated)
@@ -1359,10 +1434,10 @@ class TestSingletonIndexBehavior:
         lm = SingleKMetrics(data=X, labels=labels)
 
         expected = {
-            'davies_bouldin_index': 0.07936187995148962,
-            'point_biserial_index': -0.9959886843291079,
-            'silhouette_median_index': -0.9490914046764374,
-            'xie_beni_index': 0.0018903512758990508,
+            "davies_bouldin_index": 0.07936187995148962,
+            "point_biserial_index": -0.9959886843291079,
+            "silhouette_median_index": -0.9490914046764374,
+            "xie_beni_index": 0.0018903512758990508,
         }
         for name, pinned in expected.items():
             val = getattr(lm, name)
@@ -1374,6 +1449,7 @@ class TestSingletonIndexBehavior:
 
 # ── Settings coupling ────────────────────────────────────────────────────────
 
+
 class TestSettingsCoupling:
     """Validate the min_cluster_size / small_cluster_mode coupling rules.
 
@@ -1383,6 +1459,7 @@ class TestSettingsCoupling:
     def test_min_cluster_size_1_keep_accepted(self):
         """min_cluster_size=1 + KEEP is the valid pairing for density-based algos."""
         from opendsm.common.clustering.settings import ClusteringSettings
+
         cs = ClusteringSettings(min_cluster_size=1, small_cluster_mode=SmallClusterMode.KEEP)
         assert cs.min_cluster_size == 1
         assert cs.small_cluster_mode == SmallClusterMode.KEEP
@@ -1390,26 +1467,31 @@ class TestSettingsCoupling:
     def test_min_cluster_size_1_outlier_rejected(self):
         """min_cluster_size=1 + OUTLIER is contradictory (nothing to relabel)."""
         from opendsm.common.clustering.settings import ClusteringSettings
+
         with pytest.raises(ValueError, match="min_cluster_size=1"):
             ClusteringSettings(min_cluster_size=1, small_cluster_mode=SmallClusterMode.OUTLIER)
 
     def test_min_cluster_size_1_absorb_rejected(self):
         """min_cluster_size=1 + ABSORB is contradictory (nothing to absorb)."""
         from opendsm.common.clustering.settings import ClusteringSettings
+
         with pytest.raises(ValueError, match="min_cluster_size=1"):
             ClusteringSettings(min_cluster_size=1, small_cluster_mode=SmallClusterMode.ABSORB)
 
     def test_min_cluster_size_2_keep_rejected(self):
         """min_cluster_size=2 + KEEP is contradictory (KEEP preserves all sizes)."""
         from opendsm.common.clustering.settings import ClusteringSettings
+
         with pytest.raises(ValueError, match="small_cluster_mode='keep'"):
             ClusteringSettings(min_cluster_size=2, small_cluster_mode=SmallClusterMode.KEEP)
 
-    @pytest.mark.parametrize("mode", [SmallClusterMode.OUTLIER, SmallClusterMode.ABSORB],
-                             ids=["outlier", "absorb"])
+    @pytest.mark.parametrize(
+        "mode", [SmallClusterMode.OUTLIER, SmallClusterMode.ABSORB], ids=["outlier", "absorb"]
+    )
     def test_min_cluster_size_2_non_keep_accepted(self, mode):
         """min_cluster_size>=2 with OUTLIER or ABSORB is valid."""
         from opendsm.common.clustering.settings import ClusteringSettings
+
         cs = ClusteringSettings(min_cluster_size=2, small_cluster_mode=mode)
         assert cs.min_cluster_size == 2
         assert cs.small_cluster_mode == mode
@@ -1417,6 +1499,7 @@ class TestSettingsCoupling:
     def test_defaults(self):
         """Default settings: min_cluster_size=1, small_cluster_mode=KEEP."""
         from opendsm.common.clustering.settings import ClusteringSettings
+
         cs = ClusteringSettings()
         assert cs.min_cluster_size == 1, (
             f"Default min_cluster_size should be 1, got {cs.min_cluster_size}"
@@ -1427,6 +1510,7 @@ class TestSettingsCoupling:
 
 
 # ── Validity-index correctness: analytic values & monotonicity ───────────────
+
 
 def _blob_lm(sep, k=3, n=40, d=4, seed=0):
     """SingleKMetrics on k isotropic blobs whose centres are `sep` apart."""
@@ -1483,7 +1567,9 @@ class TestValidityIndexAnalyticValues:
         """davies_bouldin_index equals sklearn's davies_bouldin_score."""
         lm = _blob_lm(sep=8.0)
         X, labels = np.asarray(lm.data), np.asarray(lm.labels)
-        assert float(lm.davies_bouldin_index) == pytest.approx(davies_bouldin_score(X, labels), abs=1e-5)
+        assert float(lm.davies_bouldin_index) == pytest.approx(
+            davies_bouldin_score(X, labels), abs=1e-5
+        )
 
 
 class TestValidityIndexMonotonicity:
@@ -1523,6 +1609,7 @@ class TestDBCV:
 
     def test_increases_with_separation(self):
         """DBCV is higher (better) for well-separated than overlapping blobs."""
+
         def blobs(sep, seed=0):
             rng = np.random.default_rng(seed)
             X = np.vstack([rng.normal(c * sep, 1.0, (40, 4)) for c in range(3)])
@@ -1581,6 +1668,7 @@ class TestDBCV:
 
 # ── Voter discriminability weighting ─────────────────────────────────────────
 
+
 class TestDiscriminabilityWeights:
     """Council weights scale by each voter's coefficient of variation."""
 
@@ -1588,7 +1676,9 @@ class TestDiscriminabilityWeights:
         """A constant-score voter loses almost all weight; a varied one keeps it."""
         score_matrix = np.array([[5.0, 1.0], [5.0, 2.0], [5.0, 3.0], [5.0, 10.0]])
         adjusted = selection._discriminability_weights(
-            score_matrix, ["flat", "sharp"], {"flat": 1.0, "sharp": 1.0},
+            score_matrix,
+            ["flat", "sharp"],
+            {"flat": 1.0, "sharp": 1.0},
         )
         assert adjusted["flat"] == pytest.approx(0.0, abs=1e-6)
         assert adjusted["sharp"] > 0.5
@@ -1597,12 +1687,15 @@ class TestDiscriminabilityWeights:
         """A voter with non-positive council weight is left untouched."""
         score_matrix = np.array([[1.0], [2.0], [3.0]])
         adjusted = selection._discriminability_weights(
-            score_matrix, ["v"], {"v": 0.0},
+            score_matrix,
+            ["v"],
+            {"v": 0.0},
         )
         assert adjusted["v"] == 0.0
 
 
 # ── prepare_labels small-cluster strategies ──────────────────────────────────
+
 
 class TestPrepareLabels:
     """The small-cluster strategy branch of label preparation."""
@@ -1619,8 +1712,12 @@ class TestPrepareLabels:
         """KEEP retains every cluster, full coverage, no outliers introduced."""
         data, labels = labels_with_singleton
         merged, _, labels_clean, coverage = prepare_labels(
-            labels, data, ScoreSettings(), None,
-            min_cluster_size=1, small_cluster_mode=SmallClusterMode.KEEP,
+            labels,
+            data,
+            ScoreSettings(),
+            None,
+            min_cluster_size=1,
+            small_cluster_mode=SmallClusterMode.KEEP,
         )
         assert len(np.unique(labels_clean)) == 3
         assert coverage == 1.0
@@ -1630,8 +1727,12 @@ class TestPrepareLabels:
         """OUTLIER demotes the sub-threshold cluster to -1 and lowers coverage."""
         data, labels = labels_with_singleton
         merged, _, labels_clean, coverage = prepare_labels(
-            labels, data, ScoreSettings(), None,
-            min_cluster_size=3, small_cluster_mode=SmallClusterMode.OUTLIER,
+            labels,
+            data,
+            ScoreSettings(),
+            None,
+            min_cluster_size=3,
+            small_cluster_mode=SmallClusterMode.OUTLIER,
         )
         assert -1 in merged
         assert coverage == pytest.approx(0.9)
@@ -1641,12 +1742,16 @@ class TestPrepareLabels:
         """Fewer clusters than n_cluster_lower invalidates the labeling."""
         data, labels = labels_with_singleton
         _, data_clean, labels_clean, _ = prepare_labels(
-            labels, data, ScoreSettings(), 5,
-            min_cluster_size=1, small_cluster_mode=SmallClusterMode.KEEP,
+            labels,
+            data,
+            ScoreSettings(),
+            5,
+            min_cluster_size=1,
+            small_cluster_mode=SmallClusterMode.KEEP,
         )
         assert data_clean is None
         assert labels_clean is None
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

@@ -15,7 +15,9 @@
 import numpy as np
 import pytest
 
-from opendsm.comparison_groups.stratified_sampling.create_comparison_groups import Stratified_Sampling
+from opendsm.comparison_groups.stratified_sampling.create_comparison_groups import (
+    Stratified_Sampling,
+)
 from opendsm.comparison_groups.stratified_sampling.settings import (
     StratifiedSamplingSettings,
     StratificationColumnSettings,

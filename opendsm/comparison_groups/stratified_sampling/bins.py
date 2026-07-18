@@ -66,19 +66,13 @@ class BinnedData:
         df = self.df
         if skip_outliers:
             df = df[~df._outlier_bin & ~df._outlier_value]
-        df = (
-            df._bin.value_counts()
-            .reset_index()
-            .rename(columns={"_bin": "bin", "count": "n"})
-        )
+        df = df._bin.value_counts().reset_index().rename(columns={"_bin": "bin", "count": "n"})
         df["n_pct"] = df["n"] / df["n"].sum()
         return df
 
     def _outlier_bins(self):
         df_bins = (
-            self.df._bin.value_counts()
-            .reset_index()
-            .rename(columns={"_bin": "bin", "count": "n"})
+            self.df._bin.value_counts().reset_index().rename(columns={"_bin": "bin", "count": "n"})
         )
         df_bins["outlier"] = df_bins["n"] < self.min_n_treatment_per_bin
         return df_bins
@@ -86,9 +80,7 @@ class BinnedData:
     def _flag_outliers(self):
         """Flag elements that fall in bins that are too small."""
         df = self.outlier_bins
-        self.df.loc[:, "_outlier_bin"] = self.df._bin.isin(
-            df[df["outlier"]]["bin"].values
-        )
+        self.df.loc[:, "_outlier_bin"] = self.df._bin.isin(df[df["outlier"]]["bin"].values)
 
 
 class Binning:
@@ -105,13 +97,9 @@ class Binning:
     def edges_xy(self, col_x, col_y):
         df = self.edges()
         df_x = df[df.column == col_x]
-        df_x = df_x.rename(
-            columns={"column": "column_x", "min": "x_min", "max": "x_max"}
-        )
+        df_x = df_x.rename(columns={"column": "column_x", "min": "x_min", "max": "x_max"})
         df_y = df[df.column == col_y]
-        df_y = df_y.rename(
-            columns={"column": "column_y", "min": "y_min", "max": "y_max"}
-        )
+        df_y = df_y.rename(columns={"column": "column_y", "min": "y_min", "max": "y_max"})
         return df_x.merge(df_y)
 
     def bin(self, values, column_name, n_bins, fixed_width):
@@ -169,9 +157,7 @@ class MultiBin:
 
     def __init__(self, bins):
         self.bins = bins
-        self.label = "__".join(
-            [f"{b.column}_{str(b.index).zfill(3)}" for b in self.bins]
-        )
+        self.label = "__".join([f"{b.column}_{str(b.index).zfill(3)}" for b in self.bins])
 
     def filter_expr(self):
         """Make  a function that filters a dataframe to keep only values witihn
@@ -259,23 +245,16 @@ def get_counts_and_update_n_samples_approx(
     # Scenario 1: n_samples_approx = None
     # a way to ensure you get the max number of samples if n_samples_approx=None
     counts["n_samples_available"] = [
-        row["bin"].get_max_n_target(binned_data_pool.df)
-        for index, row in counts.iterrows()
+        row["bin"].get_max_n_target(binned_data_pool.df) for index, row in counts.iterrows()
     ]
-    max_possible_n_samples_approx = int(
-        min(counts["n_samples_available"] / counts["n_pct"])
-    )
-    n_samples_approx = (
-        n_samples_approx if n_samples_approx else max_possible_n_samples_approx
-    )
+    max_possible_n_samples_approx = int(min(counts["n_samples_available"] / counts["n_pct"]))
+    n_samples_approx = n_samples_approx if n_samples_approx else max_possible_n_samples_approx
     # needs to be floor to ensure rounding errors don't leave one less than exists
     counts["n_target"] = np.floor(counts["n_pct"] * n_samples_approx).astype(int)
 
     # if you want to treat n_samples_approx as a max, but get as many as you can
     # if you can't reach that, then set relax_n_samples_approx_constraint=True
-    has_enough_for_n_samples_approx = not any(
-        counts["n_samples_available"] < counts["n_target"]
-    )
+    has_enough_for_n_samples_approx = not any(counts["n_samples_available"] < counts["n_target"])
     relax_ratio_constraint = False
     if has_enough_for_n_samples_approx:
         # Scenario 2: n_samples_approx=value so we want to ignore the ratio constraint

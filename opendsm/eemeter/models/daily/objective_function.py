@@ -134,17 +134,13 @@ def obj_fcn_decorator(
     model_fcn = model_fcn_dec(model_fcn_full, T_fit_bnds, T)
 
     lasso_a = settings.regularization_percent_lasso * settings.regularization_alpha
-    ridge_a = (
-        1 - settings.regularization_percent_lasso
-    ) * settings.regularization_alpha
+    ridge_a = (1 - settings.regularization_percent_lasso) * settings.regularization_alpha
 
     idx_k = get_idx(["dd_k"], coef_id)
     idx_beta = get_idx(["dd_beta"], coef_id)
     idx_bp = get_idx(["dd_bp"], coef_id)
     # idx_reg = get_idx(["dd_beta", "dd_k"], coef_id) # drop bps and intercept from regularization
-    idx_reg = get_idx(
-        ["dd_beta", "dd_k", "dd_bp"], coef_id
-    )  # drop intercept from regularization
+    idx_reg = get_idx(["dd_beta", "dd_k", "dd_bp"], coef_id)  # drop intercept from regularization
 
     def elastic_net_penalty(X, T_sorted, obs_sorted, weight_sorted, wRMSE):
         """
@@ -167,9 +163,7 @@ def obj_fcn_decorator(
 
         ## Scale break points ##
         if len(idx_bp) > 0:
-            X_enet[idx_bp] = [
-                np.min(np.abs(X_enet[idx] - T_fit_bnds)) for idx in idx_bp
-            ]
+            X_enet[idx_bp] = [np.min(np.abs(X_enet[idx] - T_fit_bnds)) for idx in idx_bp]
 
             if len(idx_bp) == 2:
                 X_enet[idx_bp] += (X[idx_bp][1] - X[idx_bp][0]) / 2
@@ -181,9 +175,7 @@ def obj_fcn_decorator(
             [hdd_bp, cdd_bp] = X[idx_bp]
 
             idx_hdd = np.argwhere(T_sorted < hdd_bp).flatten()
-            idx_tidd = np.argwhere(
-                (hdd_bp <= T_sorted) & (T_sorted <= cdd_bp)
-            ).flatten()
+            idx_tidd = np.argwhere((hdd_bp <= T_sorted) & (T_sorted <= cdd_bp)).flatten()
             idx_cdd = np.argwhere(cdd_bp < T_sorted).flatten()
 
         elif len(idx_bp) == 1:
@@ -252,9 +244,7 @@ def obj_fcn_decorator(
         X_enet[idx_beta] *= T_stdev / obs_stdev
 
         # add penalty to slope for not having enough datapoints
-        X_enet[idx_beta] = np.where(
-            N_beta < N_min, X_enet[idx_beta] * 1e30, X_enet[idx_beta]
-        )
+        X_enet[idx_beta] = np.where(N_beta < N_min, X_enet[idx_beta] * 1e30, X_enet[idx_beta])
 
         ## Scale smoothing parameter ##
         if len(idx_k) > 0:  # reducing X_enet size allows for more smoothing
@@ -272,9 +262,7 @@ def obj_fcn_decorator(
         if ridge_a == 0:
             penalty = lasso_a * np.linalg.norm(X_enet, 1)
         else:
-            penalty = lasso_a * np.linalg.norm(X_enet, 1) + ridge_a * np.linalg.norm(
-                X_enet, 2
-            )
+            penalty = lasso_a * np.linalg.norm(X_enet, 1) + ridge_a * np.linalg.norm(X_enet, 2)
 
         return penalty
 
@@ -319,9 +307,7 @@ def obj_fcn_decorator(
         loss = wSSE / N
 
         if settings.regularization_alpha != 0:
-            loss += elastic_net_penalty(
-                X, T_sorted, obs_sorted, weight_sorted, np.sqrt(loss)
-            )
+            loss += elastic_net_penalty(X, T_sorted, obs_sorted, weight_sorted, np.sqrt(loss))
 
         if optimize_flag:
             return loss

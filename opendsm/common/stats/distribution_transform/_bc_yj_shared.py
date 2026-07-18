@@ -32,14 +32,15 @@ from opendsm.common.stats.distribution_transform.mu_sigma import robust_mu_sigma
 _WANT_VALUE = False
 _WANT_DERIV = True
 
-_C_HUBER  = 1.5   # Huber M-estimator constant; insensitive over [1.0, 2.5]
-_TUKEY_C  = 0.5   # Tukey bisquare half-width; insensitive over [0.25, 2.0]
-_LAM_EPS  = 1e-7  # neighbourhood of λ=0 and λ=2 where limit formulae apply
+_C_HUBER = 1.5  # Huber M-estimator constant; insensitive over [1.0, 2.5]
+_TUKEY_C = 0.5  # Tukey bisquare half-width; insensitive over [0.25, 2.0]
+_LAM_EPS = 1e-7  # neighbourhood of λ=0 and λ=2 where limit formulae apply
 
 
 # ---------------------------------------------------------------------------
 # Python helpers
 # ---------------------------------------------------------------------------
+
 
 def _huber_std(x):
     """Robustly standardise x with Huber M-estimator (falls back to IQR)."""
@@ -58,12 +59,13 @@ def _brent_min(obj_fn, bounds=(-4.0, 4.0)):
 @functools.lru_cache(maxsize=16)
 def _normal_scores(n):
     """Theoretical normal order statistics (Blom approximation), cached by n."""
-    return norm.ppf((np.arange(n) + 2/3) / (n + 1/3))
+    return norm.ppf((np.arange(n) + 2 / 3) / (n + 1 / 3))
 
 
 # ---------------------------------------------------------------------------
 # Numba helpers
 # ---------------------------------------------------------------------------
+
 
 @numba.jit(nopython=True, error_model="numpy", cache=True)
 def _bisquare_weights(vals, mu, sigma_inv, threshold):
@@ -76,8 +78,10 @@ def _bisquare_weights(vals, mu, sigma_inv, threshold):
     for i in range(len(vals)):
         u = abs((vals[i] - mu) * sigma_inv) / threshold
         if u <= 1.0:
-            s = 1.0 - u * u;  w = s * s
-            weight[i] = w;  W += w
+            s = 1.0 - u * u
+            w = s * s
+            weight[i] = w
+            W += w
         else:
             weight[i] = 0.0
     return weight, W
@@ -86,6 +90,7 @@ def _bisquare_weights(vals, mu, sigma_inv, threshold):
 # ---------------------------------------------------------------------------
 # Secant optimizer
 # ---------------------------------------------------------------------------
+
 
 def _secant(grad_fn, lam0, bounds=(-4.0, 4.0), xatol=1e-4, max_iter=10):
     """Secant root-finding on grad_fn, warm-started at lam0.
@@ -114,7 +119,7 @@ def _secant(grad_fn, lam0, bounds=(-4.0, 4.0), xatol=1e-4, max_iter=10):
         if abs(step) > 0.5 * (hi - lo):
             step = -np.sign(g_curr) * 0.1 * (hi - lo)
 
-        x_new  = float(np.clip(x_curr + step, lo, hi))
+        x_new = float(np.clip(x_curr + step, lo, hi))
         x_prev, g_prev = x_curr, g_curr
         x_curr = x_new
         g_curr = grad_fn(x_curr)
@@ -130,6 +135,7 @@ def _secant(grad_fn, lam0, bounds=(-4.0, 4.0), xatol=1e-4, max_iter=10):
 # ---------------------------------------------------------------------------
 # Shared fitting algorithm
 # ---------------------------------------------------------------------------
+
 
 def _fit_lambda(
     x,
@@ -167,8 +173,7 @@ def _fit_lambda(
     idx = np.argsort(x)
     xs = x[idx]
     _n = len(xs)
-    Q = np.array([xs[min(int(Q_perc * _n), _n - 1)],
-                  xs[min(int((1 - Q_perc) * _n), _n - 1)]])
+    Q = np.array([xs[min(int(Q_perc * _n), _n - 1)], xs[min(int((1 - Q_perc) * _n), _n - 1)]])
 
     lam = _brent_min(initial_obj_fn(xs, Q))
 

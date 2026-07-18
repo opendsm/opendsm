@@ -90,9 +90,7 @@ def full_model(
             c_hdd = beta * (Ti - T_bp) + intercept
 
             exp_interior = 1 / k * (Ti - T_bp)
-            exp_interior = np.clip(
-                exp_interior, LN_MIN_POS_SYSTEM_VALUE, LN_MAX_POS_SYSTEM_VALUE
-            )
+            exp_interior = np.clip(exp_interior, LN_MIN_POS_SYSTEM_VALUE, LN_MAX_POS_SYSTEM_VALUE)
             E_tot[n] = abs(beta * k) * (np.exp(exp_interior) - 1) + c_hdd
 
     return E_tot

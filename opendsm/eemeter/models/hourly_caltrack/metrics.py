@@ -35,9 +35,7 @@ def _compute_rmse(combined):
 
 def _compute_rmse_adj(combined, length, num_parameters):
     if length > num_parameters:
-        return (
-            (combined["residuals"].astype(float) ** 2).sum() / (length - num_parameters)
-        ) ** 0.5
+        return ((combined["residuals"].astype(float) ** 2).sum() / (length - num_parameters)) ** 0.5
     else:
         return np.nan
 
@@ -55,9 +53,7 @@ def _compute_mape(combined):
 
 
 def _compute_nmae(combined):
-    return (combined["residuals"].astype(float).abs().sum()) / (
-        combined["observed"].sum()
-    )
+    return (combined["residuals"].astype(float).abs().sum()) / (combined["observed"].sum())
 
 
 def _compute_nmbe(combined):
@@ -328,9 +324,7 @@ class ModelMetrics(object):
         )
 
         self.rmse = _compute_rmse(combined)
-        self.rmse_adj = _compute_rmse_adj(
-            combined, self.merged_length, self.num_parameters
-        )
+        self.rmse_adj = _compute_rmse_adj(combined, self.merged_length, self.num_parameters)
 
         with np.errstate(divide="ignore", invalid="ignore"):
             self.observed_cvstd = combined["observed"].std() / self.observed_mean
@@ -370,9 +364,7 @@ class ModelMetrics(object):
             self.t_stat = None
         else:
             self.degrees_of_freedom = round(self.n_prime - self.num_parameters)
-            self.t_stat = t.ppf(
-                self.single_tailed_confidence_level, self.degrees_of_freedom
-            )
+            self.t_stat = t.ppf(self.single_tailed_confidence_level, self.degrees_of_freedom)
 
         if (
             self.n_prime == 0
@@ -389,14 +381,11 @@ class ModelMetrics(object):
             # factor to correct cvrmse_adj for autocorrelation of inputs
             # i.e., divide by (n' - n_param) instead of by (n - n_param)
             self.cvrmse_auto_corr_correction = (
-                (self.observed_length - self.num_parameters)
-                / (self.n_prime - self.num_parameters)
+                (self.observed_length - self.num_parameters) / (self.n_prime - self.num_parameters)
             ) ** 0.5
 
             # part of approximation factor used in ashrae 14 guideline
-            self.approx_factor_auto_corr_correction = (
-                1.0 + (2.0 / self.n_prime)
-            ) ** 0.5
+            self.approx_factor_auto_corr_correction = (1.0 + (2.0 / self.n_prime)) ** 0.5
 
             # all the following values are unitless
             self.fsu_base_term = (
@@ -456,14 +445,10 @@ class ModelMetrics(object):
             "autocorr_resid": _json_safe_float(self.autocorr_resid),
             "confidence_level": _json_safe_float(self.confidence_level),
             "n_prime": _json_safe_float(self.n_prime),
-            "single_tailed_confidence_level": _json_safe_float(
-                self.single_tailed_confidence_level
-            ),
+            "single_tailed_confidence_level": _json_safe_float(self.single_tailed_confidence_level),
             "degrees_of_freedom": _json_safe_float(self.degrees_of_freedom),
             "t_stat": _json_safe_float(self.t_stat),
-            "cvrmse_auto_corr_correction": _json_safe_float(
-                self.cvrmse_auto_corr_correction
-            ),
+            "cvrmse_auto_corr_correction": _json_safe_float(self.cvrmse_auto_corr_correction),
             "approx_factor_auto_corr_correction": _json_safe_float(
                 self.approx_factor_auto_corr_correction
             ),
@@ -511,9 +496,7 @@ class ModelMetrics(object):
             degrees_of_freedom=data.get("degrees_of_freedom"),
             t_stat=data.get("t_stat"),
             cvrmse_auto_corr_correction=data.get("cvrmse_auto_corr_correction"),
-            approx_factor_auto_corr_correction=data.get(
-                "approx_factor_auto_corr_correction"
-            ),
+            approx_factor_auto_corr_correction=data.get("approx_factor_auto_corr_correction"),
             fsu_base_term=data.get("fsu_base_term"),
         )
 

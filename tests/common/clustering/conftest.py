@@ -30,6 +30,7 @@ from opendsm.common.clustering.settings import ClusteringSettings
 # Settings builders
 # ---------------------------------------------------------------------------
 
+
 def make_clustering_settings(algorithm, seed=42, **overrides):
     """Create a ClusteringSettings for *any* supported algorithm.
 
@@ -55,6 +56,7 @@ def make_clustering_settings(algorithm, seed=42, **overrides):
 # ---------------------------------------------------------------------------
 # Data generators
 # ---------------------------------------------------------------------------
+
 
 def make_simple_data(n_clusters=3, n_per=30, d=10, seed=42):
     """Create well-separated test data (NumPy array).
@@ -84,6 +86,7 @@ def run_cluster(data, algorithm, seed=42, **overrides):
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def simple_2d_data():

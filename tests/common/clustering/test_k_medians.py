@@ -41,7 +41,6 @@ from opendsm.common.clustering.algorithms.k_medians import (
 from .conftest import make_clustering_settings
 
 
-
 def _three_blobs(n_per=40, d=5, sep=50.0, seed=0):
     """Three well-separated isotropic blobs with known ground-truth labels."""
     rng = np.random.default_rng(seed)
@@ -63,6 +62,7 @@ def _nearest_center_index(point, centers):
 # ---------------------------------------------------------------------------
 # Initialization strategies
 # ---------------------------------------------------------------------------
+
 
 class TestInitStrategies:
     """Each init returns k centroids of the right shape, deterministically."""
@@ -118,6 +118,7 @@ class TestInitStrategies:
 # kmedians_fit
 # ---------------------------------------------------------------------------
 
+
 class TestKMediansFit:
     """Single-k fit: ground-truth recovery, contiguity, inertia behaviour."""
 
@@ -162,6 +163,7 @@ class TestKMediansFit:
 # kmedians_refine
 # ---------------------------------------------------------------------------
 
+
 class TestKMediansRefine:
     """Refinement: optimal is a no-op, bad assignments are corrected."""
 
@@ -204,14 +206,21 @@ class TestKMediansRefine:
 # Schedule + seed helpers
 # ---------------------------------------------------------------------------
 
+
 class TestScheduleHelpers:
     """Deterministic restart-budget arithmetic."""
 
-    @pytest.mark.parametrize("k,expected", [
-        (2, 5), (4, 5),         # k<=4: full budget
-        (5, 3), (12, 3),        # 5<=k<=12: ceil(5*0.6)=3
-        (13, 2), (50, 2),       # k>=13: ceil(5*0.4)=2
-    ])
+    @pytest.mark.parametrize(
+        "k,expected",
+        [
+            (2, 5),
+            (4, 5),  # k<=4: full budget
+            (5, 3),
+            (12, 3),  # 5<=k<=12: ceil(5*0.6)=3
+            (13, 2),
+            (50, 2),  # k>=13: ceil(5*0.4)=2
+        ],
+    )
     def test_adaptive_n_init(self, k, expected):
         """Restart budget steps down at the k thresholds."""
         assert _adaptive_n_init(5, k) == expected
@@ -256,6 +265,7 @@ class TestScheduleHelpers:
 # ---------------------------------------------------------------------------
 # kmedians entry point
 # ---------------------------------------------------------------------------
+
 
 class TestKMediansEntryPoint:
     """ClusterAlgorithm protocol behaviour: recovery, determinism, failures."""

@@ -27,7 +27,6 @@ from sklearn.linear_model import BayesianRidge
 from scipy.interpolate import RBFInterpolator
 
 
-
 # At or below this many lags the direct masked loop is used; above it the FFT
 # path is used. Both paths return identical correlation values.
 _AUTOCORR_FFT_LAG_THRESHOLD = 16

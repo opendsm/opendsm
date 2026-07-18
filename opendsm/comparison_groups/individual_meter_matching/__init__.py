@@ -12,5 +12,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from opendsm.comparison_groups.individual_meter_matching.create_comparison_groups import Individual_Meter_Matching as IMM
+from opendsm.comparison_groups.individual_meter_matching.create_comparison_groups import (
+    Individual_Meter_Matching as IMM,
+)
 from opendsm.comparison_groups.individual_meter_matching.settings import Settings as IMM_Settings

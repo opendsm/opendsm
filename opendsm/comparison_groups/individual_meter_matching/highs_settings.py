@@ -25,7 +25,7 @@ from typing import Optional, Literal
 # system maximum float
 MIN_FLOAT = np.finfo(np.float64).tiny
 MAX_FLOAT = np.finfo(np.float64).max
-    
+
 
 class HiGHS_Settings(BaseSettings):
     """Settings for HiGHS optimization solver"""
@@ -44,7 +44,7 @@ class HiGHS_Settings(BaseSettings):
 
     """Parallel option"""
     parallel: Literal["off", "choose", "on"] = pydantic.Field(
-        default="off", # was "choose"
+        default="off",  # was "choose"
         validate_default=True,
     )
 
@@ -56,9 +56,9 @@ class HiGHS_Settings(BaseSettings):
 
     """Time limit (seconds)"""
     time_limit: float = pydantic.Field(
-        default=float('inf'),
+        default=float("inf"),
         ge=0,
-        le=float('inf'),
+        le=float("inf"),
         validate_default=True,
     )
 
@@ -70,17 +70,17 @@ class HiGHS_Settings(BaseSettings):
 
     """Limit on |cost coefficient|: values greater than or equal to this will be treated as infinite"""
     infinite_cost: float = pydantic.Field(
-        default=1e+20,
-        ge=1e+15,
-        le=float('inf'),
+        default=1e20,
+        ge=1e15,
+        le=float("inf"),
         validate_default=True,
     )
 
     """Limit on |constraint bound|: values greater than or equal to this will be treated as infinite"""
     infinite_bound: float = pydantic.Field(
-        default=1e+20,
-        ge=1e+15,
-        le=float('inf'),
+        default=1e20,
+        ge=1e15,
+        le=float("inf"),
         validate_default=True,
     )
 
@@ -88,15 +88,15 @@ class HiGHS_Settings(BaseSettings):
     small_matrix_value: float = pydantic.Field(
         default=1e-09,
         ge=1e-12,
-        le=float('inf'),
+        le=float("inf"),
         validate_default=True,
     )
 
     """Upper limit on |matrix entries|: values greater than or equal to this will be treated as infinite"""
     large_matrix_value: float = pydantic.Field(
-        default=1e+15,
+        default=1e15,
         ge=1,
-        le=float('inf'),
+        le=float("inf"),
         validate_default=True,
     )
 
@@ -104,7 +104,7 @@ class HiGHS_Settings(BaseSettings):
     primal_feasibility_tolerance: float = pydantic.Field(
         default=1e-07,
         ge=1e-10,
-        le=float('inf'),
+        le=float("inf"),
         validate_default=True,
     )
 
@@ -112,7 +112,7 @@ class HiGHS_Settings(BaseSettings):
     dual_feasibility_tolerance: float = pydantic.Field(
         default=1e-07,
         ge=1e-10,
-        le=float('inf'),
+        le=float("inf"),
         validate_default=True,
     )
 
@@ -120,23 +120,23 @@ class HiGHS_Settings(BaseSettings):
     ipm_optimality_tolerance: float = pydantic.Field(
         default=1e-08,
         ge=1e-12,
-        le=float('inf'),
+        le=float("inf"),
         validate_default=True,
     )
 
     """Objective bound for termination of the dual simplex solver"""
     objective_bound: float = pydantic.Field(
-        default=float('inf'),
-        ge=float('-inf'),
-        le=float('inf'),
+        default=float("inf"),
+        ge=float("-inf"),
+        le=float("inf"),
         validate_default=True,
     )
 
     """Objective target for termination of the MIP solver"""
     objective_target: float = pydantic.Field(
-        default=float('-inf'),
-        ge=float('-inf'),
-        le=float('inf'),
+        default=float("-inf"),
+        ge=float("-inf"),
+        le=float("inf"),
         validate_default=True,
     )
 
@@ -392,7 +392,7 @@ class HiGHS_Settings(BaseSettings):
     mip_feasibility_tolerance: float = pydantic.Field(
         default=1e-06,
         ge=1e-10,
-        le=float('inf'),
+        le=float("inf"),
         validate_default=True,
     )
 
@@ -408,7 +408,7 @@ class HiGHS_Settings(BaseSettings):
     mip_rel_gap: float = pydantic.Field(
         default=0.0001,
         ge=0,
-        le=float('inf'),
+        le=float("inf"),
         validate_default=True,
     )
 
@@ -416,7 +416,7 @@ class HiGHS_Settings(BaseSettings):
     mip_abs_gap: float = pydantic.Field(
         default=1e-06,
         ge=0,
-        le=float('inf'),
+        le=float("inf"),
         validate_default=True,
     )
 
@@ -424,7 +424,7 @@ class HiGHS_Settings(BaseSettings):
     mip_min_logging_interval: float = pydantic.Field(
         default=5,
         ge=0,
-        le=float('inf'),
+        le=float("inf"),
         validate_default=True,
     )
 
@@ -468,12 +468,12 @@ class HiGHS_Settings(BaseSettings):
     pdlp_d_gap_tol: float = pydantic.Field(
         default=0.0001,
         ge=1e-12,
-        le=float('inf'),
+        le=float("inf"),
         validate_default=True,
     )
 
-
     """Make seed random if None"""
+
     @pydantic.model_validator(mode="after")
     def _random_seed(self):
         self.model_config["frozen"] = False
@@ -491,6 +491,7 @@ class HiGHS_Settings(BaseSettings):
         self.model_config["frozen"] = True
 
         return self
+
 
 if __name__ == "__main__":
     s = HiGHS_Settings()

@@ -23,7 +23,6 @@ from opendsm.eemeter.common.data_settings import (
 )
 
 
-
 def test_default_baseline_lengths():
     """Defaults: minimum is ceil(0.9 * 365) = 329, maximum 366."""
     settings = BaseSufficiencySettings()

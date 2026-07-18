@@ -31,11 +31,8 @@ from opendsm.eemeter.common.sufficiency_criteria import HourlySufficiencyCriteri
 from opendsm.eemeter.common.warnings import EEMeterWarning
 
 
-
 class NREL_Weather_API:
-    api_key = (
-        "---"  # get your own key from https://developer.nrel.gov/signup/  #Required
-    )
+    api_key = "---"  # get your own key from https://developer.nrel.gov/signup/  #Required
     name = "---"  # required
     email = "---"  # required
     interval = "60"  # required
@@ -96,16 +93,12 @@ class NREL_Weather_API:
         for year in years:
             year = str(year)
 
-            url = self._generate_url(
-                lat, lon, year, leap_year, interval, utc, api_key, name, email
-            )
+            url = self._generate_url(lat, lon, year, leap_year, interval, utc, api_key, name, email)
             df = pd.read_csv(url, skiprows=2)
 
             # Set the time index in the pandas dataframe:
             # set datetime using the year, month, day, and hour
-            df["datetime"] = pd.to_datetime(
-                df[["Year", "Month", "Day", "Hour", "Minute"]]
-            )
+            df["datetime"] = pd.to_datetime(df[["Year", "Month", "Day", "Hour", "Minute"]])
 
             df = df.drop(columns=["Year", "Month", "Day", "Hour", "Minute"])
             df = df.dropna()
@@ -117,9 +110,7 @@ class NREL_Weather_API:
 
         return df
 
-    def _generate_url(
-        self, lat, lon, year, leap_year, interval, utc, api_key, name, email
-    ):
+    def _generate_url(self, lat, lon, year, leap_year, interval, utc, api_key, name, email):
         query = f"?wkt=POINT({lon}%20{lat})&names={year}&interval={interval}&api_key={api_key}&full_name={name}&email={email}&utc={utc}"
 
         if year == "2021":
@@ -220,17 +211,11 @@ class _HourlyData:
     def _get_contiguous_datetime(self, df):
         # get earliest datetime and latest datetime
         # make earliest start at 0 and latest end at 23, this ensures full days
-        earliest_datetime = df.index.min().replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        latest_datetime = df.index.max().replace(
-            hour=23, minute=0, second=0, microsecond=0
-        )
+        earliest_datetime = df.index.min().replace(hour=0, minute=0, second=0, microsecond=0)
+        latest_datetime = df.index.max().replace(hour=23, minute=0, second=0, microsecond=0)
 
         # create a new index with all the hours between the earliest and latest datetime
-        complete_dt = pd.date_range(
-            start=earliest_datetime, end=latest_datetime, freq="h"
-        )
+        complete_dt = pd.date_range(start=earliest_datetime, end=latest_datetime, freq="h")
 
         # merge meter data with complete_dt
         df = df.reindex(complete_dt)
@@ -244,13 +229,9 @@ class _HourlyData:
         # make column of interpolated boolean if any observed or temperature is nan
         # check if in each row of the columns in output has nan values, the interpolated column will be true
         if "to_be_interpolated_columns" in self._kwargs:
-            self._to_be_interpolated_columns = self._kwargs[
-                "to_be_interpolated_columns"
-            ].copy()
+            self._to_be_interpolated_columns = self._kwargs["to_be_interpolated_columns"].copy()
             self._outputs += [
-                f"{col}"
-                for col in self._to_be_interpolated_columns
-                if col not in self._outputs
+                f"{col}" for col in self._to_be_interpolated_columns if col not in self._outputs
             ]
         else:
             self._to_be_interpolated_columns = ["temperature", "observed"]
@@ -281,9 +262,9 @@ class _HourlyData:
         return df
 
     def _merge_meter_temp(self, meter, temp):
-        df = meter.merge(
-            temp, left_index=True, right_index=True, how="left"
-        ).tz_convert(meter.index.tz)
+        df = meter.merge(temp, left_index=True, right_index=True, how="left").tz_convert(
+            meter.index.tz
+        )
         return df
 
     def _check_data_sufficiency(self):

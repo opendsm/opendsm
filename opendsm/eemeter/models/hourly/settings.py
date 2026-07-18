@@ -68,6 +68,7 @@ class BaseModel(str, Enum):
 
 class TemperatureBinSettings(BaseSettings):
     """how to bin temperature data"""
+
     method: BinningChoice = pydantic.Field(
         default=BinningChoice.FIXED_BINS,
     )
@@ -97,7 +98,7 @@ class TemperatureBinSettings(BaseSettings):
 
     """use edge bins bool"""
     include_edge_bins: bool = pydantic.Field(
-        default=True, 
+        default=True,
     )
 
     """rate for edge temperature bins"""
@@ -114,7 +115,7 @@ class TemperatureBinSettings(BaseSettings):
 
     """offset normalized temperature range for edge bins (keeps exp from blowing up)"""
     edge_bin_temperature_range_offset: Optional[float] = pydantic.Field(
-        default=1.0, # prior 1.0
+        default=1.0,  # prior 1.0
         ge=0,
     )
 
@@ -122,33 +123,25 @@ class TemperatureBinSettings(BaseSettings):
     def _check_temperature_bins(self):
         if self.method == BinningChoice.EQUAL_SAMPLE_COUNT:
             if self.n_bins is None:
-                raise ValueError(
-                    "'n_bins' must be specified if 'method' is 'equal_sample_count'."
-                )
+                raise ValueError("'n_bins' must be specified if 'method' is 'equal_sample_count'.")
             if self.n_bins < 1:
                 raise ValueError("'n_bins' must be greater than 0.")
 
         elif self.method == BinningChoice.EQUAL_BIN_WIDTH:
             if self.bin_width is None:
-                raise ValueError(
-                    "'bin_width' must be specified if 'method' is 'equal_bin_width'."
-                )
+                raise ValueError("'bin_width' must be specified if 'method' is 'equal_bin_width'.")
             if self.bin_width < 1:
                 raise ValueError("'bin_width' must be greater than 0.")
 
         elif self.method == BinningChoice.SET_BIN_WIDTH:
             if self.bin_width is None:
-                raise ValueError(
-                    "'bin_width' must be specified if 'method' is 'set_bin_width'."
-                )
+                raise ValueError("'bin_width' must be specified if 'method' is 'set_bin_width'.")
             if self.bin_width < 1:
                 raise ValueError("'bin_width' must be greater than 0.")
 
         elif self.method == BinningChoice.FIXED_BINS:
             if self.fixed_bins is None:
-                raise ValueError(
-                    "'fixed_bins' must be specified if 'method' is 'fixed_bins'."
-                )
+                raise ValueError("'fixed_bins' must be specified if 'method' is 'fixed_bins'.")
 
         else:
             raise ValueError(f"Invalid method: {self.method}")
@@ -173,13 +166,9 @@ class TemperatureBinSettings(BaseSettings):
 
         else:
             if self.edge_bin_rate is not None:
-                raise ValueError(
-                    "'edge_bin_rate' must be None if 'include_edge_bins' is False."
-                )
+                raise ValueError("'edge_bin_rate' must be None if 'include_edge_bins' is False.")
             if self.edge_bin_percent is not None:
-                raise ValueError(
-                    "'edge_bin_days' must be None if 'include_edge_bins' is False."
-                )
+                raise ValueError("'edge_bin_days' must be None if 'include_edge_bins' is False.")
             if self.edge_bin_temperature_range_offset is not None:
                 raise ValueError(
                     "'edge_bin_temperature_range_offset' must be None if 'include_edge_bins' is False."
@@ -244,6 +233,7 @@ class ElasticNetSettings(BaseSettings):
 
 class KernelRidgeSettings(BaseSettings):
     """Kernel Ridge alpha parameter"""
+
     alpha: float = pydantic.Field(
         default=0.0425,
         ge=0,
@@ -263,6 +253,7 @@ class KernelRidgeSettings(BaseSettings):
 
 class AdaptiveWeightsSettings(BaseSettings):
     """Adaptive Weights for ElasticNet"""
+
     enabled: bool = pydantic.Field(
         default=True,
     )
@@ -287,13 +278,13 @@ class AdaptiveWeightsSettings(BaseSettings):
 
     """Number of iterations to iterate weights"""
     max_iter: Optional[int] = pydantic.Field(
-        default=100,   # Exits early based on tol
+        default=100,  # Exits early based on tol
         ge=1,
     )
 
     """Relative difference in weights to stop iteration"""
     tol: Optional[float] = pydantic.Field(
-        default=1E-3,   # Previously was using 1e-4
+        default=1e-3,  # Previously was using 1e-4
         ge=0,
     )
 
@@ -478,7 +469,7 @@ class BaseHourlySettings(BaseSettings):
     @pydantic.model_validator(mode="after")
     def _remove_unselected_model_settings(self):
         self.model_config["frozen"] = False
-        
+
         if self.base_model == BaseModel.ELASTICNET:
             self.kernel_ridge = None
         elif self.base_model == BaseModel.KERNEL_RIDGE:

@@ -61,11 +61,8 @@ class DataSufficiency(object):
         self.settings = settings
 
     def __repr__(self):
-        return (
-            "DataSufficiency("
-            "status='{status}', criteria_name='{criteria_name}')".format(
-                status=self.status, criteria_name=self.criteria_name
-            )
+        return "DataSufficiency(status='{status}', criteria_name='{criteria_name}')".format(
+            status=self.status, criteria_name=self.criteria_name
         )
 
     def json(self):
@@ -174,8 +171,7 @@ def caltrack_sufficiency_criteria(
         critical_warnings.append(
             EEMeterWarning(
                 qualified_name=(
-                    "eemeter.caltrack_sufficiency_criteria"
-                    ".extra_data_after_requested_end_date"
+                    "eemeter.caltrack_sufficiency_criteria.extra_data_after_requested_end_date"
                 ),
                 description=("Extra data found after requested end date."),
                 data={
@@ -191,8 +187,7 @@ def caltrack_sufficiency_criteria(
         critical_warnings.append(
             EEMeterWarning(
                 qualified_name=(
-                    "eemeter.caltrack_sufficiency_criteria"
-                    ".extra_data_before_requested_start_date"
+                    "eemeter.caltrack_sufficiency_criteria.extra_data_before_requested_start_date"
                 ),
                 description=("Extra data found before requested start date."),
                 data={
@@ -205,17 +200,13 @@ def caltrack_sufficiency_criteria(
 
     n_days_total = n_days_data + n_days_start_gap + n_days_end_gap
 
-    n_negative_meter_values = data_quality.meter_value[
-        data_quality.meter_value < 0
-    ].shape[0]
+    n_negative_meter_values = data_quality.meter_value[data_quality.meter_value < 0].shape[0]
 
     if n_negative_meter_values > 0:
         # CalTrack 2.3.5
         critical_warnings.append(
             EEMeterWarning(
-                qualified_name=(
-                    "eemeter.caltrack_sufficiency_criteria" ".negative_meter_values"
-                ),
+                qualified_name=("eemeter.caltrack_sufficiency_criteria.negative_meter_values"),
                 description=(
                     "Found negative meter data values, which may indicate presence"
                     " of solar net metering."
@@ -266,8 +257,7 @@ def caltrack_sufficiency_criteria(
         critical_warnings.append(
             EEMeterWarning(
                 qualified_name=(
-                    "eemeter.caltrack_sufficiency_criteria"
-                    ".incorrect_number_of_total_days"
+                    "eemeter.caltrack_sufficiency_criteria.incorrect_number_of_total_days"
                 ),
                 description=("Total data span does not match the required value."),
                 data={"num_days": num_days, "n_days_total": n_days_total},
@@ -278,13 +268,9 @@ def caltrack_sufficiency_criteria(
         critical_warnings.append(
             EEMeterWarning(
                 qualified_name=(
-                    "eemeter.caltrack_sufficiency_criteria"
-                    ".too_many_days_with_missing_data"
+                    "eemeter.caltrack_sufficiency_criteria.too_many_days_with_missing_data"
                 ),
-                description=(
-                    "Too many days in data have missing meter data or"
-                    " temperature data."
-                ),
+                description=("Too many days in data have missing meter data or temperature data."),
                 data={"n_valid_days": n_valid_days, "n_days_total": n_days_total},
             )
         )
@@ -293,8 +279,7 @@ def caltrack_sufficiency_criteria(
         critical_warnings.append(
             EEMeterWarning(
                 qualified_name=(
-                    "eemeter.caltrack_sufficiency_criteria"
-                    ".too_many_days_with_missing_meter_data"
+                    "eemeter.caltrack_sufficiency_criteria.too_many_days_with_missing_meter_data"
                 ),
                 description=("Too many days in data have missing meter data."),
                 data={
@@ -329,9 +314,7 @@ def caltrack_sufficiency_criteria(
         # CalTRACK 2.3.6
         non_critical_warnings.append(
             EEMeterWarning(
-                qualified_name=(
-                    "eemeter.caltrack_sufficiency_criteria" ".extreme_values_detected"
-                ),
+                qualified_name=("eemeter.caltrack_sufficiency_criteria.extreme_values_detected"),
                 description=(
                     "Extreme values (greater than (median + (3 * IQR)),"
                     " must be flagged for manual review."

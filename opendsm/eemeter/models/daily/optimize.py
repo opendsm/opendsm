@@ -135,9 +135,7 @@ class BaseOptimizer:
             opt_settings (Opt_Settings): The settings for the optimization.
         """
         self.bnds = np.array(bnds)
-        self.x0 = np.clip(
-            x0, bnds[:, 0], bnds[:, 1]
-        )  # clip x0 to the bnds, just in case
+        self.x0 = np.clip(x0, bnds[:, 0], bnds[:, 1])  # clip x0 to the bnds, just in case
 
         self.obj_fcn, self.idx_opt = obj_fcn_dec(obj_fcn, x0, bnds)
 
@@ -177,9 +175,7 @@ class SciPyOptimizer(BaseOptimizer):
                 )
 
             elif algorithm.lower() == "bounded":
-                res = scipy_minimize_scalar(
-                    scipy_obj_fcn, bounds=bnds[0], method="bounded"
-                )
+                res = scipy_minimize_scalar(scipy_obj_fcn, bounds=bnds[0], method="bounded")
 
             res.x = [res.x]
 
@@ -192,20 +188,18 @@ class SciPyOptimizer(BaseOptimizer):
 
             if algorithm.lower() == "direct":
                 res = scipy_direct(
-                    scipy_obj_fcn, 
+                    scipy_obj_fcn,
                     bnds_opt,
                     maxiter=int(settings.stop_criteria_value),
                     f_min_rtol=settings.f_tol_rel,
                 )
             else:
-                res = scipy_minimize(
-                    scipy_obj_fcn, x0_opt, method=algorithm, bounds=bnds_opt
-                )
+                res = scipy_minimize(scipy_obj_fcn, x0_opt, method=algorithm, bounds=bnds_opt)
 
         res.time_elapsed = timer() - timer_start
 
         return res
-    
+
 
 class NLoptOptimizer(BaseOptimizer):
     def run(self):
@@ -231,7 +225,7 @@ class NLoptOptimizer(BaseOptimizer):
 
         x0_opt = x0[idx_opt]
         bnds_opt = bnds[idx_opt, :].T
-        
+
         algorithm = nlopt_algorithms[settings.algorithm]
 
         opt = nlopt.opt(algorithm, np.size(x0_opt))
@@ -268,7 +262,7 @@ class NLoptOptimizer(BaseOptimizer):
                 initial_step, (x1 < bnds_opt[0]) | (x1 > bnds_opt[1]), -initial_step
             )  # first step in direction of more variable space
 
-            opt.set_initial_step(initial_step)        
+            opt.set_initial_step(initial_step)
 
         # alter default size of population in relevant algorithms
         if settings.algorithm == "nlopt_crs2_lm":
@@ -278,12 +272,10 @@ class NLoptOptimizer(BaseOptimizer):
         elif settings.algorithm == "nlopt_isres":
             default_pop_size = 20 * (len(x0_opt) + 1)
 
-            opt.set_population(
-                int(np.rint(default_pop_size * settings["initial_pop_multiplier"]))
-            )
+            opt.set_population(int(np.rint(default_pop_size * settings["initial_pop_multiplier"])))
 
         # if using multistart algorithm as global, set subopt
-        if (settings.algorithm == "nlopt_mlsl_lds"):  
+        if settings.algorithm == "nlopt_mlsl_lds":
             raise NotImplementedError("nlopt_mlsl_lds not implemented")
             local_algorithm = nlopt_algorithms[self.opt_settings.algorithm]
             sub_opt = nlopt.opt(local_algorithm, np.size(x0_opt))
@@ -330,7 +322,7 @@ class InitialGuessOptimizer:
         """
         self.x0 = np.array(x0)
         self.bnds = np.array(bnds)
-        
+
         self.obj_fcn = obj_fcn
 
         self.settings = settings
@@ -396,7 +388,7 @@ class Optimizer:
         self.coef_id = coef_id
         self.x0 = np.array(x0)
         self.bnds = np.array(bnds)
-        
+
         self.obj_fcn = obj_fcn
 
         self.settings = settings
@@ -422,7 +414,7 @@ class Optimizer:
                 optimizer_class = SciPyOptimizer
             elif settings.algorithm[:5] == "nlopt":
                 optimizer_class = NLoptOptimizer
-                
+
             optimizer = optimizer_class(self.obj_fcn, x0, bnds, settings)
             res = optimizer.run()
 

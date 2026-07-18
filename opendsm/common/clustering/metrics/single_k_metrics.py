@@ -2,21 +2,22 @@
 # -*- coding: utf-8 -*-
 """
 
-   Copyright 2014-2025 OpenDSM contributors
+Copyright 2014-2025 OpenDSM contributors
 
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-       http://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 """
+
 from __future__ import annotations
 
 import warnings
@@ -80,7 +81,7 @@ class _LabeledDistanceProvider:
                 sub.flags.writeable = False
                 self._diag_cache[li] = sub
             return self._diag_cache[li]
-        
+
         return self._dist[np.ix_(self._label_indices[li], self._label_indices[lj])]
 
 
@@ -90,8 +91,7 @@ class _ClusterPairDistanceMetrics(ArbitraryPydanticModel):
     """
 
     cluster_ids: tuple[int, int] | None = pydantic.Field(
-        default=None,
-        description="The two clusters to compare"
+        default=None, description="The two clusters to compare"
     )
 
     distance: np.ndarray = pydantic.Field(
@@ -126,7 +126,7 @@ class _ClusterPairDistanceMetrics(ArbitraryPydanticModel):
     @computed_field_cached_property()
     def mad(self) -> float:
         return median_absolute_deviation(self.distance)
-    
+
     @computed_field_cached_property()
     def lower_quantile(self) -> float:
         return np.quantile(self.distance, 0.05)
@@ -139,7 +139,7 @@ class _ClusterPairDistanceMetrics(ArbitraryPydanticModel):
     def min(self) -> float:
         positive = self.distance[self.distance > 0]
         return float(np.min(positive)) if positive.size > 0 else 0.0
-    
+
     @computed_field_cached_property()
     def max(self) -> float:
         return np.max(self.distance)
@@ -149,6 +149,7 @@ class _SingleClusterMetrics(ArbitraryPydanticModel):
     """
     Metrics within a single cluster
     """
+
     cluster_id: int | None = pydantic.Field(
         default=None,
     )
@@ -163,11 +164,17 @@ class _SingleClusterMetrics(ArbitraryPydanticModel):
         default=None,
     )
 
-    distance: dict[int, _ClusterPairDistanceMetrics] | _ClusterPairDistanceMetrics = pydantic.Field()
+    distance: dict[int, _ClusterPairDistanceMetrics] | _ClusterPairDistanceMetrics = (
+        pydantic.Field()
+    )
 
-    distance_to_mean: dict[int | str, _ClusterPairDistanceMetrics] | _ClusterPairDistanceMetrics = pydantic.Field()
+    distance_to_mean: dict[int | str, _ClusterPairDistanceMetrics] | _ClusterPairDistanceMetrics = (
+        pydantic.Field()
+    )
 
-    distance_to_median: dict[int | str, _ClusterPairDistanceMetrics] | _ClusterPairDistanceMetrics = pydantic.Field()
+    distance_to_median: (
+        dict[int | str, _ClusterPairDistanceMetrics] | _ClusterPairDistanceMetrics
+    ) = pydantic.Field()
 
     mean_distance_intra_cluster: np.ndarray | None = pydantic.Field(
         default=None,
@@ -198,7 +205,7 @@ class _SingleClusterMetrics(ArbitraryPydanticModel):
         """Norm of the per-dimension variance vector: ||σ||"""
         if self.var is None:
             return None
-        
+
         return np.linalg.norm(self.var)
 
     @computed_field_cached_property()
@@ -230,7 +237,7 @@ class _SingleClusterMetrics(ArbitraryPydanticModel):
 
         a = self.mean_distance_intra_cluster
         b = self.mean_distance_to_nearest_cluster
-        
+
         return (b - a) / np.maximum(a, b)
 
     @computed_field_cached_property()
@@ -247,6 +254,7 @@ class _SingleClusterMetrics(ArbitraryPydanticModel):
 class SingleKMetrics(ArbitraryPydanticModel):
     # TODO: Update the doc string
     """Input dataframe to be used for metrics calculations"""
+
     data: np.ndarray = pydantic.Field(
         exclude=True,
         repr=False,
@@ -265,14 +273,15 @@ class SingleKMetrics(ArbitraryPydanticModel):
         default=None,
     )
 
-
     # Distance matrix — computed lazily on first access.  LabelStore injects
     # a shared DistanceProvider so the O(n²p) pdist is computed at most once
     # per dataset regardless of how many k-values are evaluated.  Indices that
     # never read the distance matrix (e.g. davies_bouldin, calinski_harabasz)
     # will not trigger computation at all.
     distance: np.ndarray | None = pydantic.Field(
-        default=None, exclude=True, repr=False,
+        default=None,
+        exclude=True,
+        repr=False,
     )
 
     _eps: float = 1e-10
@@ -280,7 +289,6 @@ class SingleKMetrics(ArbitraryPydanticModel):
     _merged_full: np.ndarray = pydantic.PrivateAttr(default_factory=lambda: np.array([]))
     _coverage: float = pydantic.PrivateAttr(default=1.0)
     _dist_provider: object | None = pydantic.PrivateAttr(default=None)
-
 
     @classmethod
     def available_indices(cls) -> list[str]:
@@ -290,10 +298,10 @@ class SingleKMetrics(ArbitraryPydanticModel):
         Adding a new *_index property to this class automatically
         makes it available in the score council.
         """
-        return sorted(name for name in dir(cls) if name.endswith('_index'))
+        return sorted(name for name in dir(cls) if name.endswith("_index"))
 
-    @pydantic.model_validator(mode='after')
-    def _validate_data(self) -> 'SingleKMetrics':
+    @pydantic.model_validator(mode="after")
+    def _validate_data(self) -> "SingleKMetrics":
         if self.data.shape[0] == 0:
             raise ValueError("Data must have at least one row")
 
@@ -308,11 +316,11 @@ class SingleKMetrics(ArbitraryPydanticModel):
         # Ensure _all sentinel doesn't collide with actual labels
         if label_min < self._all:
             len_label_min = len(str(abs(int(label_min))))
-            self._all = -int('9' * len_label_min)
+            self._all = -int("9" * len_label_min)
 
             # and just in case in case
             if self._all == label_min:
-                self._all = -int('9' * (len_label_min + 1))
+                self._all = -int("9" * (len_label_min + 1))
 
         return self
 
@@ -323,7 +331,9 @@ class SingleKMetrics(ArbitraryPydanticModel):
             if self._dist_provider is not None:
                 self.distance = self._dist_provider.get()
             else:
-                self.distance = squareform(pdist(self.data.astype(np.float32, copy=False))).astype(np.float32)
+                self.distance = squareform(pdist(self.data.astype(np.float32, copy=False))).astype(
+                    np.float32
+                )
         return self.distance
 
     @computed_field_cached_property()
@@ -360,8 +370,7 @@ class SingleKMetrics(ArbitraryPydanticModel):
         its scatter matrix singular.  Determinant-based indices must
         abstain (return NaN) because det(W_k) = 0 trivially."""
         d = self.data.shape[1]
-        return any(len(self._label_indices[lbl]) < d
-                   for lbl in self.unique_labels)
+        return any(len(self._label_indices[lbl]) < d for lbl in self.unique_labels)
 
     def _safe_index(self, fn) -> float:
         """Wrap an index computation: return NaN for k=1 and suppress
@@ -377,8 +386,7 @@ class SingleKMetrics(ArbitraryPydanticModel):
 
     @computed_field_cached_property()
     def _label_indices(self) -> dict[int, np.ndarray]:
-        return {label: np.where(self.labels == label)[0]
-                for label in self.unique_labels}
+        return {label: np.where(self.labels == label)[0] for label in self.unique_labels}
 
     @computed_field_cached_property()
     def _n(self) -> np.ndarray:
@@ -437,12 +445,14 @@ class SingleKMetrics(ArbitraryPydanticModel):
     @computed_field_cached_property()
     def _distance_to_median(self) -> np.ndarray:
         return cdist(self.data, self._median)
-    
+
     @computed_field_cached_property()
     def _labeled_distance(self) -> _LabeledDistanceProvider:
         return _LabeledDistanceProvider(self._distance, self._label_indices)
 
-    def _labeled_distance_to_centroid(self, distance_matrix: np.ndarray) -> dict[tuple[int, int], np.ndarray]:
+    def _labeled_distance_to_centroid(
+        self, distance_matrix: np.ndarray
+    ) -> dict[tuple[int, int], np.ndarray]:
         unique_labels = [self._all, *self.unique_labels]
         all_idx = np.arange(self.n_total)
 
@@ -467,11 +477,11 @@ class SingleKMetrics(ArbitraryPydanticModel):
         if agg == "mean":
             # One matrix multiply gives mean distances from every point to
             # every cluster; then per-cluster_i: mask out self and take min.
-            mean_dists = self._cluster_mean_distances   # (n, k)
+            mean_dists = self._cluster_mean_distances  # (n, k)
             data = {}
             for c_i, label_i in enumerate(self.unique_labels):
                 idx_i = self._label_indices[label_i]
-                rows  = mean_dists[idx_i, :].copy()    # (n_i, k)
+                rows = mean_dists[idx_i, :].copy()  # (n_i, k)
                 rows[:, c_i] = np.inf
                 data[label_i] = rows.min(axis=1)
             return data
@@ -482,7 +492,7 @@ class SingleKMetrics(ArbitraryPydanticModel):
         # vectorised broadcast, then use them for both intra- and inter-cluster
         # median extraction without re-sorting.
         return self._median_silhouette_arrays[1]
-    
+
     @computed_field_cached_property()
     def _cluster_median_distances(self) -> np.ndarray:
         """(n, k) matrix: median distance from every point to every cluster.
@@ -500,7 +510,7 @@ class SingleKMetrics(ArbitraryPydanticModel):
         for c, label_c in enumerate(self.unique_labels):
             idx_c = self._label_indices[label_c]
             n_c = len(idx_c)
-            dists_c = dist[idx_c, :].T   # (n, n_c) via (n_c, n).T
+            dists_c = dist[idx_c, :].T  # (n, n_c) via (n_c, n).T
             mid = n_c // 2
             if n_c % 2 == 1:
                 part = np.partition(dists_c, mid, axis=1)
@@ -520,18 +530,18 @@ class SingleKMetrics(ArbitraryPydanticModel):
         intra   : dict label → (n_i,) array of median intra-cluster distances
         nearest : dict label → (n_i,) array of min-median nearest-cluster distances
         """
-        dist            = self._distance                   # (n, n) float32
-        cluster_medians = self._cluster_median_distances   # (n, k)
+        dist = self._distance  # (n, n) float32
+        cluster_medians = self._cluster_median_distances  # (n, k)
 
-        intra   = {}
+        intra = {}
         nearest = {}
 
         for c_i, label_i in enumerate(self.unique_labels):
             idx_i = self._label_indices[label_i]
-            n_i   = len(idx_i)
+            n_i = len(idx_i)
 
             if n_i == 1:
-                intra[label_i]   = np.array([0.0], dtype=dist.dtype)
+                intra[label_i] = np.array([0.0], dtype=dist.dtype)
                 nearest[label_i] = np.array([0.0], dtype=dist.dtype)
                 continue
 
@@ -541,7 +551,7 @@ class SingleKMetrics(ArbitraryPydanticModel):
             # distances.  Self is placed last by inf → offset position by 1.
             dists_ii = dist[np.ix_(idx_i, idx_i)].copy()
             np.fill_diagonal(dists_ii, np.inf)
-            n_rem = n_i - 1   # number of non-self distances per row
+            n_rem = n_i - 1  # number of non-self distances per row
             # inf sorts last → non-self values occupy positions 0..n_rem-1
             if n_rem % 2 == 1:
                 pos = n_rem // 2
@@ -553,7 +563,7 @@ class SingleKMetrics(ArbitraryPydanticModel):
                 intra[label_i] = (sr[:, lo] + sr[:, hi]) * 0.5
 
             # ── nearest-cluster median ────────────────────────────────────
-            med_i = cluster_medians[idx_i, :].copy()   # (n_i, k)
+            med_i = cluster_medians[idx_i, :].copy()  # (n_i, k)
             med_i[:, c_i] = np.inf
             nearest[label_i] = med_i.min(axis=1)
 
@@ -562,7 +572,7 @@ class SingleKMetrics(ArbitraryPydanticModel):
     @computed_field_cached_property()
     def _labeled_mean_distance_to_nearest_cluster(self) -> dict[int, np.ndarray]:
         return self._labeled_distance_to_nearest_cluster(agg="mean")
-    
+
     @computed_field_cached_property()
     def _labeled_median_distance_to_nearest_cluster(self) -> dict[int, np.ndarray]:
         return self._labeled_distance_to_nearest_cluster(agg="median")
@@ -573,11 +583,11 @@ class SingleKMetrics(ArbitraryPydanticModel):
             # _cluster_mean_distances[i, c] = (sum of distances from i to
             # all cluster-c points, including self=0) / n_c.
             # For intra-cluster mean excluding self: multiply by n_c/(n_c-1).
-            mean_dists = self._cluster_mean_distances   # (n, k)
+            mean_dists = self._cluster_mean_distances  # (n, k)
             data = {}
             for c_idx, label_i in enumerate(self.unique_labels):
                 idx_i = self._label_indices[label_i]
-                n_i   = len(idx_i)
+                n_i = len(idx_i)
                 if n_i == 1:
                     data[label_i] = np.array([0.0], dtype=mean_dists.dtype)
                 else:
@@ -585,15 +595,15 @@ class SingleKMetrics(ArbitraryPydanticModel):
             return data
 
         return self._median_silhouette_arrays[0]
-    
+
     @computed_field_cached_property()
     def _labeled_mean_distance_intra_cluster(self) -> dict[int, np.ndarray]:
         return self._labeled_distance_intra_cluster(agg="mean")
-    
+
     @computed_field_cached_property()
     def _labeled_median_distance_intra_cluster(self) -> dict[int, np.ndarray]:
         return self._labeled_distance_intra_cluster(agg="median")
-        
+
     @computed_field_cached_property()
     def all(self) -> _SingleClusterMetrics:
         key = (self._all, self._all)
@@ -605,7 +615,7 @@ class SingleKMetrics(ArbitraryPydanticModel):
         distance_to_mean = _ClusterPairDistanceMetrics(
             distance=self._labeled_distance_to_mean[key],
         )
-        
+
         distance_to_median = _ClusterPairDistanceMetrics(
             distance=self._labeled_distance_to_median[key],
         )
@@ -633,14 +643,18 @@ class SingleKMetrics(ArbitraryPydanticModel):
 
             # pair distance metrics
             distance = {}
-            distance_to_mean = {"all": _ClusterPairDistanceMetrics(
-                cluster_ids=(label, self._all),
-                distance=self._labeled_distance_to_mean[(label, self._all)],
-            )}
-            distance_to_median = {"all": _ClusterPairDistanceMetrics(
-                cluster_ids=(label, self._all),
-                distance=self._labeled_distance_to_median[(label, self._all)],
-            )}
+            distance_to_mean = {
+                "all": _ClusterPairDistanceMetrics(
+                    cluster_ids=(label, self._all),
+                    distance=self._labeled_distance_to_mean[(label, self._all)],
+                )
+            }
+            distance_to_median = {
+                "all": _ClusterPairDistanceMetrics(
+                    cluster_ids=(label, self._all),
+                    distance=self._labeled_distance_to_median[(label, self._all)],
+                )
+            }
 
             for label_j in self.unique_labels:
                 key = (label, label_j)
@@ -663,8 +677,10 @@ class SingleKMetrics(ArbitraryPydanticModel):
             mean_distance_intra_cluster = self._labeled_mean_distance_intra_cluster[label]
             median_distance_intra_cluster = self._labeled_median_distance_intra_cluster[label]
             mean_distance_to_nearest_cluster = self._labeled_mean_distance_to_nearest_cluster[label]
-            median_distance_to_nearest_cluster = self._labeled_median_distance_to_nearest_cluster[label]
-            
+            median_distance_to_nearest_cluster = self._labeled_median_distance_to_nearest_cluster[
+                label
+            ]
+
             data[label] = _SingleClusterMetrics(
                 cluster_id=label,
                 n=n,
@@ -717,7 +733,9 @@ class SingleKMetrics(ArbitraryPydanticModel):
         """
         Total Scatter Matrix
         """
-        centered_data = self.data.astype(np.float64, copy=False) - self._mean[0].astype(np.float64, copy=False)
+        centered_data = self.data.astype(np.float64, copy=False) - self._mean[0].astype(
+            np.float64, copy=False
+        )
         return centered_data.T @ centered_data
 
     @computed_field_cached_property()
@@ -734,7 +752,7 @@ class SingleKMetrics(ArbitraryPydanticModel):
         Between-Cluster Sum of Squares
         """
         diffs = self._mean[1:] - self._mean[0]
-        sq_dists = np.sum(diffs ** 2, axis=1)
+        sq_dists = np.sum(diffs**2, axis=1)
         BCSS = np.dot(self._n[1:], sq_dists)
 
         return BCSS
@@ -903,11 +921,11 @@ class SingleKMetrics(ArbitraryPydanticModel):
                 # Singleton cluster: s_i = 0 (neutral, not "perfect").
                 # A singleton has no intra-cluster information, so its
                 # silhouette is undefined.  Convention matches sklearn.
-                coefficients[idx:idx+n_points] = 0.0
+                coefficients[idx : idx + n_points] = 0.0
             else:
                 denom = np.maximum(a, b)
                 coefs = np.divide(b - a, denom, out=np.zeros_like(denom), where=denom > 0)
-                coefficients[idx:idx+n_points] = coefs
+                coefficients[idx : idx + n_points] = coefs
             idx += n_points
 
         return coefficients
@@ -965,26 +983,28 @@ class SingleKMetrics(ArbitraryPydanticModel):
         # Exclude singleton clusters: their scatter is trivially 0,
         # which makes them look "perfect" and biases DB downward.
         # Compute DB only over clusters with >= 2 members.
-        multi_mask = np.array([
-            len(self._label_indices[lbl]) >= 2
-            for lbl in self.unique_labels
-        ])
+        multi_mask = np.array([len(self._label_indices[lbl]) >= 2 for lbl in self.unique_labels])
         if multi_mask.sum() < 2:
             return np.nan
 
         multi_indices = np.where(multi_mask)[0]
         k_eff = len(multi_indices)
 
-        intracluster_distance = np.array([
-            self._distance_to_mean[self._label_indices[self.unique_labels[i]], i + 1].mean()
-            for i in multi_indices
-        ], dtype=np.float32)
+        intracluster_distance = np.array(
+            [
+                self._distance_to_mean[self._label_indices[self.unique_labels[i]], i + 1].mean()
+                for i in multi_indices
+            ],
+            dtype=np.float32,
+        )
 
         centroids = self._mean[1:].astype(np.float32, copy=False)[multi_indices]
         intercluster_distance = squareform(pdist(centroids))
 
-        with np.errstate(divide='ignore', invalid='ignore'):
-            similarity = (intracluster_distance[:, None] + intracluster_distance[None, :]) / intercluster_distance
+        with np.errstate(divide="ignore", invalid="ignore"):
+            similarity = (
+                intracluster_distance[:, None] + intracluster_distance[None, :]
+            ) / intercluster_distance
 
         np.fill_diagonal(similarity, 0)
         similarity = np.nan_to_num(similarity, nan=0.0, posinf=0.0)
@@ -1058,14 +1078,13 @@ class SingleKMetrics(ArbitraryPydanticModel):
         else:
             # Standard: distance between all point pairs in different clusters
             for i, label_i in enumerate(self.unique_labels):
-                for label_j in self.unique_labels[i+1:]:
+                for label_j in self.unique_labels[i + 1 :]:
                     min_dist = np.min(self._labeled_distance[label_i, label_j])
                     min_inter_distance = min(min_inter_distance, min_dist)
 
         # Find maximum intra-cluster diameter
         max_intra_diameter = max(
-            np.max(self._labeled_distance[label, label])
-            for label in self.unique_labels
+            np.max(self._labeled_distance[label, label]) for label in self.unique_labels
         )
 
         # Avoid division by zero
@@ -1094,8 +1113,7 @@ class SingleKMetrics(ArbitraryPydanticModel):
         # Exclude singleton clusters: their WCSS contribution is trivially
         # 0, which biases XB downward.  Compute over non-singleton clusters
         # and their centroids only.
-        multi_labels = [lbl for lbl in self.unique_labels
-                        if len(self._label_indices[lbl]) >= 2]
+        multi_labels = [lbl for lbl in self.unique_labels if len(self._label_indices[lbl]) >= 2]
         if len(multi_labels) < 1:
             return np.nan
 
@@ -1106,16 +1124,15 @@ class SingleKMetrics(ArbitraryPydanticModel):
             idx = self._label_indices[lbl]
             c_idx = list(self.unique_labels).index(lbl)
             dists = self._distance_to_mean[idx, c_idx + 1]
-            wcss_eff += float(np.sum(dists ** 2))
+            wcss_eff += float(np.sum(dists**2))
             n_eff += len(idx)
 
         # Centroid separation over non-singleton centroids
-        multi_c_indices = [list(self.unique_labels).index(lbl)
-                           for lbl in multi_labels]
+        multi_c_indices = [list(self.unique_labels).index(lbl) for lbl in multi_labels]
         centroids = self._mean[1:][multi_c_indices]
 
         if len(centroids) > 1:
-            d_sq = pdist(centroids, metric='sqeuclidean')
+            d_sq = pdist(centroids, metric="sqeuclidean")
             d_min_squared = float(np.min(d_sq))
         else:
             return np.inf
@@ -1144,11 +1161,13 @@ class SingleKMetrics(ArbitraryPydanticModel):
 
             inter_sum = sum(
                 self._labeled_distance[label_i, lj].sum()
-                for lj in self.unique_labels if lj != label_i
+                for lj in self.unique_labels
+                if lj != label_i
             )
             inter_count = sum(
                 self._labeled_distance[label_i, lj].size
-                for lj in self.unique_labels if lj != label_i
+                for lj in self.unique_labels
+                if lj != label_i
             )
             intercluster_distance += inter_sum / inter_count
 
@@ -1317,11 +1336,11 @@ class SingleKMetrics(ArbitraryPydanticModel):
         between_sorted = np.sort(between_dists)
 
         # For each within_dist, count concordant (between > within) and discordant (between < within)
-        left_indices = np.searchsorted(between_sorted, within_dists, side='left')
-        right_indices = np.searchsorted(between_sorted, within_dists, side='right')
+        left_indices = np.searchsorted(between_sorted, within_dists, side="left")
+        right_indices = np.searchsorted(between_sorted, within_dists, side="right")
 
-        s_plus = np.sum(n_b - right_indices)   # between > within (concordant)
-        s_minus = np.sum(left_indices)          # between < within (discordant)
+        s_plus = np.sum(n_b - right_indices)  # between > within (concordant)
+        s_minus = np.sum(left_indices)  # between < within (discordant)
 
         denom = s_plus + s_minus
         if denom == 0:
@@ -1369,7 +1388,7 @@ class SingleKMetrics(ArbitraryPydanticModel):
         if std_all < self._eps:
             return np.nan  # all distances equal → correlation undefined
 
-        res = ((mean_between - mean_within) / std_all) * np.sqrt(n_w * n_b / (n_t ** 2))
+        res = ((mean_between - mean_within) / std_all) * np.sqrt(n_w * n_b / (n_t**2))
 
         res *= -1
 
@@ -1429,7 +1448,7 @@ class SingleKMetrics(ArbitraryPydanticModel):
             return np.nan  # determinant uncomputable → undefined
 
         # KSq-DetW = K² × det(W)
-        res = (k ** 2) * det_W
+        res = (k**2) * det_W
 
         res *= -1
 
@@ -1547,29 +1566,27 @@ class SingleKMetrics(ArbitraryPydanticModel):
         #   in_radius_dtm[i, c] = dtm[i, c] <= stdev     (n, k) bool
         #   M[i, c]             = point i ∈ cluster c    (n, k) bool
         #   union_mask[i, ci, cj] = M[i,ci] | M[i,cj]   (n, k, k) bool
-        dtm = self._distance_to_mean[:, 1:]                    # (n, k)
-        in_radius_dtm = dtm <= stdev                           # (n, k) bool
+        dtm = self._distance_to_mean[:, 1:]  # (n, k)
+        in_radius_dtm = dtm <= stdev  # (n, k) bool
 
-        M = (self.labels[:, None] == self.unique_labels[None, :])  # (n, k) bool
-        union_mask = M[:, :, None] | M[:, None, :]             # (n, k, k) bool
+        M = self.labels[:, None] == self.unique_labels[None, :]  # (n, k) bool
+        union_mask = M[:, :, None] | M[:, None, :]  # (n, k, k) bool
 
         # Distances from all n points to all k² midpoints in one cdist call.
         midpoints = (cluster_means[:, None, :] + cluster_means[None, :, :]) / 2.0
         dist_mid = cdist(self.data, midpoints.reshape(k * k, p)).reshape(n, k, k)
-        in_radius_mid = dist_mid <= stdev                      # (n, k, k) bool
+        in_radius_mid = dist_mid <= stdev  # (n, k, k) bool
 
         # density_ci[ci, cj] = count of union(ci,cj) points within stdev of c_ci
         # in_radius_dtm[:, ci] broadcast over cj axis:
-        density_ci = (in_radius_dtm[:, :, None] & union_mask).sum(axis=0)   # (k, k)
-        density_cj = (in_radius_dtm[:, None, :] & union_mask).sum(axis=0)   # (k, k)
-        density_midpoint = (in_radius_mid & union_mask).sum(axis=0)          # (k, k)
+        density_ci = (in_radius_dtm[:, :, None] & union_mask).sum(axis=0)  # (k, k)
+        density_cj = (in_radius_dtm[:, None, :] & union_mask).sum(axis=0)  # (k, k)
+        density_midpoint = (in_radius_mid & union_mask).sum(axis=0)  # (k, k)
 
-        max_density = np.maximum(density_ci, density_cj)                     # (k, k)
+        max_density = np.maximum(density_ci, density_cj)  # (k, k)
         offdiag = np.eye(k, dtype=bool) ^ True
         valid = offdiag & (max_density > 0)
-        dens_bw = (
-            np.sum(density_midpoint[valid] / max_density[valid]) / (k * (k - 1))
-        )
+        dens_bw = np.sum(density_midpoint[valid] / max_density[valid]) / (k * (k - 1))
 
         res = scat + dens_bw
 
@@ -1691,8 +1708,8 @@ class SingleKMetrics(ArbitraryPydanticModel):
         dtm_masked[np.arange(self.n_total), own_col] = np.inf
         b = np.min(dtm_masked, axis=1)
 
-        ratio = np.where(a < self._eps, 0.0, np.inf)          # fallback when b ≈ 0
-        np.divide(a, b, out=ratio, where=b > self._eps)       # only divide where safe
+        ratio = np.where(a < self._eps, 0.0, np.inf)  # fallback when b ≈ 0
+        np.divide(a, b, out=ratio, where=b > self._eps)  # only divide where safe
         res = float(np.mean(ratio))
 
         return res
@@ -1805,8 +1822,8 @@ class SingleKMetrics(ArbitraryPydanticModel):
         centroids = self._mean[1:]  # (K, p)
         min_inter = np.inf
         for i in range(k - 1):
-            diffs = centroids[i + 1:] - centroids[i]
-            dists = np.sqrt(np.sum(diffs ** 2, axis=1))
+            diffs = centroids[i + 1 :] - centroids[i]
+            dists = np.sqrt(np.sum(diffs**2, axis=1))
             min_inter = min(min_inter, np.min(dists))
 
         # Intra-cluster: max over clusters of mean distance to own centroid

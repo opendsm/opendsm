@@ -110,8 +110,7 @@ def selection_criteria(
     # Akaike information criterion corrected - Hurvich and Tsai (1989)
     elif model_selection_criteria.lower() == "aicc":
         criteria = (
-            -2 * neg_log_likelihood(loss, N)
-            + c0 * (2 * K + (2 * K * (K + 1) / df_penalized)) ** d0
+            -2 * neg_log_likelihood(loss, N) + c0 * (2 * K + (2 * K * (K + 1) / df_penalized)) ** d0
         )
 
     # Consistent Akaike information criterion - Bozdogan (1987)
@@ -125,27 +124,19 @@ def selection_criteria(
 
     # Sample-size adjusted Bayesian information criteria
     elif model_selection_criteria.lower() == "sabic":
-        criteria = (
-            -2 * neg_log_likelihood(loss, N) + c0 * K * np.log((N + 2) / 24) ** d0
-        )
+        criteria = -2 * neg_log_likelihood(loss, N) + c0 * K * np.log((N + 2) / 24) ** d0
 
     # Deviance information criterion
     elif model_selection_criteria.lower() == "dic":
-        raise NotImplementedError(
-            "DIC has not been implmented as a model selection criterion"
-        )
+        raise NotImplementedError("DIC has not been implmented as a model selection criterion")
 
     # Widely applicable (or Watanabe-Akaike) information criterion
     elif model_selection_criteria.lower() == "waic":
-        raise NotImplementedError(
-            "WAIC has not been implmented as a model selection criterion"
-        )
+        raise NotImplementedError("WAIC has not been implmented as a model selection criterion")
 
     # Widely applicable (or Watanabe) Bayesian information criterion
     elif model_selection_criteria.lower() == "wbic":
-        raise NotImplementedError(
-            "WBIC has not been implmented as a model selection criterion"
-        )
+        raise NotImplementedError("WBIC has not been implmented as a model selection criterion")
 
     if model_selection_criteria.lower() not in ["rmse", "rmse_adj"]:
         criteria /= N  # Normalize to number of datapoints

@@ -159,10 +159,7 @@ class StratifiedSamplingBinSelector:
         )
         disqualified_n_bin_options = []
         for n_bin_option in self.n_bin_options_df.to_dict("records"):
-            [
-                self.model.set_n_bins(name, n_bins)
-                for name, n_bins in n_bin_option.items()
-            ]
+            [self.model.set_n_bins(name, n_bins) for name, n_bins in n_bin_option.items()]
             bins_selected_str = self.model.get_all_n_bins_as_str()
 
             if n_bin_option in disqualified_n_bin_options:
@@ -194,10 +191,9 @@ class StratifiedSamplingBinSelector:
                     f"{min_n_sampled_to_n_treatment_ratio}:1."
                 )
                 disqualified_options = self.n_bin_options_df.loc[
-                    (
-                        self.n_bin_options_df[list(n_bin_option)]
-                        >= pd.Series(n_bin_option)
-                    ).all(axis=1)
+                    (self.n_bin_options_df[list(n_bin_option)] >= pd.Series(n_bin_option)).all(
+                        axis=1
+                    )
                 ].to_dict("records")
                 disqualified_n_bin_options.extend(disqualified_options)
                 n_bin_results.append(
@@ -252,8 +248,7 @@ class StratifiedSamplingBinSelector:
             self.equiv_samples.append(equiv_sample.copy(deep=True))
 
             logging.info(
-                f"Computing bins: {bins_selected_str} distance: "
-                f"{equivalence_distance:.2f}, "
+                f"Computing bins: {bins_selected_str} distance: {equivalence_distance:.2f}, "
                 #  f"pct: {100*equivalence_distance/sum(equiv_treatment[equivalence_value_col]):.2f}"
             )
             if equivalence_distance < min_distance:
@@ -292,9 +287,7 @@ class StratifiedSamplingBinSelector:
         self.n_samples_approx = n_samples_approx
 
         # get averages that can be accessed later
-        self.equiv_treatment_avg = self.equiv_treatment.groupby("feature_index")[
-            "value"
-        ].mean()
+        self.equiv_treatment_avg = self.equiv_treatment.groupby("feature_index")["value"].mean()
         self.equiv_treatment_avg = self.equiv_treatment_avg.rename("treatment")
 
         self.equiv_pool_avg = (
@@ -342,9 +335,7 @@ class StratifiedSamplingBinSelector:
 
     def results_as_json(self):
         equiv_samples_df = pd.concat(self.equiv_samples)
-        selected_sample_df = equiv_samples_df[
-            equiv_samples_df["bin_str"] == self.bins_selected_str
-        ]
+        selected_sample_df = equiv_samples_df[equiv_samples_df["bin_str"] == self.bins_selected_str]
 
         return {
             "bins_selected": self.bins_selected_str,
@@ -363,9 +354,7 @@ class StratifiedSamplingBinSelector:
                 self.model.treatment_label: self.equiv_treatment_avg.reset_index().to_dict(
                     "records"
                 ),
-                self.model.pool_label: self.equiv_pool_avg.reset_index().to_dict(
-                    "records"
-                ),
+                self.model.pool_label: self.equiv_pool_avg.reset_index().to_dict("records"),
             },
         }
 
@@ -375,9 +364,7 @@ class StratifiedSamplingBinSelector:
             axis=1,
         )
 
-        wrong_models = [
-            m for m in self.equiv_samples_avg.columns if m != self.bins_selected_str
-        ]
+        wrong_models = [m for m in self.equiv_samples_avg.columns if m != self.bins_selected_str]
 
         if plot:
             fig = Figure()

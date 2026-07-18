@@ -61,9 +61,7 @@ def fit_tidd(
         model_fcn, weight_fcn, TSS_fcn, T, obs, weights, settings, alpha, coef_id, initial_fit
     )
 
-    res = Optimizer(
-        obj_fcn, x0.to_np_array(), bnds, coef_id, settings, opt_options
-    ).run()
+    res = Optimizer(obj_fcn, x0.to_np_array(), bnds, coef_id, settings, opt_options).run()
 
     return res
 
@@ -102,11 +100,7 @@ def _tidd_update_bnds(new_bnds, bnds):
     return new_bnds
 
 
-def _tidd_weight(
-    intercept, T, residual, sigma=3.0, quantile=0.25, alpha=2.0, min_weight=0.0
-):
+def _tidd_weight(intercept, T, residual, sigma=3.0, quantile=0.25, alpha=2.0, min_weight=0.0):
     model_vars = set_full_model_coeffs(intercept)
 
-    return full_model_weight(
-        *model_vars, T, residual, sigma, quantile, alpha, min_weight
-    )
+    return full_model_weight(*model_vars, T, residual, sigma, quantile, alpha, min_weight)

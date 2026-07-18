@@ -196,10 +196,10 @@ def _self_tuning_affinity_sparse(data: np.ndarray, k: int, k_connect: int):
     sigma = _sigma_floor(np.maximum(dist[:, k_eff], 1e-10))
 
     rows = np.repeat(np.arange(n), k_connect)
-    cols = idx[:, 1:k_connect + 1].ravel()
-    d_flat = dist[:, 1:k_connect + 1].ravel()
+    cols = idx[:, 1 : k_connect + 1].ravel()
+    d_flat = dist[:, 1 : k_connect + 1].ravel()
 
-    vals = np.exp(-(d_flat ** 2) / (sigma[rows] * sigma[cols]))
+    vals = np.exp(-(d_flat**2) / (sigma[rows] * sigma[cols]))
     A = csr_matrix((vals, (rows, cols)), shape=(n, n))
     return A.maximum(A.T)
 
@@ -304,7 +304,7 @@ def _anisotropic_affinity_sparse(
     local_inv_scales = np.empty((n, n_pcs), dtype=np.float32)
 
     for i in range(n):
-        neighbors = data[idx[i, 1:k_eff + 1]]  # (k_eff, d)
+        neighbors = data[idx[i, 1 : k_eff + 1]]  # (k_eff, d)
         centered = neighbors - data[i]
         if n_pcs >= min(k_eff, d):
             _, s, Vt = np.linalg.svd(centered, full_matrices=False)
@@ -334,16 +334,16 @@ def _anisotropic_affinity_sparse(
 
     # Build sparse affinity: for each edge (i, j), compute anisotropic distance
     rows = np.repeat(np.arange(n), k_connect)
-    cols = idx[:, 1:k_connect + 1].ravel()
+    cols = idx[:, 1 : k_connect + 1].ravel()
     diff = data[cols] - data[rows]  # (n_edges, d)
 
     # Mahalanobis distance from j to i's local model:
     # d_M(i,j)² = Σ_pc (diff · axis_pc / scale_pc)²
     # Project diff onto each point's local PCs and scale
-    proj_i = np.einsum('ed,ecd->ec', diff, local_axes[rows])  # (n_edges, n_pcs)
+    proj_i = np.einsum("ed,ecd->ec", diff, local_axes[rows])  # (n_edges, n_pcs)
     mahal_sq_i = np.sum((proj_i * local_inv_scales[rows]) ** 2, axis=1)
 
-    proj_j = np.einsum('ed,ecd->ec', diff, local_axes[cols])  # (n_edges, n_pcs)
+    proj_j = np.einsum("ed,ecd->ec", diff, local_axes[cols])  # (n_edges, n_pcs)
     mahal_sq_j = np.sum((proj_j * local_inv_scales[cols]) ** 2, axis=1)
 
     # Symmetrized Mahalanobis distance
@@ -367,7 +367,5 @@ def _affinity_matrix(
         params["degree"] = algo.degree
         params["coef0"] = algo.coef0
 
-    X = pairwise_kernels(
-        data, metric=algo.affinity, filter_params=True, **params
-    )
+    X = pairwise_kernels(data, metric=algo.affinity, filter_params=True, **params)
     return X

@@ -30,7 +30,6 @@ from opendsm.comparison_groups.savings.settings import (
 )
 
 
-
 # A single-hour correction scenario: one treatment meter, six comparison-group
 # meters split across two clusters. No real savings data exists, so these are
 # constructed inputs exercising one hour of model_correction.
@@ -66,9 +65,18 @@ def test_model_correction_contiguous_labels_runs():
     cg_label = np.array([0, 0, 0, 1, 1, 1])
 
     mTrc, mTrc_unc, mask = model_correction(
-        OTR, MTR, OCGR, MCGR,
-        None, None, None, None, None,
-        cg_label, T_WEIGHT, _settings(),
+        OTR,
+        MTR,
+        OCGR,
+        MCGR,
+        None,
+        None,
+        None,
+        None,
+        None,
+        cg_label,
+        T_WEIGHT,
+        _settings(),
     )
 
     assert np.isfinite(mTrc)
@@ -79,7 +87,7 @@ def test_model_correction_contiguous_labels_runs():
 @pytest.mark.parametrize(
     "cg_label",
     [
-        np.array([0, 0, 0, 2, 2, 2]),       # non-contiguous integer labels
+        np.array([0, 0, 0, 2, 2, 2]),  # non-contiguous integer labels
         np.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0]),  # float-valued labels
     ],
     ids=["noncontiguous_int", "float_labels"],
@@ -89,9 +97,18 @@ def test_model_correction_label_indexed_by_position(cg_label):
     position, not label value. Non-contiguous or float labels previously raised
     IndexError (T_weight[2]) or could not index at all (float)."""
     mTrc, _, _ = model_correction(
-        OTR, MTR, OCGR, MCGR,
-        None, None, None, None, None,
-        cg_label, T_WEIGHT, _settings(),
+        OTR,
+        MTR,
+        OCGR,
+        MCGR,
+        None,
+        None,
+        None,
+        None,
+        None,
+        cg_label,
+        T_WEIGHT,
+        _settings(),
     )
 
     assert np.isfinite(mTrc)
@@ -103,9 +120,18 @@ def test_model_correction_algorithm_none_returns_vector_mask():
     cg_label = np.array([0, 0, 0, 1, 1, 1])
 
     mTrc, mTrc_unc, mask = model_correction(
-        OTR, MTR, OCGR, MCGR,
-        None, None, None, None, None,
-        cg_label, T_WEIGHT, _settings(algorithm=None),
+        OTR,
+        MTR,
+        OCGR,
+        MCGR,
+        None,
+        None,
+        None,
+        None,
+        None,
+        cg_label,
+        T_WEIGHT,
+        _settings(algorithm=None),
     )
 
     assert mTrc == MTR
@@ -123,9 +149,18 @@ def test_model_correction_uncertainty_finite_when_model_equals_observed():
     mCGr_unc = np.full(OCGR.shape, 2.0)
 
     mTrc, mTrc_unc, _ = model_correction(
-        OTR, MTR, OCGR, mCGr,
-        None, 5.0, None, mCGr_unc, None,
-        cg_label, T_WEIGHT, _settings(),
+        OTR,
+        MTR,
+        OCGR,
+        mCGr,
+        None,
+        5.0,
+        None,
+        mCGr_unc,
+        None,
+        cg_label,
+        T_WEIGHT,
+        _settings(),
     )
 
     assert np.isfinite(mTrc)
@@ -142,9 +177,18 @@ def test_uncertainty_finite_for_each_algorithm(algorithm):
     mCGr_unc = np.full(OCGR.shape, 2.0)
 
     _, mTrc_unc, _ = model_correction(
-        OTR, MTR, OCGR, MCGR,
-        None, 5.0, None, mCGr_unc, None,
-        cg_label, T_WEIGHT, _settings(algorithm=algorithm),
+        OTR,
+        MTR,
+        OCGR,
+        MCGR,
+        None,
+        5.0,
+        None,
+        mCGr_unc,
+        None,
+        cg_label,
+        T_WEIGHT,
+        _settings(algorithm=algorithm),
     )
 
     assert np.isfinite(mTrc_unc)
@@ -161,9 +205,17 @@ def test_zero_cg_model_magnitude_stays_finite(algorithm):
     mCGr_unc = np.full(6, 2.0)
 
     mTrc, mTrc_unc, _ = model_correction(
-        OTR, MTR, OCGR, mCGr,
-        None, 5.0, None, mCGr_unc, None,
-        cg_label, T_WEIGHT,
+        OTR,
+        MTR,
+        OCGR,
+        mCGr,
+        None,
+        5.0,
+        None,
+        mCGr_unc,
+        None,
+        cg_label,
+        T_WEIGHT,
         _settings(algorithm=algorithm, outlier_rejection={"enabled": False}),
     )
 
@@ -175,8 +227,18 @@ def test_rejects_non_finite_mtr():
     cg_label = np.array([0, 0, 0, 1, 1, 1])
     with pytest.raises(ValueError):
         model_correction(
-            OTR, np.nan, OCGR, MCGR, None, None, None, None, None,
-            cg_label, T_WEIGHT, _settings(),
+            OTR,
+            np.nan,
+            OCGR,
+            MCGR,
+            None,
+            None,
+            None,
+            None,
+            None,
+            cg_label,
+            T_WEIGHT,
+            _settings(),
         )
 
 
@@ -184,8 +246,18 @@ def test_rejects_comparison_group_shorter_than_five():
     short = np.array([1.0, 2.0, 3.0])
     with pytest.raises(ValueError):
         model_correction(
-            OTR, MTR, short, short, None, None, None, None, None,
-            np.array([0, 0, 0]), np.array([1.0]), _settings(),
+            OTR,
+            MTR,
+            short,
+            short,
+            None,
+            None,
+            None,
+            None,
+            None,
+            np.array([0, 0, 0]),
+            np.array([1.0]),
+            _settings(),
         )
 
 
@@ -193,8 +265,18 @@ def test_rejects_mismatched_cg_lengths():
     cg_label = np.array([0, 0, 0, 1, 1, 1])
     with pytest.raises(ValueError):
         model_correction(
-            OTR, MTR, OCGR, MCGR[:5], None, None, None, None, None,
-            cg_label, T_WEIGHT, _settings(),
+            OTR,
+            MTR,
+            OCGR,
+            MCGR[:5],
+            None,
+            None,
+            None,
+            None,
+            None,
+            cg_label,
+            T_WEIGHT,
+            _settings(),
         )
 
 
@@ -202,8 +284,18 @@ def test_rejects_t_weight_length_mismatch():
     cg_label = np.array([0, 0, 0, 1, 1, 1])  # two clusters
     with pytest.raises(ValueError):
         model_correction(
-            OTR, MTR, OCGR, MCGR, None, None, None, None, None,
-            cg_label, np.array([1.0]), _settings(),  # only one weight
+            OTR,
+            MTR,
+            OCGR,
+            MCGR,
+            None,
+            None,
+            None,
+            None,
+            None,
+            cg_label,
+            np.array([1.0]),
+            _settings(),  # only one weight
         )
 
 
@@ -215,9 +307,18 @@ def test_uncertainty_with_observed_uncertainty_and_correlation():
     CGr_corr = np.full(OCGR.shape, 0.5)
 
     mTrc, mTrc_unc, _ = model_correction(
-        OTR, MTR, OCGR, MCGR,
-        None, 5.0, oCGr_unc, mCGr_unc, CGr_corr,
-        cg_label, T_WEIGHT, _settings(),
+        OTR,
+        MTR,
+        OCGR,
+        MCGR,
+        None,
+        5.0,
+        oCGr_unc,
+        mCGr_unc,
+        CGr_corr,
+        cg_label,
+        T_WEIGHT,
+        _settings(),
     )
 
     assert np.isfinite(mTrc)
@@ -232,9 +333,18 @@ def test_outlier_rejection_path_runs():
     t_weight = np.array([0.5, 0.5])
 
     mTrc, _, _ = model_correction(
-        OTR, MTR, oCGr, mCGr,
-        None, None, None, None, None,
-        cg_label, t_weight, _settings(outlier_rejection={"enabled": True}),
+        OTR,
+        MTR,
+        oCGr,
+        mCGr,
+        None,
+        None,
+        None,
+        None,
+        None,
+        cg_label,
+        t_weight,
+        _settings(outlier_rejection={"enabled": True}),
     )
 
     assert np.isfinite(mTrc)
@@ -245,13 +355,27 @@ def test_global_cap_bounds_correction():
     cg_label = np.array([0, 0, 0, 1, 1, 1])
     cap_value = 0.01
     settings = _settings(
-        correction_cap={"enabled": True, "type": "global", "value": cap_value, "solar_threshold": None}
+        correction_cap={
+            "enabled": True,
+            "type": "global",
+            "value": cap_value,
+            "solar_threshold": None,
+        }
     )
 
     mTrc, _, _ = model_correction(
-        OTR, MTR, OCGR, MCGR,
-        None, None, None, None, None,
-        cg_label, T_WEIGHT, settings,
+        OTR,
+        MTR,
+        OCGR,
+        MCGR,
+        None,
+        None,
+        None,
+        None,
+        None,
+        cg_label,
+        T_WEIGHT,
+        settings,
     )
 
     assert abs(mTrc - MTR) <= abs(MTR) * cap_value + 1e-9
@@ -263,14 +387,21 @@ def test_solar_cap_bounds_low_model_meters():
     oCGr = np.full(6, 0.05)
     mCGr = np.full(6, 0.1)  # below the default solar threshold of 1/3
     cap_value = 0.01
-    settings = _settings(
-        correction_cap={"enabled": True, "type": "solar", "value": cap_value}
-    )
+    settings = _settings(correction_cap={"enabled": True, "type": "solar", "value": cap_value})
 
     mTrc, _, _ = model_correction(
-        OTR, MTR, oCGr, mCGr,
-        None, None, None, None, None,
-        cg_label, T_WEIGHT, settings,
+        OTR,
+        MTR,
+        oCGr,
+        mCGr,
+        None,
+        None,
+        None,
+        None,
+        None,
+        cg_label,
+        T_WEIGHT,
+        settings,
     )
 
     assert abs(mTrc - MTR) <= abs(MTR) * cap_value + 1e-9
@@ -284,9 +415,17 @@ def test_model_correction_zero_model_cluster_weights_finite():
     mCGr = np.array([0.0, 0.0, 0.0, 95.0, 110.0, 100.0])
 
     mTrc, _, _ = model_correction(
-        OTR, MTR, OCGR, mCGr,
-        None, None, None, None, None,
-        cg_label, T_WEIGHT,
+        OTR,
+        MTR,
+        OCGR,
+        mCGr,
+        None,
+        None,
+        None,
+        None,
+        None,
+        cg_label,
+        T_WEIGHT,
         _settings(
             algorithm=CorrectionAlgorithm.ODID,
             weight_cluster_aggregation=WeightClusterAggChoice.MODEL,
@@ -297,6 +436,7 @@ def test_model_correction_zero_model_cluster_weights_finite():
 
 
 # ── Fixture generation (run once, manually, JIT-on) ──────────────────────────
+
 
 @pytest.mark.skipif(
     not os.environ.get("GENERATE_FIXTURES"),
@@ -312,8 +452,11 @@ def test_generate_correction_fixtures(
     n_pool = int(os.environ.get("GENERATE_FIXTURES_N", "99"))
     min_cluster_size = int(os.environ.get("GENERATE_FIXTURES_MIN", "5"))
     build_fixtures(
-        _comstock_hourly_all, _comstock_daily_all, _comstock_monthly_all,
-        n_pool=n_pool, min_cluster_size=min_cluster_size,
+        _comstock_hourly_all,
+        _comstock_daily_all,
+        _comstock_monthly_all,
+        n_pool=n_pool,
+        min_cluster_size=min_cluster_size,
     )
 
 
@@ -346,9 +489,18 @@ def _run_correction(data, algorithm):
     """Run model_correction on fixture arrays for one algorithm."""
     settings = CGCorrectionSettings(algorithm=algorithm, correction_cap={"enabled": False})
     mTrc, mTrc_unc, mask = model_correction(
-        float(data["oTr"]), float(data["mTr"]), data["oCGr"], data["mCGr"],
-        None, float(data["mTr_unc"]), None, data["mCGr_unc"], None,
-        data["CG_label"], data["T_weight"], settings,
+        float(data["oTr"]),
+        float(data["mTr"]),
+        data["oCGr"],
+        data["mCGr"],
+        None,
+        float(data["mTr_unc"]),
+        None,
+        data["mCGr_unc"],
+        None,
+        data["CG_label"],
+        data["T_weight"],
+        settings,
     )
 
     return mTrc, mTrc_unc, mask

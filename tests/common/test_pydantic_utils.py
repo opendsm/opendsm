@@ -25,7 +25,6 @@ from opendsm.common.pydantic_utils import (
 )
 
 
-
 class _SpecialFloatModel(ArbitraryPydanticModel):
     x: float
     y: float

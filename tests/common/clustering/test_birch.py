@@ -27,7 +27,6 @@ from opendsm.common.clustering.settings import ClusteringSettings
 from opendsm.common.clustering.algorithms.birch import birch
 
 
-
 def _bcs(lower, upper, **birch_settings):
     """ClusteringSettings selecting BIRCH over a cluster range."""
     cs = ClusteringSettings(

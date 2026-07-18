@@ -20,7 +20,6 @@ from opendsm.comparison_groups.common import Data, Data_Settings
 from opendsm.comparison_groups.common import const as _const
 
 
-
 def _long_loadshape_df(n_ids=3, n_time=24):
     rows = [
         {"id": f"m{i}", "time": t, "loadshape": float(t + i)}
@@ -168,9 +167,7 @@ def test_time_series_string_datetime_raises():
 def test_insufficient_data_meter_is_excluded():
     """A meter with far fewer than the required hourly observations is dropped
     and recorded in excluded_ids rather than crashing the build."""
-    time_series = pd.concat(
-        [_hourly_frame("good", 48), _hourly_frame("bad", 5)], ignore_index=True
-    )
+    time_series = pd.concat([_hourly_frame("good", 48), _hourly_frame("bad", 5)], ignore_index=True)
     settings = Data_Settings(
         agg_type=_const.AggType.MEAN,
         loadshape_type=_const.LoadshapeType.OBSERVED,
@@ -227,11 +224,14 @@ def test_unstacked_loadshape_ingestion():
 
 def test_extend_rejects_mismatched_time_period(_comstock_hourly_all):
     df_baseline, _ = _comstock_hourly_all
-    hour_data = Data(time_series_df=_hourly_frame("a", 48), settings=Data_Settings(
-        agg_type=_const.AggType.MEAN,
-        loadshape_type=_const.LoadshapeType.OBSERVED,
-        time_period=_const.TimePeriod.HOUR,
-    ))
+    hour_data = Data(
+        time_series_df=_hourly_frame("a", 48),
+        settings=Data_Settings(
+            agg_type=_const.AggType.MEAN,
+            loadshape_type=_const.LoadshapeType.OBSERVED,
+            time_period=_const.TimePeriod.HOUR,
+        ),
+    )
     loadshape_only = Data(loadshape_df=_long_loadshape_df(n_ids=1))
 
     with pytest.raises(ValueError):

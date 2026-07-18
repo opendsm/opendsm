@@ -66,9 +66,7 @@ def test_get_slope():
     intercept = 0
     alpha = 2
     expected_slope = 2.0102
-    assert np.isclose(
-        get_slope(x, y, x_bp, intercept, alpha), expected_slope, atol=1e-3
-    )
+    assert np.isclose(get_slope(x, y, x_bp, intercept, alpha), expected_slope, atol=1e-3)
 
     # Test case 2: Test with alpha=1
     x = np.array([1, 2, 3, 4, 5])
@@ -77,9 +75,7 @@ def test_get_slope():
     intercept = 0
     alpha = 1
     expected_slope = 2.125
-    assert np.isclose(
-        get_slope(x, y, x_bp, intercept, alpha), expected_slope, atol=1e-3
-    )
+    assert np.isclose(get_slope(x, y, x_bp, intercept, alpha), expected_slope, atol=1e-3)
 
     # Test case 3: Test with negative y values
     x = np.array([1, 2, 3, 4, 5])
@@ -88,9 +84,7 @@ def test_get_slope():
     intercept = 0
     alpha = 2
     expected_slope = -2.016
-    assert np.isclose(
-        get_slope(x, y, x_bp, intercept, alpha), expected_slope, atol=1e-3
-    )
+    assert np.isclose(get_slope(x, y, x_bp, intercept, alpha), expected_slope, atol=1e-3)
 
     # Test case 4: Test with non-zero intercept
     x = np.array([1, 2, 3, 4, 5])
@@ -99,9 +93,7 @@ def test_get_slope():
     intercept = 1
     alpha = 2
     expected_slope = 2.0143
-    assert np.isclose(
-        get_slope(x, y, x_bp, intercept, alpha), expected_slope, atol=1e-3
-    )
+    assert np.isclose(get_slope(x, y, x_bp, intercept, alpha), expected_slope, atol=1e-3)
 
 
 def test_linear_fit():
@@ -153,9 +145,7 @@ def test_get_smooth_coeffs():
 
     # Test case 5: pct_hdd_k and pct_cdd_k are both greater than min_pct_k and sum to greater than 1
     coeffs = get_smooth_coeffs(10, 0.5, 20, 0.6, min_pct_k=0.01)
-    assert np.allclose(
-        coeffs, np.array([14.54545455, 4.54545455, 14.54545455, 5.45454545])
-    )
+    assert np.allclose(coeffs, np.array([14.54545455, 4.54545455, 14.54545455, 5.45454545]))
 
     # Test case 6: pct_match is 1.0, so the smoothed curve should converge at - or + inf
     coeffs = get_smooth_coeffs(10, 0.1, 20, 0.2, min_pct_k=0.01)

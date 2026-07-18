@@ -74,9 +74,13 @@ def _dwt_coeffs(
 
     # Cap so coarsest subband has enough coefficients for PCA.
     while n_levels > 1:
-        coarsest_len = pywt.dwt_coeff_len(n_points, pywt.Wavelet(wavelet).dec_len, mode=wavelet_mode)
+        coarsest_len = pywt.dwt_coeff_len(
+            n_points, pywt.Wavelet(wavelet).dec_len, mode=wavelet_mode
+        )
         for _ in range(n_levels - 1):
-            coarsest_len = pywt.dwt_coeff_len(coarsest_len, pywt.Wavelet(wavelet).dec_len, mode=wavelet_mode)
+            coarsest_len = pywt.dwt_coeff_len(
+                coarsest_len, pywt.Wavelet(wavelet).dec_len, mode=wavelet_mode
+            )
         if coarsest_len >= _MIN_PCA_COEFFS:
             break
         n_levels -= 1
@@ -114,8 +118,7 @@ def _reduce_single_subband(
         n = min(n, max_components)
         pca = PCA(n_components=n, random_state=random_state)
     elif isinstance(n_components, int):
-        pca = PCA(n_components=min(n_components, max_components),
-                   random_state=random_state)
+        pca = PCA(n_components=min(n_components, max_components), random_state=random_state)
     elif n_components == "mle":
         pca = PCA(n_components="mle", random_state=random_state)
     else:
@@ -162,7 +165,10 @@ def _reduce_wavelet_subbands(
         for i, band in enumerate(subbands):
             band_seed = (seed + i * 7) if seed is not None else None
             band_reduced, band_explained = _reduce_single_subband(
-                band, min_var_ratio, n_components, seed=band_seed,
+                band,
+                min_var_ratio,
+                n_components,
+                seed=band_seed,
             )
             reduced.append(band_reduced)
             level_total_vars.append(float(np.sum(np.var(band, axis=0))))
@@ -171,9 +177,10 @@ def _reduce_wavelet_subbands(
         # Variance-weighted average of per-level explained ratios
         total_input_var = sum(level_total_vars)
         if total_input_var > 0:
-            explained_ratio = sum(
-                v * r for v, r in zip(level_total_vars, level_explained_ratios)
-            ) / total_input_var
+            explained_ratio = (
+                sum(v * r for v, r in zip(level_total_vars, level_explained_ratios))
+                / total_input_var
+            )
         else:
             explained_ratio = 1.0
 

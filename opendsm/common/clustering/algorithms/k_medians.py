@@ -53,6 +53,7 @@ def _sub_seed(base_seed: int, *parts: int) -> int:
 # KMeans++ initialization
 # ---------------------------------------------------------------------------
 
+
 def kmeanspp_init(
     data: np.ndarray,
     k: int,
@@ -93,7 +94,7 @@ def kmeanspp_init(
         if use_fast_l2:
             d_new = np.sum((data - centers[c]) ** 2, axis=1)
         else:
-            d_new = cdist(data, centers[c:c+1], metric=metric).ravel()
+            d_new = cdist(data, centers[c : c + 1], metric=metric).ravel()
         np.minimum(min_d, d_new, out=min_d)
 
     return centers
@@ -102,6 +103,7 @@ def kmeanspp_init(
 # ---------------------------------------------------------------------------
 # Farthest-first (maxmin) initialization
 # ---------------------------------------------------------------------------
+
 
 def farthest_first_init(
     data: np.ndarray,
@@ -137,7 +139,7 @@ def farthest_first_init(
         if use_fast_l2:
             d_new = np.sum((data - centers[c]) ** 2, axis=1)
         else:
-            d_new = cdist(data, centers[c:c+1], metric=metric).ravel()
+            d_new = cdist(data, centers[c : c + 1], metric=metric).ravel()
         np.minimum(min_d, d_new, out=min_d)
 
     return centers
@@ -146,6 +148,7 @@ def farthest_first_init(
 # ---------------------------------------------------------------------------
 # Bisecting initialization
 # ---------------------------------------------------------------------------
+
 
 def bisecting_init(
     data: np.ndarray,
@@ -204,9 +207,7 @@ def bisecting_init(
         clusters.append(right)
 
     # Compute median centroids from each cluster
-    centroids = np.array([
-        np.median(data[cl], axis=0) for cl in clusters
-    ])
+    centroids = np.array([np.median(data[cl], axis=0) for cl in clusters])
 
     # Pad with random points if bisecting couldn't reach k
     while len(centroids) < k:
@@ -218,6 +219,7 @@ def bisecting_init(
 # ---------------------------------------------------------------------------
 # Random initialization
 # ---------------------------------------------------------------------------
+
 
 def random_init(
     data: np.ndarray,
@@ -255,6 +257,7 @@ _INIT_DISPATCH = {
 # ---------------------------------------------------------------------------
 # Core KMedians
 # ---------------------------------------------------------------------------
+
 
 def kmedians_fit(
     data: np.ndarray,
@@ -314,14 +317,20 @@ def kmedians_fit(
             # Absorb sub-threshold clusters
             if min_cluster_size >= 2:
                 labels = assign_small_clusters_nearest(
-                    labels, data, min_cluster_size, centroid="median",
+                    labels,
+                    data,
+                    min_cluster_size,
+                    centroid="median",
                 )
 
             labels, inertia = _relabel_and_inertia(data, labels, metric=metric)
 
             if inertia < best_inertia:
                 # Check if improvement is marginal (within 1%)
-                if best_inertia < np.inf and abs(inertia - best_inertia) / max(best_inertia, 1e-20) < 0.01:
+                if (
+                    best_inertia < np.inf
+                    and abs(inertia - best_inertia) / max(best_inertia, 1e-20) < 0.01
+                ):
                     consecutive_same += 1
                 else:
                     consecutive_same = 0
@@ -400,9 +409,7 @@ def kmedians_refine(
     if len(unique_labels) <= 1:
         return result
 
-    centroids = np.array([
-        np.median(data[result == c], axis=0) for c in unique_labels
-    ])
+    centroids = np.array([np.median(data[result == c], axis=0) for c in unique_labels])
 
     for _ in range(max_iter):
         dists = cdist(data[active_mask], centroids, metric=metric)
@@ -416,7 +423,10 @@ def kmedians_refine(
 
         if min_cluster_size >= 2:
             result = assign_small_clusters_nearest(
-                result, data, min_cluster_size, centroid="median",
+                result,
+                data,
+                min_cluster_size,
+                centroid="median",
             )
             active_mask = result >= 0  # recompute after reassignment
             unique_labels = np.unique(result[result >= 0])
@@ -426,9 +436,7 @@ def kmedians_refine(
         if len(unique_labels) <= 1:
             break
 
-        centroids = np.array([
-            np.median(data[result == c], axis=0) for c in unique_labels
-        ])
+        centroids = np.array([np.median(data[result == c], axis=0) for c in unique_labels])
 
     # Relabel to contiguous 0..k_actual-1
     final_unique = np.unique(result[active_mask])
@@ -445,6 +453,7 @@ def kmedians_refine(
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _relabel_and_inertia(
     data: np.ndarray,
     labels: np.ndarray,
@@ -456,9 +465,7 @@ def _relabel_and_inertia(
     remap[-1] = -1
     relabeled = np.array([remap[int(l)] for l in labels], dtype=np.intp)
 
-    centroids = np.array([
-        np.median(data[relabeled == c], axis=0) for c in range(len(unique))
-    ])
+    centroids = np.array([np.median(data[relabeled == c], axis=0) for c in range(len(unique))])
     active = relabeled >= 0
     dists = cdist(data[active], centroids, metric=metric)
     inertia = float(dists[np.arange(active.sum()), relabeled[active]].sum())
@@ -470,6 +477,7 @@ def _relabel_and_inertia(
 # ClusterAlgorithm entry point
 # ---------------------------------------------------------------------------
 
+
 def _adaptive_n_init(base_n_init: int, k: int) -> int:
     """Reduce restarts for high k where the solution space is constrained.
 
@@ -478,6 +486,7 @@ def _adaptive_n_init(base_n_init: int, k: int) -> int:
     k=13+: 40% of n_init
     """
     import math
+
     if k <= 4:
         return base_n_init
     elif k <= 12:
@@ -553,8 +562,14 @@ def _kmedians_single(data, settings, seed):
 
         rng = np.random.default_rng(_sub_seed(seed, k))
         labels, _ = kmedians_fit(
-            data, k, max_iter, k_n_init, rng, min_cs,
-            init_schedule=k_schedule, metric=metric,
+            data,
+            k,
+            max_iter,
+            k_n_init,
+            rng,
+            min_cs,
+            init_schedule=k_schedule,
+            metric=metric,
             early_stop_inits=early_stop,
         )
         actual_k = len(np.unique(labels[labels >= 0]))

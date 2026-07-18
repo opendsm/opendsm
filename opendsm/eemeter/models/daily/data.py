@@ -33,7 +33,6 @@ from opendsm.eemeter.common.sufficiency_criteria import DailySufficiencyCriteria
 from opendsm.eemeter.common.warnings import EEMeterWarning
 
 
-
 class _DailyData:
     """Private base class for daily baseline and reporting data.
 
@@ -47,12 +46,7 @@ class _DailyData:
     # Abstract the settings class for easier inheritance and alteration
     _settings_class = DailyDataSettings
 
-    def __init__(
-        self, 
-        df: pd.DataFrame, 
-        is_electricity_data: bool, 
-        settings: dict | None = None
-    ):
+    def __init__(self, df: pd.DataFrame, is_electricity_data: bool, settings: dict | None = None):
         self._df = None
         self.is_electricity_data = is_electricity_data
         self.tz = None
@@ -67,7 +61,7 @@ class _DailyData:
             self.settings = self._settings_class(**settings)
 
         self.settings.is_electricity_data = is_electricity_data
-            
+
         # TODO re-examine dq/warning pattern. keep consistent between
         # either implicitly setting as side effects, or returning and assigning outside
         self._df, temp_coverage = self._set_data(df)
@@ -118,9 +112,7 @@ class _DailyData:
         temperature_data = temperature_data.rename(
             columns={temperature_data.columns[0]: "temperature"}
         )
-        temperature_data.index = temperature_data.index.tz_convert(
-            meter_data.index.tzinfo
-        )
+        temperature_data.index = temperature_data.index.tz_convert(meter_data.index.tzinfo)
 
         if temperature_data.empty:
             raise ValueError("Temperature data cannot be empty.")
@@ -130,9 +122,9 @@ class _DailyData:
 
         is_billing_data = False
         if not meter_data.empty:
-            is_billing_data = compute_minimum_granularity(
-                meter_data.index, "billing"
-            ).startswith("billing")
+            is_billing_data = compute_minimum_granularity(meter_data.index, "billing").startswith(
+                "billing"
+            )
 
         # first, trim the data to exclude NaNs on the outer edges of the data
         last_meter_index = meter_data.last_valid_index()
@@ -174,15 +166,9 @@ class _DailyData:
 
         # large period needs a buffer for the min index, and no buffer for the max index
         # short period needs a buffer for the max index, and no buffer for the min index
-        meter_offset_first = (
-            period_diff_first if meter_period_first_longer else zero_offset
-        )
-        meter_offset_last = (
-            -period_diff_last if not meter_period_last_longer else zero_offset
-        )
-        temp_offset_first = (
-            -period_diff_first if not meter_period_first_longer else zero_offset
-        )
+        meter_offset_first = period_diff_first if meter_period_first_longer else zero_offset
+        meter_offset_last = -period_diff_last if not meter_period_last_longer else zero_offset
+        temp_offset_first = -period_diff_first if not meter_period_first_longer else zero_offset
         temp_offset_last = period_diff_last if meter_period_last_longer else zero_offset
 
         # if the shorter period ends on an exact index of the longer, we accept it.
@@ -197,9 +183,7 @@ class _DailyData:
 
         # if billing detected, subtract one day from final index since dataframe input assumes final row is part of period
         if is_billing_data:
-            new_index = meter_data.index[:-1].union(
-                [(meter_data.index[-1] - pd.Timedelta(days=1))]
-            )
+            new_index = meter_data.index[:-1].union([(meter_data.index[-1] - pd.Timedelta(days=1))])
             if len(new_index) == len(meter_data.index):
                 meter_data.index = new_index
             else:
@@ -262,9 +246,7 @@ class _DailyData:
         if min_granularity.startswith("billing"):
             # TODO : make this a warning instead of an exception
             raise ValueError("Billing data is not allowed in the daily model")
-        meter_value_df = clean_billing_daily_data(
-            meter_series, min_granularity, self.warnings
-        )
+        meter_value_df = clean_billing_daily_data(meter_series, min_granularity, self.warnings)
 
         meter_value_df = meter_value_df.rename(columns={"value": "observed"})
 
@@ -286,9 +268,7 @@ class _DailyData:
         # TODO regardless, it feels like there should be a better way to match
         # the indices on date than by comparing strftime in this manner
         all_days_df = all_days_df[
-            ~all_days_df.index.strftime("%Y%m%d").isin(
-                meter_series.index.strftime("%Y%m%d")
-            )
+            ~all_days_df.index.strftime("%Y%m%d").isin(meter_series.index.strftime("%Y%m%d"))
         ]
         meter_value_df = meter_value_df.merge(
             all_days_df, left_index=True, right_index=True, how="outer"
@@ -296,9 +276,7 @@ class _DailyData:
 
         return meter_value_df
 
-    def _compute_temperature_features(
-        self, df: pd.DataFrame, meter_index: pd.DatetimeIndex
-    ):
+    def _compute_temperature_features(self, df: pd.DataFrame, meter_index: pd.DatetimeIndex):
         """
         Compute temperature features for the given DataFrame and meter index.
         1. The frequency of the temperature data is inferred and set to hourly if not already. If frequency is not inferred or its lower than hourly, a warning is added.
@@ -321,9 +299,7 @@ class _DailyData:
         temp_series = df["temperature"]
         temp_series.index.freq = temp_series.index.inferred_freq
         if temp_series.index.freq != "h":
-            if temp_series.index.freq is None or temp_series.index.freq > pd.Timedelta(
-                hours=1
-            ):
+            if temp_series.index.freq is None or temp_series.index.freq > pd.Timedelta(hours=1):
                 # Add warning for frequencies longer than 1 hour
                 self.warnings.append(
                     EEMeterWarning(
@@ -358,9 +334,7 @@ class _DailyData:
                     )
 
                 # Set missing high frequency data to NaN
-                temperature_features.loc[
-                    temperature_features.coverage > 0.5, "value"
-                ] = (
+                temperature_features.loc[temperature_features.coverage > 0.5, "value"] = (
                     temperature_features[temperature_features.coverage > 0.5].value
                     / temperature_features[temperature_features.coverage > 0.5].coverage
                 )
@@ -372,16 +346,12 @@ class _DailyData:
                 )
 
                 if "coverage" in temperature_features.columns:
-                    temperature_features = temperature_features.drop(
-                        columns=["coverage"]
-                    )
+                    temperature_features = temperature_features.drop(columns=["coverage"])
             else:
                 temperature_features = temp_series.to_frame(name="temperature_mean")
 
             temperature_features["temperature_null"] = temp_series.isnull().astype(int)
-            temperature_features["temperature_not_null"] = temp_series.notnull().astype(
-                int
-            )
+            temperature_features["temperature_not_null"] = temp_series.notnull().astype(int)
             temperature_features["n_days_kept"] = 0  # unused
             temperature_features["n_days_dropped"] = 0  # unused
         else:
@@ -398,8 +368,7 @@ class _DailyData:
 
             # Only check for high frequency temperature data if it exists
             if (
-                temperature_features.temperature_not_null
-                + temperature_features.temperature_null
+                temperature_features.temperature_not_null + temperature_features.temperature_null
             ).median() > 1:
                 invalid_temperature_rows = (
                     temperature_features.temperature_not_null
@@ -419,13 +388,13 @@ class _DailyData:
                             ),
                             data=[
                                 timestamp.isoformat()
-                                for timestamp in invalid_temperature_rows[invalid_temperature_rows].index
+                                for timestamp in invalid_temperature_rows[
+                                    invalid_temperature_rows
+                                ].index
                             ],
                         )
                     )
-                    temperature_features.loc[
-                        invalid_temperature_rows, "temperature_mean"
-                    ] = np.nan
+                    temperature_features.loc[invalid_temperature_rows, "temperature_mean"] = np.nan
 
         temp = temperature_features["temperature_mean"].rename("temperature")
         features = temperature_features.drop(columns=["temperature_mean"])
@@ -445,17 +414,15 @@ class _DailyData:
         -------
             pd.DataFrame: The merged and transformed dataframe.
         """
-        df = meter.merge(
-            temp, left_index=True, right_index=True, how="left"
-        ).tz_convert(meter.index.tz)
+        df = meter.merge(temp, left_index=True, right_index=True, how="left").tz_convert(
+            meter.index.tz
+        )
         if df["observed"].dropna().empty:
             df = df.drop(columns=["observed"])
 
         # Add Season and Weekday_weekend
         df["season"] = df.index.month_name().map(_const.default_season_def)
-        df["weekday_weekend"] = df.index.day_name().map(
-            _const.default_weekday_weekend_def
-        )
+        df["weekday_weekend"] = df.index.day_name().map(_const.default_weekday_weekend_def)
 
         # Reorder the columns Create a list of columns
         columns = ["season", "weekday_weekend", "temperature"]
@@ -586,7 +553,7 @@ class DailyBaselineData(_DailyData):
         """
         # 90% coverage per period only required for billing models
         dsc = DailySufficiencyCriteria(
-            data=sufficiency_df, 
+            data=sufficiency_df,
             is_electricity_data=self.is_electricity_data,
             is_reporting_data=False,
             settings=self.settings.sufficiency,
@@ -619,12 +586,7 @@ class DailyReportingData(_DailyData):
         warnings (list[EEMeterWarning]): A list of issues with the data, but none that will severely reduce the quality of the model built.
     """
 
-    def __init__(
-        self,
-        df: pd.DataFrame, 
-        is_electricity_data: bool, 
-        settings: dict | None = None
-    ):
+    def __init__(self, df: pd.DataFrame, is_electricity_data: bool, settings: dict | None = None):
         df = df.copy()
         if "observed" not in df.columns:
             df["observed"] = np.nan
@@ -656,13 +618,9 @@ class DailyReportingData(_DailyData):
                 "When passing meter data to DailyReportingData, convert its DatetimeIndex to local timezone first; `tzinfo` param should only be used in the absence of reporting meter data."
             )
         if is_electricity_data is None and meter_data is not None:
-            raise ValueError(
-                "Must specify is_electricity_data when passing meter data."
-            )
+            raise ValueError("Must specify is_electricity_data when passing meter data.")
         if meter_data is None:
-            meter_data = pd.DataFrame(
-                {"observed": np.nan}, index=temperature_data.index
-            )
+            meter_data = pd.DataFrame({"observed": np.nan}, index=temperature_data.index)
             if tzinfo:
                 meter_data = meter_data.tz_convert(tzinfo)
 
@@ -673,7 +631,9 @@ class DailyReportingData(_DailyData):
             raise ValueError(
                 "Pass meter_data=None rather than an empty series in order to explicitly create a temperature-only reporting data instance."
             )
-        return super().from_series(meter_data, temperature_data, is_electricity_data, settings=settings)
+        return super().from_series(
+            meter_data, temperature_data, is_electricity_data, settings=settings
+        )
 
     def _check_data_sufficiency(self, sufficiency_df):
         """
@@ -693,7 +653,7 @@ class DailyReportingData(_DailyData):
         """
         # 90% coverage per period only required for billing models
         dsc = DailySufficiencyCriteria(
-            data=sufficiency_df, 
+            data=sufficiency_df,
             is_electricity_data=self.is_electricity_data,
             is_reporting_data=True,
             settings=self.settings.sufficiency,

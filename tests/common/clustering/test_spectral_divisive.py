@@ -28,7 +28,6 @@ from opendsm.common.clustering.settings import ClusteringSettings
 from opendsm.common.clustering.algorithms.spectral.spectral_divisive import spectral_divisive
 
 
-
 def _blobs(k, n=50, d=5, sep=50.0, seed=0):
     """k well-separated blobs with ground-truth labels."""
     rng = np.random.default_rng(seed)

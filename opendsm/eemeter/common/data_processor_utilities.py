@@ -147,9 +147,7 @@ def clean_billing_data(data, source_interval, warnings):
             data["unestimated_value"] = (
                 data[:-1].value[(data[:-1].estimated == False)].reindex(data.index)
             )
-            data["estimated_value"] = (
-                data[:-1].value[(data[:-1].estimated)].reindex(data.index)
-            )
+            data["estimated_value"] = data[:-1].value[(data[:-1].estimated)].reindex(data.index)
             for i, (index, row) in enumerate(data[:-1].iterrows()):
                 # ensures there is a prev_row and previous row value is null
                 if i > 0 and pd.isnull(prev_row["unestimated_value"]):
@@ -232,25 +230,19 @@ def as_freq(
     """
     # TODO(philngo): make sure this complies with CalTRACK 2.2.2.1
     if not isinstance(data_series, pd.Series):
-        raise ValueError(
-            "expected series, got object with class {}".format(data_series.__class__)
-        )
+        raise ValueError("expected series, got object with class {}".format(data_series.__class__))
     if data_series.empty:
         return data_series
     series = remove_duplicates(data_series)
     target_freq = pd.Timedelta(atomic_freq)
-    timedeltas = (series.index[1:] - series.index[:-1]).append(
-        pd.TimedeltaIndex([pd.NaT])
-    )
+    timedeltas = (series.index[1:] - series.index[:-1]).append(pd.TimedeltaIndex([pd.NaT]))
 
     if series_type == "cumulative":
         spread_factor = target_freq.total_seconds() / timedeltas.total_seconds()
         series_spread = series * spread_factor
         atomic_series = series_spread.asfreq(atomic_freq, method="ffill")
         resampled = atomic_series.resample(freq, origin=series.index[0]).sum()
-        resampled_with_nans = atomic_series.resample(
-            freq, origin=series.index[0]
-        ).first()
+        resampled_with_nans = atomic_series.resample(freq, origin=series.index[0]).first()
         n_coverage = atomic_series.resample(freq, origin=series.index[0]).count()
         resampled = resampled[resampled_with_nans.notnull()].reindex(resampled.index)
 
@@ -271,9 +263,7 @@ def as_freq(
         # this adds a null at the end using the target frequency
         last_index = pd.date_range(resampled.index[-1], freq=freq, periods=2)[1:]
         resampled = (
-            pd.concat([resampled, pd.Series(np.nan, index=last_index)])
-            .resample(freq)
-            .mean()
+            pd.concat([resampled, pd.Series(np.nan, index=last_index)]).resample(freq).mean()
         )
     if include_coverage:
         n_total = (
@@ -302,12 +292,9 @@ def downsample_and_clean_daily_data(dataset, warnings):
         warnings.append(
             EEMeterWarning(
                 qualified_name="eemeter.sufficiency_criteria.missing_high_frequency_meter_data",
-                description=(
-                    "More than 50% of the high frequency Meter data is missing."
-                ),
+                description=("More than 50% of the high frequency Meter data is missing."),
                 data=[
-                    timestamp.isoformat()
-                    for timestamp in dataset[dataset.coverage <= 0.5].index
+                    timestamp.isoformat() for timestamp in dataset[dataset.coverage <= 0.5].index
                 ],
             )
         )

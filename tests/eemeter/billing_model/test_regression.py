@@ -45,9 +45,7 @@ def billing_model_fit(billing_baseline_data):
 
 @pytest.mark.slow
 @pytest.mark.regression
-def test_billing_baseline_predict_regression(
-    billing_model_fit, billing_baseline_data, snapshot
-):
+def test_billing_baseline_predict_regression(billing_model_fit, billing_baseline_data, snapshot):
     result = billing_model_fit.predict(billing_baseline_data)
 
     assert regression_block(result, freq="daily") == snapshot(name="regression")
@@ -55,9 +53,7 @@ def test_billing_baseline_predict_regression(
 
 @pytest.mark.slow
 @pytest.mark.regression
-def test_billing_reporting_predict_regression(
-    billing_model_fit, billing_reporting_data, snapshot
-):
+def test_billing_reporting_predict_regression(billing_model_fit, billing_reporting_data, snapshot):
     result = billing_model_fit.predict(billing_reporting_data)
 
     assert regression_block(result, freq="daily") == snapshot(name="regression")

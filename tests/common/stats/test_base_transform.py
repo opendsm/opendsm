@@ -23,7 +23,6 @@ from opendsm.common.stats.distribution_transform import (
 )
 
 
-
 # Contract shared by every TransformBase subclass. BoxCox requires strictly
 # positive input, so the shared fixtures use positive data for all four.
 
@@ -87,9 +86,7 @@ def test_to_dict_from_dict_roundtrip(cls, positive_2d):
     fitted = cls().fit(positive_2d)
     restored = cls.from_dict(fitted.to_dict())
 
-    assert np.allclose(
-        fitted.transform(positive_2d), restored.transform(positive_2d), atol=1e-9
-    )
+    assert np.allclose(fitted.transform(positive_2d), restored.transform(positive_2d), atol=1e-9)
 
 
 @pytest.mark.parametrize("cls", TRANSFORMS)
@@ -98,9 +95,7 @@ def test_to_json_from_json_roundtrip(cls, positive_2d):
     fitted = cls().fit(positive_2d)
     restored = cls.from_json(fitted.to_json())
 
-    assert np.allclose(
-        fitted.transform(positive_2d), restored.transform(positive_2d), atol=1e-9
-    )
+    assert np.allclose(fitted.transform(positive_2d), restored.transform(positive_2d), atol=1e-9)
 
 
 @pytest.mark.parametrize("cls", TRANSFORMS)

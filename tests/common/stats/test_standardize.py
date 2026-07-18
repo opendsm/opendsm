@@ -5,9 +5,7 @@ import pytest
 
 from opendsm.common.stats.distribution_transform.standardize import Standardize
 
-pytestmark = pytest.mark.filterwarnings(
-    "ignore::numba.core.errors.NumbaExperimentalFeatureWarning"
-)
+pytestmark = pytest.mark.filterwarnings("ignore::numba.core.errors.NumbaExperimentalFeatureWarning")
 
 
 @pytest.fixture

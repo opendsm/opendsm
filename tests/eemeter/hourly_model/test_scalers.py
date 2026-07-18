@@ -22,7 +22,6 @@ from opendsm.eemeter.models.hourly.scalers import (
 )
 
 
-
 SAFE_SCALERS = [SafeStandardScaler, SafeRobustScaler]
 
 

@@ -31,7 +31,6 @@ from opendsm.common.clustering.algorithms.settings import (
 from opendsm.common.clustering.transform.normalize_settings import NormalizeSettings
 
 
-
 class TestClusterRange:
     """Cluster-count bounds and ordering."""
 

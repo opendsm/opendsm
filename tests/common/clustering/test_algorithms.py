@@ -33,7 +33,6 @@ from opendsm.common.clustering.algorithms.k_medians import kmedians
 from .conftest import make_clustering_settings
 
 
-
 # ---------------------------------------------------------------------------
 # Dispatch helper
 # ---------------------------------------------------------------------------
@@ -57,7 +56,12 @@ def _algo_settings_key(algorithm):
 
 def _run(data, algorithm, seed=42, n_lower=2, n_upper=5, **extra_algo):
     """Run an algorithm directly and return its ClusteringResult."""
-    algo_kw = {_algo_settings_key(algorithm): {"n_cluster": {"lower": n_lower, "upper": n_upper}, **extra_algo}}
+    algo_kw = {
+        _algo_settings_key(algorithm): {
+            "n_cluster": {"lower": n_lower, "upper": n_upper},
+            **extra_algo,
+        }
+    }
     cs = make_clustering_settings(algorithm, seed=seed, **algo_kw)
 
     return _ALGO_FN[algorithm](data, cs)
@@ -66,6 +70,7 @@ def _run(data, algorithm, seed=42, n_lower=2, n_upper=5, **extra_algo):
 # ---------------------------------------------------------------------------
 # Shared-behaviour tests
 # ---------------------------------------------------------------------------
+
 
 class TestAlgorithmSharedBehavior:
     """Tests that apply identically to every supported algorithm."""
@@ -145,22 +150,28 @@ class TestAlgorithmSharedBehavior:
     def test_mixed_scale_features(self, algorithm):
         """Data with features at very different scales is handled."""
         np.random.seed(42)
-        data = np.column_stack([
-            np.random.randn(100) * 0.01,
-            np.random.randn(100) * 1.0,
-            np.random.randn(100) * 100.0,
-        ])
+        data = np.column_stack(
+            [
+                np.random.randn(100) * 0.01,
+                np.random.randn(100) * 1.0,
+                np.random.randn(100) * 100.0,
+            ]
+        )
         labels = _run(data, algorithm, n_lower=2, n_upper=2).labels
         assert len(labels) == 100
         assert len(np.unique(labels)) == 2
 
     @pytest.mark.parametrize("algorithm", _ALGORITHMS)
-    @pytest.mark.parametrize("n_samples,n_features,n_clusters", [
-        (10, 5, 2),
-        (1000, 20, 5),
-        (100, 50, 3),
-        (100, 2, 3),
-    ], ids=["small", "large", "high_dim", "low_dim"])
+    @pytest.mark.parametrize(
+        "n_samples,n_features,n_clusters",
+        [
+            (10, 5, 2),
+            (1000, 20, 5),
+            (100, 50, 3),
+            (100, 2, 3),
+        ],
+        ids=["small", "large", "high_dim", "low_dim"],
+    )
     @pytest.mark.slow
     def test_varied_data_shapes(self, algorithm, n_samples, n_features, n_clusters):
         """Handles datasets of varying size and dimensionality."""
@@ -194,9 +205,7 @@ class TestAlgorithmSharedBehavior:
 # fabricates the requested k from the eigenvectors.  spectral_divisive is
 # the honest spectral variant; it is not a council algorithm, hence absent
 # from _ALGO_FN and added here explicitly.
-_HONEST_DEGENERACY_FN = {
-    name: fn for name, fn in _ALGO_FN.items() if name != "spectral"
-}
+_HONEST_DEGENERACY_FN = {name: fn for name, fn in _ALGO_FN.items() if name != "spectral"}
 _HONEST_DEGENERACY_FN["spectral_divisive"] = spectral_divisive
 
 

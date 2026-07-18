@@ -22,14 +22,20 @@ from opendsm.common.clustering import (
     transform as _transform,
 )
 
-from opendsm.common.clustering.algorithms.bisect_k_means import bisect_k_means as _bisecting_kmeans_clustering
-from opendsm.common.clustering.algorithms.bisect_k_medians import bisect_k_medians as _bisecting_kmedians_clustering
+from opendsm.common.clustering.algorithms.bisect_k_means import (
+    bisect_k_means as _bisecting_kmeans_clustering,
+)
+from opendsm.common.clustering.algorithms.bisect_k_medians import (
+    bisect_k_medians as _bisecting_kmedians_clustering,
+)
 from opendsm.common.clustering.algorithms.k_medians import kmedians as _kmedians_clustering
 from opendsm.common.clustering.algorithms.birch import birch as _birch_clustering
 from opendsm.common.clustering.algorithms.dbscan import dbscan as _dbscan_clustering
 from opendsm.common.clustering.algorithms.hdbscan import hdbscan as _hdbscan_clustering
 from opendsm.common.clustering.algorithms.spectral import spectral as _spectral_clustering
-from opendsm.common.clustering.algorithms.spectral import spectral_divisive as _spectral_divisive_clustering
+from opendsm.common.clustering.algorithms.spectral import (
+    spectral_divisive as _spectral_divisive_clustering,
+)
 from opendsm.common.clustering.metrics.labels import ClusteringResult
 from opendsm.common.clustering.metrics.label_ops import remove_outliers_mad
 from opendsm.common.clustering.metrics.settings import SmallClusterMode
@@ -67,6 +73,7 @@ def _build_label_remap(
 
 
 from opendsm.common.clustering.algorithms.protocol import ClusterAlgorithm
+
 _ALGORITHM_DISPATCH: dict[_settings.ClusterAlgorithms, ClusterAlgorithm] = {
     _settings.ClusterAlgorithms.KMEDIANS: _kmedians_clustering,
     _settings.ClusterAlgorithms.BISECTING_KMEDIANS: _bisecting_kmedians_clustering,
@@ -81,7 +88,10 @@ _ALGORITHM_DISPATCH: dict[_settings.ClusterAlgorithms, ClusterAlgorithm] = {
 
 def _k_range_algo_settings(settings: _settings.ClusteringSettings):
     """Return the active algorithm's settings object, or None for density-based algorithms."""
-    if settings.algorithm_selection in (_settings.ClusterAlgorithms.DBSCAN, _settings.ClusterAlgorithms.HDBSCAN):
+    if settings.algorithm_selection in (
+        _settings.ClusterAlgorithms.DBSCAN,
+        _settings.ClusterAlgorithms.HDBSCAN,
+    ):
         return None
     return getattr(settings, settings.algorithm_selection.value)
 
@@ -145,7 +155,9 @@ def _run_pipeline(
     # Post-council MAD-based outlier removal
     if settings._outlier_mad_threshold is not None and result.k > 0:
         cluster_labels = remove_outliers_mad(
-            data, cluster_labels, settings._outlier_mad_threshold,
+            data,
+            cluster_labels,
+            settings._outlier_mad_threshold,
             small_cluster_mode=settings.small_cluster_mode,
         )
 

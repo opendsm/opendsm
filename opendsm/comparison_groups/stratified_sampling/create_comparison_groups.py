@@ -22,10 +22,11 @@ from opendsm.comparison_groups.common.base_comparison_group import Comparison_Gr
 
 from opendsm.comparison_groups.stratified_sampling.sampling import StratifiedSampler
 from opendsm.comparison_groups.stratified_sampling.diagnostics import StratifiedSamplingDiagnostics
-from opendsm.comparison_groups.stratified_sampling.bin_selection import StratifiedSamplingBinSelector
+from opendsm.comparison_groups.stratified_sampling.bin_selection import (
+    StratifiedSamplingBinSelector,
+)
 
 from opendsm.comparison_groups.stratified_sampling.settings import Settings
-
 
 
 class Stratified_Sampling(Comparison_Group_Algorithm):

@@ -17,8 +17,8 @@ from opendsm.comparison_groups.individual_meter_matching import *
 
 from opendsm.comparison_groups.stratified_sampling import (
     Stratified_Sampling,
-    SS_Settings, 
-    DSS_Settings
+    SS_Settings,
+    DSS_Settings,
 )
 
 from opendsm.comparison_groups.random_sampling import (

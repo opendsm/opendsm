@@ -30,17 +30,16 @@ class Comparison_Group_Algorithm:
 
     clusters = None
     treatment_weights = None
-    
 
     def _get_treatment_loadshape(self, id):
         ls = self.treatment_loadshape.loc[id]
 
         agg_ls = ls.agg(self._loadshape_aggregation).to_frame().T
-        
+
         if len(id) == 1:
-            agg_ls.index = ['Treatment Meter']
+            agg_ls.index = ["Treatment Meter"]
         else:
-            agg_ls.index = ['Treatment Group']
+            agg_ls.index = ["Treatment Group"]
 
         return agg_ls
 
@@ -53,7 +52,7 @@ class Comparison_Group_Algorithm:
         agg_ls = pd.DataFrame(agg_ls, columns=pool_ls.columns, index=self.treatment_weights.index)
 
         return agg_ls
-    
+
     def _get_treatment_match_loadshape(self, id):
         if self.treatment_match_loadshape is None:
             self.treatment_match_loadshape = self._set_treatment_match_loadshape()
@@ -61,7 +60,7 @@ class Comparison_Group_Algorithm:
         ls = self.treatment_match_loadshape.loc[id]
 
         agg_ls = ls.agg(self._loadshape_aggregation).to_frame().T
-        agg_ls.index = ['Comparison Group']
+        agg_ls.index = ["Comparison Group"]
 
         return agg_ls
 
@@ -69,10 +68,10 @@ class Comparison_Group_Algorithm:
         ls = self.comparison_pool_loadshape
 
         agg_ls = ls.agg(self._loadshape_aggregation).to_frame().T
-        agg_ls.index = ['Comparison Pool']
+        agg_ls.index = ["Comparison Pool"]
 
         return agg_ls
-    
+
     def get_loadshapes(self, id=None):
         if id is None:
             id = self.treatment_data.ids
@@ -88,18 +87,20 @@ class Comparison_Group_Algorithm:
         ls.columns = [int(col) - 1 for col in ls.columns]
 
         return ls
-    
+
     def _validate_ls_weights(self, weights):
         if weights is None:
             return
-        
+
         # if weights are all the same then return
         if len(set(weights)) == 1:
             return
 
         if len(weights) != len(self.treatment_loadshape.iloc[0].values):
-            raise ValueError("weights must be the same length as the number of columns in the treatment group and comparison pool")
-        
+            raise ValueError(
+                "weights must be the same length as the number of columns in the treatment group and comparison pool"
+            )
+
         # normalize weights to 1
         weights = np.array(weights) / np.sum(weights)
 
@@ -123,8 +124,8 @@ class Comparison_Group_Algorithm:
             ax.set_xticks(np.arange(t_min, t_max, 24))
 
         ax.set_xlim([t_min, t_max])
-        ax.set_xlabel('Time')
-        ax.set_ylabel('Loadshape')
+        ax.set_xlabel("Time")
+        ax.set_ylabel("Loadshape")
         ax.legend()
 
         return fig

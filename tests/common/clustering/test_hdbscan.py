@@ -32,13 +32,7 @@ def get_default_settings_dict():
 @pytest.fixture
 def simple_clustered_data():
     """Create simple synthetic data with clear clusters."""
-    data, _ = make_blobs(
-        n_samples=150,
-        n_features=10,
-        centers=3,
-        cluster_std=0.6,
-        random_state=42
-    )
+    data, _ = make_blobs(n_samples=150, n_features=10, centers=3, cluster_std=0.6, random_state=42)
 
     return data
 
@@ -48,11 +42,7 @@ def clustered_data_with_outliers():
     """Create data with clear clusters and some outliers."""
     # Main cluster
     cluster, _ = make_blobs(
-        n_samples=80,
-        n_features=10,
-        centers=1,
-        cluster_std=0.5,
-        random_state=42
+        n_samples=80, n_features=10, centers=1, cluster_std=0.5, random_state=42
     )
     # Outliers far from cluster
     outliers, _ = make_blobs(
@@ -61,7 +51,7 @@ def clustered_data_with_outliers():
         centers=1,
         center_box=(20, 25),
         cluster_std=0.3,
-        random_state=43
+        random_state=43,
     )
 
     return np.vstack([cluster, outliers])
@@ -77,7 +67,9 @@ def default_settings():
 class TestBasicFunctionality:
     """Tests for basic HDBSCAN functionality."""
 
-    def test_simple_clustering_produces_expected_clusters(self, simple_clustered_data, default_settings):
+    def test_simple_clustering_produces_expected_clusters(
+        self, simple_clustered_data, default_settings
+    ):
         """Test basic clustering finds expected number of clusters."""
         # simple_clustered_data has 3 well-separated clusters (150 samples, 3 centers)
         labels = hdbscan(simple_clustered_data, default_settings).labels
@@ -155,11 +147,7 @@ class TestOutlierHandling:
         """Test when all points belong to clusters (no outliers)."""
         # Very tight, dense cluster
         data, _ = make_blobs(
-            n_samples=100,
-            n_features=5,
-            centers=1,
-            cluster_std=0.2,
-            random_state=42
+            n_samples=100, n_features=5, centers=1, cluster_std=0.2, random_state=42
         )
 
         settings_dict = get_default_settings_dict()
@@ -194,13 +182,18 @@ class TestOutlierHandling:
 class TestAlgorithmParameters:
     """Tests for different HDBSCAN algorithm parameters."""
 
-    @pytest.mark.parametrize("min_samples_val,expected_min_clusters", [
-        (1, 3),   # Most permissive, should find all 3 clusters
-        (2, 3),   # Still finds all 3 clusters
-        (5, 2),   # More conservative, may merge some clusters
-        (10, 1),  # Very conservative, likely finds fewer clusters
-    ])
-    def test_min_samples_affects_clustering_granularity(self, simple_clustered_data, min_samples_val, expected_min_clusters):
+    @pytest.mark.parametrize(
+        "min_samples_val,expected_min_clusters",
+        [
+            (1, 3),  # Most permissive, should find all 3 clusters
+            (2, 3),  # Still finds all 3 clusters
+            (5, 2),  # More conservative, may merge some clusters
+            (10, 1),  # Very conservative, likely finds fewer clusters
+        ],
+    )
+    def test_min_samples_affects_clustering_granularity(
+        self, simple_clustered_data, min_samples_val, expected_min_clusters
+    ):
         """Test that min_samples parameter affects clustering granularity."""
         settings_dict = get_default_settings_dict()
         settings_dict["hdbscan"] = {"min_samples": min_samples_val}
@@ -232,18 +225,14 @@ class TestAlgorithmParameters:
         """Test that allow_single_cluster=True can produce single cluster."""
         # Homogeneous, tight data
         data, _ = make_blobs(
-            n_samples=100,
-            n_features=5,
-            centers=1,
-            cluster_std=0.3,
-            random_state=42
+            n_samples=100, n_features=5, centers=1, cluster_std=0.3, random_state=42
         )
 
         settings_dict = get_default_settings_dict()
         settings_dict["hdbscan"] = {
             "allow_single_cluster": True,
             "min_samples": 5,
-            "cluster_selection_epsilon": 0.0
+            "cluster_selection_epsilon": 0.0,
         }
         settings = ClusteringSettings(**settings_dict)
 
@@ -262,14 +251,11 @@ class TestAlgorithmParameters:
             centers=2,
             cluster_std=0.5,
             center_box=(0, 2),
-            random_state=42
+            random_state=42,
         )
 
         settings_dict = get_default_settings_dict()
-        settings_dict["hdbscan"] = {
-            "allow_single_cluster": False,
-            "min_samples": 5
-        }
+        settings_dict["hdbscan"] = {"allow_single_cluster": False, "min_samples": 5}
         settings = ClusteringSettings(**settings_dict)
 
         labels = hdbscan(data, settings).labels
@@ -289,18 +275,11 @@ class TestAlgorithmParameters:
     def test_max_cluster_size_limited(self):
         """Test with max_cluster_size limit."""
         data, _ = make_blobs(
-            n_samples=200,
-            n_features=5,
-            centers=2,
-            cluster_std=1.0,
-            random_state=42
+            n_samples=200, n_features=5, centers=2, cluster_std=1.0, random_state=42
         )
 
         settings_dict = get_default_settings_dict()
-        settings_dict["hdbscan"] = {
-            "max_cluster_size": 50,
-            "min_samples": 5
-        }
+        settings_dict["hdbscan"] = {"max_cluster_size": 50, "min_samples": 5}
         settings = ClusteringSettings(**settings_dict)
 
         labels = hdbscan(data, settings).labels
@@ -316,10 +295,7 @@ class TestAlgorithmParameters:
     def test_cluster_selection_epsilon_variations(self, simple_clustered_data, epsilon):
         """Test different cluster_selection_epsilon values control cluster merging."""
         settings_dict = get_default_settings_dict()
-        settings_dict["hdbscan"] = {
-            "cluster_selection_epsilon": epsilon,
-            "min_samples": 5
-        }
+        settings_dict["hdbscan"] = {"cluster_selection_epsilon": epsilon, "min_samples": 5}
         settings = ClusteringSettings(**settings_dict)
 
         labels = hdbscan(simple_clustered_data, settings).labels
@@ -333,10 +309,7 @@ class TestAlgorithmParameters:
     def test_robust_single_linkage_scaling(self, simple_clustered_data, alpha):
         """Test different alpha (robust_single_linkage_scaling) values."""
         settings_dict = get_default_settings_dict()
-        settings_dict["hdbscan"] = {
-            "robust_single_linkage_scaling": alpha,
-            "min_samples": 5
-        }
+        settings_dict["hdbscan"] = {"robust_single_linkage_scaling": alpha, "min_samples": 5}
         settings = ClusteringSettings(**settings_dict)
 
         labels = hdbscan(simple_clustered_data, settings).labels
@@ -349,12 +322,15 @@ class TestAlgorithmParameters:
 class TestDistanceMetrics:
     """Tests for different distance metrics."""
 
-    @pytest.mark.parametrize("metric", [
-        "euclidean",
-        "manhattan",
-        "cosine",
-        "seuclidean",
-    ])
+    @pytest.mark.parametrize(
+        "metric",
+        [
+            "euclidean",
+            "manhattan",
+            "cosine",
+            "seuclidean",
+        ],
+    )
     def test_distance_metrics(self, simple_clustered_data, metric):
         """Test HDBSCAN with various distance metrics."""
         data = simple_clustered_data
@@ -376,17 +352,17 @@ class TestDistanceMetrics:
 class TestClusterSelectionMethods:
     """Tests for different cluster selection methods."""
 
-    @pytest.mark.parametrize("method,expected_min_clusters", [
-        ("eom", 1),  # Excess of Mass typically finds fewer, larger clusters
-        ("leaf", 1),  # Leaf method may find more granular clusters
-    ])
+    @pytest.mark.parametrize(
+        "method,expected_min_clusters",
+        [
+            ("eom", 1),  # Excess of Mass typically finds fewer, larger clusters
+            ("leaf", 1),  # Leaf method may find more granular clusters
+        ],
+    )
     def test_cluster_selection_methods(self, simple_clustered_data, method, expected_min_clusters):
         """Test HDBSCAN with different cluster selection methods."""
         settings_dict = get_default_settings_dict()
-        settings_dict["hdbscan"] = {
-            "cluster_selection_method": method,
-            "min_samples": 5
-        }
+        settings_dict["hdbscan"] = {"cluster_selection_method": method, "min_samples": 5}
         settings = ClusteringSettings(**settings_dict)
 
         labels = hdbscan(simple_clustered_data, settings).labels
@@ -400,12 +376,15 @@ class TestClusterSelectionMethods:
 class TestNearestNeighborsAlgorithm:
     """Tests for different nearest neighbors algorithms."""
 
-    @pytest.mark.parametrize("algorithm", [
-        "auto",
-        "brute",
-        "ball_tree",
-        "kd_tree",
-    ])
+    @pytest.mark.parametrize(
+        "algorithm",
+        [
+            "auto",
+            "brute",
+            "ball_tree",
+            "kd_tree",
+        ],
+    )
     def test_nearest_neighbors_algorithms(self, simple_clustered_data, algorithm):
         """Test HDBSCAN with different nearest neighbors algorithms."""
         settings_dict = get_default_settings_dict()
@@ -422,8 +401,8 @@ class TestNearestNeighborsAlgorithm:
         """Test different leaf_size values for tree-based algorithms."""
         settings_dict = get_default_settings_dict()
         settings_dict["hdbscan"] = {
-            "nearest_neighbors_algorithm": "ball_tree", 
-            "leaf_size": leaf_size
+            "nearest_neighbors_algorithm": "ball_tree",
+            "leaf_size": leaf_size,
         }
         settings = ClusteringSettings(**settings_dict)
 
@@ -438,13 +417,7 @@ class TestDataShapes:
 
     def test_very_small_dataset(self):
         """Test clustering on very small dataset."""
-        data, _ = make_blobs(
-            n_samples=5,
-            n_features=5,
-            centers=2,
-            cluster_std=0.5,
-            random_state=42
-        )
+        data, _ = make_blobs(n_samples=5, n_features=5, centers=2, cluster_std=0.5, random_state=42)
 
         settings_dict = get_default_settings_dict()
         settings_dict["hdbscan"] = {"min_samples": 1}
@@ -456,11 +429,7 @@ class TestDataShapes:
     def test_small_dataset(self):
         """Test clustering on small dataset."""
         data, _ = make_blobs(
-            n_samples=50,
-            n_features=5,
-            centers=2,
-            cluster_std=1.0,
-            random_state=42
+            n_samples=50, n_features=5, centers=2, cluster_std=1.0, random_state=42
         )
 
         settings = ClusteringSettings(**get_default_settings_dict())
@@ -470,11 +439,7 @@ class TestDataShapes:
     def test_medium_dataset(self):
         """Test clustering on medium dataset."""
         data, _ = make_blobs(
-            n_samples=500,
-            n_features=10,
-            centers=3,
-            cluster_std=1.0,
-            random_state=42
+            n_samples=500, n_features=10, centers=3, cluster_std=1.0, random_state=42
         )
 
         settings = ClusteringSettings(**get_default_settings_dict())
@@ -484,11 +449,7 @@ class TestDataShapes:
     def test_large_dataset(self):
         """Test clustering on large dataset."""
         data, _ = make_blobs(
-            n_samples=5000,
-            n_features=20,
-            centers=5,
-            cluster_std=2.0,
-            random_state=42
+            n_samples=5000, n_features=20, centers=5, cluster_std=2.0, random_state=42
         )
 
         settings_dict = get_default_settings_dict()
@@ -501,11 +462,7 @@ class TestDataShapes:
     def test_single_feature_data(self):
         """Test clustering on 1D data."""
         data, _ = make_blobs(
-            n_samples=100,
-            n_features=1,
-            centers=3,
-            cluster_std=0.5,
-            random_state=42
+            n_samples=100, n_features=1, centers=3, cluster_std=0.5, random_state=42
         )
 
         settings = ClusteringSettings(**get_default_settings_dict())
@@ -516,11 +473,7 @@ class TestDataShapes:
         """Test clustering on 2D and 3D data."""
         for n_features in [2, 3]:
             data, _ = make_blobs(
-                n_samples=100,
-                n_features=n_features,
-                centers=3,
-                cluster_std=1.0,
-                random_state=42
+                n_samples=100, n_features=n_features, centers=3, cluster_std=1.0, random_state=42
             )
 
             settings = ClusteringSettings(**get_default_settings_dict())
@@ -530,11 +483,7 @@ class TestDataShapes:
     def test_medium_dimensional_data(self):
         """Test clustering on medium-dimensional data."""
         data, _ = make_blobs(
-            n_samples=100,
-            n_features=20,
-            centers=3,
-            cluster_std=1.5,
-            random_state=42
+            n_samples=100, n_features=20, centers=3, cluster_std=1.5, random_state=42
         )
 
         settings = ClusteringSettings(**get_default_settings_dict())
@@ -544,11 +493,7 @@ class TestDataShapes:
     def test_high_dimensional_data(self):
         """Test clustering on high-dimensional data."""
         data, _ = make_blobs(
-            n_samples=100,
-            n_features=50,
-            centers=2,
-            cluster_std=2.0,
-            random_state=42
+            n_samples=100, n_features=50, centers=2, cluster_std=2.0, random_state=42
         )
 
         settings_dict = get_default_settings_dict()
@@ -561,11 +506,7 @@ class TestDataShapes:
     def test_very_high_dimensional_data(self):
         """Test clustering on very high-dimensional data (curse of dimensionality)."""
         data, _ = make_blobs(
-            n_samples=100,
-            n_features=200,
-            centers=2,
-            cluster_std=3.0,
-            random_state=42
+            n_samples=100, n_features=200, centers=2, cluster_std=3.0, random_state=42
         )
 
         settings_dict = get_default_settings_dict()
@@ -669,11 +610,13 @@ class TestEdgeCases:
         """Test clustering with features at vastly different scales."""
         np.random.seed(42)
         # Create data with features at different scales
-        data = np.column_stack([
-            np.random.randn(100) * 0.01,    # Small scale
-            np.random.randn(100) * 1.0,     # Medium scale
-            np.random.randn(100) * 1000.0   # Large scale
-        ])
+        data = np.column_stack(
+            [
+                np.random.randn(100) * 0.01,  # Small scale
+                np.random.randn(100) * 1.0,  # Medium scale
+                np.random.randn(100) * 1000.0,  # Large scale
+            ]
+        )
 
         settings_dict = get_default_settings_dict()
         settings_dict["hdbscan"] = {"min_samples": 5}
@@ -701,10 +644,7 @@ class TestEdgeCases:
         data = np.random.randn(100, 5)  # Data spread ~[-3, 3]
 
         settings_dict = get_default_settings_dict()
-        settings_dict["hdbscan"] = {
-            "cluster_selection_epsilon": 100.0,
-            "min_samples": 5
-        }
+        settings_dict["hdbscan"] = {"cluster_selection_epsilon": 100.0, "min_samples": 5}
         settings = ClusteringSettings(**settings_dict)
 
         labels = hdbscan(data, settings).labels
@@ -716,10 +656,7 @@ class TestEdgeCases:
         data = np.random.randn(100, 5)
 
         settings_dict = get_default_settings_dict()
-        settings_dict["hdbscan"] = {
-            "cluster_selection_epsilon": 0.0,
-            "min_samples": 5
-        }
+        settings_dict["hdbscan"] = {"cluster_selection_epsilon": 0.0, "min_samples": 5}
         settings = ClusteringSettings(**settings_dict)
 
         labels = hdbscan(data, settings).labels
@@ -732,11 +669,7 @@ class TestSpecialDataDistributions:
     def test_gaussian_blobs(self):
         """Test on clear, well-separated Gaussian clusters."""
         data, true_labels = make_blobs(
-            n_samples=300,
-            n_features=10,
-            centers=5,
-            cluster_std=1.0,
-            random_state=42
+            n_samples=300, n_features=10, centers=5, cluster_std=1.0, random_state=42
         )
 
         settings_dict = get_default_settings_dict()
@@ -756,7 +689,7 @@ class TestSpecialDataDistributions:
             n_features=5,
             centers=3,
             cluster_std=2.0,  # Large std creates overlap
-            random_state=42
+            random_state=42,
         )
 
         settings_dict = get_default_settings_dict()
@@ -769,12 +702,7 @@ class TestSpecialDataDistributions:
     def test_nested_clusters(self):
         """Test on nested/concentric clusters."""
         # Create concentric circles
-        data, _ = make_circles(
-            n_samples=150,
-            factor=0.3,
-            noise=0.05,
-            random_state=42
-        )
+        data, _ = make_circles(n_samples=150, factor=0.3, noise=0.05, random_state=42)
 
         settings_dict = get_default_settings_dict()
         settings_dict["hdbscan"] = {"min_samples": 5}
@@ -788,11 +716,7 @@ class TestSpecialDataDistributions:
     def test_nonlinear_clusters(self):
         """Test on non-linear, crescent-shaped clusters."""
         # Create two interleaving half circles
-        data, _ = make_moons(
-            n_samples=100,
-            noise=0.05,
-            random_state=42
-        )
+        data, _ = make_moons(n_samples=100, noise=0.05, random_state=42)
 
         settings_dict = get_default_settings_dict()
         settings_dict["hdbscan"] = {"min_samples": 5}
@@ -805,11 +729,7 @@ class TestSpecialDataDistributions:
         """Test HDBSCAN's ability to find clusters with different densities."""
         # Dense cluster (small std)
         dense, _ = make_blobs(
-            n_samples=100,
-            n_features=5,
-            centers=1,
-            cluster_std=0.3,
-            random_state=42
+            n_samples=100, n_features=5, centers=1, cluster_std=0.3, random_state=42
         )
         # Sparse cluster (large std)
         sparse, _ = make_blobs(
@@ -818,15 +738,12 @@ class TestSpecialDataDistributions:
             centers=1,
             center_box=(8, 10),
             cluster_std=1.5,
-            random_state=43
+            random_state=43,
         )
         data = np.vstack([dense, sparse])
 
         settings_dict = get_default_settings_dict()
-        settings_dict["hdbscan"] = {
-            "min_samples": 5,
-            "allow_single_cluster": False
-        }
+        settings_dict["hdbscan"] = {"min_samples": 5, "allow_single_cluster": False}
         settings = ClusteringSettings(**settings_dict)
 
         labels = hdbscan(data, settings).labels
@@ -839,11 +756,7 @@ class TestSpecialDataDistributions:
         """Test on data with heavy noise."""
         # Main cluster
         cluster, _ = make_blobs(
-            n_samples=80,
-            n_features=5,
-            centers=1,
-            cluster_std=0.5,
-            random_state=42
+            n_samples=80, n_features=5, centers=1, cluster_std=0.5, random_state=42
         )
         # Scattered noise
         np.random.seed(42)
@@ -866,17 +779,9 @@ class TestClusterQuality:
     def test_well_separated_clusters_identified(self):
         """Test that well-separated clusters are correctly identified."""
         # Create three very distinct clusters with known centers far apart
-        centers = np.array([
-            [0, 0, 0, 0, 0],
-            [10, 10, 10, 10, 10],
-            [20, 20, 20, 20, 20]
-        ])
+        centers = np.array([[0, 0, 0, 0, 0], [10, 10, 10, 10, 10], [20, 20, 20, 20, 20]])
         data, true_labels = make_blobs(
-            n_samples=120,
-            n_features=5,
-            centers=centers,
-            cluster_std=0.5,
-            random_state=42
+            n_samples=120, n_features=5, centers=centers, cluster_std=0.5, random_state=42
         )
 
         settings_dict = get_default_settings_dict()
@@ -899,7 +804,9 @@ class TestClusterQuality:
             non_outlier_labels = original_cluster_labels[original_cluster_labels != -1]
             if len(non_outlier_labels) > 0:
                 most_common = np.bincount(non_outlier_labels).argmax()
-                accuracy = np.sum(original_cluster_labels == most_common) / len(original_cluster_labels)
+                accuracy = np.sum(original_cluster_labels == most_common) / len(
+                    original_cluster_labels
+                )
                 cluster_accuracy.append(accuracy)
 
         # Most samples should be correctly clustered
@@ -911,11 +818,7 @@ class TestClusterQuality:
         # Create multi-scale structure with three different densities
         # Very dense core
         core, _ = make_blobs(
-            n_samples=30,
-            n_features=3,
-            centers=1,
-            cluster_std=0.2,
-            random_state=42
+            n_samples=30, n_features=3, centers=1, cluster_std=0.2, random_state=42
         )
         # Medium density shell
         shell, _ = make_blobs(
@@ -924,7 +827,7 @@ class TestClusterQuality:
             centers=1,
             center_box=(3, 4),
             cluster_std=0.8,
-            random_state=43
+            random_state=43,
         )
         # Sparse outer region
         outer, _ = make_blobs(
@@ -933,7 +836,7 @@ class TestClusterQuality:
             centers=1,
             center_box=(7, 8),
             cluster_std=1.5,
-            random_state=44
+            random_state=44,
         )
 
         data = np.vstack([core, shell, outer])
@@ -952,18 +855,12 @@ class TestClusterQuality:
         """Test outlier identification."""
         # Main cluster
         cluster, _ = make_blobs(
-            n_samples=90,
-            n_features=5,
-            centers=1,
-            cluster_std=0.5,
-            random_state=42
+            n_samples=90, n_features=5, centers=1, cluster_std=0.5, random_state=42
         )
         # Known outliers
-        outliers = np.array([
-            [10, 10, 10, 10, 10],
-            [-10, -10, -10, -10, -10],
-            [15, -15, 15, -15, 15]
-        ])
+        outliers = np.array(
+            [[10, 10, 10, 10, 10], [-10, -10, -10, -10, -10], [15, -15, 15, -15, 15]]
+        )
         data = np.vstack([cluster, outliers])
 
         settings_dict = get_default_settings_dict()
@@ -982,11 +879,7 @@ class TestClusterQuality:
     def test_cluster_stability(self):
         """Test that results are relatively stable with small perturbations."""
         data, _ = make_blobs(
-            n_samples=100,
-            n_features=5,
-            centers=3,
-            cluster_std=1.0,
-            random_state=42
+            n_samples=100, n_features=5, centers=3, cluster_std=1.0, random_state=42
         )
 
         settings_dict = get_default_settings_dict()
@@ -1006,11 +899,7 @@ class TestClusterQuality:
     def test_minimum_cluster_size_enforcement(self):
         """Test that clusters respect min_cluster_size."""
         data, _ = make_blobs(
-            n_samples=100,
-            n_features=5,
-            centers=3,
-            cluster_std=1.0,
-            random_state=42
+            n_samples=100, n_features=5, centers=3, cluster_std=1.0, random_state=42
         )
 
         min_samples_val = 10
@@ -1045,10 +934,7 @@ class TestScoringsSampleCount:
         """Test with explicit scoring_sample_count values."""
         for count in [5, 10, 20]:
             settings_dict = get_default_settings_dict()
-            settings_dict["hdbscan"] = {
-                "scoring_sample_count": count,
-                "min_samples": 5
-            }
+            settings_dict["hdbscan"] = {"scoring_sample_count": count, "min_samples": 5}
             settings = ClusteringSettings(**settings_dict)
 
             labels = hdbscan(simple_clustered_data, settings).labels
@@ -1110,7 +996,7 @@ class TestIntegration:
             "robust_single_linkage_scaling": 1.0,
             "nearest_neighbors_algorithm": "auto",
             "leaf_size": 40,
-            "cluster_selection_method": "eom"
+            "cluster_selection_method": "eom",
         }
         settings = ClusteringSettings(**settings_dict)
 
@@ -1129,5 +1015,5 @@ class TestIntegration:
         assert np.all(labels >= 0)  # With default min_samples=1
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

@@ -44,7 +44,6 @@ from opendsm.eemeter.models.billing.data import (
 from regression_metrics import regression_block
 
 
-
 # DailyModel-derived tests (metered/modeled_savings_*_daily) pin a Windows-
 # specific snapshot because the SBPLX optimizer converges to a different
 # local minimum there; aggregate sum/mean stay within ~0.05% but per-bin
@@ -109,9 +108,7 @@ def test_metered_savings_cdd_hdd_daily(
     )
     results = baseline_model_daily.predict(reporting_data)
 
-    assert regression_block(results, freq="daily") == snapshot(
-        name=f"regression{SNAP_SUFFIX}"
-    )
+    assert regression_block(results, freq="daily") == snapshot(name=f"regression{SNAP_SUFFIX}")
 
 
 @pytest.fixture(scope="session")
@@ -127,9 +124,7 @@ def reporting_model_billing(comstock_monthly):
     df_b, _ = comstock_monthly
     df_shifted = df_b.copy()
     df_shifted["observed"] = df_shifted["observed"] - 50
-    baseline_data = BillingBaselineData(
-        df=df_shifted.reset_index(), is_electricity_data=True
-    )
+    baseline_data = BillingBaselineData(df=df_shifted.reset_index(), is_electricity_data=True)
 
     return BillingModel().fit(baseline_data, ignore_disqualification=True)
 
@@ -166,9 +161,7 @@ def test_metered_savings_cdd_hdd_billing_no_reporting_data(
 ):
     # TODO test makes less sense without the use of derivatives functions. can just be merged with other predict() tests
     results = baseline_model_billing.predict(
-        BillingReportingData.from_series(
-            None, reporting_temperature_data, is_electricity_data=True
-        )
+        BillingReportingData.from_series(None, reporting_temperature_data, is_electricity_data=True)
     )
     assert list(results.columns) == [
         "season",
@@ -225,9 +218,9 @@ def baseline_model_billing_single_record_baseline_data(comstock_monthly, comstoc
     temperature_data = df_hourly["temperature"].copy()
     temperature_data.index = temperature_data.index.tz_convert("UTC")
 
-    baseline_data = create_caltrack_billing_design_matrix(
-        meter_data, temperature_data
-    ).rename(columns={"meter_value": "observed", "temperature_mean": "temperature"})
+    baseline_data = create_caltrack_billing_design_matrix(meter_data, temperature_data).rename(
+        columns={"meter_value": "observed", "temperature_mean": "temperature"}
+    )
     baseline_data = baseline_data[:60]
     model = BillingModel().fit(
         BillingBaselineData(baseline_data, is_electricity_data=True),
@@ -313,9 +306,7 @@ def test_modeled_savings_cdd_hdd_daily(
 
 
 # TODO move to dataclass testing
-def test_modeled_savings_daily_empty_temperature_data(
-    baseline_model_daily, reporting_model_daily
-):
+def test_modeled_savings_daily_empty_temperature_data(baseline_model_daily, reporting_model_daily):
     index = pd.DatetimeIndex([], tz="UTC", name="dt", freq="h")
     temperature_data = pd.Series([], index=index).to_frame()
 
@@ -324,13 +315,9 @@ def test_modeled_savings_daily_empty_temperature_data(
 
 
 def _fit_caltrack_hourly(meter_data, temperature_data):
-    preliminary = create_caltrack_hourly_preliminary_design_matrix(
-        meter_data, temperature_data
-    )
+    preliminary = create_caltrack_hourly_preliminary_design_matrix(meter_data, temperature_data)
     segmentation = segment_time_series(preliminary.index, "three_month_weighted")
-    occupancy_lookup = estimate_hour_of_week_occupancy(
-        preliminary, segmentation=segmentation
-    )
+    occupancy_lookup = estimate_hour_of_week_occupancy(preliminary, segmentation=segmentation)
     occ_bins, unocc_bins = fit_temperature_bins(
         preliminary, segmentation=segmentation, occupancy_lookup=occupancy_lookup
     )

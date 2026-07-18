@@ -29,6 +29,7 @@ from opendsm.eemeter.models.daily.utilities.base_model import (
 from opendsm.common.metrics import BaselineMetrics
 import pandas as pd
 
+
 def get_k(X, T_min_seg, T_max_seg):
     """
     Calculates the heating and cooling degree day breakpoints and slopes based on the given input parameters.
@@ -136,9 +137,7 @@ def reduce_model(
             if (hdd_k == 0) and (cdd_k == 0):
                 x = [hdd_bp, hdd_beta, hdd_k, cdd_bp, cdd_beta, cdd_k, intercept]
 
-                return reduce_model(
-                    *x, T_min, T_max, T_min_seg, T_max_seg, "c_hdd_tidd_smooth"
-                )
+                return reduce_model(*x, T_min, T_max, T_min_seg, T_max_seg, "c_hdd_tidd_smooth")
         else:
             hdd_k = pct_hdd_k
 
@@ -154,9 +153,7 @@ def reduce_model(
             if (hdd_k == 0) and (cdd_k == 0):
                 x = [hdd_bp, hdd_beta, hdd_k, cdd_bp, cdd_beta, cdd_k, intercept]
 
-                return reduce_model(
-                    *x, T_min, T_max, T_min_seg, T_max_seg, "c_hdd_tidd_smooth"
-                )
+                return reduce_model(*x, T_min, T_max, T_min_seg, T_max_seg, "c_hdd_tidd_smooth")
 
         else:
             cdd_k = pct_cdd_k
@@ -240,9 +237,7 @@ class OptimizedResult:
 
         self.N = np.shape(T)[0]
         self.T = T
-        [self.T_min, self.T_max], [self.T_min_seg, self.T_max_seg] = get_T_bnds(
-            T, settings
-        )
+        [self.T_min, self.T_max], [self.T_min_seg, self.T_max_seg] = get_T_bnds(T, settings)
 
         self.obs = model - resid
         self.model = model
@@ -251,11 +246,13 @@ class OptimizedResult:
         self.wSSE = np.sum(weight * resid**2)
 
         self.baseline_metrics = BaselineMetrics(
-            df=pd.DataFrame({
-                "observed": self.obs,
-                "predicted": self.model,
-            }),
-            num_model_params=self.num_coeffs
+            df=pd.DataFrame(
+                {
+                    "observed": self.obs,
+                    "predicted": self.model,
+                }
+            ),
+            num_model_params=self.num_coeffs,
         )
         self.baseline_metrics.wsse = self.wSSE
         self.baseline_metrics.wrmse = np.sqrt(self.wSSE / self.N)
@@ -321,9 +318,7 @@ class OptimizedResult:
         self.DoF = self.baseline_metrics.ddof_autocorr
 
         alpha = self.settings.uncertainty_alpha
-        f_unc = np.std(self.resid) * unc_factor(
-            self.DoF + 1, interval="PI", alpha=alpha
-        )
+        f_unc = np.std(self.resid) * unc_factor(self.DoF + 1, interval="PI", alpha=alpha)
         self.f_unc = f_unc
 
     def _set_model_key(self):
@@ -414,9 +409,7 @@ class OptimizedResult:
 
         if self.model_key == "hdd_tidd_cdd_smooth":
             [hdd_bp, hdd_beta, pct_hdd_k, cdd_bp, cdd_beta, pct_cdd_k, intercept] = x
-            [hdd_bp, hdd_k, cdd_bp, cdd_k] = get_smooth_coeffs(
-                hdd_bp, pct_hdd_k, cdd_bp, pct_cdd_k
-            )
+            [hdd_bp, hdd_k, cdd_bp, cdd_k] = get_smooth_coeffs(hdd_bp, pct_hdd_k, cdd_bp, pct_cdd_k)
             x = [hdd_bp, hdd_beta, hdd_k, cdd_bp, cdd_beta, cdd_k, intercept]
 
         hdd_bp, cdd_bp, intercept = x[0], x[3], x[6]

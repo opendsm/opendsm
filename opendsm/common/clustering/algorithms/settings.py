@@ -43,13 +43,9 @@ class BisectingKMeansSettings(BaseSettings):
         description="Bisection strategy",
     )
 
-    n_cluster: ClusterRangeSettings = pydantic.Field(
-        default_factory=ClusterRangeSettings
-    )
+    n_cluster: ClusterRangeSettings = pydantic.Field(default_factory=ClusterRangeSettings)
 
-    scoring: ScoreSettings = pydantic.Field(
-        default_factory=ScoreSettings
-    )
+    scoring: ScoreSettings = pydantic.Field(default_factory=ScoreSettings)
 
 
 class BirchSettings(BaseSettings):
@@ -65,13 +61,9 @@ class BirchSettings(BaseSettings):
         description="maximum number of CF subclusters in each node",
     )
 
-    n_cluster: ClusterRangeSettings = pydantic.Field(
-        default_factory=ClusterRangeSettings
-    )
+    n_cluster: ClusterRangeSettings = pydantic.Field(default_factory=ClusterRangeSettings)
 
-    scoring: ScoreSettings = pydantic.Field(
-        default_factory=ScoreSettings
-    )
+    scoring: ScoreSettings = pydantic.Field(default_factory=ScoreSettings)
 
 
 class DbscanDistanceAlgorithm(str, Enum):
@@ -79,6 +71,7 @@ class DbscanDistanceAlgorithm(str, Enum):
     BRUTE = "brute"
     KD_TREE = "kd_tree"
     BALL_TREE = "ball_tree"
+
 
 class DBSCANSettings(BaseSettings):
     epsilon: float = pydantic.Field(
@@ -88,7 +81,7 @@ class DBSCANSettings(BaseSettings):
     )
 
     min_samples: int = pydantic.Field(
-        default=1, # sklearn default is 5
+        default=1,  # sklearn default is 5
         ge=1,
         description="minimum number of samples in a neighborhood for a point to be considered as a cluster",
     )
@@ -109,9 +102,7 @@ class DBSCANSettings(BaseSettings):
         description="Minkowski p-norm distance power",
     )
 
-    scoring: ScoreSettings = pydantic.Field(
-        default_factory=ScoreSettings
-    )
+    scoring: ScoreSettings = pydantic.Field(default_factory=ScoreSettings)
 
 
 class HdbscanClusterSelectionMethod(str, Enum):
@@ -168,15 +159,14 @@ class HDBSCANSettings(BaseSettings):
         description="cluster selection method",
     )
 
-    scoring: ScoreSettings = pydantic.Field(
-        default_factory=ScoreSettings
-    )
+    scoring: ScoreSettings = pydantic.Field(default_factory=ScoreSettings)
 
 
 class SpectralEigenSolver(str, Enum):
     ARPACK = "arpack"
     LOBPCG = "lobpcg"
     # AMG = "amg" # disabled due to additional installation requirements
+
 
 class AffinityMatrixOptions(str, Enum):
     NEAREST_NEIGHBORS = "nearest_neighbors"
@@ -187,10 +177,12 @@ class AffinityMatrixOptions(str, Enum):
     DIFFUSION = "diffusion"
     ANISOTROPIC = "anisotropic"
 
+
 class SpectralAssignLabels(str, Enum):
     KMEANS = "kmeans"
     DISCRETIZE = "discretize"
     CLUSTER_QR = "cluster_qr"
+
 
 class SpectralSettings(BaseSettings):
     recluster_count: int = pydantic.Field(
@@ -236,13 +228,9 @@ class SpectralSettings(BaseSettings):
         description="label assignment method",
     )
 
-    n_cluster: ClusterRangeSettings = pydantic.Field(
-        default_factory=ClusterRangeSettings
-    )
+    n_cluster: ClusterRangeSettings = pydantic.Field(default_factory=ClusterRangeSettings)
 
-    scoring: ScoreSettings = pydantic.Field(
-        default_factory=ScoreSettings
-    )
+    scoring: ScoreSettings = pydantic.Field(default_factory=ScoreSettings)
 
     eigengap_weight: float = pydantic.Field(
         default=1.0,
@@ -342,8 +330,11 @@ class SpectralSettings(BaseSettings):
 
     @pydantic.model_validator(mode="after")
     def _check_self_tuning_gamma(self):
-        if self.affinity in (AffinityMatrixOptions.SELF_TUNING, AffinityMatrixOptions.DIFFUSION,
-                             AffinityMatrixOptions.ANISOTROPIC):
+        if self.affinity in (
+            AffinityMatrixOptions.SELF_TUNING,
+            AffinityMatrixOptions.DIFFUSION,
+            AffinityMatrixOptions.ANISOTROPIC,
+        ):
             gamma_default = type(self).model_fields["gamma"].default
             if self.gamma != gamma_default:
                 raise ValueError(
@@ -360,9 +351,7 @@ class SpectralSettings(BaseSettings):
     def _check_eigen_tol(self):
         if self.eigen_tol != "auto":
             if self.eigen_tol < 0:
-                raise ValueError(
-                    "'eigen_tol' must be >= 0"
-                )
+                raise ValueError("'eigen_tol' must be >= 0")
 
         return self
 

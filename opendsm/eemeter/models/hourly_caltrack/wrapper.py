@@ -72,14 +72,10 @@ class HourlyModel:
         preliminary_design_matrix = create_caltrack_hourly_preliminary_design_matrix(
             meter_data, temperature_data
         )
-        self.model_process_variables.preliminary_design_matrix = (
-            preliminary_design_matrix
-        )
+        self.model_process_variables.preliminary_design_matrix = preliminary_design_matrix
 
         # segment time series
-        segmentation = segment_time_series(
-            preliminary_design_matrix.index, self.segment_type
-        )
+        segmentation = segment_time_series(preliminary_design_matrix.index, self.segment_type)
         self.model_process_variables.segmentation = segmentation
 
         # estimate occupancy
@@ -105,9 +101,7 @@ class HourlyModel:
             occupied_t_bins,
             unoccupied_t_bins,
         )
-        self.model_process_variables.segmented_design_matrices = (
-            segmented_design_matrices
-        )
+        self.model_process_variables.segmented_design_matrices = segmented_design_matrices
 
         # fit model
         self.model = fit_caltrack_hourly_model(
@@ -122,9 +116,7 @@ class HourlyModel:
 
         # calculate baseline residuals
         prediction = self.model.predict(temperature_data.index, temperature_data)
-        meter_data = meter_data.merge(
-            prediction.result, left_index=True, right_index=True
-        )
+        meter_data = meter_data.merge(prediction.result, left_index=True, right_index=True)
         meter_data.dropna(inplace=True)
         meter_data["resid"] = meter_data["value"] - meter_data["predicted_usage"]
 
@@ -140,8 +132,7 @@ class HourlyModel:
         else:
             # monthly segment model
             model_month_dict = {
-                k.replace("-weighted", "").split("-")[1]: k
-                for k in self.model_metrics.keys()
+                k.replace("-weighted", "").split("-")[1]: k for k in self.model_metrics.keys()
             }
             meter_data["month"] = meter_data.index.month
 
@@ -226,9 +217,7 @@ class HourlyModel:
         """fill default metrics and uncertainty variables to allow deserializing legacy models with new wrapper"""
         monthly_unc_vars = {"mean_baseline_usage": 0, "n": 0, "n_prime": 1, "MSE": 0}
         model_dict = dict(data)
-        model_dict["model"]["unc_vars"] = {
-            str(month): monthly_unc_vars for month in range(1, 13)
-        }
+        model_dict["model"]["unc_vars"] = {str(month): monthly_unc_vars for month in range(1, 13)}
         return cls.from_dict(model_dict)
 
     @classmethod

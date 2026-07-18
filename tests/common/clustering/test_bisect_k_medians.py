@@ -30,7 +30,6 @@ from opendsm.common.clustering.algorithms.bisect_k_medians import bisect_k_media
 from .conftest import make_clustering_settings
 
 
-
 def _bkmed_cs(seed=42, lower=3, upper=3, small_cluster_mode=None, min_cluster_size=None, **algo):
     """ClusteringSettings for bisecting_kmedians with optional outlier coupling."""
     overrides = {}
@@ -95,8 +94,10 @@ class TestBisectKMediansSettings:
         rng = np.random.default_rng(1)
         data = np.vstack([rng.normal(0, 1, (20, 5)), rng.normal(50, 1, (20, 5))])
         cs = _bkmed_cs(
-            lower=2, upper=6,
-            min_cluster_size=15, small_cluster_mode="outlier",
+            lower=2,
+            upper=6,
+            min_cluster_size=15,
+            small_cluster_mode="outlier",
         )
         result = bisect_k_medians(data, cs)
         assert result.k == 2
@@ -137,22 +138,66 @@ class TestBisectKMediansBaseline:
         pinned here so an algorithmic change surfaces as a failure.
         """
         data, _ = make_blobs(
-            n_samples=40, n_features=10, centers=3, cluster_std=2.0, random_state=42,
+            n_samples=40,
+            n_features=10,
+            centers=3,
+            cluster_std=2.0,
+            random_state=42,
         )
         cs = _bkmed_cs(
-            lower=2, upper=4,
-            recluster_count=2, bisecting_strategy="largest_cluster",
+            lower=2,
+            upper=4,
+            recluster_count=2,
+            bisecting_strategy="largest_cluster",
             refinement_enabled=False,
         )
 
         labels = bisect_k_medians(data, cs).labels
 
-        expected = np.array([
-            0, 1, 0, 0, 0, 0, 1, 1, 0, 0,
-            1, 0, 1, 1, 0, 0, 0, 0, 0, 0,
-            1, 0, 0, 1, 0, 0, 0, 0, 0, 1,
-            0, 0, 0, 1, 0, 1, 1, 1, 0, 0,
-        ])
+        expected = np.array(
+            [
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                0,
+                1,
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1,
+                0,
+                1,
+                1,
+                1,
+                0,
+                0,
+            ]
+        )
         np.testing.assert_array_equal(labels, expected)
 
 

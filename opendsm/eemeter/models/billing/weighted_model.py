@@ -67,11 +67,7 @@ class BillingWeightedModel(DailyModel):
 
         print("The weighted billing model is under development and is not ready for public use.")
 
-    def _initialize_settings(
-        self,
-        model: str = "current",
-        settings: dict | None = None
-    ) -> None:
+    def _initialize_settings(self, model: str = "current", settings: dict | None = None) -> None:
 
         # Note: Model designates the base settings, it can be 'current' or 'legacy'
         #       Settings is to be a dictionary of settings to be changed
@@ -82,9 +78,7 @@ class BillingWeightedModel(DailyModel):
         self.settings = BillingSettings(**settings)
 
     def fit(
-        self, 
-        baseline_data: BillingBaselineData, 
-        ignore_disqualification: bool = False
+        self, baseline_data: BillingBaselineData, ignore_disqualification: bool = False
     ) -> BillingWeightedModel:
         return super().fit(baseline_data, ignore_disqualification=ignore_disqualification)
 
@@ -135,9 +129,7 @@ class BillingWeightedModel(DailyModel):
         elif aggregation == "bimonthly":
             agg = "2MS"
         else:
-            raise ValueError(
-                "aggregation must be one of [None, 'monthly', 'bimonthly']"
-            )
+            raise ValueError("aggregation must be one of [None, 'monthly', 'bimonthly']")
 
         if agg is not None:
             sum_quad = lambda x: np.sqrt(np.sum(np.square(x)))

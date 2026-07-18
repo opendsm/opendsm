@@ -22,7 +22,6 @@ import pydantic
 from opendsm.common.base_settings import BaseSettings
 
 
-
 class TransformChoice(str, Enum):
     STANDARDIZE = "standardize"
     BISYMLOG = "bisymlog"
@@ -35,27 +34,20 @@ class TransformChoice(str, Enum):
 class OutlierRejectionSettings(BaseSettings):
     """Settings for outlier rejection"""
 
-    enabled: bool = pydantic.Field(
-        default=False,
-        description="enables outlier rejection"
-    )
+    enabled: bool = pydantic.Field(default=False, description="enables outlier rejection")
 
     transform: Optional[TransformChoice] = pydantic.Field(
-        default=None,
-        description="transformation to apply prior to outlier removal"
+        default=None, description="transformation to apply prior to outlier removal"
     )
 
     std_threshold: float = pydantic.Field(
-        default = 3.0,
+        default=3.0,
         gt=0.0,
-        description="number of standard deviations at which outliers are defined"
+        description="number of standard deviations at which outliers are defined",
     )
 
     quantile: float = pydantic.Field(
-        default=0.25,
-        gt=0.0,
-        lt=0.5,
-        description="quantile to use for iqr outlier detection"
+        default=0.25, gt=0.0, lt=0.5, description="quantile to use for iqr outlier detection"
     )
 
 
@@ -67,38 +59,29 @@ class CorrectionCapChoice(str, Enum):
 class CorrectionCapSettings(BaseSettings):
     """Settings for correction cap"""
 
-    enabled: bool = pydantic.Field(
-        default=True,
-        description="enables correction cap"
-    )   
+    enabled: bool = pydantic.Field(default=True, description="enables correction cap")
 
     type: CorrectionCapChoice = pydantic.Field(
-        default=CorrectionCapChoice.SOLAR,
-        description="what kind of correction cap to apply"
+        default=CorrectionCapChoice.SOLAR, description="what kind of correction cap to apply"
     )
 
     value: float = pydantic.Field(
         default=3.0,
-        description="maximum correction as a multiple of the treatment model magnitude (cap = |mTr| * value)"
+        description="maximum correction as a multiple of the treatment model magnitude (cap = |mTr| * value)",
     )
 
     solar_threshold: Optional[float] = pydantic.Field(
-        default = 1/3,
-        description="threshold below which the cap applies for solar"
+        default=1 / 3, description="threshold below which the cap applies for solar"
     )
 
     @pydantic.model_validator(mode="after")
     def _check_solar_cap(self):
         if self.enabled and self.type == CorrectionCapChoice.SOLAR:
             if self.solar_threshold is None:
-                raise ValueError(
-                    "'solar_threshold' must be specified if 'type' is 'solar'."
-                )
+                raise ValueError("'solar_threshold' must be specified if 'type' is 'solar'.")
         elif self.enabled and self.type == CorrectionCapChoice.GLOBAL:
             if self.solar_threshold is not None:
-                raise ValueError(
-                    "'solar_threshold' should not be specified if 'type' is 'global'."
-                )
+                raise ValueError("'solar_threshold' should not be specified if 'type' is 'global'.")
 
         return self
 
@@ -115,34 +98,28 @@ class WeightClusterAggChoice(str, Enum):
 
 class CGCorrectionSettings(BaseSettings):
     """Settings for model correction"""
-    
+
     algorithm: Optional[CorrectionAlgorithm] = pydantic.Field(
         default=CorrectionAlgorithm.ABSPCTDID,
-        description="algorithm to correct treatment meter using comparison group"
+        description="algorithm to correct treatment meter using comparison group",
     )
 
     weight_cluster_aggregation: Optional[WeightClusterAggChoice] = pydantic.Field(
-        default = None,
-        description="how to weight cluster aggregation"
+        default=None, description="how to weight cluster aggregation"
     )
 
     outlier_rejection: OutlierRejectionSettings = pydantic.Field(
-        default_factory=OutlierRejectionSettings,
-        description="outlier rejection settings"
+        default_factory=OutlierRejectionSettings, description="outlier rejection settings"
     )
 
     correction_cap: CorrectionCapSettings = pydantic.Field(
-        default_factory=CorrectionCapSettings,
-        description="correction cap settings"
+        default_factory=CorrectionCapSettings, description="correction cap settings"
     )
 
     alpha: float = pydantic.Field(
-        default=0.10,
-        gt=0.0,
-        lt=1.0,
-        description="significance level for uncertainty calculations"
+        default=0.10, gt=0.0, lt=1.0, description="significance level for uncertainty calculations"
     )
-    
+
 
 if __name__ == "__main__":
     s = CGCorrectionSettings()

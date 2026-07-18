@@ -33,8 +33,8 @@ LOSS_ALPHA_MAX = 100.0
 
 @numba.jit(nopython=True, cache=True)
 def sliding_window(
-    arr: np.ndarray, 
-    window_size: int, 
+    arr: np.ndarray,
+    window_size: int,
     step: int = 0,
 ) -> np.ndarray:
     """Create sliding windows over a time series array.
@@ -58,8 +58,7 @@ def sliding_window(
     # validate arguments
     if window_size > n_obs:
         raise ValueError(
-            "Window size must be less than or equal "
-            "the size of array in first dimension."
+            "Window size must be less than or equal the size of array in first dimension."
         )
     if step < 0:
         raise ValueError("Step must be positive.")
@@ -171,17 +170,13 @@ def get_C(
     if algo == "iqr_legacy":
         # TODO: uncertain if these C functions should use np.min, np.mean, or np.max
         # suspect we can switch to IQR below, but need to test
-        bounds = _IQR_outlier(
-            resid - mu, weights=None, sigma_threshold=sigma, quantile=quantile
-        )
+        bounds = _IQR_outlier(resid - mu, weights=None, sigma_threshold=sigma, quantile=quantile)
         C = np.max(np.abs(bounds))
 
     elif algo == "iqr":
         resid = np.abs(resid)
 
-        bounds = _IQR_outlier(
-            resid - mu, weights=None, sigma_threshold=sigma, quantile=quantile
-        )
+        bounds = _IQR_outlier(resid - mu, weights=None, sigma_threshold=sigma, quantile=quantile)
         C = np.max(np.abs(bounds))
 
     elif algo == "mad":
@@ -227,8 +222,8 @@ def rolling_C(
 
 @numba.jit(nopython=True, error_model="numpy", cache=True)
 def generalized_loss_fcn(
-    x: Union[float, np.ndarray], 
-    alpha: float = 2.0, 
+    x: Union[float, np.ndarray],
+    alpha: float = 2.0,
     alpha_min: float = LOSS_ALPHA_MIN,
 ) -> Union[float, np.ndarray]:
     """Calculate generalized loss function value.
@@ -274,8 +269,8 @@ def generalized_loss_fcn(
 
 @numba.jit(nopython=True, error_model="numpy", cache=True)
 def generalized_loss_derivative(
-    x: Union[float, np.ndarray], 
-    scale: float = 1.0, 
+    x: Union[float, np.ndarray],
+    scale: float = 1.0,
     alpha: float = 2.0,
 ) -> Union[float, np.ndarray]:
     """Calculate derivative of generalized loss function.
@@ -317,8 +312,8 @@ def generalized_loss_derivative(
 
 @numba.jit(nopython=True, error_model="numpy", cache=True)
 def generalized_loss_weights(
-    x: np.ndarray, 
-    alpha: float = 2.0, 
+    x: np.ndarray,
+    alpha: float = 2.0,
     min_weight: float = 0.0,
 ) -> np.ndarray:
     """Calculate adaptive weights based on generalized loss function.
@@ -362,8 +357,8 @@ def generalized_loss_weights(
 
 
 def penalized_loss_fcn(
-    x: np.ndarray, 
-    alpha: float = 2.0, 
+    x: np.ndarray,
+    alpha: float = 2.0,
     use_penalty: bool = True,
 ) -> np.ndarray:
     """Calculate penalized loss function with partition function penalty.
@@ -400,7 +395,7 @@ def penalized_loss_fcn(
 
 @numba.jit(nopython=True, error_model="numpy", cache=True)
 def alpha_scaled(
-    s: float, 
+    s: float,
     alpha_max: float = 2.0,
 ) -> float:
     """Convert scaled parameter s to alpha value.
@@ -441,9 +436,7 @@ def alpha_scaled(
         elif s <= 0:
             return LOSS_ALPHA_MIN
 
-        A = (np.exp((LOSS_ALPHA_MAX - x0) / k) + 1) / (
-            1 - np.exp(2 * LOSS_ALPHA_MAX / k)
-        )
+        A = (np.exp((LOSS_ALPHA_MAX - x0) / k) + 1) / (1 - np.exp(2 * LOSS_ALPHA_MAX / k))
         K = (1 - A) * np.exp((x0 - LOSS_ALPHA_MAX) / k) + 1
 
         alpha = x0 - k * np.log((K - A) / (s - A) - 1)
@@ -499,7 +492,9 @@ def _numba_loss_weights(x_sq, alpha, alpha_min, min_weight):
 
 
 @numba.jit(nopython=True, error_model="numpy", cache=True)
-def _numba_brent_alpha(x_sq: np.ndarray, obs_weights: np.ndarray, alpha_min: float = LOSS_ALPHA_MIN) -> float:
+def _numba_brent_alpha(
+    x_sq: np.ndarray, obs_weights: np.ndarray, alpha_min: float = LOSS_ALPHA_MIN
+) -> float:
     """Bounded Brent minimizer over alpha; mirrors scipy's _minimize_scalar_bounded.
 
     Same algorithm and tolerances as
@@ -573,19 +568,25 @@ def _numba_brent_alpha(x_sq: np.ndarray, obs_weights: np.ndarray, alpha_min: flo
                 a = xf
             else:
                 b = xf
-            fulc = nfc; ffulc = fnfc
-            nfc = xf; fnfc = fx
-            xf = x; fx = fu
+            fulc = nfc
+            ffulc = fnfc
+            nfc = xf
+            fnfc = fx
+            xf = x
+            fx = fu
         else:
             if x < xf:
                 a = x
             else:
                 b = x
             if fu <= fnfc or nfc == xf:
-                fulc = nfc; ffulc = fnfc
-                nfc = x; fnfc = fu
+                fulc = nfc
+                ffulc = fnfc
+                nfc = x
+                fnfc = fu
             elif fu <= ffulc or fulc == xf or fulc == nfc:
-                fulc = x; ffulc = fu
+                fulc = x
+                ffulc = fu
 
         xm = 0.5 * (a + b)
         tol1 = sqrt_eps * abs(xf) + xatol / 3.0
@@ -637,7 +638,7 @@ def adaptive_loss_fcn(
     if alpha == "adaptive":
         # Fully numba Brent optimization — single Python→numba call
         # eliminates per-iteration dispatch overhead.
-        x_sq = x ** 2
+        x_sq = x**2
         if obs_weights is not None:
             w = obs_weights
         else:
@@ -689,9 +690,7 @@ def adaptive_weights(
     x_normalized = (x - mu) / C
 
     if alpha == "adaptive":
-        _, alpha = adaptive_loss_fcn(
-            x_normalized, alpha=alpha, replace_nonfinite=replace_nonfinite
-        )
+        _, alpha = adaptive_loss_fcn(x_normalized, alpha=alpha, replace_nonfinite=replace_nonfinite)
 
     return generalized_loss_weights(x_normalized, alpha=alpha, min_weight=min_weight), C, alpha
 
@@ -707,8 +706,15 @@ class KernelWeightCache:
     """
 
     __slots__ = (
-        "N", "x", "M", "M_alpha", "eval_x", "alpha_x",
-        "scale_kernels", "alpha_kernels", "_q50",
+        "N",
+        "x",
+        "M",
+        "M_alpha",
+        "eval_x",
+        "alpha_x",
+        "scale_kernels",
+        "alpha_kernels",
+        "_q50",
     )
 
     def __init__(
@@ -818,7 +824,8 @@ class KernelWeightCache:
         mu_interp = PchipInterpolator(self.eval_x, eval_mu, extrapolate=True)(x)
         C_interp = np.clip(
             PchipInterpolator(self.eval_x, eval_C, extrapolate=True)(x),
-            1e-10, None,
+            1e-10,
+            None,
         )
 
         # --- Pass 2: Alpha at M_alpha points ---
@@ -828,7 +835,7 @@ class KernelWeightCache:
         M_alpha = self.M_alpha
         eval_alpha = np.empty(M_alpha)
 
-        r_sq_all = r_normalized_all ** 2
+        r_sq_all = r_normalized_all**2
 
         for i in range(M_alpha):
             w = self.alpha_kernels[i]
@@ -840,7 +847,8 @@ class KernelWeightCache:
         # Interpolate alpha, clamp
         alpha_interp = np.clip(
             PchipInterpolator(self.alpha_x, eval_alpha, extrapolate=True)(x),
-            LOSS_ALPHA_MIN, 2.0,
+            LOSS_ALPHA_MIN,
+            2.0,
         )
 
         # --- Per-observation weights via numba (by alpha bucket) ---
@@ -849,7 +857,10 @@ class KernelWeightCache:
         for alpha_val in np.unique(alpha_rounded):
             mask = alpha_rounded == alpha_val
             weights[mask] = _numba_loss_weights(
-                r_sq_all[mask], float(alpha_val), LOSS_ALPHA_MIN, min_weight,
+                r_sq_all[mask],
+                float(alpha_val),
+                LOSS_ALPHA_MIN,
+                min_weight,
             )
 
         median_alpha = float(np.median(eval_alpha))

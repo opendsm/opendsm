@@ -32,11 +32,16 @@ from opendsm.comparison_groups.common import const as _const
 from opendsm.comparison_groups.cg_clustering.create_comparison_groups import CG_Clustering
 from opendsm.comparison_groups.cg_clustering.settings import CG_Clustering_Settings
 from opendsm.eemeter import (
-    DailyModel, DailyBaselineData, DailyReportingData,
-    HourlyModel, HourlyBaselineData, HourlyReportingData,
-    BillingModel, BillingBaselineData, BillingReportingData,
+    DailyModel,
+    DailyBaselineData,
+    DailyReportingData,
+    HourlyModel,
+    HourlyBaselineData,
+    HourlyReportingData,
+    BillingModel,
+    BillingBaselineData,
+    BillingReportingData,
 )
-
 
 
 FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures"
@@ -92,8 +97,12 @@ def _model_reporting_totals(model_cls, baseline_cls, reporting_cls, df_b, df_r, 
     try:
         b = df_b.xs(meter_id, level="id").reset_index()
         r = df_r.xs(meter_id, level="id").reset_index()
-        model = model_cls().fit(baseline_cls(b, is_electricity_data=True), ignore_disqualification=True)
-        pred = model.predict(reporting_cls(r, is_electricity_data=True), ignore_disqualification=True)
+        model = model_cls().fit(
+            baseline_cls(b, is_electricity_data=True), ignore_disqualification=True
+        )
+        pred = model.predict(
+            reporting_cls(r, is_electricity_data=True), ignore_disqualification=True
+        )
     except Exception:
         return None
 
@@ -119,7 +128,7 @@ def build_fixtures(hourly_data, daily_data, monthly_data, n_pool=99, min_cluster
     df_hb, _ = hourly_data
     all_ids = sorted(df_hb.index.get_level_values("id").unique())
     treatment_id = all_ids[0]
-    pool_ids = all_ids[1:1 + n_pool]
+    pool_ids = all_ids[1 : 1 + n_pool]
     print(f"treatment={treatment_id}, pool={len(pool_ids)} meters")
 
     labels_by_id, weight_by_cluster = _cluster_pool(df_hb, treatment_id, pool_ids, min_cluster_size)
@@ -129,14 +138,18 @@ def build_fixtures(hourly_data, daily_data, monthly_data, n_pool=99, min_cluster
     for gran, (model_cls, baseline_cls, reporting_cls) in _MODELS.items():
         df_b, df_r = granularity_data[gran]
 
-        treatment = _model_reporting_totals(model_cls, baseline_cls, reporting_cls, df_b, df_r, treatment_id)
+        treatment = _model_reporting_totals(
+            model_cls, baseline_cls, reporting_cls, df_b, df_r, treatment_id
+        )
         if treatment is None:
             raise RuntimeError(f"{gran}: treatment meter failed to model")
         oTr, mTr, mTr_unc = treatment
 
         oCGr, mCGr, mCGr_unc, labels = [], [], [], []
         for pid in pool_ids:
-            totals = _model_reporting_totals(model_cls, baseline_cls, reporting_cls, df_b, df_r, pid)
+            totals = _model_reporting_totals(
+                model_cls, baseline_cls, reporting_cls, df_b, df_r, pid
+            )
             label = labels_by_id[str(pid)]
             if totals is None or label < 0:
                 continue
@@ -162,9 +175,16 @@ def build_fixtures(hourly_data, daily_data, monthly_data, n_pool=99, min_cluster
         out = FIXTURE_DIR / f"model_correction_{gran}.npz"
         np.savez(
             out,
-            oTr=np.float64(oTr), mTr=np.float64(mTr), mTr_unc=np.float64(mTr_unc),
-            oCGr=oCGr, mCGr=mCGr, mCGr_unc=mCGr_unc,
-            CG_label=labels.astype(float), T_weight=t_weight,
+            oTr=np.float64(oTr),
+            mTr=np.float64(mTr),
+            mTr_unc=np.float64(mTr_unc),
+            oCGr=oCGr,
+            mCGr=mCGr,
+            mCGr_unc=mCGr_unc,
+            CG_label=labels.astype(float),
+            T_weight=t_weight,
         )
-        print(f"{gran}: saved {out.name}  n_cg={len(oCGr)} clusters={len(kept_clusters)} "
-              f"oTr={oTr:.1f} mTr={mTr:.1f}")
+        print(
+            f"{gran}: saved {out.name}  n_cg={len(oCGr)} clusters={len(kept_clusters)} "
+            f"oTr={oTr:.1f} mTr={mTr:.1f}"
+        )

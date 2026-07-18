@@ -33,13 +33,13 @@ logger = logging.getLogger(__name__)
 
 class StratifiedSampler:
     """
-    Perform stratified sampling on a treatment group and comparison pool.  
-    
-    Input data must be provided in the form of two data frames, df_treatment and df_pool, 
-    which have identical columns.  These data frames should contain one row per meter, 
+    Perform stratified sampling on a treatment group and comparison pool.
+
+    Input data must be provided in the form of two data frames, df_treatment and df_pool,
+    which have identical columns.  These data frames should contain one row per meter,
     one ID column, and one or more numerical feature columns.  The comparison pool
-    will be stratified (i.e. binned) along one or more of these feature columns, and 
-    a comparison group will be selected such that the distribution of features in the 
+    will be stratified (i.e. binned) along one or more of these feature columns, and
+    a comparison group will be selected such that the distribution of features in the
     comparison group is as close as possible to that of the treatment group.
 
     Stratification columns must be configured as follows:
@@ -48,7 +48,7 @@ class StratifiedSampler:
         m.add_column('annual_usage', min_value=0, max_value=20000)
         m.add_column('summer_usage', min_value=0, max_value=1000)
 
-    In this case, `annual_usage` and `summer_usage` are feature columns that 
+    In this case, `annual_usage` and `summer_usage` are feature columns that
     are present in `df_treatment` and `df_pool`.
     See `StratifiedSampler.add_column()` for more information on configuring columns.
     Once columns are added, execute the model as follows:
@@ -58,7 +58,7 @@ class StratifiedSampler:
     See `StratifiedSampler.fit_and_sample()` for additional options, notably several
     parameters which determine the number of meters in the comparison group.
 
-    After fitting the model, you can create a StratifiedSamplingDiagnostics object 
+    After fitting the model, you can create a StratifiedSamplingDiagnostics object
     which has methods for producing diagnostic plots and tables:
 
         d = m.diagnostics()
@@ -68,9 +68,7 @@ class StratifiedSampler:
 
     """
 
-    def __init__(
-        self, treatment_label="treatment", pool_label="pool", output_name="output"
-    ):
+    def __init__(self, treatment_label="treatment", pool_label="pool", output_name="output"):
         self.columns = {}
         self.treatment_label = treatment_label
         self.pool_label = pool_label
@@ -119,7 +117,7 @@ class StratifiedSampler:
             The name of the column to be added to the model.
         n_bins: int
             Fixed number of bins to stratify over for this column.
-            If set to None, automatic binning occurs. 
+            If set to None, automatic binning occurs.
         min_value_allowed: int
             Minimum treatment value used to construct bins (used to remove outliers).
         max_value_allowed: int
@@ -148,14 +146,10 @@ class StratifiedSampler:
 
     def _check_columns_present(self, df):
         if not getattr(self, "col_names"):
-            raise ValueError(
-                "No columns found in model. Use add_columns(...) to add a column."
-            )
+            raise ValueError("No columns found in model. Use add_columns(...) to add a column.")
         missing_cols = list(set(self.col_names) - set(df.columns))
         if len(missing_cols) > 0:
-            raise ValueError(
-                f"data is missing required columns: {','.join(missing_cols)}"
-            )
+            raise ValueError(f"data is missing required columns: {','.join(missing_cols)}")
 
     def fit_and_sample(
         self,
@@ -179,15 +173,15 @@ class StratifiedSampler:
             there may be some slight discrepencies around the total count to ensure
             that each bin has the correct percentage of the total.
         min_n_treatment_per_bin: int
-            Minimum number of treatment samples that must exist in a given bin for 
-            it to be considered a non-outlier bin (only applicable if there are 
+            Minimum number of treatment samples that must exist in a given bin for
+            it to be considered a non-outlier bin (only applicable if there are
             cols with fixed_width=True)
         min_n_sampled_to_n_treatment_ratio: int
         relax_n_samples_approx_constraint: bool
             If True, treats n_samples_approx as an upper bound, but gets as many comparison group
             meters as available up to n_samples_approx. If False, it raises an exception
             if there are not enough comparison pool meters to reach n_samples_approx.
-            
+
         """
         if len(self.columns) == 0:
             raise ValueError("You must add at least one column before fitting.")
@@ -213,10 +207,7 @@ class StratifiedSampler:
                         n_sampled_to_n_treatment_ratio = (
                             self.diagnostics().n_sampled_to_n_treatment_ratio()
                         )
-                        if (
-                            n_sampled_to_n_treatment_ratio
-                            < min_n_sampled_to_n_treatment_ratio
-                        ):
+                        if n_sampled_to_n_treatment_ratio < min_n_sampled_to_n_treatment_ratio:
                             logger.info(
                                 f"Insufficient pool data in one of the bins for {col['name']}:"
                                 f"found {n_sampled_to_n_treatment_ratio}:1 but need "
@@ -265,9 +256,7 @@ class StratifiedSampler:
         logger.info(self.get_all_n_bins_as_str())
 
     def get_all_n_bins_as_str(self):
-        return ",".join(
-            [f"{col}:{self.get_n_bins(col)} bins" for col in self.columns.keys()]
-        )
+        return ",".join([f"{col}:{self.get_n_bins(col)} bins" for col in self.columns.keys()])
 
     def get_n_bins(self, col_name):
         col = self.columns[col_name]
@@ -280,15 +269,12 @@ class StratifiedSampler:
 
     def fit(self, df_treatment, min_n_treatment_per_bin=0, random_seed=1):
         self._check_columns_present(df_treatment)
-        df_treatment = self._perturb(
-            self._chop_outliers(df_treatment), random_seed=random_seed
-        )
+        df_treatment = self._perturb(self._chop_outliers(df_treatment), random_seed=random_seed)
         self.df_treatment = df_treatment.copy()
         self.binning = Binning()
 
         self.df_treatment["_outlier_value"] = False
         for name, col in self.columns.items():
-
             if col["min_value_allowed"] is not None:
                 self.df_treatment.loc[
                     self.df_treatment[col["name"]] < col["min_value_allowed"],
@@ -306,9 +292,7 @@ class StratifiedSampler:
                 .dropna()
                 .astype(float)
             )
-            self.binning.bin(
-                values, col["name"], col["n_bins"], fixed_width=col["fixed_width"]
-            )
+            self.binning.bin(values, col["name"], col["n_bins"], fixed_width=col["fixed_width"])
 
         self.data_treatment = BinnedData(
             self.df_treatment,
@@ -336,7 +320,7 @@ class StratifiedSampler:
     ):
         if not self.trained and self.data_treatment is not None:
             raise ValueError("No model found; please run fit()")
-        
+
         self._check_columns_present(df_pool)
         df_pool = self._perturb(self._chop_outliers(df_pool), random_seed=random_seed)
         self.data_pool = BinnedData(df_pool, self.binning)

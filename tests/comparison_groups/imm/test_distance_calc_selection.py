@@ -27,6 +27,7 @@ def _total_memory_gb():
     except (AttributeError, ValueError):
         return float("inf")
 
+
 from opendsm.comparison_groups.individual_meter_matching.settings import Settings
 from opendsm.comparison_groups.individual_meter_matching.distance_calc_selection import (
     DistanceMatching,
@@ -76,13 +77,10 @@ def test_distance_match():
             n_matches_per_treatment=n_matches_per_treatment,
             allow_duplicate_matches=allow_duplicate_matches,
         )
-        IMM = DistanceMatching(
-            settings=settings
-        )
-        
+        IMM = DistanceMatching(settings=settings)
+
         comparison_group = IMM.get_comparison_group(
-            treatment_group=treatment_group,
-            comparison_pool=comparison_pool
+            treatment_group=treatment_group, comparison_pool=comparison_pool
         )
         assert not comparison_group.empty
 
@@ -103,12 +101,9 @@ def test_distance_match_duplicates_allowed():
         n_matches_per_treatment=n_matches_per_treatment,
         allow_duplicate_matches=allow_duplicate_matches,
     )
-    IMM = DistanceMatching(
-        settings=settings
-    )
+    IMM = DistanceMatching(settings=settings)
     comparison_group = IMM.get_comparison_group(
-        treatment_group=treatment_group,
-        comparison_pool=comparison_pool
+        treatment_group=treatment_group, comparison_pool=comparison_pool
     )
     assert comparison_group["duplicated"].any()
 
@@ -132,12 +127,9 @@ def test_distance_match_duplicates_forbidden():
         n_matches_per_treatment=n_matches_per_treatment,
         allow_duplicate_matches=allow_duplicate_matches,
     )
-    IMM = DistanceMatching(
-        settings=settings
-    )
+    IMM = DistanceMatching(settings=settings)
     comparison_group = IMM.get_comparison_group(
-        treatment_group=treatment_group,
-        comparison_pool=comparison_pool
+        treatment_group=treatment_group, comparison_pool=comparison_pool
     )
     assert not comparison_group["duplicated"].any()
 
@@ -164,12 +156,9 @@ def test_distance_match_large_treatments():
         n_matches_per_treatment=n_matches_per_treatment,
         allow_duplicate_matches=allow_duplicate_matches,
     )
-    IMM = DistanceMatching(
-        settings=settings
-    )
+    IMM = DistanceMatching(settings=settings)
     comparison_group = IMM.get_comparison_group(
-        treatment_group=treatment_group,
-        comparison_pool=comparison_pool
+        treatment_group=treatment_group, comparison_pool=comparison_pool
     )
     assert not comparison_group.empty
 
@@ -193,12 +182,9 @@ def test_distance_duplicate_best_match():
         n_matches_per_treatment=n_matches_per_treatment,
         allow_duplicate_matches=allow_duplicate_matches,
     )
-    IMM = DistanceMatching(
-        settings=settings
-    )
+    IMM = DistanceMatching(settings=settings)
     comparison_group = IMM.get_comparison_group(
-        treatment_group=treatment_group,
-        comparison_pool=comparison_pool
+        treatment_group=treatment_group, comparison_pool=comparison_pool
     )
     comparison_group.set_index("id", inplace=True)
 
@@ -226,12 +212,9 @@ def test_multiple_meter_matches():
         n_matches_per_treatment=n_matches_per_treatment,
         allow_duplicate_matches=allow_duplicate_matches,
     )
-    IMM = DistanceMatching(
-        settings=settings
-    )
+    IMM = DistanceMatching(settings=settings)
     comparison_group = IMM.get_comparison_group(
-        treatment_group=treatment_group,
-        comparison_pool=comparison_pool
+        treatment_group=treatment_group, comparison_pool=comparison_pool
     )
     assert not comparison_group["duplicated"].any()
     assert len(comparison_group) == 40
@@ -243,6 +226,7 @@ def test_multiple_meter_matches():
 # Regression tests: verify exact outputs so refactoring cannot silently change
 # results. All inputs are fully deterministic (no random state).
 # ---------------------------------------------------------------------------
+
 
 def test_iter_chunks_exact():
     """_iter_chunks yields non-overlapping chunks of exactly the requested size."""
@@ -271,10 +255,12 @@ def test_distances_exact_euclidean():
 
     result = _distances(ls_t, ls_cp)
 
-    expected = np.array([
-        [0.0,        np.sqrt(2), np.sqrt(2)],
-        [np.sqrt(2), 0.0,        np.sqrt(2)],
-    ])
+    expected = np.array(
+        [
+            [0.0, np.sqrt(2), np.sqrt(2)],
+            [np.sqrt(2), 0.0, np.sqrt(2)],
+        ]
+    )
     np.testing.assert_array_almost_equal(result, expected)
 
 
@@ -282,7 +268,7 @@ def test_distances_exact_with_weights():
     """_distances with weights matches manually scaled cdist."""
     from scipy.spatial.distance import cdist
 
-    ls_t  = np.array([[1.0, 2.0], [3.0, 4.0]])
+    ls_t = np.array([[1.0, 2.0], [3.0, 4.0]])
     ls_cp = np.array([[1.5, 2.5], [0.5, 1.5], [2.5, 3.5]])
     weights = np.array([2.0, 0.5])
 
@@ -295,10 +281,10 @@ def test_distances_exact_with_weights():
 def test_distances_chunking_consistency():
     """Chunked and non-chunked _distances produce identical results (no weights)."""
     rng = np.random.default_rng(42)
-    ls_t  = rng.random((5, 4))
+    ls_t = rng.random((5, 4))
     ls_cp = rng.random((11, 4))
 
-    result_full   = _distances(ls_t, ls_cp, n_meters_per_chunk=1000)
+    result_full = _distances(ls_t, ls_cp, n_meters_per_chunk=1000)
     result_chunked = _distances(ls_t, ls_cp, n_meters_per_chunk=3)
 
     np.testing.assert_array_almost_equal(result_full, result_chunked)
@@ -307,11 +293,11 @@ def test_distances_chunking_consistency():
 def test_distances_chunking_consistency_with_weights():
     """Chunked and non-chunked _distances produce identical results (with weights)."""
     rng = np.random.default_rng(42)
-    ls_t    = rng.random((5, 4))
-    ls_cp   = rng.random((11, 4))
+    ls_t = rng.random((5, 4))
+    ls_cp = rng.random((11, 4))
     weights = rng.random(4) + 0.1  # positive weights
 
-    result_full    = _distances(ls_t, ls_cp, weights=weights, n_meters_per_chunk=1000)
+    result_full = _distances(ls_t, ls_cp, weights=weights, n_meters_per_chunk=1000)
     result_chunked = _distances(ls_t, ls_cp, weights=weights, n_meters_per_chunk=3)
 
     np.testing.assert_array_almost_equal(result_full, result_chunked)
@@ -319,10 +305,12 @@ def test_distances_chunking_consistency_with_weights():
 
 def test_closest_idx_duplicates_allowed_exact():
     """_closest_idx_duplicates_allowed returns the correct top-k indices."""
-    distances = np.array([
-        [5.0, 1.0, 3.0, 2.0],  # closest 2: indices 1 (1.0) and 3 (2.0)
-        [2.0, 3.0, 1.0, 4.0],  # closest 2: indices 2 (1.0) and 0 (2.0)
-    ])
+    distances = np.array(
+        [
+            [5.0, 1.0, 3.0, 2.0],  # closest 2: indices 1 (1.0) and 3 (2.0)
+            [2.0, 3.0, 1.0, 4.0],  # closest 2: indices 2 (1.0) and 0 (2.0)
+        ]
+    )
     settings = Settings(n_matches_per_treatment=2, allow_duplicate_matches=True)
     imm = DistanceMatching(settings=settings)
 
@@ -364,9 +352,7 @@ def test_get_comparison_group_exact_no_duplicates():
     # "far"   (10) vs match_1 (2)  → dist=8,  match_2 (100) → dist=90
     # "close" (1)  vs match_1 (2)  → dist=1,  match_2 (100) → dist=99
     # linear_sum_assignment (n_match=1): assigns "far"→match_2 (90), "close"→match_1 (1)
-    treatment_group = pd.DataFrame(
-        {"id": ["far", "close"], "month_1": [10.0, 1.0]}
-    ).set_index("id")
+    treatment_group = pd.DataFrame({"id": ["far", "close"], "month_1": [10.0, 1.0]}).set_index("id")
     comparison_pool = pd.DataFrame(
         {"id": ["match_1", "match_2"], "month_1": [2.0, 100.0]}
     ).set_index("id")
@@ -381,12 +367,14 @@ def test_get_comparison_group_exact_no_duplicates():
         comparison_pool=comparison_pool,
     )
 
-    expected = pd.DataFrame({
-        "id":          ["match_2", "match_1"],
-        "treatment":   ["far",     "close"],
-        "distance":    [90.0,      1.0],
-        "duplicated":  [False,     False],
-    })
+    expected = pd.DataFrame(
+        {
+            "id": ["match_2", "match_1"],
+            "treatment": ["far", "close"],
+            "distance": [90.0, 1.0],
+            "duplicated": [False, False],
+        }
+    )
     pd.testing.assert_frame_equal(
         cg.reset_index(drop=True),
         expected,
@@ -397,9 +385,7 @@ def test_get_comparison_group_exact_no_duplicates():
 
 def test_get_comparison_group_exact_with_max_distance():
     """max_distance_threshold filters rows whose distance exceeds the limit."""
-    treatment_group = pd.DataFrame(
-        {"id": ["far", "close"], "month_1": [10.0, 1.0]}
-    ).set_index("id")
+    treatment_group = pd.DataFrame({"id": ["far", "close"], "month_1": [10.0, 1.0]}).set_index("id")
     comparison_pool = pd.DataFrame(
         {"id": ["match_1", "match_2"], "month_1": [2.0, 100.0]}
     ).set_index("id")
@@ -461,9 +447,7 @@ def test_get_comparison_group_duplicated_flag():
     treatment_group = pd.DataFrame(
         {"id": ["t_1", "t_2", "t_3"], "month_1": [1.0, 1.1, 5.0]}
     ).set_index("id")
-    comparison_pool = pd.DataFrame(
-        {"id": ["c_1", "c_2"], "month_1": [1.05, 1.08]}
-    ).set_index("id")
+    comparison_pool = pd.DataFrame({"id": ["c_1", "c_2"], "month_1": [1.05, 1.08]}).set_index("id")
 
     settings = Settings(
         selection_method="minimize_meter_distance",

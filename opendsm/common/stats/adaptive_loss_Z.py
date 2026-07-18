@@ -305,5 +305,5 @@ def ln_Z_numba(alpha, alpha_min=-100.0):
     lo = _LN_Z_T[_LN_Z_K]
     hi = _LN_Z_T[len(_LN_Z_T) - _LN_Z_K - 1]
     x = min(max(alpha, lo), hi - 1e-10)
-    
+
     return _de_boor(_LN_Z_T, _LN_Z_C, _LN_Z_K, x)

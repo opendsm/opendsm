@@ -16,7 +16,6 @@ from opendsm.drmeter.models.caltrack.model import Model
 from opendsm.eemeter.models.hourly_caltrack import HourlyModel
 
 
-
 def test_drmeter_model_is_single_segment_hourly_model():
     """The DR caltrack Model is an HourlyModel configured for a single segment."""
     model = Model()

@@ -69,9 +69,7 @@ def create_hourly_dataframe(
     obs_noise = np.random.normal(0, 0.5, n) if add_noise else 0
     observed = np.maximum(0, base_load + temp_correlation + obs_noise)
 
-    df = pd.DataFrame(
-        {"observed": observed, "temperature": temperature}, index=index
-    )
+    df = pd.DataFrame({"observed": observed, "temperature": temperature}, index=index)
 
     if include_ghi:
         # GHI: daytime only, seasonal variation
@@ -168,9 +166,7 @@ class TestHourlyDataClassInit:
 
     def test_baseline_with_valid_data(self, synthetic_hourly_data):
         """Basic successful instantiation of HourlyBaselineData"""
-        data = HourlyBaselineData(
-            df=synthetic_hourly_data, is_electricity_data=True
-        )
+        data = HourlyBaselineData(df=synthetic_hourly_data, is_electricity_data=True)
 
         assert data is not None
         assert isinstance(data.df, pd.DataFrame)
@@ -186,17 +182,13 @@ class TestHourlyDataClassInit:
 
     def test_baseline_with_ghi_data(self, synthetic_hourly_with_ghi):
         """Include optional GHI column"""
-        data = HourlyBaselineData(
-            df=synthetic_hourly_with_ghi, is_electricity_data=True
-        )
+        data = HourlyBaselineData(df=synthetic_hourly_with_ghi, is_electricity_data=True)
 
         assert "ghi" in data.df.columns
 
     def test_reporting_with_valid_data(self, synthetic_hourly_data):
         """Basic reporting data instantiation"""
-        data = HourlyReportingData(
-            df=synthetic_hourly_data, is_electricity_data=True
-        )
+        data = HourlyReportingData(df=synthetic_hourly_data, is_electricity_data=True)
 
         assert data is not None
         assert isinstance(data.df, pd.DataFrame)
@@ -211,9 +203,7 @@ class TestHourlyDataClassInit:
 
     def test_reporting_with_observed(self, synthetic_hourly_data):
         """Observed column present (should work for reporting)"""
-        data = HourlyReportingData(
-            df=synthetic_hourly_data, is_electricity_data=True
-        )
+        data = HourlyReportingData(df=synthetic_hourly_data, is_electricity_data=True)
 
         assert "observed" in data.df.columns
 
@@ -269,10 +259,12 @@ class TestHourlyDataClassInit:
         original_tz = df.index.tz
         naive_index = df.index.tz_localize(None)
         us_index = naive_index.astype("datetime64[us]")
-        df.index = us_index.tz_localize(original_tz, ambiguous='infer', nonexistent='shift_forward')
+        df.index = us_index.tz_localize(original_tz, ambiguous="infer", nonexistent="shift_forward")
 
         # Verify we successfully created microsecond precision
-        assert df.index.dtype.unit == "us", f"Test setup failed: expected us, got {df.index.dtype.unit}"
+        assert df.index.dtype.unit == "us", (
+            f"Test setup failed: expected us, got {df.index.dtype.unit}"
+        )
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
@@ -300,9 +292,7 @@ class TestHourlyDataClassInit:
 
     def test_df_property_returns_copy(self, synthetic_hourly_data):
         """Verify .df returns copy, not reference"""
-        data = HourlyBaselineData(
-            df=synthetic_hourly_data, is_electricity_data=True
-        )
+        data = HourlyBaselineData(df=synthetic_hourly_data, is_electricity_data=True)
 
         df1 = data.df
         df2 = data.df
@@ -311,9 +301,7 @@ class TestHourlyDataClassInit:
 
     def test_df_immutability(self, synthetic_hourly_data):
         """Modifying returned df doesn't affect internal data"""
-        data = HourlyBaselineData(
-            df=synthetic_hourly_data, is_electricity_data=True
-        )
+        data = HourlyBaselineData(df=synthetic_hourly_data, is_electricity_data=True)
 
         df = data.df
         original_value = df.iloc[0, 0]
@@ -325,18 +313,14 @@ class TestHourlyDataClassInit:
 
     def test_tz_property(self, synthetic_hourly_data):
         """Timezone preserved correctly"""
-        data = HourlyBaselineData(
-            df=synthetic_hourly_data, is_electricity_data=True
-        )
+        data = HourlyBaselineData(df=synthetic_hourly_data, is_electricity_data=True)
 
         assert data.tz is not None
         assert str(data.tz) == "US/Eastern"
 
     def test_settings_property(self, synthetic_hourly_data):
         """Settings accessible and correct type"""
-        data = HourlyBaselineData(
-            df=synthetic_hourly_data, is_electricity_data=True
-        )
+        data = HourlyBaselineData(df=synthetic_hourly_data, is_electricity_data=True)
 
         assert data.settings is not None
         assert isinstance(data.settings, HourlyDataSettings)
@@ -345,25 +329,19 @@ class TestHourlyDataClassInit:
         """PV start date handling"""
         df = create_hourly_dataframe()
         pv_date = date(2019, 6, 1)
-        data = HourlyBaselineData(
-            df=df, is_electricity_data=True, pv_start=pv_date
-        )
+        data = HourlyBaselineData(df=df, is_electricity_data=True, pv_start=pv_date)
 
         assert data.pv_start == pv_date
 
     def test_warnings_list(self, synthetic_hourly_data):
         """Warnings list accessible"""
-        data = HourlyBaselineData(
-            df=synthetic_hourly_data, is_electricity_data=True
-        )
+        data = HourlyBaselineData(df=synthetic_hourly_data, is_electricity_data=True)
 
         assert isinstance(data.warnings, list)
 
     def test_disqualification_list(self, synthetic_hourly_data):
         """Disqualifications list accessible"""
-        data = HourlyBaselineData(
-            df=synthetic_hourly_data, is_electricity_data=True
-        )
+        data = HourlyBaselineData(df=synthetic_hourly_data, is_electricity_data=True)
 
         assert isinstance(data.disqualification, list)
 
@@ -371,9 +349,7 @@ class TestHourlyDataClassInit:
 
     def test_default_settings(self, synthetic_hourly_data):
         """No settings passed, uses defaults"""
-        data = HourlyBaselineData(
-            df=synthetic_hourly_data, is_electricity_data=True
-        )
+        data = HourlyBaselineData(df=synthetic_hourly_data, is_electricity_data=True)
 
         assert data.settings.sufficiency.min_baseline_length == 329
         assert data.settings.sufficiency.temperature.min_pct_daily_coverage == 0.9
@@ -391,9 +367,7 @@ class TestHourlyDataClassInit:
 
     def test_settings_object(self, synthetic_hourly_data):
         """Pass HourlyDataSettings instance"""
-        settings = HourlyDataSettings(
-            sufficiency={"min_baseline_length": 350}
-        )
+        settings = HourlyDataSettings(sufficiency={"min_baseline_length": 350})
         data = HourlyBaselineData(
             df=synthetic_hourly_data, is_electricity_data=True, settings=settings
         )
@@ -419,9 +393,7 @@ class TestHourlyDataClassInit:
 
     def test_settings_immutability(self, synthetic_hourly_data):
         """Settings can't be changed after init"""
-        data = HourlyBaselineData(
-            df=synthetic_hourly_data, is_electricity_data=True
-        )
+        data = HourlyBaselineData(df=synthetic_hourly_data, is_electricity_data=True)
 
         original_value = data.settings.sufficiency.min_baseline_length
 
@@ -444,9 +416,7 @@ class TestHourlyDataClassInit:
 
     def test_settings_inherited_by_data_class(self, synthetic_hourly_data):
         """is_electricity_data propagated to sufficiency checks"""
-        data = HourlyBaselineData(
-            df=synthetic_hourly_data, is_electricity_data=False
-        )
+        data = HourlyBaselineData(df=synthetic_hourly_data, is_electricity_data=False)
 
         assert data.is_electricity_data is False
 
@@ -1042,9 +1012,7 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyReportingData(df=df, is_electricity_data=False)
 
-        assert_has_disqualification(
-            data, "eemeter.sufficiency_criteria.negative_observed_values"
-        )
+        assert_has_disqualification(data, "eemeter.sufficiency_criteria.negative_observed_values")
 
     # ===== Temperature Daily Coverage Check =====
 
@@ -1144,8 +1112,7 @@ class TestHourlySufficiencyCriteria:
 
         dq_names = [dq.qualified_name for dq in data.disqualification]
         assert (
-            "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data"
-            not in dq_names
+            "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data" not in dq_names
         )
 
     def test_observed_daily_coverage_baseline_only(self):
@@ -1173,8 +1140,7 @@ class TestHourlySufficiencyCriteria:
 
         dq_names = [dq.qualified_name for dq in reporting_data.disqualification]
         assert (
-            "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data"
-            not in dq_names
+            "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data" not in dq_names
         )
 
     def test_observed_daily_coverage_custom_threshold(self):
@@ -1190,8 +1156,7 @@ class TestHourlySufficiencyCriteria:
         # With 85% coverage and 80% threshold, should pass
         dq_names = [dq.qualified_name for dq in data.disqualification]
         assert (
-            "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data"
-            not in dq_names
+            "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data" not in dq_names
         )
 
     # ===== Joint Daily Coverage Check =====
@@ -1206,10 +1171,7 @@ class TestHourlySufficiencyCriteria:
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
         dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data"
-            not in dq_names
-        )
+        assert "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data" not in dq_names
 
     def test_joint_daily_coverage_temp_missing(self):
         """Temperature NaN fails joint"""
@@ -1266,10 +1228,7 @@ class TestHourlySufficiencyCriteria:
 
         # With 85% coverage and 80% threshold, should pass
         dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data"
-            not in dq_names
-        )
+        assert "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data" not in dq_names
 
     # ===== Temperature Monthly Coverage Check =====
 
@@ -1282,10 +1241,7 @@ class TestHourlySufficiencyCriteria:
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
         dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.missing_monthly_temperature_data"
-            not in dq_names
-        )
+        assert "eemeter.sufficiency_criteria.missing_monthly_temperature_data" not in dq_names
 
     def test_temperature_monthly_coverage_one_month_low(self):
         """Feb with 85% fails"""
@@ -1330,10 +1286,7 @@ class TestHourlySufficiencyCriteria:
         data = HourlyBaselineData(df=df, is_electricity_data=True, settings=settings)
 
         dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.missing_monthly_temperature_data"
-            not in dq_names
-        )
+        assert "eemeter.sufficiency_criteria.missing_monthly_temperature_data" not in dq_names
 
     def test_temperature_monthly_coverage_reporting(self):
         """Reporting checked"""
@@ -1363,9 +1316,7 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        assert_has_disqualification(
-            data, "eemeter.sufficiency_criteria.missing_monthly_ghi_data"
-        )
+        assert_has_disqualification(data, "eemeter.sufficiency_criteria.missing_monthly_ghi_data")
 
     def test_ghi_monthly_coverage_all_months_pass(self):
         """All above 90%"""
@@ -1396,9 +1347,7 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        assert_has_disqualification(
-            data, "eemeter.sufficiency_criteria.missing_monthly_ghi_data"
-        )
+        assert_has_disqualification(data, "eemeter.sufficiency_criteria.missing_monthly_ghi_data")
 
     def test_ghi_monthly_coverage_reporting(self):
         """Reporting checked"""
@@ -1410,9 +1359,7 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyReportingData(df=df, is_electricity_data=True)
 
-        assert_has_disqualification(
-            data, "eemeter.sufficiency_criteria.missing_monthly_ghi_data"
-        )
+        assert_has_disqualification(data, "eemeter.sufficiency_criteria.missing_monthly_ghi_data")
 
     def test_ghi_monthly_coverage_custom_threshold(self):
         """Override threshold"""
@@ -1452,10 +1399,7 @@ class TestHourlySufficiencyCriteria:
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
         dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.missing_monthly_observed_data"
-            not in dq_names
-        )
+        assert "eemeter.sufficiency_criteria.missing_monthly_observed_data" not in dq_names
 
     def test_observed_monthly_coverage_baseline_only(self):
         """Only baseline checked"""
@@ -1482,10 +1426,7 @@ class TestHourlySufficiencyCriteria:
         reporting_data = HourlyReportingData(df=df, is_electricity_data=True)
 
         dq_names = [dq.qualified_name for dq in reporting_data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.missing_monthly_observed_data"
-            not in dq_names
-        )
+        assert "eemeter.sufficiency_criteria.missing_monthly_observed_data" not in dq_names
 
     def test_observed_monthly_coverage_custom_threshold(self):
         """Custom threshold"""
@@ -1499,10 +1440,7 @@ class TestHourlySufficiencyCriteria:
         data = HourlyBaselineData(df=df, is_electricity_data=True, settings=settings)
 
         dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.missing_monthly_observed_data"
-            not in dq_names
-        )
+        assert "eemeter.sufficiency_criteria.missing_monthly_observed_data" not in dq_names
 
     # ===== Unique Observed Values Check =====
 
@@ -1516,10 +1454,7 @@ class TestHourlySufficiencyCriteria:
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
         dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.insufficient_unique_observed_values"
-            not in dq_names
-        )
+        assert "eemeter.sufficiency_criteria.insufficient_unique_observed_values" not in dq_names
 
     def test_unique_observed_above_threshold(self):
         """Above 10% passes"""
@@ -1528,10 +1463,7 @@ class TestHourlySufficiencyCriteria:
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
         dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.insufficient_unique_observed_values"
-            not in dq_names
-        )
+        assert "eemeter.sufficiency_criteria.insufficient_unique_observed_values" not in dq_names
 
     def test_unique_observed_below_threshold(self):
         """Below 10% unique disqualifies"""
@@ -1597,10 +1529,7 @@ class TestHourlySufficiencyCriteria:
         reporting_data = HourlyReportingData(df=df, is_electricity_data=True)
 
         dq_names = [dq.qualified_name for dq in reporting_data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.insufficient_unique_observed_values"
-            not in dq_names
-        )
+        assert "eemeter.sufficiency_criteria.insufficient_unique_observed_values" not in dq_names
 
     def test_unique_observed_custom_threshold(self):
         """Override to 30%"""
@@ -1738,9 +1667,7 @@ class TestHourlySufficiencyCriteria:
 
         baseline_data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        assert_has_warning(
-            baseline_data, "eemeter.sufficiency_criteria.extreme_values_detected"
-        )
+        assert_has_warning(baseline_data, "eemeter.sufficiency_criteria.extreme_values_detected")
 
     def test_extreme_values_reporting_skipped(self):
         """Reporting exempt"""
@@ -1761,6 +1688,7 @@ class TestHourlySufficiencyCriteria:
 
         warning_names = [w.qualified_name for w in data.warnings]
         # May or may not have this warning depending on random data
+
 
 class TestHourlyDataIntegration:
     """Tests for end-to-end scenarios"""
@@ -1848,10 +1776,7 @@ class TestHourlyDataEdgeCases:
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
         dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.incorrect_number_of_total_days"
-            not in dq_names
-        )
+        assert "eemeter.sufficiency_criteria.incorrect_number_of_total_days" not in dq_names
 
     def test_exactly_366_days(self):
         """Maximum baseline length"""
@@ -1860,10 +1785,7 @@ class TestHourlyDataEdgeCases:
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
         dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.incorrect_number_of_total_days"
-            not in dq_names
-        )
+        assert "eemeter.sufficiency_criteria.incorrect_number_of_total_days" not in dq_names
 
     def test_single_day_of_data(self):
         """Too short, disqualified"""
@@ -2032,7 +1954,9 @@ class TestHourlyDataEdgeCases:
     def test_ghi_vs_no_ghi(self):
         """GHI checks conditional"""
         df_no_ghi = create_hourly_dataframe(start="2019-01-01", end="2019-12-31", include_ghi=False)
-        df_with_ghi = create_hourly_dataframe(start="2019-01-01", end="2019-12-31", include_ghi=True)
+        df_with_ghi = create_hourly_dataframe(
+            start="2019-01-01", end="2019-12-31", include_ghi=True
+        )
 
         data_no_ghi = HourlyBaselineData(df=df_no_ghi, is_electricity_data=True)
         data_with_ghi = HourlyBaselineData(df=df_with_ghi, is_electricity_data=True)

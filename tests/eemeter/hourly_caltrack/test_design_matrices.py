@@ -38,9 +38,7 @@ def _meter_temp(df):
 def test_create_caltrack_hourly_preliminary_design_matrix(comstock_hourly, snapshot):
     df_b, _ = comstock_hourly
     meter, temperature = _meter_temp(df_b)
-    design_matrix = create_caltrack_hourly_preliminary_design_matrix(
-        meter[:1000], temperature
-    )
+    design_matrix = create_caltrack_hourly_preliminary_design_matrix(meter[:1000], temperature)
     assert design_matrix.shape == (1000, 7)
     assert sorted(design_matrix.columns) == [
         "cdd_65",
@@ -103,9 +101,7 @@ def preliminary_hourly_design_matrix(comstock_hourly):
 
 @pytest.fixture
 def segmentation(preliminary_hourly_design_matrix):
-    return segment_time_series(
-        preliminary_hourly_design_matrix.index, "three_month_weighted"
-    )
+    return segment_time_series(preliminary_hourly_design_matrix.index, "three_month_weighted")
 
 
 @pytest.fixture
@@ -154,7 +150,9 @@ def test_create_caltrack_billing_design_matrix_empty_temp(comstock_monthly, coms
         create_caltrack_billing_design_matrix(meter[:10], temperature[:0])
 
 
-def test_create_caltrack_billing_design_matrix_partial_empty_temp(comstock_monthly, comstock_hourly):
+def test_create_caltrack_billing_design_matrix_partial_empty_temp(
+    comstock_monthly, comstock_hourly
+):
     df_monthly, _ = comstock_monthly
     df_hourly, _ = comstock_hourly
     meter, _ = _meter_temp(df_monthly)

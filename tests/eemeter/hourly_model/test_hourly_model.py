@@ -30,7 +30,6 @@ import pytest
 from math import ceil
 
 
-
 def test_good_data(baseline, reporting):
     baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
     reporting_data = HourlyReportingData(reporting, is_electricity_data=True)
@@ -100,9 +99,7 @@ def test_forced_solar_model_fit_no_ghi(baseline):
 def test_forced_nonsolar_model_fit_with_ghi(baseline):
     baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
     hm = HourlyModel(settings=HourlyNonSolarSettings()).fit(baseline_data)
-    assert [
-        w for w in hm.warnings if w.qualified_name == "eemeter.potential_model_mismatch"
-    ]
+    assert [w for w in hm.warnings if w.qualified_name == "eemeter.potential_model_mismatch"]
 
 
 def test_no_data(baseline):
@@ -131,7 +128,7 @@ def test_invalid_baseline_lengths(baseline):
     MIN_BASELINE_HOURS = ceil(MAX_BASELINE_HOURS * 0.9) - 24
     short_df = baseline.iloc[:MIN_BASELINE_HOURS]
 
-    extra_days = baseline.iloc[-24*2:]
+    extra_days = baseline.iloc[-24 * 2 :]
     extra_days.index += pd.Timedelta(days=2)
     long_df = pd.concat([baseline, extra_days])
 
@@ -168,9 +165,7 @@ def test_low_freq_meter(baseline):
 
 
 def test_monthly_percentage(baseline):
-    missing_idx = pd.date_range(
-        start=baseline.index.min(), end=baseline.index.max(), freq="h"
-    )
+    missing_idx = pd.date_range(start=baseline.index.min(), end=baseline.index.max(), freq="h")
     # create datetimeindex where a little over 10% of days are missing in feb, but still 90% overall
     missing_idx = missing_idx[missing_idx.day < 4]
     invalid_baseline = baseline[~baseline.index.isin(missing_idx)]
@@ -185,9 +180,7 @@ def test_monthly_percentage(baseline):
     invalid_meter.loc[invalid_meter.index.day < 5, "observed"] = np.nan
 
     baseline_data = HourlyBaselineData(invalid_baseline, is_electricity_data=True)
-    assert_dq(
-        baseline_data, ["eemeter.sufficiency_criteria.missing_monthly_temperature_data"]
-    )
+    assert_dq(baseline_data, ["eemeter.sufficiency_criteria.missing_monthly_temperature_data"])
     with pytest.raises(DataSufficiencyError):
         HourlyModel().fit(baseline_data)
     baseline_data = HourlyBaselineData(valid_baseline, is_electricity_data=True)
@@ -220,9 +213,7 @@ def test_monthly_percentage(baseline):
 
 def test_monthly_ghi_percentage(baseline):
     # create datetimeindex where a little over 10% of days are missing in feb, but still 90% overall
-    missing_idx = pd.date_range(
-        start=baseline.index.min(), end=baseline.index.max(), freq="h"
-    )
+    missing_idx = pd.date_range(start=baseline.index.min(), end=baseline.index.max(), freq="h")
     missing_idx = missing_idx[missing_idx.day < 4]
 
     invalid_ghi = baseline.copy()

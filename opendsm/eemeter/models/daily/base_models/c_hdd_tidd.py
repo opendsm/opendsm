@@ -122,9 +122,7 @@ def fit_c_hdd_tidd(
         bnds_0 = [c_hdd_bnds, c_hdd_beta_bnds, intercept_bnds]
 
     bnds = _c_hdd_tidd_update_bnds(bnds, bnds_0, smooth)
-    if (
-        c_hdd_bnds[0] == c_hdd_bnds[1]
-    ):  # if breakpoint bounds are identical, don't expand
+    if c_hdd_bnds[0] == c_hdd_bnds[1]:  # if breakpoint bounds are identical, don't expand
         bnds[0, :] = c_hdd_bnds
 
     if smooth:
@@ -140,9 +138,7 @@ def fit_c_hdd_tidd(
     obj_fcn = obj_fcn_decorator(
         model_fcn, weight_fcn, TSS_fcn, T, obs, weights, settings, alpha, coef_id, initial_fit
     )
-    res = Optimizer(
-        obj_fcn, x0.to_np_array(), bnds, coef_id, settings, opt_options
-    ).run()
+    res = Optimizer(obj_fcn, x0.to_np_array(), bnds, coef_id, settings, opt_options).run()
 
     return res
 
@@ -222,9 +218,7 @@ def _c_hdd_tidd_update_bnds(new_bnds, bnds, smooth):
     return new_bnds
 
 
-def _tdd_coefficients(
-    intercept, c_hdd_bp, c_hdd_beta, c_hdd_k=None
-) -> ModelCoefficients:
+def _tdd_coefficients(intercept, c_hdd_bp, c_hdd_beta, c_hdd_k=None) -> ModelCoefficients:
     """
     infer cdd vs hdd given positive or negative slope.
     if slope is 0, model will be reduced later
@@ -360,9 +354,7 @@ def _c_hdd_tidd_bp0(T, obs, alpha, settings, min_weight=0.0):
                 c_hdd_beta = cdd_beta
                 intercept = get_intercept(obs[idx_hdd], alpha)
 
-            model = _c_hdd_tidd(
-                c_hdd_bp, c_hdd_beta, intercept, T_fit_bnds=T_fit_bnds, T=T
-            )
+            model = _c_hdd_tidd(c_hdd_bp, c_hdd_beta, intercept, T_fit_bnds=T_fit_bnds, T=T)
 
             resid = model - obs
             weight, _, _ = adaptive_weights(
@@ -393,16 +385,12 @@ def _c_hdd_tidd_bp0(T, obs, alpha, settings, min_weight=0.0):
         f_tol_rel=0.5,
     )
 
-    res = InitialGuessOptimizer(
-        obj_fcn, x0, bnds, opt_settings
-    ).run()
+    res = InitialGuessOptimizer(obj_fcn, x0, bnds, opt_settings).run()
 
     return res.x[0]
 
 
-def _c_hdd_tidd(
-    c_hdd_bp, c_hdd_beta, intercept, T_fit_bnds=np.array([]), T=np.array([])
-):
+def _c_hdd_tidd(c_hdd_bp, c_hdd_beta, intercept, T_fit_bnds=np.array([]), T=np.array([])):
     model_vars = set_full_model_coeffs(c_hdd_bp, c_hdd_beta, intercept)
     return full_model(*model_vars, T_fit_bnds, T)
 
@@ -426,9 +414,7 @@ def _c_hdd_tidd_weight(
     min_weight=0.0,
 ):
     model_vars = set_full_model_coeffs(c_hdd_bp, c_hdd_beta, intercept)
-    return full_model_weight(
-        *model_vars, T, residual, sigma, quantile, alpha, min_weight
-    )
+    return full_model_weight(*model_vars, T, residual, sigma, quantile, alpha, min_weight)
 
 
 def _c_hdd_tidd_smooth_weight(
@@ -461,9 +447,7 @@ def _c_hdd_tidd_smooth_weight(
     """
 
     model_vars = set_full_model_coeffs_smooth(c_hdd_bp, c_hdd_beta, c_hdd_k, intercept)
-    return full_model_weight(
-        *model_vars, T, residual, sigma, quantile, alpha, min_weight
-    )
+    return full_model_weight(*model_vars, T, residual, sigma, quantile, alpha, min_weight)
 
 
 def _c_hdd_tidd_total_sum_of_squares(c_hdd_bp, c_hdd_beta, intercept, T, obs):

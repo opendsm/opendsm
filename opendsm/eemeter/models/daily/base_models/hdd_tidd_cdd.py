@@ -118,9 +118,7 @@ def fit_hdd_tidd_cdd(
         model_fcn, weight_fcn, TSS_fcn, T, obs, weights, settings, alpha, coef_id, initial_fit
     )
 
-    res = Optimizer(
-        obj_fcn, x0.to_np_array(), bnds, coef_id, settings, opt_options
-    ).run()
+    res = Optimizer(obj_fcn, x0.to_np_array(), bnds, coef_id, settings, opt_options).run()
 
     return res
 
@@ -137,9 +135,7 @@ def _hdd_tidd_cdd(
 ):
     hdd_k = cdd_k = 0
 
-    return full_model(
-        hdd_bp, hdd_beta, hdd_k, cdd_bp, cdd_beta, cdd_k, intercept, T_fit_bnds, T
-    )
+    return full_model(hdd_bp, hdd_beta, hdd_k, cdd_bp, cdd_beta, cdd_k, intercept, T_fit_bnds, T)
 
 
 @numba.jit(nopython=True, error_model="numpy", cache=True)
@@ -185,9 +181,7 @@ def _hdd_tidd_cdd_smooth_x0(T, obs, alpha, settings, smooth, min_weight=0.0):
 
             T_range = T_fit_bnds[1] - T_fit_bnds[0]
 
-            X_lasso = np.array(
-                [np.min(np.abs(X[idx] - T_fit_bnds)) for idx in range(len(X))]
-            )
+            X_lasso = np.array([np.min(np.abs(X[idx] - T_fit_bnds)) for idx in range(len(X))])
             X_lasso += (X[1] - X[0]) / 2
             X_lasso *= wRMSE / T_range
 
@@ -239,9 +233,7 @@ def _hdd_tidd_cdd_smooth_x0(T, obs, alpha, settings, smooth, min_weight=0.0):
             if optimize_flag:
                 return loss
 
-            return np.array(
-                [hdd_bp, hdd_beta, hdd_k, cdd_bp, cdd_beta, cdd_k, intercept]
-            )
+            return np.array([hdd_bp, hdd_beta, hdd_k, cdd_bp, cdd_beta, cdd_k, intercept])
 
         return bp_obj_fcn
 
@@ -273,9 +265,7 @@ def _hdd_tidd_cdd_smooth_x0(T, obs, alpha, settings, smooth, min_weight=0.0):
         f_tol_rel=0.5,
     )
 
-    res = InitialGuessOptimizer(
-        obj_fcn, x0, bnds, opt_settings
-    ).run()
+    res = InitialGuessOptimizer(obj_fcn, x0, bnds, opt_settings).run()
 
     x0 = obj_fcn(res.x, optimize_flag=False)
 
@@ -311,9 +301,7 @@ def estimate_betas_and_intercept(T, obs, hdd_bp, cdd_bp, min_T_idx, alpha):
         and (len(idx_hdd) >= min_T_idx)
         and (idx_cdd[min_T_idx - 1] - idx_hdd[-min_T_idx]) > 0
     ):
-        intercept = get_intercept(
-            obs[idx_hdd[-min_T_idx] : idx_cdd[min_T_idx - 1]], alpha
-        )
+        intercept = get_intercept(obs[idx_hdd[-min_T_idx] : idx_cdd[min_T_idx - 1]], alpha)
     else:
         intercept = np.quantile(obs, 0.20)
 
@@ -378,9 +366,7 @@ def _hdd_tidd_cdd_weight(
     hdd_k = cdd_k = 0
     model_vars = [hdd_bp, hdd_beta, hdd_k, cdd_bp, cdd_beta, cdd_k, intercept]
 
-    return full_model_weight(
-        *model_vars, T, residual, sigma, quantile, alpha, min_weight
-    )
+    return full_model_weight(*model_vars, T, residual, sigma, quantile, alpha, min_weight)
 
 
 def _hdd_tidd_cdd_smooth_weight(
@@ -400,14 +386,10 @@ def _hdd_tidd_cdd_smooth_weight(
 ):
     model_vars = [hdd_bp, hdd_beta, hdd_k, cdd_bp, cdd_beta, cdd_k, intercept]
 
-    return full_model_weight(
-        *model_vars, T, residual, sigma, quantile, alpha, min_weight
-    )
+    return full_model_weight(*model_vars, T, residual, sigma, quantile, alpha, min_weight)
 
 
-def _hdd_tidd_cdd_total_sum_of_squares(
-    hdd_bp, hdd_beta, cdd_bp, cdd_beta, intercept, T, obs
-):
+def _hdd_tidd_cdd_total_sum_of_squares(hdd_bp, hdd_beta, cdd_bp, cdd_beta, intercept, T, obs):
     if hdd_bp > cdd_bp:
         hdd_bp, cdd_bp = cdd_bp, hdd_bp
 

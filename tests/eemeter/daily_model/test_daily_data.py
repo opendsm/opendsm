@@ -85,9 +85,7 @@ def get_datetime_index_daily_with_timezone():
 @pytest.fixture
 def get_datetime_index_daily_without_timezone():
     # Create a DateTimeIndex at daily intervals
-    datetime_index = pd.date_range(
-        start="2023-01-01", end="2024-01-01", inclusive="left", freq="D"
-    )
+    datetime_index = pd.date_range(start="2023-01-01", end="2024-01-01", inclusive="left", freq="D")
 
     return datetime_index
 
@@ -149,16 +147,10 @@ def get_meter_data_daily_with_extreme_values_and_negative_values(
     iqr = q75 - q25
 
     # Generate some extreme values more than thrice the interquartile range from the median
-    extreme_values_right = (
-        median + (3 * iqr) + np.random.normal(loc=0.0, scale=100.0, size=30)
-    )
-    extreme_values_left = median - (
-        (3 * iqr) + np.random.normal(loc=0.0, scale=100.0, size=30)
-    )
+    extreme_values_right = median + (3 * iqr) + np.random.normal(loc=0.0, scale=100.0, size=30)
+    extreme_values_left = median - ((3 * iqr) + np.random.normal(loc=0.0, scale=100.0, size=30))
 
-    meter_value = np.concatenate(
-        (extreme_values_right, meter_value, extreme_values_left)
-    )
+    meter_value = np.concatenate((extreme_values_right, meter_value, extreme_values_left))
 
     # Create the DataFrame
     df = pd.DataFrame(data={"observed": meter_value}, index=datetime_index)
@@ -270,9 +262,7 @@ def test_daily_baseline_data_with_same_daily_frequencies(get_datetime_index):
     assert len(cls.disqualification) == 0
 
 
-@pytest.mark.parametrize(
-    "get_datetime_index", [["30min", True], ["h", True]], indirect=True
-)
+@pytest.mark.parametrize("get_datetime_index", [["30min", True], ["h", True]], indirect=True)
 def test_daily_baseline_data_with_same_hourly_frequencies(get_datetime_index):
     datetime_index = get_datetime_index
 
@@ -358,10 +348,7 @@ def test_daily_baseline_data_with_extreme_values_in_daily_and_hourly_frequencies
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
     assert len(cls.warnings) == 1
-    assert (
-        cls.warnings[0].qualified_name
-        == "eemeter.sufficiency_criteria.extreme_values_detected"
-    )
+    assert cls.warnings[0].qualified_name == "eemeter.sufficiency_criteria.extreme_values_detected"
     assert len(cls.disqualification) == 0
 
 
@@ -383,10 +370,7 @@ def test_daily_baseline_data_with_extreme_and_negative_values_in_daily_and_hourl
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
     assert len(cls.warnings) == 1
-    assert (
-        cls.warnings[0].qualified_name
-        == "eemeter.sufficiency_criteria.extreme_values_detected"
-    )
+    assert cls.warnings[0].qualified_name == "eemeter.sufficiency_criteria.extreme_values_detected"
     assert len(cls.disqualification) == 1
     assert (
         cls.disqualification[0].qualified_name
@@ -413,7 +397,9 @@ def test_daily_baseline_data_with_specific_hourly_input(comstock_hourly, snapsho
     assert int(len(cls.df)) == snapshot(name="df_length")
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
     assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
-    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(
+        name="disqualification"
+    )
 
 
 def test_daily_baseline_data_with_specific_daily_input(comstock_daily, comstock_hourly, snapshot):
@@ -430,10 +416,14 @@ def test_daily_baseline_data_with_specific_daily_input(comstock_daily, comstock_
     assert int(len(cls.df)) == snapshot(name="df_length")
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
     assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
-    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(
+        name="disqualification"
+    )
 
 
-def test_daily_baseline_data_with_missing_specific_daily_input(comstock_daily, comstock_hourly, snapshot):
+def test_daily_baseline_data_with_missing_specific_daily_input(
+    comstock_daily, comstock_hourly, snapshot
+):
     df_daily, _ = comstock_daily
     df_hourly, _ = comstock_hourly
     sub_daily = _to_utc(df_daily)
@@ -449,7 +439,9 @@ def test_daily_baseline_data_with_missing_specific_daily_input(comstock_daily, c
     assert int(len(cls.df)) == snapshot(name="df_length")
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
     assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
-    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
+    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(
+        name="disqualification"
+    )
 
 
 def test_daily_baseline_data_with_missing_hourly_temperature_data(
@@ -644,9 +636,7 @@ def test_duplicate_datetime_index_values():
     temperature = np.random.rand(len(datetime_index))
 
     # Create the DataFrame
-    df = pd.DataFrame(
-        data={"observed": observed, "temperature": temperature}, index=datetime_index
-    )
+    df = pd.DataFrame(data={"observed": observed, "temperature": temperature}, index=datetime_index)
 
     cls = DailyBaselineData(df, is_electricity_data=True)
 
@@ -654,9 +644,7 @@ def test_duplicate_datetime_index_values():
     assert len(cls.df) == 1
 
 
-@pytest.mark.parametrize(
-    "get_datetime_index", [["30min", True], ["h", True]], indirect=True
-)
+@pytest.mark.parametrize("get_datetime_index", [["30min", True], ["h", True]], indirect=True)
 def test_daily_reporting_data_with_half_hourly_and_hourly_frequencies(
     get_datetime_index,
 ):
@@ -677,9 +665,7 @@ def test_daily_reporting_data_with_half_hourly_and_hourly_frequencies(
     assert len(cls.disqualification) == 0
 
 
-@pytest.mark.parametrize(
-    "get_datetime_index", [["30min", True], ["h", True]], indirect=True
-)
+@pytest.mark.parametrize("get_datetime_index", [["30min", True], ["h", True]], indirect=True)
 def test_daily_reporting_data_with_missing_half_hourly_and_hourly_frequencies(
     get_datetime_index,
 ):
@@ -727,9 +713,7 @@ def test_daily_reporting_data_with_missing_half_hourly_and_hourly_frequencies(
 
 def test_daily_reporting_data_high_frequency_temperature_warning_gives_proper_results():
 
-    datetime_index = pd.date_range(
-        "2023-01-01", "2023-01-08", freq="h", tz="US/Eastern"
-    )
+    datetime_index = pd.date_range("2023-01-01", "2023-01-08", freq="h", tz="US/Eastern")
     np.random.seed(TEMPERATURE_SEED)
     # Create a 'temperature_mean' and meter_value columns with random data
     temperature_mean = np.random.rand(len(datetime_index))
@@ -860,9 +844,7 @@ def test_offset_aggregations_hourly(comstock_hourly, snapshot):
 def test_dst_handling():
     # 2020-03-08 02:00 is nonexistent, should push to 03:00
     tz = "America/New_York"
-    idx = DatetimeIndex(
-        [Timestamp("2020-03-07 02", tz=tz), Timestamp("2021-03-06 02", tz=tz)]
-    )
+    idx = DatetimeIndex([Timestamp("2020-03-07 02", tz=tz), Timestamp("2021-03-06 02", tz=tz)])
     df = DataFrame({"observed": [1] * 2, "temperature": [50] * 2}, index=idx)
     baseline = DailyBaselineData(df, is_electricity_data=True)
     assert len(baseline.df) == 365
@@ -872,9 +854,7 @@ def test_dst_handling():
 
     # 2020-11-01 01:00 is ambiguous, single index should be chosen
     tz = "America/New_York"
-    idx = DatetimeIndex(
-        [Timestamp("2020-03-07 01", tz=tz), Timestamp("2021-03-06 01", tz=tz)]
-    )
+    idx = DatetimeIndex([Timestamp("2020-03-07 01", tz=tz), Timestamp("2021-03-06 01", tz=tz)])
     df = DataFrame({"observed": [1] * 2, "temperature": [50] * 2}, index=idx)
     baseline = DailyBaselineData(df, is_electricity_data=True)
     assert len(baseline.df) == 365
@@ -883,7 +863,9 @@ def test_dst_handling():
 
 def _daily_df(observed, tz="UTC"):
     idx = pd.date_range("2020-01-01", periods=len(observed), freq="D", tz=tz)
-    return pd.DataFrame({"observed": observed, "temperature": np.linspace(30, 90, len(observed))}, index=idx)
+    return pd.DataFrame(
+        {"observed": observed, "temperature": np.linspace(30, 90, len(observed))}, index=idx
+    )
 
 
 def test_daily_baseline_insufficient_unique_observed_disqualifies():
@@ -894,7 +876,8 @@ def test_daily_baseline_insufficient_unique_observed_disqualifies():
     baseline = DailyBaselineData(_daily_df(observed), is_electricity_data=True)
 
     insufficient = [
-        d for d in baseline.disqualification
+        d
+        for d in baseline.disqualification
         if "insufficient_unique_observed_values" in d.qualified_name
     ]
     assert len(insufficient) == 1
@@ -910,7 +893,8 @@ def test_daily_baseline_sufficient_unique_observed_passes():
     baseline = DailyBaselineData(_daily_df(observed), is_electricity_data=True)
 
     insufficient = [
-        d for d in baseline.disqualification
+        d
+        for d in baseline.disqualification
         if "insufficient_unique_observed_values" in d.qualified_name
     ]
     assert len(insufficient) == 0
@@ -923,7 +907,8 @@ def test_daily_reporting_skips_unique_values_check():
     reporting = DailyReportingData(_daily_df(observed), is_electricity_data=True)
 
     insufficient = [
-        d for d in reporting.disqualification
+        d
+        for d in reporting.disqualification
         if "insufficient_unique_observed_values" in d.qualified_name
     ]
     assert len(insufficient) == 0

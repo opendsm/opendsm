@@ -67,10 +67,9 @@ def _eigengap_scores(eigenvalues, n_cluster_lower, n_cluster_upper):
     """Return eigengap-based scores for each k candidate (lower = better)."""
     gaps = np.diff(eigenvalues)
     n_clusters_range = np.arange(n_cluster_lower, n_cluster_upper + 1)
-    scores = np.array([
-        -gaps[k - 1] if k <= len(gaps) else np.inf
-        for k in n_clusters_range
-    ], dtype=np.float64)
+    scores = np.array(
+        [-gaps[k - 1] if k <= len(gaps) else np.inf for k in n_clusters_range], dtype=np.float64
+    )
     return scores
 
 
@@ -79,6 +78,7 @@ def _assign_labels(vectors, n_clusters, method, seed):
     if method == "cluster_qr":
         try:
             from sklearn.cluster._spectral import cluster_qr as _cluster_qr
+
             return _cluster_qr(vectors[:, :n_clusters])
         except ImportError:
             method = "kmeans"
@@ -89,10 +89,7 @@ def _assign_labels(vectors, n_clusters, method, seed):
     v = vectors[:, :n_clusters]
     norms = np.linalg.norm(v, axis=1, keepdims=True)
     v = v / np.maximum(norms, 1e-10)
-    return KMeans(
-        n_clusters=n_clusters, random_state=seed, n_init=10
-    ).fit_predict(v)
-
+    return KMeans(n_clusters=n_clusters, random_state=seed, n_init=10).fit_predict(v)
 
 
 def _single_spectral_clustering(data, settings, seed):
@@ -157,16 +154,17 @@ def _single_spectral_clustering(data, settings, seed):
             # ARPACK can fail to converge on large or ill-conditioned
             # Laplacians; fall back to a dense solve of the smallest eigenpairs.
             L_dense = L_sparse.toarray()
-            eigenvalues, eigenvectors = _scipy_eigh(
-                L_dense, subset_by_index=[0, n_eigvecs - 1]
-            )
+            eigenvalues, eigenvectors = _scipy_eigh(L_dense, subset_by_index=[0, n_eigvecs - 1])
         del L_sparse
 
         embedding = eigenvectors[:, :n_eigvecs]
         assign_method = algo_settings.assign_labels
         for n_clusters in n_clusters_range:
-            vectors = embedding.copy() if algo_settings.n_components is not None \
+            vectors = (
+                embedding.copy()
+                if algo_settings.n_components is not None
                 else embedding[:, :n_clusters].copy()
+            )
             labels = _assign_labels(vectors, int(n_clusters), assign_method, seed)
             lbl.add(int(n_clusters), labels)
 
@@ -197,8 +195,11 @@ def _single_spectral_clustering(data, settings, seed):
         assign_method = algo_settings.assign_labels
 
         for n_clusters in n_clusters_range:
-            vectors = embedding.copy() if algo_settings.n_components is not None \
+            vectors = (
+                embedding.copy()
+                if algo_settings.n_components is not None
                 else embedding[:, :n_clusters].copy()
+            )
             labels = _assign_labels(vectors, int(n_clusters), assign_method, seed)
             lbl.add(int(n_clusters), labels)
 

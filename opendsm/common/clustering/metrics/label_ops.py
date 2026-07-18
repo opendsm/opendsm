@@ -225,6 +225,7 @@ def remove_outliers_mad(
         else:
             # Truncated SVD with seeded v0 to avoid zero-start ARPACK error
             from scipy.sparse.linalg import svds
+
             v0 = np.random.default_rng(n_cl).standard_normal(min(centered.shape))
             try:
                 _, s, Vt = svds(centered.astype(np.float64), k=k, v0=v0)
@@ -237,7 +238,7 @@ def remove_outliers_mad(
                 s = s[:k]
 
         # Keep only PCs with nonzero singular values
-        nonzero = s[:len(Vt)] > 1e-10
+        nonzero = s[: len(Vt)] > 1e-10
         if not nonzero.any():
             continue
         Vt = Vt[nonzero]
@@ -254,9 +255,7 @@ def remove_outliers_mad(
             continue
 
         # Flag points exceeding threshold in ANY valid PC
-        is_outlier = np.any(
-            deviations[:, valid_pcs] > threshold * mad[valid_pcs], axis=1
-        )
+        is_outlier = np.any(deviations[:, valid_pcs] > threshold * mad[valid_pcs], axis=1)
 
         # Map back to global indices
         global_idx = np.where(cl_mask)[0]

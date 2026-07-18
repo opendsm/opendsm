@@ -74,9 +74,7 @@ def fit_initial_models_from_full_model(df_meter, settings, print_res=False):
             *fit_input, smooth=settings.allow_smooth_model, initial_fit=True
         )
     elif settings.full_model == FullModelSelection.C_HDD_TIDD:
-        model_res = fit_c_hdd_tidd(
-            *fit_input, smooth=settings.allow_smooth_model, initial_fit=True
-        )
+        model_res = fit_c_hdd_tidd(*fit_input, smooth=settings.allow_smooth_model, initial_fit=True)
     elif settings.full_model == FullModelSelection.TIDD:
         model_res = fit_tidd(*fit_input, initial_fit=True)
 
@@ -105,24 +103,16 @@ def fit_model(model_key, fit_input, x0: ModelCoefficients, bnds):
     """
 
     if model_key == "hdd_tidd_cdd_smooth":
-        res = fit_hdd_tidd_cdd(
-            *fit_input, smooth=True, x0=x0, bnds=bnds, initial_fit=False
-        )
+        res = fit_hdd_tidd_cdd(*fit_input, smooth=True, x0=x0, bnds=bnds, initial_fit=False)
 
     elif model_key == "hdd_tidd_cdd":
-        res = fit_hdd_tidd_cdd(
-            *fit_input, smooth=False, x0=x0, bnds=bnds, initial_fit=False
-        )
+        res = fit_hdd_tidd_cdd(*fit_input, smooth=False, x0=x0, bnds=bnds, initial_fit=False)
 
     elif model_key == "c_hdd_tidd_smooth":
-        res = fit_c_hdd_tidd(
-            *fit_input, smooth=True, x0=x0, bnds=bnds, initial_fit=False
-        )
+        res = fit_c_hdd_tidd(*fit_input, smooth=True, x0=x0, bnds=bnds, initial_fit=False)
 
     elif model_key == "c_hdd_tidd":
-        res = fit_c_hdd_tidd(
-            *fit_input, smooth=False, x0=x0, bnds=bnds, initial_fit=False
-        )
+        res = fit_c_hdd_tidd(*fit_input, smooth=False, x0=x0, bnds=bnds, initial_fit=False)
 
     elif model_key == "tidd":
         res = fit_tidd(*fit_input, x0, bnds, initial_fit=False)
@@ -171,8 +161,6 @@ def fit_final_model(df_meter, HoF: OptimizedResult, settings, print_res=False):
     HoF = fit_model(HoF.model_key, fit_input, HoF.named_coeffs, bnds)
 
     if print_res:
-        print(
-            f"{HoF.model_name:<30s} {HoF.loss_alpha:<8.2f} {HoF.time_elapsed:>8.2f} ms"
-        )
+        print(f"{HoF.model_name:<30s} {HoF.loss_alpha:<8.2f} {HoF.time_elapsed:>8.2f} ms")
 
     return HoF

@@ -31,18 +31,19 @@ from sklearn.cluster import _bisect_k_means
 from sklearn.cluster._kmeans import (
     _kmeans_single_elkan,
     _kmeans_single_lloyd,
-) # type: ignore
+)  # type: ignore
 from sklearn.cluster._k_means_common import (
     _inertia_dense,
     _inertia_sparse,
-) # type: ignore
+)  # type: ignore
 from sklearn.utils.extmath import row_norms
 from sklearn.utils.validation import (
     _check_sample_weight,
     check_random_state,
-) # type: ignore
+)  # type: ignore
+
 try:
-    from sklearn.utils.validation import validate_data # type: ignore
+    from sklearn.utils.validation import validate_data  # type: ignore
 except ImportError:
     validate_data = None  # type: ignore
 # from sklearn.utils._openmp_helpers import _openmp_effective_n_threads
@@ -159,9 +160,7 @@ class BisectingKMeans(_sklearn_BisectingKMeans):
             try:
                 self._bisect(X, x_squared_norms, sample_weight, cluster_to_bisect)  # type: ignore
             except IndexError:
-                logger.warn(
-                    f"encountered IndexError during bisection for cluster size {i + 2}"
-                )
+                logger.warn(f"encountered IndexError during bisection for cluster size {i + 2}")
                 return self  # return early so that calculated labels can be returned until an error arose
 
             # Aggregate final labels and centers from the bisecting tree

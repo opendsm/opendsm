@@ -189,8 +189,12 @@ def test_as_freq_perserves_nulls(monthly_meter, monthly_temperature, snapshot):
     daily_with_nulls = as_freq(monthly_with_nulls.value, freq="D")
     assert round(monthly_with_nulls.value.sum(), 2) == snapshot(name="monthly_with_nulls_sum")
     assert round(daily_with_nulls.sum(), 2) == snapshot(name="daily_with_nulls_sum")
-    assert round(float(monthly_with_nulls.value.isnull().sum()), 4) == snapshot(name="monthly_with_nulls_value_isnull___sum")
-    assert round(float(daily_with_nulls.isnull().sum()), 4) == snapshot(name="daily_with_nulls_isnull___sum")
+    assert round(float(monthly_with_nulls.value.isnull().sum()), 4) == snapshot(
+        name="monthly_with_nulls_value_isnull___sum"
+    )
+    assert round(float(daily_with_nulls.isnull().sum()), 4) == snapshot(
+        name="daily_with_nulls_isnull___sum"
+    )
 
 
 def test_day_counts(monthly_meter, monthly_temperature, snapshot):
@@ -219,13 +223,9 @@ def test_get_baseline_data(hourly_meter, hourly_temperature, snapshot):
 
 def test_get_baseline_data_with_timezones(hourly_meter, hourly_temperature, snapshot):
     meter_data = hourly_meter
-    baseline_data, warnings = get_baseline_data(
-        meter_data.tz_convert("America/New_York")
-    )
+    baseline_data, warnings = get_baseline_data(meter_data.tz_convert("America/New_York"))
     assert int(len(warnings)) == snapshot(name="warnings_len")
-    baseline_data, warnings = get_baseline_data(
-        meter_data.tz_convert("Australia/Sydney")
-    )
+    baseline_data, warnings = get_baseline_data(meter_data.tz_convert("Australia/Sydney"))
     assert int(len(warnings)) == snapshot(name="warnings_len_1")
 
 
@@ -241,9 +241,7 @@ def test_get_baseline_data_with_end(hourly_meter, hourly_temperature, snapshot):
 def test_get_baseline_data_with_end_no_max_days(hourly_meter, hourly_temperature, snapshot):
     meter_data = hourly_meter
     blackout_start_date = pd.Timestamp("2019-01-01", tz="UTC")
-    baseline_data, warnings = get_baseline_data(
-        meter_data, end=blackout_start_date, max_days=None
-    )
+    baseline_data, warnings = get_baseline_data(meter_data, end=blackout_start_date, max_days=None)
     assert meter_data.shape != baseline_data.shape
     assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
     assert int(len(warnings)) == snapshot(name="warnings_len")
@@ -264,10 +262,7 @@ def test_get_baseline_data_start_gap(hourly_meter, hourly_temperature, snapshot)
     assert int(len(warnings)) == snapshot(name="warnings_len")
     warning = warnings[0]
     assert warning.qualified_name == "eemeter.get_baseline_data.gap_at_baseline_start"
-    assert (
-        warning.description
-        == "Data does not have coverage at requested baseline start date."
-    )
+    assert warning.description == "Data does not have coverage at requested baseline start date."
     assert warning.data == {
         "data_start": meter_data.index.min().isoformat(),
         "requested_start": start.isoformat(),
@@ -282,10 +277,7 @@ def test_get_baseline_data_end_gap(hourly_meter, hourly_temperature, snapshot):
     assert int(len(warnings)) == snapshot(name="warnings_len")
     warning = warnings[0]
     assert warning.qualified_name == "eemeter.get_baseline_data.gap_at_baseline_end"
-    assert (
-        warning.description
-        == "Data does not have coverage at requested baseline end date."
-    )
+    assert warning.description == "Data does not have coverage at requested baseline end date."
     assert warning.data == {
         "data_end": meter_data.index.max().isoformat(),
         "requested_end": end.isoformat(),
@@ -301,7 +293,9 @@ def test_get_baseline_data_with_overshoot(monthly_meter, monthly_temperature, sn
         allow_billing_period_overshoot=True,
     )
     assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
-    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(
+        name="baseline_data_value_sum___round"
+    )
     assert int(len(warnings)) == snapshot(name="warnings_len")
 
     baseline_data, warnings = get_baseline_data(
@@ -311,7 +305,9 @@ def test_get_baseline_data_with_overshoot(monthly_meter, monthly_temperature, sn
         allow_billing_period_overshoot=False,
     )
     assert list(baseline_data.shape) == snapshot(name="baseline_data_shape_1")
-    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round_1")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(
+        name="baseline_data_value_sum___round_1"
+    )
     assert int(len(warnings)) == snapshot(name="warnings_len_1")
 
     baseline_data, warnings = get_baseline_data(
@@ -321,7 +317,9 @@ def test_get_baseline_data_with_overshoot(monthly_meter, monthly_temperature, sn
         allow_billing_period_overshoot=True,
     )
     assert list(baseline_data.shape) == snapshot(name="baseline_data_shape_2")
-    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round_2")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(
+        name="baseline_data_value_sum___round_2"
+    )
     assert int(len(warnings)) == snapshot(name="warnings_len_2")
 
 
@@ -334,7 +332,9 @@ def test_get_baseline_data_with_ignored_gap(monthly_meter, monthly_temperature, 
         ignore_billing_period_gap_for_day_count=True,
     )
     assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
-    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(
+        name="baseline_data_value_sum___round"
+    )
     assert int(len(warnings)) == snapshot(name="warnings_len")
 
     baseline_data, warnings = get_baseline_data(
@@ -344,7 +344,9 @@ def test_get_baseline_data_with_ignored_gap(monthly_meter, monthly_temperature, 
         ignore_billing_period_gap_for_day_count=False,
     )
     assert list(baseline_data.shape) == snapshot(name="baseline_data_shape_1")
-    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round_1")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(
+        name="baseline_data_value_sum___round_1"
+    )
     assert int(len(warnings)) == snapshot(name="warnings_len_1")
 
     baseline_data, warnings = get_baseline_data(
@@ -354,11 +356,15 @@ def test_get_baseline_data_with_ignored_gap(monthly_meter, monthly_temperature, 
         ignore_billing_period_gap_for_day_count=True,
     )
     assert list(baseline_data.shape) == snapshot(name="baseline_data_shape_2")
-    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round_2")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(
+        name="baseline_data_value_sum___round_2"
+    )
     assert int(len(warnings)) == snapshot(name="warnings_len_2")
 
 
-def test_get_baseline_data_with_overshoot_and_ignored_gap(monthly_meter, monthly_temperature, snapshot):
+def test_get_baseline_data_with_overshoot_and_ignored_gap(
+    monthly_meter, monthly_temperature, snapshot
+):
     meter_data = monthly_meter
     baseline_data, warnings = get_baseline_data(
         meter_data,
@@ -368,7 +374,9 @@ def test_get_baseline_data_with_overshoot_and_ignored_gap(monthly_meter, monthly
         ignore_billing_period_gap_for_day_count=True,
     )
     assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
-    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(
+        name="baseline_data_value_sum___round"
+    )
     assert int(len(warnings)) == snapshot(name="warnings_len")
 
     baseline_data, warnings = get_baseline_data(
@@ -379,11 +387,15 @@ def test_get_baseline_data_with_overshoot_and_ignored_gap(monthly_meter, monthly
         ignore_billing_period_gap_for_day_count=False,
     )
     assert list(baseline_data.shape) == snapshot(name="baseline_data_shape_1")
-    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round_1")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(
+        name="baseline_data_value_sum___round_1"
+    )
     assert int(len(warnings)) == snapshot(name="warnings_len_1")
 
 
-def test_get_baseline_data_n_days_billing_period_overshoot(monthly_meter, monthly_temperature, snapshot):
+def test_get_baseline_data_n_days_billing_period_overshoot(
+    monthly_meter, monthly_temperature, snapshot
+):
     meter_data = monthly_meter
     baseline_data, warnings = get_baseline_data(
         meter_data,
@@ -394,7 +406,9 @@ def test_get_baseline_data_n_days_billing_period_overshoot(monthly_meter, monthl
         ignore_billing_period_gap_for_day_count=True,
     )
     assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
-    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(
+        name="baseline_data_value_sum___round"
+    )
     assert int(len(warnings)) == snapshot(name="warnings_len")
 
 
@@ -409,7 +423,9 @@ def test_get_baseline_data_too_far_from_date(monthly_meter, monthly_temperature,
         ignore_billing_period_gap_for_day_count=True,
     )
     assert list(baseline_data.shape) == snapshot(name="baseline_data_shape")
-    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(
+        name="baseline_data_value_sum___round"
+    )
     assert int(len(warnings)) == snapshot(name="warnings_len")
     with pytest.raises(NoBaselineDataError):
         get_baseline_data(
@@ -427,7 +443,9 @@ def test_get_baseline_data_too_far_from_date(monthly_meter, monthly_temperature,
         ignore_billing_period_gap_for_day_count=True,
     )
     assert list(baseline_data.shape) == snapshot(name="baseline_data_shape_1")
-    assert round(float(baseline_data.value.sum()), 2) == snapshot(name="baseline_data_value_sum___round_1")
+    assert round(float(baseline_data.value.sum()), 2) == snapshot(
+        name="baseline_data_value_sum___round_1"
+    )
     assert int(len(warnings)) == snapshot(name="warnings_len_1")
     # Includes 3 data points because data at index -3 is closer to start target
     # then data at index -2
@@ -454,13 +472,9 @@ def test_get_reporting_data(hourly_meter, hourly_temperature, snapshot):
 
 def test_get_reporting_data_with_timezones(hourly_meter, hourly_temperature, snapshot):
     meter_data = hourly_meter
-    reporting_data, warnings = get_reporting_data(
-        meter_data.tz_convert("America/New_York")
-    )
+    reporting_data, warnings = get_reporting_data(meter_data.tz_convert("America/New_York"))
     assert int(len(warnings)) == snapshot(name="warnings_len")
-    reporting_data, warnings = get_reporting_data(
-        meter_data.tz_convert("Australia/Sydney")
-    )
+    reporting_data, warnings = get_reporting_data(meter_data.tz_convert("Australia/Sydney"))
     assert int(len(warnings)) == snapshot(name="warnings_len_1")
 
 
@@ -494,17 +508,12 @@ def test_get_reporting_data_empty(hourly_meter, hourly_temperature):
 def test_get_reporting_data_start_gap(hourly_meter, hourly_temperature, snapshot):
     meter_data = hourly_meter
     start = meter_data.index.min() - timedelta(days=1)
-    reporting_data, warnings = get_reporting_data(
-        meter_data, start=start, max_days=None
-    )
+    reporting_data, warnings = get_reporting_data(meter_data, start=start, max_days=None)
     assert meter_data.shape == reporting_data.shape
     assert int(len(warnings)) == snapshot(name="warnings_len")
     warning = warnings[0]
     assert warning.qualified_name == "eemeter.get_reporting_data.gap_at_reporting_start"
-    assert (
-        warning.description
-        == "Data does not have coverage at requested reporting start date."
-    )
+    assert warning.description == "Data does not have coverage at requested reporting start date."
     assert warning.data == {
         "data_start": meter_data.index.min().isoformat(),
         "requested_start": start.isoformat(),
@@ -519,10 +528,7 @@ def test_get_reporting_data_end_gap(hourly_meter, hourly_temperature, snapshot):
     assert int(len(warnings)) == snapshot(name="warnings_len")
     warning = warnings[0]
     assert warning.qualified_name == "eemeter.get_reporting_data.gap_at_reporting_end"
-    assert (
-        warning.description
-        == "Data does not have coverage at requested reporting end date."
-    )
+    assert warning.description == "Data does not have coverage at requested reporting end date."
     assert warning.data == {
         "data_end": meter_data.index.max().isoformat(),
         "requested_end": end.isoformat(),
@@ -538,7 +544,9 @@ def test_get_reporting_data_with_overshoot(monthly_meter, monthly_temperature, s
         allow_billing_period_overshoot=True,
     )
     assert list(reporting_data.shape) == snapshot(name="reporting_data_shape")
-    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(
+        name="reporting_data_value_sum___round"
+    )
     assert int(len(warnings)) == snapshot(name="warnings_len")
 
     reporting_data, warnings = get_reporting_data(
@@ -548,7 +556,9 @@ def test_get_reporting_data_with_overshoot(monthly_meter, monthly_temperature, s
         allow_billing_period_overshoot=False,
     )
     assert list(reporting_data.shape) == snapshot(name="reporting_data_shape_1")
-    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round_1")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(
+        name="reporting_data_value_sum___round_1"
+    )
     assert int(len(warnings)) == snapshot(name="warnings_len_1")
 
     reporting_data, warnings = get_reporting_data(
@@ -558,7 +568,9 @@ def test_get_reporting_data_with_overshoot(monthly_meter, monthly_temperature, s
         allow_billing_period_overshoot=True,
     )
     assert list(reporting_data.shape) == snapshot(name="reporting_data_shape_2")
-    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round_2")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(
+        name="reporting_data_value_sum___round_2"
+    )
     assert int(len(warnings)) == snapshot(name="warnings_len_2")
 
 
@@ -571,7 +583,9 @@ def test_get_reporting_data_with_ignored_gap(monthly_meter, monthly_temperature,
         ignore_billing_period_gap_for_day_count=True,
     )
     assert list(reporting_data.shape) == snapshot(name="reporting_data_shape")
-    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(
+        name="reporting_data_value_sum___round"
+    )
     assert int(len(warnings)) == snapshot(name="warnings_len")
 
     reporting_data, warnings = get_reporting_data(
@@ -581,7 +595,9 @@ def test_get_reporting_data_with_ignored_gap(monthly_meter, monthly_temperature,
         ignore_billing_period_gap_for_day_count=False,
     )
     assert list(reporting_data.shape) == snapshot(name="reporting_data_shape_1")
-    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round_1")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(
+        name="reporting_data_value_sum___round_1"
+    )
     assert int(len(warnings)) == snapshot(name="warnings_len_1")
 
     reporting_data, warnings = get_reporting_data(
@@ -591,11 +607,15 @@ def test_get_reporting_data_with_ignored_gap(monthly_meter, monthly_temperature,
         ignore_billing_period_gap_for_day_count=True,
     )
     assert list(reporting_data.shape) == snapshot(name="reporting_data_shape_2")
-    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round_2")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(
+        name="reporting_data_value_sum___round_2"
+    )
     assert int(len(warnings)) == snapshot(name="warnings_len_2")
 
 
-def test_get_reporting_data_with_overshoot_and_ignored_gap(monthly_meter, monthly_temperature, snapshot):
+def test_get_reporting_data_with_overshoot_and_ignored_gap(
+    monthly_meter, monthly_temperature, snapshot
+):
     meter_data = monthly_meter
     reporting_data, warnings = get_reporting_data(
         meter_data,
@@ -605,7 +625,9 @@ def test_get_reporting_data_with_overshoot_and_ignored_gap(monthly_meter, monthl
         ignore_billing_period_gap_for_day_count=True,
     )
     assert list(reporting_data.shape) == snapshot(name="reporting_data_shape")
-    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(
+        name="reporting_data_value_sum___round"
+    )
     assert int(len(warnings)) == snapshot(name="warnings_len")
 
     reporting_data, warnings = get_reporting_data(
@@ -616,7 +638,9 @@ def test_get_reporting_data_with_overshoot_and_ignored_gap(monthly_meter, monthl
         ignore_billing_period_gap_for_day_count=False,
     )
     assert list(reporting_data.shape) == snapshot(name="reporting_data_shape_1")
-    assert round(float(reporting_data.value.sum()), 2) == snapshot(name="reporting_data_value_sum___round_1")
+    assert round(float(reporting_data.value.sum()), 2) == snapshot(
+        name="reporting_data_value_sum___round_1"
+    )
     assert int(len(warnings)) == snapshot(name="warnings_len_1")
 
 
@@ -747,7 +771,9 @@ def test_get_terms_nearest(monthly_meter, monthly_temperature, snapshot):
     assert list(year2.index.shape) == snapshot(name="year2_index_shape_short_final")
     assert year2.target_start_date == nearest_terms[0].index[-1]
     assert year2.target_term_length_days == 340
-    assert year2.actual_term_length_days == snapshot(name="year2_actual_term_length_days_short_final")
+    assert year2.actual_term_length_days == snapshot(
+        name="year2_actual_term_length_days_short_final"
+    )
     assert year2.complete == snapshot(name="year2_complete_short_final")
 
 
@@ -952,14 +978,10 @@ def test_format_temperature_data_for_caltrack(hourly_meter, hourly_temperature):
     # rename column name to 'consumption'
     temperature_data.rename(columns={"value": "consumption"}, inplace=True)
 
-    temperature_data_reformatted = format_temperature_data_for_caltrack(
-        temperature_data
-    )
+    temperature_data_reformatted = format_temperature_data_for_caltrack(temperature_data)
 
     assert isinstance(temperature_data_reformatted, pd.Series)
-    assert (
-        temperature_data_reformatted.index[0] < temperature_data_reformatted.index[-1]
-    )
+    assert temperature_data_reformatted.index[0] < temperature_data_reformatted.index[-1]
     assert temperature_data_reformatted.index.freq == "h"
     assert temperature_data_reformatted.index.tzinfo is not None
 

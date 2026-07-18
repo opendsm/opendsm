@@ -31,9 +31,7 @@ def hourly_data():
 @pytest.fixture
 def baseline(hourly_data):
     baseline, _ = hourly_data
-    baseline.loc[baseline["observed"] > 513, "observed"] = (
-        0  # quick extreme value removal
-    )
+    baseline.loc[baseline["observed"] > 513, "observed"] = 0  # quick extreme value removal
     return baseline
 
 
@@ -76,9 +74,7 @@ def create_hourly_dataframe(
     obs_noise = np.random.normal(0, 0.5, n) if add_noise else 0
     observed = np.maximum(0, base_load + temp_correlation + obs_noise)
 
-    df = pd.DataFrame(
-        {"observed": observed, "temperature": temperature}, index=index
-    )
+    df = pd.DataFrame({"observed": observed, "temperature": temperature}, index=index)
 
     if include_ghi:
         # GHI: daytime only, seasonal variation
@@ -108,12 +104,16 @@ def create_gaps(df, gap_pattern):
     elif gap_pattern == "multi_hour":
         # 6-hour consecutive gaps
         start_idx = len(df) // 4
-        df.iloc[start_idx : start_idx + 6, df.columns.get_indexer(["observed", "temperature"])] = np.nan
+        df.iloc[start_idx : start_idx + 6, df.columns.get_indexer(["observed", "temperature"])] = (
+            np.nan
+        )
 
     elif gap_pattern == "full_day":
         # Full 24-hour gap
         start_idx = len(df) // 3
-        df.iloc[start_idx : start_idx + 24, df.columns.get_indexer(["observed", "temperature"])] = np.nan
+        df.iloc[start_idx : start_idx + 24, df.columns.get_indexer(["observed", "temperature"])] = (
+            np.nan
+        )
 
     elif gap_pattern == "month":
         # February missing
@@ -270,8 +270,8 @@ def baseline_with_supplemental_features(baseline):
     """Baseline data with custom supplemental features for testing"""
     baseline = baseline.copy()
     np.random.seed(42)
-    baseline['custom_ts_feature'] = np.random.randn(len(baseline))
-    baseline['custom_cat_feature'] = np.random.choice(['A', 'B', 'C'], len(baseline))
+    baseline["custom_ts_feature"] = np.random.randn(len(baseline))
+    baseline["custom_cat_feature"] = np.random.choice(["A", "B", "C"], len(baseline))
 
     return baseline
 
@@ -280,8 +280,8 @@ def baseline_with_supplemental_features(baseline):
 def baseline_extreme_temperatures(baseline):
     """Baseline data with extreme temperature values for edge bin testing"""
     baseline_wide = baseline.copy()
-    baseline_wide.loc[baseline_wide.index[:100], 'temperature'] = -20
-    baseline_wide.loc[baseline_wide.index[-100:], 'temperature'] = 110
+    baseline_wide.loc[baseline_wide.index[:100], "temperature"] = -20
+    baseline_wide.loc[baseline_wide.index[-100:], "temperature"] = 110
 
     return baseline_wide
 

@@ -73,9 +73,7 @@ def load_test_data(data_type: str):
     keys = [k.lower() for k in TutorialDataChoice.__members__.keys()]
 
     if data_type not in valid_list:
-        raise ValueError(
-            f"Data type {data_type} not recognized. \nMust be one of {keys}."
-        )
+        raise ValueError(f"Data type {data_type} not recognized. \nMust be one of {keys}.")
 
     if data_type in [*comparison_group_time_series, *treatment_time_series]:
         return _load_time_series_data(data_type)
@@ -102,10 +100,14 @@ def _load_time_series_data(data_type):
     df = df.set_index(["id", "datetime"])
 
     df_baseline = df[["temperature", "ghi_baseline", "observed_baseline"]]
-    df_baseline = df_baseline.rename(columns={"observed_baseline": "observed", "ghi_baseline": "ghi"})
+    df_baseline = df_baseline.rename(
+        columns={"observed_baseline": "observed", "ghi_baseline": "ghi"}
+    )
 
     df_reporting = df[["temperature", "ghi_reporting", "observed_reporting"]]
-    df_reporting = df_reporting.rename(columns={"observed_reporting": "observed", "ghi_reporting": "ghi"})
+    df_reporting = df_reporting.rename(
+        columns={"observed_reporting": "observed", "ghi_reporting": "ghi"}
+    )
 
     df_reporting = df_reporting.reset_index()
     df_reporting["datetime"] = df_reporting["datetime"] + pd.Timedelta(days=365)

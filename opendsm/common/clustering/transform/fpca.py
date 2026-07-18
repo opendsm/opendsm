@@ -30,6 +30,7 @@ from opendsm.common.clustering.transform.parallel_analysis import (
 # FPCA transform
 # ---------------------------------------------------------------------------
 
+
 class FpcaError(Exception):
     pass
 
@@ -76,9 +77,7 @@ def fpca_transform(
     seed = settings._seed if settings._seed is not None else 0
 
     if fpca_settings.use_parallel_analysis:
-        n = _parallel_analysis_n_components(
-            data, method="fpca", grid_points=x, seed=seed
-        )
+        n = _parallel_analysis_n_components(data, method="fpca", grid_points=x, seed=seed)
         result = _fpca_transform_with_n(x, data, n)
     else:
         result = _fpca_base(x, data, fpca_settings.min_var_ratio)

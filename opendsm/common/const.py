@@ -59,9 +59,7 @@ class TutorialDataChoice(str, Enum):
     """
 
     FEATURES = "features"
-    SEASONAL_HOUR_DAY_WEEK_LOADSHAPE = "seasonal_hourly_day_of_week_loadshape".replace(
-        "_", ""
-    )
+    SEASONAL_HOUR_DAY_WEEK_LOADSHAPE = "seasonal_hourly_day_of_week_loadshape".replace("_", "")
     SEASONAL_DAY_WEEK_LOADSHAPE = "seasonal_day_of_week_loadshape".replace("_", "")
     MONTH_LOADSHAPE = "month_loadshape".replace("_", "")
     HOURLY_COMPARISON_GROUP_DATA = "hourly_comparison_group_data".replace("_", "")

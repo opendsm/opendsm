@@ -21,7 +21,6 @@ from opendsm.eemeter.models.hourly.settings import (
 )
 
 
-
 def test_default_binning_settings_construct():
     """Defaults use fixed bins and validate cleanly."""
     settings = TemperatureBinSettings()

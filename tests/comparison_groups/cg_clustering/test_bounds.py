@@ -24,7 +24,10 @@ from opendsm.comparison_groups.cg_clustering.bounds import (
 @pytest.mark.parametrize("data_size", [30, 100, 1000, 10000])
 def test_get_cluster_bounds_lower_below_upper(data_size):
     lower, upper = get_cluster_bounds(
-        data_size=data_size, min_cluster_size=15, num_cluster_bound_lower=8, num_cluster_bound_upper=1500
+        data_size=data_size,
+        min_cluster_size=15,
+        num_cluster_bound_lower=8,
+        num_cluster_bound_upper=1500,
     )
 
     assert lower < upper

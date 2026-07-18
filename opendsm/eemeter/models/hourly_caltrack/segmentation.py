@@ -69,9 +69,7 @@ class CalTRACKSegmentModel(object):
         # Step 1, slice
         col_type = "C(hour_of_week)"
         hour_of_week_cols = [
-            c
-            for c in design_matrix_granular.columns
-            if col_type in c and c in parameters.keys()
+            c for c in design_matrix_granular.columns if col_type in c and c in parameters.keys()
         ]
 
         # Step 2, cut out all 0s
@@ -162,8 +160,7 @@ class SegmentedModel(object):
         self.segment_models = segment_models
 
         fitted_model_lookup = {
-            segment_model.segment_name: segment_model
-            for segment_model in segment_models
+            segment_model.segment_name: segment_model for segment_model in segment_models
         }
         if prediction_segment_name_mapping is None:
             self.model_lookup = fitted_model_lookup
@@ -177,9 +174,7 @@ class SegmentedModel(object):
         self.prediction_feature_processor = prediction_feature_processor
         self.prediction_feature_processor_kwargs = prediction_feature_processor_kwargs
 
-    def predict(
-        self, prediction_index, temperature, **kwargs
-    ):  # ignore extra args with kwargs
+    def predict(self, prediction_index, temperature, **kwargs):  # ignore extra args with kwargs
         """Predict over a prediction index by combining results from all models.
 
         Parameters
@@ -231,9 +226,7 @@ class SegmentedModel(object):
 
         data = {
             "segment_models": [_json_or_none(m) for m in self.segment_models],
-            "model_lookup": {
-                key: _json_or_none(val) for key, val in self.model_lookup.items()
-            },
+            "model_lookup": {key: _json_or_none(val) for key, val in self.model_lookup.items()},
             "prediction_segment_type": self.prediction_segment_type,
             "prediction_segment_name_mapping": self.prediction_segment_name_mapping,
             "prediction_feature_processor": self.prediction_feature_processor.__name__,
@@ -403,9 +396,7 @@ def _segment_weights_three_month(index):
 def _segment_weights_three_month_weighted(index):
     return pd.DataFrame(
         {
-            month_names: index.month.map(
-                lambda i: month_weights.get(str(i), 0.0)
-            ).astype(float)
+            month_names: index.month.map(lambda i: month_weights.get(str(i), 0.0)).astype(float)
             for month_names, month_weights in [
                 ("dec-jan-feb-weighted", {"12": 0.5, "1": 1, "2": 0.5}),
                 ("jan-feb-mar-weighted", {"1": 0.5, "2": 1, "3": 0.5}),

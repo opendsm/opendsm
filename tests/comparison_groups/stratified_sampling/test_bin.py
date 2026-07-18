@@ -17,7 +17,6 @@ import pandas as pd
 from opendsm.comparison_groups.stratified_sampling.bins import Bin, MultiBin, BinnedData, Binning
 
 
-
 def test_bin_filtering():
     this_bin = Bin("col", min=5, max=100, index=0)
     filter_expr = this_bin.filter_expr()
@@ -29,7 +28,7 @@ def test_bin_filtering():
 
 
 def test_binned_data_bin_label_label_leading_zeroes():
-    col_name = 'c1'
+    col_name = "c1"
     b1 = Bin(col_name, min=1, max=2, index=0)
 
     multi_bin = MultiBin(bins=[b1])
@@ -40,11 +39,10 @@ def test_binned_data_bin_label_label_leading_zeroes():
 
     binned_data = BinnedData(df, binning)
     mapped_bins = binned_data._map_bins(df)
-    assert set(mapped_bins['_bin_label'].values) == set(['c1_000'])
+    assert set(mapped_bins["_bin_label"].values) == set(["c1_000"])
 
 
-
-'''
+"""
 
 def test_multi_bin_filtering():
     b1 = Bin("c1", min=5, max=100, index=0)
@@ -81,4 +79,4 @@ def test_remove_bins_too_small():
     ]
 
     mb = MultiBin(bins=bins)
-'''
+"""

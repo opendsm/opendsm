@@ -77,9 +77,14 @@ def test_clustering_output_snapshot(cg_clustering_data, seed, snapshot):
 
     sizes = labels[labels["cluster"] >= 0]["cluster"].value_counts().sort_values()
     summary = {
-        "n_clusters": int((labels["cluster"] >= 0).sum() and labels.loc[labels["cluster"] >= 0, "cluster"].nunique()),
+        "n_clusters": int(
+            (labels["cluster"] >= 0).sum()
+            and labels.loc[labels["cluster"] >= 0, "cluster"].nunique()
+        ),
         "sorted_cluster_sizes": sorted(sizes.tolist()),
-        "dominant_weight_per_treatment": sorted(np.round(coeffs.to_numpy().max(axis=1), 4).tolist()),
+        "dominant_weight_per_treatment": sorted(
+            np.round(coeffs.to_numpy().max(axis=1), 4).tolist()
+        ),
     }
 
     assert summary == snapshot

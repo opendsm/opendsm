@@ -22,7 +22,6 @@ from opendsm.comparison_groups.stratified_sampling.bins import ModelSamplingExce
 from opendsm.comparison_groups.stratified_sampling.settings import StratificationColumnSettings
 
 
-
 def test_stratification_column_rejects_inverted_bounds():
     """min_value_allowed must not exceed max_value_allowed."""
     with pytest.raises(ValueError):
@@ -136,9 +135,7 @@ def test_stratified_sampling_fit_and_sample_random_seed_check():
     [model.add_column(col) for col in stratification_params]
 
     model.fit(df_treatment, min_n_treatment_per_bin=0)
-    model.sample(
-        df_comparison, n_samples_approx=n_samples_approx, random_seed=random_seed
-    )
+    model.sample(df_comparison, n_samples_approx=n_samples_approx, random_seed=random_seed)
 
     for run_num in range(0, 10):
         model_temp = StratifiedSampler(
@@ -146,17 +143,14 @@ def test_stratified_sampling_fit_and_sample_random_seed_check():
         )
         [model_temp.add_column(col) for col in stratification_params]
         model_temp.fit(df_treatment, min_n_treatment_per_bin=0)
-        model_temp.sample(
-            df_comparison, n_samples_approx=n_samples_approx, random_seed=random_seed
-        )
+        model_temp.sample(df_comparison, n_samples_approx=n_samples_approx, random_seed=random_seed)
         pd.testing.assert_frame_equal(
             model_temp.data_sample.df[stratification_params + ["id"]],
             model.data_sample.df[stratification_params + ["id"]],
         )
         assert (
             len(
-                set(model_temp.data_sample.df["id"].values)
-                - set(model.data_sample.df["id"].values)
+                set(model_temp.data_sample.df["id"].values) - set(model.data_sample.df["id"].values)
             )
             == 0
         )
@@ -167,16 +161,12 @@ def stratified_sampling_obj():
     return StratifiedSampler()
 
 
-def test_stratified_sampling_fit_and_sample_min_allowed_max_allowed(
-    stratified_sampling_obj
-):
+def test_stratified_sampling_fit_and_sample_min_allowed_max_allowed(stratified_sampling_obj):
     col_name = "col1"
     min_value_allowed = 5
     max_value_allowed = 8
     df_treatment = pd.DataFrame([{"id": f"id_{x}", col_name: x} for x in range(0, 10)])
-    df_pool = pd.DataFrame(
-        [{"id": f"id_{x}", col_name: x} for x in np.arange(0, 20, 0.1)]
-    )
+    df_pool = pd.DataFrame([{"id": f"id_{x}", col_name: x} for x in np.arange(0, 20, 0.1)])
     stratified_sampling_obj.add_column(
         col_name,
         min_value_allowed=min_value_allowed,
@@ -195,9 +185,7 @@ def test_stratified_sampling_fit_and_sample_min_allowed_max_allowed(
     assert max(output) < max_value_allowed
 
 
-def test_stratified_sampling_fit_and_sample_n_samples_approx_limit(
-    df_treatment, df_pool, col_name
-):
+def test_stratified_sampling_fit_and_sample_n_samples_approx_limit(df_treatment, df_pool, col_name):
     stratified_sampling_obj = StratifiedSampler()
     stratified_sampling_obj.add_column(col_name)
 
@@ -211,9 +199,7 @@ def test_stratified_sampling_fit_and_sample_n_samples_approx_limit(
     assert (bins_df["n_sampled"] / bins_df["n_pct_sampled"]).round() == n_samples_approx
 
 
-def test_stratified_sampling_fit_and_sample_n_samples_approx_limit(
-    df_treatment, df_pool, col_name
-):
+def test_stratified_sampling_fit_and_sample_n_samples_approx_limit(df_treatment, df_pool, col_name):
     stratified_sampling_obj = StratifiedSampler()
     col_name = "col1"
     df_treatment = pd.DataFrame(
@@ -227,9 +213,7 @@ def test_stratified_sampling_fit_and_sample_n_samples_approx_limit(
             )
         ]
     )
-    df_pool = pd.DataFrame(
-        [{"id": f"id_{x}", col_name: x} for x in np.arange(0, 20, 0.01)]
-    )
+    df_pool = pd.DataFrame([{"id": f"id_{x}", col_name: x} for x in np.arange(0, 20, 0.01)])
     stratified_sampling_obj.add_column(col_name)
 
     n_samples_approx = 40

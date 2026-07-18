@@ -158,9 +158,7 @@ def test_iterate_segmented_dataset_with_segmentation(dataset, segmentation):
 def test_iterate_segmented_dataset_with_processor(dataset, segmentation):
     feature_processor_segment_names = []
 
-    def feature_processor(
-        segment_name, dataset, column_mapping=None
-    ):  # rename some columns
+    def feature_processor(segment_name, dataset, column_mapping=None):  # rename some columns
         feature_processor_segment_names.append(segment_name)
         return dataset.rename(columns=column_mapping).assign(weight=1)
 
@@ -266,8 +264,5 @@ def test_segmented_model_serialized():
         prediction_feature_processor_kwargs=None,
     )
     assert segmented_model.json()["prediction_segment_type"] == "one_month"
-    assert (
-        segmented_model.json()["prediction_feature_processor"]
-        == "fake_feature_processor"
-    )
+    assert segmented_model.json()["prediction_feature_processor"] == "fake_feature_processor"
     assert json.dumps(segmented_model.json())

@@ -51,17 +51,20 @@ class BillingModel(DailyModel):
         model (sklearn.pipeline.Pipeline): The final fitted model.
         id (str): The index of the meter data.
     """
+
     _baseline_data_type = BillingBaselineData
     _reporting_data_type = BillingReportingData
     _data_df_name = "df"
 
-    def __init__(self, settings=None, verbose: bool = False,):
+    def __init__(
+        self,
+        settings=None,
+        verbose: bool = False,
+    ):
         super().__init__(model="legacy", settings=settings, verbose=verbose)
 
     def fit(
-        self, 
-        baseline_data: BillingBaselineData, 
-        ignore_disqualification: bool = False
+        self, baseline_data: BillingBaselineData, ignore_disqualification: bool = False
     ) -> BillingModel:
         return super().fit(baseline_data, ignore_disqualification=ignore_disqualification)
 
@@ -112,9 +115,7 @@ class BillingModel(DailyModel):
         elif aggregation == "bimonthly":
             agg = "2MS"
         else:
-            raise ValueError(
-                "aggregation must be one of [None, 'monthly', 'bimonthly']"
-            )
+            raise ValueError("aggregation must be one of [None, 'monthly', 'bimonthly']")
 
         if agg is not None:
             sum_quad = lambda x: np.sqrt(np.sum(np.square(x)))

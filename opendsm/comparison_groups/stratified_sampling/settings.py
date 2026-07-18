@@ -23,7 +23,6 @@ from opendsm.common.base_settings import BaseSettings
 from typing import Optional, Literal, Union
 
 
-
 class DistanceMetric(str, Enum):
     EUCLIDEAN = "euclidean"
     CHISQUARE = "chisquare"
@@ -31,26 +30,27 @@ class DistanceMetric(str, Enum):
 
 class StratificationColumnSettings(BaseSettings):
     """column name to use for stratification"""
+
     column_name: str = pydantic.Field()
 
     """fixed number of bins to use for stratification"""
     n_bins: Optional[int] = pydantic.Field(
-        default=8, 
-        ge=2, 
+        default=8,
+        ge=2,
         validate_default=True,
     )
 
     """minimum treatment value used to construct bins (used to remove outliers)"""
     min_value_allowed: int = pydantic.Field(
-        default=3000, 
-        ge=0, 
+        default=3000,
+        ge=0,
         validate_default=True,
     )
 
     """maximum treatment value used to construct bins (used to remove outliers)"""
     max_value_allowed: int = pydantic.Field(
-        default=6000, 
-        ge=0, 
+        default=6000,
+        ge=0,
         validate_default=True,
     )
 
@@ -75,6 +75,7 @@ class StratificationColumnSettings(BaseSettings):
 
 class DSS_StratificationColumnSettings(StratificationColumnSettings):
     """fixed number of bins to use for stratification"""
+
     n_bins: Literal[None] = None
 
     """column requires equivalence when auto-binning"""
@@ -90,8 +91,8 @@ class Settings(BaseSettings):
     """
 
     min_n_treatment_per_bin: int = pydantic.Field(
-        default=0, 
-        ge=0, 
+        default=0,
+        ge=0,
         validate_default=True,
     )
 
@@ -109,8 +110,8 @@ class StratifiedSamplingSettings(Settings):
         there may be some slight discrepancies around the total count to ensure
         that each bin has the correct percentage of the total.
     min_n_treatment_per_bin: int
-        minimum number of treatment samples that must exist in a given bin for 
-        it to be considered a non-outlier bin (only applicable if there are 
+        minimum number of treatment samples that must exist in a given bin for
+        it to be considered a non-outlier bin (only applicable if there are
         cols with fixed_width=True)
     min_n_sampled_to_n_treatment_ratio: float
     relax_n_samples_approx_constraint: bool
@@ -120,13 +121,13 @@ class StratifiedSamplingSettings(Settings):
     """
 
     n_samples_approx: Optional[int] = pydantic.Field(
-        default=None, 
-        ge=1, 
+        default=None,
+        ge=1,
         validate_default=True,
     )
 
     relax_n_samples_approx_constraint: bool = pydantic.Field(
-        default=False, 
+        default=False,
     )
 
     equivalence_method: Literal[None] = None
@@ -138,8 +139,8 @@ class StratifiedSamplingSettings(Settings):
     max_n_bins: Literal[None] = None
 
     min_n_sampled_to_n_treatment_ratio: float = pydantic.Field(
-        default=4, 
-        ge=0, 
+        default=4,
+        ge=0,
         validate_default=True,
     )
 
@@ -151,6 +152,7 @@ class StratifiedSamplingSettings(Settings):
     )
 
     """set stratification column classes with given dictionaries"""
+
     @pydantic.model_validator(mode="after")
     def _set_nested_classes(self):
         if len(self.stratification_column) > 3:
@@ -182,8 +184,8 @@ class DistanceStratifiedSamplingSettings(Settings):
         there may be some slight discrepancies around the total count to ensure
         that each bin has the correct percentage of the total.
     min_n_treatment_per_bin: int
-        Minimum number of treatment samples that must exist in a given bin for 
-        it to be considered a non-outlier bin (only applicable if there are 
+        Minimum number of treatment samples that must exist in a given bin for
+        it to be considered a non-outlier bin (only applicable if there are
         cols with fixed_width=True)
     min_n_sampled_to_n_treatment_ratio: float
     relax_n_samples_approx_constraint: bool
@@ -191,15 +193,15 @@ class DistanceStratifiedSamplingSettings(Settings):
         meters as available up to n_samples_approx. If False, it raises an exception
         if there are not enough comparison pool meters to reach n_samples_approx.
     """
-    
+
     n_samples_approx: Optional[int] = pydantic.Field(
-        default=5000, 
-        ge=1, 
+        default=5000,
+        ge=1,
         validate_default=True,
     )
 
     relax_n_samples_approx_constraint: bool = pydantic.Field(
-        default=True, 
+        default=True,
     )
 
     equivalence_method: DistanceMetric = pydantic.Field(
@@ -213,31 +215,34 @@ class DistanceStratifiedSamplingSettings(Settings):
     )
 
     min_n_bins: int = pydantic.Field(
-        default=1, 
-        ge=1, 
+        default=1,
+        ge=1,
         validate_default=True,
     )
 
     max_n_bins: int = pydantic.Field(
-        default=8, 
-        ge=2, 
+        default=8,
+        ge=2,
         validate_default=True,
     )
 
     min_n_sampled_to_n_treatment_ratio: float = pydantic.Field(
-        default=0.25, 
-        ge=0, 
+        default=0.25,
+        ge=0,
         validate_default=True,
     )
 
-    stratification_column: Union[list[DSS_StratificationColumnSettings], list[dict]] = pydantic.Field(
-        default=[
-            DSS_StratificationColumnSettings(column_name="summer_usage"),
-            DSS_StratificationColumnSettings(column_name="winter_usage"),
-        ],
+    stratification_column: Union[list[DSS_StratificationColumnSettings], list[dict]] = (
+        pydantic.Field(
+            default=[
+                DSS_StratificationColumnSettings(column_name="summer_usage"),
+                DSS_StratificationColumnSettings(column_name="winter_usage"),
+            ],
+        )
     )
 
     """set stratification column classes with given dictionaries"""
+
     @pydantic.model_validator(mode="after")
     def _set_nested_classes(self):
         if len(self.stratification_column) > 3:

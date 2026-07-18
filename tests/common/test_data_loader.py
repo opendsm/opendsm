@@ -18,7 +18,6 @@ import pytest
 from opendsm.common import test_data
 
 
-
 class _FakeResponse:
     def __init__(self, content):
         self.content = content
@@ -105,8 +104,7 @@ def test_load_file_rejects_unsupported_extension(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize(
     "data_type",
-    ["month_loadshape", "seasonal_day_of_week_loadshape",
-     "seasonal_hourly_day_of_week_loadshape"],
+    ["month_loadshape", "seasonal_day_of_week_loadshape", "seasonal_hourly_day_of_week_loadshape"],
 )
 def test_load_other_data_from_repo(data_type):
     """The CSV loadshape datasets load from the in-repo copy, indexed by id."""
@@ -120,6 +118,7 @@ def test_load_other_data_from_repo(data_type):
 # datasets. They are deliberately exact so that any change to the in-repo data
 # files (data/features.csv, data/hourly_data_0.parquet) is caught here rather
 # than silently shifting downstream snapshots.
+
 
 def test_features_dataset_fingerprint():
     """The features dataset has its committed shape and id count."""

@@ -22,23 +22,34 @@ from opendsm.comparison_groups.stratified_sampling.sampling import StratifiedSam
 from opendsm.comparison_groups.stratified_sampling.diagnostics import t_and_ks_test
 
 
-
 @pytest.fixture
 def diagnostics_obj_2d():
     """Two-column diagnostics so scatter (which needs column pairs) is exercised."""
     rng = np.random.default_rng(0)
     df_treatment = pd.DataFrame(
-        {"id": [f"t{i}" for i in range(60)], "c1": rng.uniform(0, 100, 60), "c2": rng.uniform(0, 100, 60)}
+        {
+            "id": [f"t{i}" for i in range(60)],
+            "c1": rng.uniform(0, 100, 60),
+            "c2": rng.uniform(0, 100, 60),
+        }
     )
     df_pool = pd.DataFrame(
-        {"id": [f"p{i}" for i in range(600)], "c1": rng.uniform(0, 100, 600), "c2": rng.uniform(0, 100, 600)}
+        {
+            "id": [f"p{i}" for i in range(600)],
+            "c1": rng.uniform(0, 100, 600),
+            "c2": rng.uniform(0, 100, 600),
+        }
     )
     model = StratifiedSampler()
     model.add_column("c1", n_bins=3)
     model.add_column("c2", n_bins=3)
     model.fit_and_sample(
-        df_treatment, df_pool, n_samples_approx=100, random_seed=1,
-        min_n_sampled_to_n_treatment_ratio=0, relax_n_samples_approx_constraint=True,
+        df_treatment,
+        df_pool,
+        n_samples_approx=100,
+        random_seed=1,
+        min_n_sampled_to_n_treatment_ratio=0,
+        relax_n_samples_approx_constraint=True,
     )
     diagnostics = model.diagnostics()
 
@@ -155,17 +166,17 @@ class TestEquivalenceNegative:
         under-populated and the t/KS equivalence checks reject (the expected
         small-sample warning is suppressed).
         """
-        df_treatment = pd.DataFrame(
-            [{"id": f"t_{x}", col_name: x} for x in np.arange(0, 10, 0.1)]
-        )
-        df_pool = pd.DataFrame(
-            [{"id": f"p_{x}", col_name: x} for x in np.arange(100, 120, 0.05)]
-        )
+        df_treatment = pd.DataFrame([{"id": f"t_{x}", col_name: x} for x in np.arange(0, 10, 0.1)])
+        df_pool = pd.DataFrame([{"id": f"p_{x}", col_name: x} for x in np.arange(100, 120, 0.05)])
         model = StratifiedSampler()
         model.add_column(col_name, n_bins=4)
         model.fit_and_sample(
-            df_treatment, df_pool, n_samples_approx=len(df_treatment), random_seed=1,
-            min_n_sampled_to_n_treatment_ratio=0, relax_n_samples_approx_constraint=True,
+            df_treatment,
+            df_pool,
+            n_samples_approx=len(df_treatment),
+            random_seed=1,
+            min_n_sampled_to_n_treatment_ratio=0,
+            relax_n_samples_approx_constraint=True,
         )
 
         assert model.diagnostics().equivalence_passed() is False

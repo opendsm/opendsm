@@ -107,7 +107,9 @@ def _collect_diffs(
     """Walk structures and record (path, actual, expected) for numeric leaves outside tolerance."""
     if isinstance(a, dict) and isinstance(b, dict):
         for k in a.keys() | b.keys():
-            _collect_diffs(a.get(k), b.get(k), f"{path}.{k}" if path else k, diffs, atol=atol, rtol=rtol)
+            _collect_diffs(
+                a.get(k), b.get(k), f"{path}.{k}" if path else k, diffs, atol=atol, rtol=rtol
+            )
         return
 
     if isinstance(a, list) and isinstance(b, list):

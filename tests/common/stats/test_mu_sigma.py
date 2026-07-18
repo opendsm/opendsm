@@ -19,7 +19,6 @@ from opendsm.common.stats.basic import median_absolute_deviation
 from opendsm.common.stats.distribution_transform.mu_sigma import robust_mu_sigma
 
 
-
 def _scalar(v):
     """Coerce iqr's size-1-array returns and scalar returns to a Python float."""
     return float(np.asarray(v).ravel()[0])

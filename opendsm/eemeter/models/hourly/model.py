@@ -27,9 +27,7 @@ import pandas as pd
 
 import sklearn
 
-sklearn.set_config(
-    assume_finite=True, skip_parameter_validation=True
-)  # Faster, we do checking
+sklearn.set_config(assume_finite=True, skip_parameter_validation=True)  # Faster, we do checking
 
 from scipy.spatial.distance import cdist
 from scipy.sparse import csr_matrix
@@ -60,7 +58,6 @@ from opendsm.eemeter.common.warnings import EEMeterWarning
 from opendsm.common.clustering.cluster import cluster_features
 from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict, ReportingMetrics
 from opendsm import __version__
-
 
 
 def _get_interpolated_mask(df):
@@ -124,7 +121,7 @@ def _fit_exp_growth_decay(x, y, k_only=True, is_x_sorted=False):
     x_shifted = x - x[0]
     y_shifted = y - y[0]
 
-    x_diff_sq = np.sum(x_shifted ** 2)
+    x_diff_sq = np.sum(x_shifted**2)
     xs_diff = np.sum(s * x_shifted)
     s_sq = np.sum(s**2)
     xy_diff = np.sum(x_shifted * y_shifted)
@@ -134,8 +131,8 @@ def _fit_exp_growth_decay(x, y, k_only=True, is_x_sorted=False):
     b = np.array([xy_diff, ys_diff])
 
     _, c = np.linalg.solve(A, b)
-    with np.errstate(divide='ignore'):
-        k = 1 / c # ignore divide by zero, it will be filtered later
+    with np.errstate(divide="ignore"):
+        k = 1 / c  # ignore divide by zero, it will be filtered later
 
     if k_only:
         a, b = None, None
@@ -239,10 +236,10 @@ class HourlyModel:
         settings (dict): A dictionary of settings.
         baseline_metrics (dict): A dictionary of metrics based on input baseline data and model fit.
     """
-    
+
     # thresholds for switching model types
-    _alpha_model_threshold = 1E-5
-    _l1_ratio_model_threshold = 1E-4
+    _alpha_model_threshold = 1e-5
+    _l1_ratio_model_threshold = 1e-4
     _model_warning = EEMeterWarning
     _base_settings = _settings
 
@@ -310,7 +307,6 @@ class HourlyModel:
         self.baseline_timezone = None
         self.version = __version__
 
-    
     def _warn_model_mismatch(self, description):
         warning = self._model_warning(
             qualified_name="eemeter.potential_model_mismatch",
@@ -329,15 +325,12 @@ class HourlyModel:
             self._feature_scaler = SafeRobustScaler(unit_variance=True)
             self._y_scaler = SafeRobustScaler(unit_variance=True)
 
-
     def _set_model(self):
         # set base model
         if self.settings.base_model == _settings.BaseModel.ELASTICNET:
             settings = self.settings.elasticnet
             if settings.alpha <= self._alpha_model_threshold:
-                model = SafeLinearRegression(
-                    fit_intercept=settings.fit_intercept
-                )
+                model = SafeLinearRegression(fit_intercept=settings.fit_intercept)
 
             else:
                 if settings.l1_ratio < self._l1_ratio_model_threshold:
@@ -354,7 +347,7 @@ class HourlyModel:
                     tol=settings.tol,
                     random_state=settings._seed,
                 )
-                
+
                 if not isinstance(model, Ridge):
                     model.precompute = settings.precompute
                     model.selection = settings.selection
@@ -365,7 +358,7 @@ class HourlyModel:
 
             if self.settings.adaptive_weights.enabled:
                 model = AdaptiveElasticNetRegressor(model, self.settings)
-                
+
         elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
             settings = self.settings.kernel_ridge
             model = KernelRidge(
@@ -394,7 +387,9 @@ class HourlyModel:
             )
             model_fit_warning.warn()
             self.disqualification.append(model_fit_warning)
-            raise DataSufficiencyError("Cannot fit model: Baseline data contains all zeros in observed values")
+            raise DataSufficiencyError(
+                "Cannot fit model: Baseline data contains all zeros in observed values"
+            )
 
         if baseline_data.df["observed"].isnull().all():
             model_fit_warning = self._model_warning(
@@ -403,8 +398,9 @@ class HourlyModel:
             )
             model_fit_warning.warn()
             self.disqualification.append(model_fit_warning)
-            raise DataSufficiencyError("Cannot fit model: Baseline data contains no finite observed values")
-
+            raise DataSufficiencyError(
+                "Cannot fit model: Baseline data contains no finite observed values"
+            )
 
     def fit(
         self, baseline_data: HourlyBaselineData, ignore_disqualification: bool = False
@@ -438,7 +434,7 @@ class HourlyModel:
             self._ts_features = self.settings.train_features.copy()
 
         self._model_prefit_check(baseline_data)
-        
+
         self._fit(baseline_data)
         self._check_model_fit()
 
@@ -489,17 +485,13 @@ class HourlyModel:
         if not self._is_fit:
             raise RuntimeError("Model must be fit before predictions can be made.")
 
-        if missing_features := (
-            set(self._ts_features) - set(reporting_data.df.columns)
-        ):
+        if missing_features := (set(self._ts_features) - set(reporting_data.df.columns)):
             raise ValueError(
                 f"Reporting data is missing the following features: {missing_features}"
             )
 
         if "ghi" in reporting_data.df.columns and "ghi" not in self._ts_features:
-            self._warn_model_mismatch(
-                "Reporting data contains GHI, but model was fit without GHI."
-            )
+            self._warn_model_mismatch("Reporting data contains GHI, but model was fit without GHI.")
 
         if str(self.baseline_timezone) != str(reporting_data.tz):
             raise ValueError(
@@ -593,14 +585,10 @@ class HourlyModel:
         # add temperature bins based on temperature
         if not self._is_fit:
             if settings.method == "equal_sample_count":
-                T_bin_edges = pd.qcut(
-                    df["temperature"], q=settings.n_bins, labels=False
-                )
+                T_bin_edges = pd.qcut(df["temperature"], q=settings.n_bins, labels=False)
 
             elif settings.method == "equal_bin_width":
-                T_bin_edges = pd.cut(
-                    df["temperature"], bins=settings.n_bins, labels=False
-                )
+                T_bin_edges = pd.cut(df["temperature"], bins=settings.n_bins, labels=False)
 
             elif settings.method == "set_bin_width":
                 bin_width = settings.bin_width
@@ -609,9 +597,7 @@ class HourlyModel:
                 max_temp = np.ceil(df["temperature"].max())
 
                 if not settings.include_edge_bins:
-                    step_num = (
-                        np.round((max_temp - min_temp) / bin_width).astype(int) + 1
-                    )
+                    step_num = np.round((max_temp - min_temp) / bin_width).astype(int) + 1
 
                     # T_bin_edges = np.arange(min_temp, max_temp + bin_width, bin_width)
                     T_bin_edges = np.linspace(min_temp, max_temp, step_num)
@@ -636,15 +622,10 @@ class HourlyModel:
 
                         bin_range = [min_temp_reg_bin, max_temp_reg_bin]
 
-                    step_num = (
-                        np.round((bin_range[1] - bin_range[0]) / bin_width).astype(int)
-                        + 1
-                    )
+                    step_num = np.round((bin_range[1] - bin_range[0]) / bin_width).astype(int) + 1
 
                     # create bins with set width
-                    T_bin_edges = np.array(
-                        [min_temp, *np.linspace(*bin_range, step_num), max_temp]
-                    )
+                    T_bin_edges = np.array([min_temp, *np.linspace(*bin_range, step_num), max_temp])
 
             elif settings.method == "fixed_bins":
                 temp = df["temperature"].values
@@ -654,7 +635,7 @@ class HourlyModel:
 
                 if temp.size < settings.min_bin_count:
                     raise ValueError("Not enough data to form temperature bins")
-                elif temp.size < settings.min_bin_count*2:
+                elif temp.size < settings.min_bin_count * 2:
                     T_bin_edges = np.array([-np.inf, np.inf])
                 else:
                     T_bin_edges = _merge_bins(T_bin_edges, temp, settings.min_bin_count)
@@ -675,9 +656,7 @@ class HourlyModel:
 
         # Create dummy variables for temperature bins
         bin_dummies = pd.get_dummies(
-            pd.Categorical(
-                df["temp_bin"], categories=range(len(self._T_bin_edges) - 1)
-            ),
+            pd.Categorical(df["temp_bin"], categories=range(len(self._T_bin_edges) - 1)),
             prefix="temp_bin",
         )
         bin_dummies.index = df.index
@@ -701,10 +680,7 @@ class HourlyModel:
                 values="observed",
             )
 
-            labels = cluster_features(
-                fit_df_grouped,
-                self.settings.temporal_cluster
-            )
+            labels = cluster_features(fit_df_grouped, self.settings.temporal_cluster)
 
             df_temporal_clusters = pd.DataFrame(
                 labels,
@@ -744,9 +720,9 @@ class HourlyModel:
                     df_missing = df[is_missing]
 
                     df_missing_grouped = (
-                        df_missing.groupby(
-                            self._temporal_cluster_cols + ["hour_of_day"]
-                        )["observed"]
+                        df_missing.groupby(self._temporal_cluster_cols + ["hour_of_day"])[
+                            "observed"
+                        ]
                         .agg(self.settings.temporal_cluster_aggregation)
                         .reset_index()
                     )
@@ -770,9 +746,7 @@ class HourlyModel:
                     df_known = df[~is_missing]
 
                     df_known_mean = (
-                        df_known.groupby(self._temporal_cluster_cols + ["hour_of_day"])[
-                            "observed"
-                        ]
+                        df_known.groupby(self._temporal_cluster_cols + ["hour_of_day"])["observed"]
                         .mean()
                         .reset_index()
                     )
@@ -795,9 +769,7 @@ class HourlyModel:
 
                     # set labels to minimum distance of known clusters
                     labels = temporal_clusters.iloc[min_dist_idx].values
-                    df_temporal_clusters.loc[
-                        missing_combinations, "temporal_cluster"
-                    ] = labels
+                    df_temporal_clusters.loc[missing_combinations, "temporal_cluster"] = labels
 
                     self._df_temporal_clusters = df_temporal_clusters
 
@@ -835,8 +807,7 @@ class HourlyModel:
 
             # Count unique temporal cluster base columns (e.g. temporal_cluster_0, temporal_cluster_1)
             n_clusters = sum(
-                1 for col in self._categorical_features
-                if re.match(r'^temporal_cluster_\d+$', col)
+                1 for col in self._categorical_features if re.match(r"^temporal_cluster_\d+$", col)
             )
 
         # join df_temporal_clusters to df
@@ -856,9 +827,7 @@ class HourlyModel:
 
         self._categorical_features = [f"temporal_cluster_{i}" for i in range(n_clusters)]
 
-        df = pd.merge(
-            df, cluster_dummies, how="left", left_index=True, right_index=True
-        )
+        df = pd.merge(df, cluster_dummies, how="left", left_index=True, right_index=True)
 
         if self.settings.temperature_bin is not None:
             df, temp_bin_cols = self._add_temperature_bins(df)
@@ -936,15 +905,13 @@ class HourlyModel:
         df = pd.concat([df, normalized_df], axis=1)
 
         if "observed" in df.columns:
-            df["observed_norm"] = self._y_scaler.transform(
-                df["observed"].values.reshape(-1, 1)
-            )
+            df["observed_norm"] = self._y_scaler.transform(df["observed"].values.reshape(-1, 1))
 
         if "ghi" in self._ts_features and "ghi" in df.columns:
             df["ghi_norm"] *= self.settings.ghi_scalar
 
         return df
-    
+
     def _add_extreme_temperature_bins(self, df, bin_range):
         settings = self.settings.temperature_bin
 
@@ -959,9 +926,7 @@ class HourlyModel:
 
                 # Fit the model using robust least squares
                 try:
-                    params = _fit_exp_growth_decay(
-                        x_data, y_data, k_only=True, is_x_sorted=True
-                    )
+                    params = _fit_exp_growth_decay(x_data, y_data, k_only=True, is_x_sorted=True)
                     # save k for each hour
                     k.append(params[2])
                 except Exception:
@@ -973,10 +938,10 @@ class HourlyModel:
             if len(k_valid) > 0:
                 k = np.mean(k_valid)
             else:
-                k = 1 # if no valid k, set to 1
+                k = 1  # if no valid k, set to 1
 
             # if k is too small, set to minimum
-            k_min = 1/np.log(1E6)
+            k_min = 1 / np.log(1e6)
             if k < k_min:
                 k = k_min
 
@@ -1033,9 +998,7 @@ class HourlyModel:
             k = self._T_edge_bin_coeffs[n]["k"]
             A = self._T_edge_bin_coeffs[n]["a"]
 
-            col_dict[T_col] = np.where(
-                df[base_col].values, T_a * df[int_col].values + T_b, 0
-            )
+            col_dict[T_col] = np.where(df[base_col].values, T_a * df[int_col].values + T_b, 0)
 
             for label, sign in [("pos", 1), ("neg", -1)]:
                 ts_col = f"{base_col}_{label}_exp_ts"
@@ -1057,8 +1020,8 @@ class HourlyModel:
         # TODO: if this permanent then it should not create, erase, make anew
         self._ts_feature_norm.remove("temperature_norm")
 
-        temp_bin_cols = [c for c in df.columns if re.match(r'^temp_bin_\d+$', c)]
-        cluster_cols = [c for c in df.columns if re.match(r'^temporal_cluster_\d+$', c)]
+        temp_bin_cols = [c for c in df.columns if re.match(r"^temp_bin_\d+$", c)]
+        cluster_cols = [c for c in df.columns if re.match(r"^temporal_cluster_\d+$", c)]
 
         col_dict = {}
 
@@ -1083,7 +1046,9 @@ class HourlyModel:
                 # add slope term
                 interaction_ts_col = f"{interaction_col}_ts"
                 # df[interaction_ts_col] = df["temperature_norm"] * df[interaction_col]
-                col_dict[interaction_ts_col] = s*df["temperature_norm"] * col_dict[interaction_col]
+                col_dict[interaction_ts_col] = (
+                    s * df["temperature_norm"] * col_dict[interaction_col]
+                )
 
                 # add to feature lists
                 self._categorical_features.append(interaction_col)
@@ -1115,9 +1080,7 @@ class HourlyModel:
                 for feature_idx, feature in enumerate(agg[date]):
                     if hour == 0:
                         # there are a handful of countries that use 0:00 as the DST transition
-                        interpolated = (
-                            agg[date - 1][feature_idx][-1] + feature[hour]
-                        ) / 2
+                        interpolated = (agg[date - 1][feature_idx][-1] + feature[hour]) / 2
 
                     else:
                         interpolated = (feature[hour - 1] + feature[hour]) / 2
@@ -1137,18 +1100,12 @@ class HourlyModel:
         ts_feature = np.array(agg_x).reshape(len(agg_x), -1)
 
         # get the first categorical features for each day for each sample
-        unique_dummies = (
-            df[["date"] + self._categorical_features].groupby("date").first()
-        )
+        unique_dummies = df[["date"] + self._categorical_features].groupby("date").first()
 
         X = np.concatenate((ts_feature, unique_dummies), axis=1)
 
         if not self._is_fit:
-            agg_y = (
-                df_grouped
-                .agg({"observed_norm": list})
-                .values.tolist()
-            )
+            agg_y = df_grouped.agg({"observed_norm": list}).values.tolist()
             correct_dst(agg_y)
             y = np.array(agg_y)
             y = y.reshape(y.shape[0], -1)
@@ -1166,8 +1123,8 @@ class HourlyModel:
         adaptive_weights = None
         if self.settings.base_model == _settings.BaseModel.ELASTICNET:
             if self.settings.adaptive_weights.enabled:
-                if hasattr(self._model, 'base_model'):
-                    adaptive_weights = getattr(self._model.base_model, 'adaptive_weights', None)
+                if hasattr(self._model, "base_model"):
+                    adaptive_weights = getattr(self._model.base_model, "adaptive_weights", None)
                 self._model = self._model.base_model
 
             coef = self._model.coef_
@@ -1181,7 +1138,7 @@ class HourlyModel:
         num_parameters = np.count_nonzero(coef)
         self.baseline_metrics = BaselineMetrics(
             df=df_non_interp,
-            num_model_params=num_parameters + 1, # + 1 for intercept
+            num_model_params=num_parameters + 1,  # + 1 for intercept
         )
 
         # calculate baseline metrics per hour-of-day with edf-based num_model_params
@@ -1204,7 +1161,11 @@ class HourlyModel:
             # Compute edf via SVD when X_fit is available and model is not KernelRidge
             if X_fit is not None and not is_kernel and lambda_2 is not None:
                 edf_h = self._compute_hour_edf(
-                    X_fit, hour, hour_coef, lambda_2, adaptive_weights,
+                    X_fit,
+                    hour,
+                    hour_coef,
+                    lambda_2,
+                    adaptive_weights,
                 )
                 # Clamp so ddof >= 3 → stdtrit(ddof, perc) is finite and reasonable
                 n_h = len(hour_data)
@@ -1233,8 +1194,8 @@ class HourlyModel:
         if isinstance(base, Ridge) and not isinstance(base, ElasticNet):
             return base.alpha
         else:
-            alpha = getattr(base, 'alpha', 0)
-            l1_ratio = getattr(base, 'l1_ratio', 0)
+            alpha = getattr(base, "alpha", 0)
+            l1_ratio = getattr(base, "l1_ratio", 0)
             return n_samples * alpha * (1 - l1_ratio)
 
     def _compute_hour_edf(self, X_fit, hour, hour_coef, lambda_2, adaptive_weights):
@@ -1252,7 +1213,7 @@ class HourlyModel:
             return 1  # intercept only
 
         X_active = X_fit[:, active]
-        if hasattr(X_active, 'toarray'):
+        if hasattr(X_active, "toarray"):
             X_active = X_active.toarray()
 
         # Apply per-hour adaptive weights (also daily-indexed)
@@ -1351,9 +1312,8 @@ class HourlyModel:
     # ----------------------------------------------------------------------
     def _has_per_hour_uncertainty(self):
         """False only for legacy model_json that lack per-hour metrics."""
-        return (
-            self.baseline_hour_metrics is not None
-            and any(v is not None for v in self.baseline_hour_metrics.values())
+        return self.baseline_hour_metrics is not None and any(
+            v is not None for v in self.baseline_hour_metrics.values()
         )
 
     def _calculate_uncertainty_global_legacy(self, df_eval):
@@ -1381,7 +1341,11 @@ class HourlyModel:
         Returns:
             Model parameters.
         """
-        loc_attr = "mean_" if self.settings.scaling_method == _settings.ScalingChoice.STANDARD_SCALER else "center_"
+        loc_attr = (
+            "mean_"
+            if self.settings.scaling_method == _settings.ScalingChoice.STANDARD_SCALER
+            else "center_"
+        )
         feature_loc = getattr(self._feature_scaler, loc_attr)
         feature_scaler = {
             key: [feature_loc[i], self._feature_scaler.scale_[i]]
@@ -1399,8 +1363,7 @@ class HourlyModel:
         baseline_hour_metrics = None
         if self.baseline_hour_metrics:
             baseline_hour_metrics = {
-                str(k): v for k, v in self.baseline_hour_metrics.items()
-                if v is not None
+                str(k): v for k, v in self.baseline_hour_metrics.items() if v is not None
             }
 
         params = self._base_settings.SerializeModel(
@@ -1420,7 +1383,6 @@ class HourlyModel:
             info=self._base_settings.ModelInfo(
                 disqualification=self.disqualification,
                 warnings=self.warnings,
-
                 baseline_timezone=str(self.baseline_timezone),
                 version=self.version,
             ),
@@ -1478,11 +1440,15 @@ class HourlyModel:
 
         y_scaler_values = data.get("y_scaler")
 
-        loc_attr = "mean_" if settings.scaling_method == _settings.ScalingChoice.STANDARD_SCALER else "center_"
+        loc_attr = (
+            "mean_"
+            if settings.scaling_method == _settings.ScalingChoice.STANDARD_SCALER
+            else "center_"
+        )
 
         setattr(model_cls._feature_scaler, loc_attr, np.array(feature_scaler_loc))
         model_cls._feature_scaler.scale_ = np.array(feature_scaler_scale)
-        
+
         setattr(model_cls._y_scaler, loc_attr, np.array(y_scaler_values[0]))
         model_cls._y_scaler.scale_ = np.array(y_scaler_values[1])
 
@@ -1493,9 +1459,7 @@ class HourlyModel:
         model_cls._is_fit = True
 
         # set baseline metrics
-        model_cls.baseline_metrics = BaselineMetricsFromDict(
-            data.get("baseline_metrics")
-        )
+        model_cls.baseline_metrics = BaselineMetricsFromDict(data.get("baseline_metrics"))
 
         # COMPAT[legacy-hourly-model-json]: the None default leaves legacy
         # model_json (no baseline_hour_metrics) on the global uncertainty path;
@@ -1504,8 +1468,7 @@ class HourlyModel:
         raw_hour_metrics = data.get("baseline_hour_metrics")
         if raw_hour_metrics is not None:
             model_cls.baseline_hour_metrics = {
-                int(k): BaselineMetricsFromDict(v)
-                for k, v in raw_hour_metrics.items()
+                int(k): BaselineMetricsFromDict(v) for k, v in raw_hour_metrics.items()
             }
 
         info = model_cls._base_settings.ModelInfo(**data.get("info"))

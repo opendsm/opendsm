@@ -27,6 +27,7 @@ from sklearn.decomposition import PCA
 # Parallel Analysis helpers
 # ---------------------------------------------------------------------------
 
+
 def _sigmoid_scalar(x: float, x0: float, k: float) -> float:
     """Numerically stable scalar sigmoid: 1 / (1 + exp(-(x - x0) / k))."""
     z = (x - x0) / k
@@ -211,9 +212,7 @@ def _parallel_analysis_n_components(
         if null_n_max < 1:
             continue
 
-        null_eigs = _compute_pa_eigenvalues(
-            perm_flat, method, grid_points, null_n_max
-        )
+        null_eigs = _compute_pa_eigenvalues(perm_flat, method, grid_points, null_n_max)
         n_fill = min(null_n_max, n_max)
         null[i, :n_fill] = null_eigs[:n_fill]
 

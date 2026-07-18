@@ -16,28 +16,32 @@ from opendsm.common.stats.distribution_transform.box_cox import (
     BoxCox,
 )
 from opendsm.common.stats.distribution_transform._bc_yj_shared import (
-    _WANT_VALUE, _WANT_DERIV, _LAM_EPS,
+    _WANT_VALUE,
+    _WANT_DERIV,
+    _LAM_EPS,
 )
 
-pytestmark = pytest.mark.filterwarnings(
-    "ignore::numba.core.errors.NumbaExperimentalFeatureWarning"
-)
+pytestmark = pytest.mark.filterwarnings("ignore::numba.core.errors.NumbaExperimentalFeatureWarning")
 
 RNG = np.random.default_rng
 
 
 # ── Scalar _bc forward ──────────────────────────────────────────────────
 
+
 class TestBCScalar:
-    @pytest.mark.parametrize("x, lam, expected", [
-        (1.0, 1.0, 0.0),                              # (1^1 - 1)/1 = 0
-        (2.0, 1.0, 1.0),                              # (2-1)/1 = 1
-        (4.0, 1.0, 3.0),                              # (4-1)/1 = 3
-        (np.e, 0.0, 1.0),                             # log(e) = 1
-        (np.e ** 2, 0.0, 2.0),                        # log(e^2) = 2
-        (4.0, 0.5, 2.0),                              # (sqrt(4)-1)/0.5 = 2
-        (9.0, 0.5, 4.0),                              # (3-1)/0.5 = 4
-    ])
+    @pytest.mark.parametrize(
+        "x, lam, expected",
+        [
+            (1.0, 1.0, 0.0),  # (1^1 - 1)/1 = 0
+            (2.0, 1.0, 1.0),  # (2-1)/1 = 1
+            (4.0, 1.0, 3.0),  # (4-1)/1 = 3
+            (np.e, 0.0, 1.0),  # log(e) = 1
+            (np.e**2, 0.0, 2.0),  # log(e^2) = 2
+            (4.0, 0.5, 2.0),  # (sqrt(4)-1)/0.5 = 2
+            (9.0, 0.5, 4.0),  # (3-1)/0.5 = 4
+        ],
+    )
     def test_forward_known(self, x, lam, expected):
         assert np.isclose(_bc(x, lam, _WANT_VALUE), expected, atol=1e-12)
 
@@ -46,16 +50,20 @@ class TestBCScalar:
         """BC(1, λ) = 0 for all λ (since 1^λ = 1)."""
         assert abs(_bc(1.0, lam, _WANT_VALUE)) < 1e-12
 
-    @pytest.mark.parametrize("x, lam, expected", [
-        (2.0, 2.0, 2.0),          # x^(lam-1) = 2^1 = 2
-        (4.0, 0.5, 0.5),          # 4^(0.5-1) = 4^(-0.5) = 1/2
-        (np.e, 0.0, 1.0 / np.e),  # 1/x
-    ])
+    @pytest.mark.parametrize(
+        "x, lam, expected",
+        [
+            (2.0, 2.0, 2.0),  # x^(lam-1) = 2^1 = 2
+            (4.0, 0.5, 0.5),  # 4^(0.5-1) = 4^(-0.5) = 1/2
+            (np.e, 0.0, 1.0 / np.e),  # 1/x
+        ],
+    )
     def test_derivative_known(self, x, lam, expected):
         assert np.isclose(_bc(x, lam, _WANT_DERIV), expected, atol=1e-12)
 
 
 # ── Scalar _bc_inverse ──────────────────────────────────────────────────
+
 
 class TestBCInverse:
     @pytest.mark.parametrize("lam", [0.0, 0.5, 1.0, 2.0])
@@ -75,6 +83,7 @@ class TestBCInverse:
 
 # ── Vectorised transforms ───────────────────────────────────────────────
 
+
 class TestVectorised:
     @pytest.mark.parametrize("lam", [0.0, 0.5, 1.0, 2.0])
     def test_array_roundtrip(self, lam):
@@ -89,6 +98,7 @@ class TestVectorised:
 
 # ── _bc_hg ───────────────────────────────────────────────────────────────
 
+
 class TestBCHG:
     def test_at_lambda_zero(self):
         h, g = _bc_hg(4.0, 0.0)
@@ -102,6 +112,7 @@ class TestBCHG:
 
 
 # ── Rectified transform ─────────────────────────────────────────────────
+
 
 class TestRectified:
     def test_inside_matches_unrectified(self):
@@ -119,6 +130,7 @@ class TestRectified:
 
 # ── _fit_bc_lambda ──────────────────────────────────────────────────────
 
+
 class TestFitBCLambda:
     def test_lognormal(self):
         x = RNG(43).lognormal(0, 1, 300)
@@ -134,14 +146,17 @@ class TestFitBCLambda:
 
 # ── BoxCox class ─────────────────────────────────────────────────────────
 
+
 @pytest.fixture
 def positive_2d():
     rng = RNG(42)
-    return np.column_stack([
-        rng.lognormal(0, 1, 200),
-        rng.lognormal(2, 0.5, 200),
-        rng.uniform(0.1, 10, 200),
-    ])
+    return np.column_stack(
+        [
+            rng.lognormal(0, 1, 200),
+            rng.lognormal(2, 0.5, 200),
+            rng.uniform(0.1, 10, 200),
+        ]
+    )
 
 
 @pytest.fixture
@@ -164,7 +179,9 @@ class TestBoxCoxClass:
 
     def test_roundtrip_1d(self, positive_1d):
         bc = BoxCox()
-        assert np.abs(positive_1d - bc.inverse_transform(bc.fit_transform(positive_1d))).max() < 1e-5
+        assert (
+            np.abs(positive_1d - bc.inverse_transform(bc.fit_transform(positive_1d))).max() < 1e-5
+        )
 
     def test_n_features(self, positive_2d):
         bc = BoxCox()
@@ -174,10 +191,12 @@ class TestBoxCoxClass:
 
 class TestBoxCoxNonPositive:
     def test_non_positive_dim_skipped_with_warning(self):
-        data = np.column_stack([
-            np.random.default_rng(0).standard_normal(50),  # has negatives
-            np.random.default_rng(0).lognormal(0, 1, 50),  # all positive
-        ])
+        data = np.column_stack(
+            [
+                np.random.default_rng(0).standard_normal(50),  # has negatives
+                np.random.default_rng(0).lognormal(0, 1, 50),  # all positive
+            ]
+        )
         bc = BoxCox()
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -222,7 +241,9 @@ class TestBoxCoxRobust:
 
     def test_non_robust_roundtrip(self, positive_1d):
         bc = BoxCox(robust=False)
-        assert np.abs(positive_1d - bc.inverse_transform(bc.fit_transform(positive_1d))).max() < 1e-5
+        assert (
+            np.abs(positive_1d - bc.inverse_transform(bc.fit_transform(positive_1d))).max() < 1e-5
+        )
 
     @pytest.mark.parametrize("robust", [True, False])
     def test_finite_output(self, positive_1d, robust):

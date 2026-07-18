@@ -23,7 +23,6 @@ from opendsm.eemeter.models.hourly.regressors import (
 )
 
 
-
 SAFE_REGRESSORS = [SafeLinearRegression, SafeRidge, SafeLasso, SafeElasticNet]
 
 

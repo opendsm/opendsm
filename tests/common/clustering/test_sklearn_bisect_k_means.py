@@ -28,7 +28,6 @@ from sklearn.metrics import adjusted_rand_score
 from opendsm.common.clustering.algorithms.sklearn_bisect_k_means import BisectingKMeans
 
 
-
 @pytest.fixture
 def blobs():
     """Five well-separated 4-d blobs, 30 points each (150 total)."""

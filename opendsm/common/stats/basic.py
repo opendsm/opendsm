@@ -2,19 +2,19 @@
 # -*- coding: utf-8 -*-
 """
 
-   Copyright 2014-2024 OpenEEmeter contributors
+Copyright 2014-2024 OpenEEmeter contributors
 
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-       http://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 """
 
@@ -29,7 +29,6 @@ from scipy.special import (
 )
 
 from opendsm.common.utils import to_np_array
-
 
 
 # Constant to convert MAD to std deviation for normal distribution
@@ -84,9 +83,7 @@ def z_stat(alpha: float, tail: Union[int, str] = 2) -> float:
     return erfinv(2 * perc - 1) * np.sqrt(2)
 
 
-def unc_factor(
-    n: int, interval: Literal["PI", "CI"] = "PI", alpha: float = 0.10
-) -> float:
+def unc_factor(n: int, interval: Literal["PI", "CI"] = "PI", alpha: float = 0.10) -> float:
     """Calculate uncertainty factor for confidence or prediction intervals.
 
     Args:

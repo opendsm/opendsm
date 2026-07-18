@@ -22,14 +22,13 @@ from opendsm.common.clustering.metrics.single_k_metrics import SingleKMetrics
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+
 def _make_ckm(X: np.ndarray, max_k: int = 6, seed: int = 42) -> CrossKMetrics:
     """Build CrossKMetrics from raw data with KMeans WCSS."""
     n = X.shape[0]
     wcss = {}
     for k in range(1, min(max_k + 1, n)):
-        wcss[k] = KMeans(
-            n_clusters=k, n_init=3, random_state=seed
-        ).fit(X).inertia_
+        wcss[k] = KMeans(n_clusters=k, n_init=3, random_state=seed).fit(X).inertia_
     return CrossKMetrics(
         wcss_by_k=wcss,
         k_values=sorted(wcss),
@@ -42,13 +41,16 @@ def _make_ckm(X: np.ndarray, max_k: int = 6, seed: int = 42) -> CrossKMetrics:
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
+
 @pytest.fixture(scope="module")
 def well_separated_2cl():
     rng = np.random.default_rng(42)
-    return np.vstack([
-        rng.normal(0, 0.5, (30, 5)),
-        rng.normal(5, 0.5, (30, 5)),
-    ])
+    return np.vstack(
+        [
+            rng.normal(0, 0.5, (30, 5)),
+            rng.normal(5, 0.5, (30, 5)),
+        ]
+    )
 
 
 @pytest.fixture(scope="module")
@@ -66,16 +68,18 @@ _ALL_NULL_TESTS = ["gap_statistic", "hopkins_test", "sigclust_test", "spectral_g
 
 # ── Cross-cutting: NaN when data is None, determinism ────────────────────────
 
+
 class TestNullTestsNanWhenNoData:
     @pytest.mark.parametrize("test_name", _ALL_NULL_TESTS)
     def test_returns_nan_when_data_is_none(self, test_name):
         ckm = CrossKMetrics(
-            wcss_by_k={1: 100, 2: 50}, k_values=[1, 2],
-            n_features=5, n_samples=60, raw_data=None,
+            wcss_by_k={1: 100, 2: 50},
+            k_values=[1, 2],
+            n_features=5,
+            n_samples=60,
+            raw_data=None,
         )
-        assert np.isnan(getattr(ckm, test_name)), (
-            f"{test_name} should return NaN when data is None"
-        )
+        assert np.isnan(getattr(ckm, test_name)), f"{test_name} should return NaN when data is None"
 
 
 class TestNullTestsDeterminism:
@@ -90,6 +94,7 @@ class TestNullTestsDeterminism:
 
 
 # ── Regression: exact p-values for canonical datasets ────────────────────────
+
 
 class TestNullTestRegression:
     """Pin exact p-values so silent behavioral changes are caught."""
@@ -114,6 +119,7 @@ class TestNullTestRegression:
 
 # ── Gap statistic ────────────────────────────────────────────────────────────
 
+
 class TestGapStatistic:
     def test_detects_well_separated_clusters(self, well_separated_2cl):
         assert _make_ckm(well_separated_2cl).gap_statistic < 0.05
@@ -122,8 +128,12 @@ class TestGapStatistic:
         rng = np.random.default_rng(42)
         X = rng.normal(0, 1, (10, 3))
         ckm = CrossKMetrics(
-            wcss_by_k={1: 100.0}, k_values=[1], n_features=3,
-            n_samples=10, raw_data=X, seed=42,
+            wcss_by_k={1: 100.0},
+            k_values=[1],
+            n_features=3,
+            n_samples=10,
+            raw_data=X,
+            seed=42,
         )
         assert ckm.gap_statistic == 1.0
 
@@ -132,18 +142,27 @@ class TestGapStatistic:
         X = rng.normal(0, 1, (60, 5))
         wcss = {1: 300.0, 2: 150.0, 3: 100.0}
         ckm_full = CrossKMetrics(
-            wcss_by_k=wcss, k_values=[1, 2, 3], n_features=5,
-            n_samples=60, raw_data=X, seed=42,
+            wcss_by_k=wcss,
+            k_values=[1, 2, 3],
+            n_features=5,
+            n_samples=60,
+            raw_data=X,
+            seed=42,
         )
         ckm_scored = CrossKMetrics(
-            wcss_by_k=wcss, n_scored_by_k={1: 60, 2: 54, 3: 54},
-            k_values=[1, 2, 3], n_features=5, n_samples=60,
-            raw_data=X, seed=42,
+            wcss_by_k=wcss,
+            n_scored_by_k={1: 60, 2: 54, 3: 54},
+            k_values=[1, 2, 3],
+            n_features=5,
+            n_samples=60,
+            raw_data=X,
+            seed=42,
         )
         assert ckm_scored.gap_statistic != ckm_full.gap_statistic
 
 
 # ── Hopkins test ─────────────────────────────────────────────────────────────
+
 
 class TestHopkinsTest:
     def test_detects_well_separated_clusters(self, well_separated_2cl):
@@ -161,13 +180,18 @@ class TestHopkinsTest:
 
     def test_nan_when_n_too_small(self):
         ckm = CrossKMetrics(
-            wcss_by_k={1: 1.0}, k_values=[1], n_features=2,
-            n_samples=2, raw_data=np.array([[0.0, 1.0], [1.0, 0.0]]), seed=42,
+            wcss_by_k={1: 1.0},
+            k_values=[1],
+            n_features=2,
+            n_samples=2,
+            raw_data=np.array([[0.0, 1.0], [1.0, 0.0]]),
+            seed=42,
         )
         assert np.isnan(ckm.hopkins_test)
 
 
 # ── SigClust test ────────────────────────────────────────────────────────────
+
 
 class TestSigclustTest:
     def test_detects_well_separated_clusters(self, well_separated_2cl):
@@ -178,9 +202,12 @@ class TestSigclustTest:
 
     def test_nan_when_n_lt_4(self):
         ckm = CrossKMetrics(
-            wcss_by_k={1: 1.0, 2: 0.5}, k_values=[1, 2],
-            n_features=2, n_samples=3,
-            raw_data=np.array([[0.0, 1.0], [1.0, 0.0], [0.5, 0.5]]), seed=42,
+            wcss_by_k={1: 1.0, 2: 0.5},
+            k_values=[1, 2],
+            n_features=2,
+            n_samples=3,
+            raw_data=np.array([[0.0, 1.0], [1.0, 0.0], [0.5, 0.5]]),
+            seed=42,
         )
         assert np.isnan(ckm.sigclust_test)
 
@@ -189,8 +216,12 @@ class TestSigclustTest:
         X = np.vstack([rng.normal(0, 0.5, (30, 5)), rng.normal(5, 0.5, (30, 5))])
         wcss = {2: KMeans(n_clusters=2, n_init=3, random_state=42).fit(X).inertia_}
         ckm = CrossKMetrics(
-            wcss_by_k=wcss, k_values=[2], n_features=5,
-            n_samples=60, raw_data=X, seed=42,
+            wcss_by_k=wcss,
+            k_values=[2],
+            n_features=5,
+            n_samples=60,
+            raw_data=X,
+            seed=42,
         )
         assert not np.isnan(ckm.sigclust_test)
 
@@ -201,21 +232,30 @@ class TestSigclustTest:
     def test_multi_k_detects_5_cluster_structure(self):
         rng = np.random.default_rng(42)
         X = np.vstack([rng.normal(c, 0.5, (20, 5)) for c in np.eye(5) * 3])
-        wcss = {k: KMeans(n_clusters=k, n_init=3, random_state=42).fit(X).inertia_
-                for k in [1, 2, 3, 4, 5]}
+        wcss = {
+            k: KMeans(n_clusters=k, n_init=3, random_state=42).fit(X).inertia_
+            for k in [1, 2, 3, 4, 5]
+        }
         ckm = CrossKMetrics(
-            wcss_by_k=wcss, k_values=[1, 2, 3, 4, 5], n_features=5,
-            n_samples=100, raw_data=X, seed=42,
+            wcss_by_k=wcss,
+            k_values=[1, 2, 3, 4, 5],
+            n_features=5,
+            n_samples=100,
+            raw_data=X,
+            seed=42,
         )
         assert ckm.sigclust_test < 0.05
 
 
 # ── Spectral gap test ────────────────────────────────────────────────────────
 
+
 class TestSpectralGapTest:
     def test_lower_pvalue_for_clusters_than_gaussian(self):
         rng = np.random.default_rng(42)
-        p_cl = _make_ckm(np.vstack([rng.normal(0, 0.5, (50, 5)), rng.normal(5, 0.5, (50, 5))])).spectral_gap_test
+        p_cl = _make_ckm(
+            np.vstack([rng.normal(0, 0.5, (50, 5)), rng.normal(5, 0.5, (50, 5))])
+        ).spectral_gap_test
         p_ga = _make_ckm(rng.normal(0, 1, (100, 5))).spectral_gap_test
         # Both should produce small p-values (strong structure detected)
         assert p_cl < 0.05
@@ -223,8 +263,11 @@ class TestSpectralGapTest:
 
     def test_nan_when_n_lt_4(self):
         ckm = CrossKMetrics(
-            wcss_by_k={1: 1.0}, k_values=[1], n_features=2,
-            n_samples=3, raw_data=np.array([[0.0, 1.0], [1.0, 0.0], [0.5, 0.5]]),
+            wcss_by_k={1: 1.0},
+            k_values=[1],
+            n_features=2,
+            n_samples=3,
+            raw_data=np.array([[0.0, 1.0], [1.0, 0.0], [0.5, 0.5]]),
             seed=42,
         )
         assert np.isnan(ckm.spectral_gap_test)
@@ -235,17 +278,18 @@ class TestSpectralGapTest:
 
     def test_axis_aligned_clusters_detected(self):
         rng = np.random.default_rng(42)
-        X = np.vstack([rng.normal([-5, 0, 0, 0, 0], 1, (40, 5)),
-                        rng.normal([5, 0, 0, 0, 0], 1, (40, 5))])
+        X = np.vstack(
+            [rng.normal([-5, 0, 0, 0, 0], 1, (40, 5)), rng.normal([5, 0, 0, 0, 0], 1, (40, 5))]
+        )
         ckm = _make_ckm(X)
         assert ckm.sigclust_test < 0.05 or ckm.spectral_gap_test < 0.05
 
 
 # ── _max_eigengap helper ────────────────────────────────────────────────────
 
+
 class TestMaxEigengap:
-    @pytest.mark.parametrize("n, k_nn", [(20, 2), (50, 5)],
-                             ids=["dense_path", "sparse_path"])
+    @pytest.mark.parametrize("n, k_nn", [(20, 2), (50, 5)], ids=["dense_path", "sparse_path"])
     def test_returns_non_negative_float(self, n, k_nn):
         X = np.random.default_rng(42).normal(0, 1, (n, 3))
         gap = CrossKMetrics._max_eigengap(X, k_nn=k_nn, n_eig=5, seed=42)
@@ -253,25 +297,31 @@ class TestMaxEigengap:
 
     def test_deterministic_with_seed(self):
         X = np.random.default_rng(42).normal(0, 1, (50, 3))
-        assert CrossKMetrics._max_eigengap(X, 5, 5, seed=99) == \
-               CrossKMetrics._max_eigengap(X, 5, 5, seed=99)
+        assert CrossKMetrics._max_eigengap(X, 5, 5, seed=99) == CrossKMetrics._max_eigengap(
+            X, 5, 5, seed=99
+        )
 
     def test_larger_for_clustered_than_gaussian(self):
         rng = np.random.default_rng(42)
         X_cl = np.vstack([rng.normal(0, 0.5, (25, 3)), rng.normal(5, 0.5, (25, 3))])
         X_ga = rng.normal(0, 1, (50, 3))
-        assert CrossKMetrics._max_eigengap(X_cl, 5, 5, 42) > \
-               CrossKMetrics._max_eigengap(X_ga, 5, 5, 42)
+        assert CrossKMetrics._max_eigengap(X_cl, 5, 5, 42) > CrossKMetrics._max_eigengap(
+            X_ga, 5, 5, 42
+        )
 
 
 # ── has_cluster_structure gate ───────────────────────────────────────────────
 
+
 class TestHasClusterStructureGate:
-    @pytest.mark.parametrize("fixture_name, expected", [
-        ("well_separated_2cl", True),
-        ("single_gaussian", False),
-        ("uniform_random", False),
-    ])
+    @pytest.mark.parametrize(
+        "fixture_name, expected",
+        [
+            ("well_separated_2cl", True),
+            ("single_gaussian", False),
+            ("uniform_random", False),
+        ],
+    )
     @pytest.mark.slow
     def test_gate_decision(self, fixture_name, expected, request):
         result = has_cluster_structure(_make_ckm(request.getfixturevalue(fixture_name)))
@@ -279,8 +329,11 @@ class TestHasClusterStructureGate:
 
     def test_permissive_when_no_data(self):
         ckm = CrossKMetrics(
-            wcss_by_k={2: 100}, k_values=[2], n_features=5,
-            n_samples=60, raw_data=None,
+            wcss_by_k={2: 100},
+            k_values=[2],
+            n_features=5,
+            n_samples=60,
+            raw_data=None,
         )
         assert has_cluster_structure(ckm) is True
 
@@ -320,17 +373,20 @@ class TestGateGroupedAgreementLogic:
 
         return ns
 
-    @pytest.mark.parametrize("pvals, expected, why", [
-        ((0.01, 0.50, 0.01, 0.50), True, "both groups have a significant test"),
-        ((0.01, 0.50, 0.50, 0.50), False, "only the distance group is significant"),
-        ((0.50, 0.50, 0.01, 0.50), False, "only the model group is significant"),
-        ((0.50, 0.50, 0.50, 0.50), False, "no group is significant"),
-        ((0.01, 0.01, np.nan, np.nan), True, "model group absent, 2-of-N majority met"),
-        ((0.01, 0.50, np.nan, np.nan), False, "model group absent, majority not met"),
-        ((np.nan, np.nan, 0.01, 0.01), True, "distance group absent, majority met"),
-        ((0.01, np.nan, np.nan, np.nan), True, "fewer than 2 computable -> permissive"),
-        ((np.nan, np.nan, np.nan, np.nan), True, "nothing computable -> permissive"),
-    ])
+    @pytest.mark.parametrize(
+        "pvals, expected, why",
+        [
+            ((0.01, 0.50, 0.01, 0.50), True, "both groups have a significant test"),
+            ((0.01, 0.50, 0.50, 0.50), False, "only the distance group is significant"),
+            ((0.50, 0.50, 0.01, 0.50), False, "only the model group is significant"),
+            ((0.50, 0.50, 0.50, 0.50), False, "no group is significant"),
+            ((0.01, 0.01, np.nan, np.nan), True, "model group absent, 2-of-N majority met"),
+            ((0.01, 0.50, np.nan, np.nan), False, "model group absent, majority not met"),
+            ((np.nan, np.nan, 0.01, 0.01), True, "distance group absent, majority met"),
+            ((0.01, np.nan, np.nan, np.nan), True, "fewer than 2 computable -> permissive"),
+            ((np.nan, np.nan, np.nan, np.nan), True, "nothing computable -> permissive"),
+        ],
+    )
     def test_branches(self, pvals, expected, why):
         """Each grouped-agreement branch resolves as documented."""
         result = has_cluster_structure(self._stub(*pvals))
@@ -347,12 +403,23 @@ class TestGateGroupedAgreementLogic:
 
 # ── k=1 index abstention ────────────────────────────────────────────────────
 
+
 class TestK1IndexAbstention:
     ALL_INDICES = [
-        'silhouette_index', 'silhouette_median_index', 'davies_bouldin_index',
-        'calinski_harabasz_index', 'dunn_index', 'xie_beni_index', 'i_index',
-        'point_biserial_index', 'sd_validity_index', 'simplified_silhouette_index',
-        'cop_index', 'negentropy_index', 'wb_index', 'generalized_dunn_index',
+        "silhouette_index",
+        "silhouette_median_index",
+        "davies_bouldin_index",
+        "calinski_harabasz_index",
+        "dunn_index",
+        "xie_beni_index",
+        "i_index",
+        "point_biserial_index",
+        "sd_validity_index",
+        "simplified_silhouette_index",
+        "cop_index",
+        "negentropy_index",
+        "wb_index",
+        "generalized_dunn_index",
     ]
 
     @pytest.fixture(scope="class")
@@ -360,17 +427,17 @@ class TestK1IndexAbstention:
         rng = np.random.default_rng(42)
         return SingleKMetrics(
             data=rng.normal(0, 1, (30, 5)).astype(np.float32),
-            labels=np.zeros(30, dtype=int), seed=42,
+            labels=np.zeros(30, dtype=int),
+            seed=42,
         )
 
     @pytest.mark.parametrize("index", ALL_INDICES)
     def test_returns_nan_at_k1(self, k1_metrics, index):
-        assert np.isnan(getattr(k1_metrics, index)), (
-            f"{index} should return NaN at k=1"
-        )
+        assert np.isnan(getattr(k1_metrics, index)), f"{index} should return NaN at k=1"
 
 
 # ── ClusteringResult integration ────────────────────────────────────────────
+
 
 class TestClusteringResultGateIntegration:
     def test_returns_k1_with_confidence_0_when_no_structure(self):
@@ -406,6 +473,7 @@ class TestClusteringResultGateIntegration:
 
 # ── Edge cases ───────────────────────────────────────────────────────────────
 
+
 class TestEdgeCases:
     @pytest.mark.slow
     def test_d_equals_1(self):
@@ -422,8 +490,12 @@ class TestEdgeCases:
 
     def test_identical_data_does_not_crash(self):
         ckm = CrossKMetrics(
-            wcss_by_k={1: 0.0, 2: 0.0}, k_values=[1, 2],
-            n_features=3, n_samples=20, raw_data=np.ones((20, 3)), seed=42,
+            wcss_by_k={1: 0.0, 2: 0.0},
+            k_values=[1, 2],
+            n_features=3,
+            n_samples=20,
+            raw_data=np.ones((20, 3)),
+            seed=42,
         )
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -432,6 +504,7 @@ class TestEdgeCases:
 
 
 # ── Settings ─────────────────────────────────────────────────────────────────
+
 
 class TestNullTestAlphaSetting:
     def test_default_is_010(self):
@@ -447,6 +520,7 @@ class TestNullTestAlphaSetting:
 
 
 # ── Labels integration edge cases ────────────────────────────────────────────
+
 
 class TestLabelsIntegrationEdgeCases:
     """Test untested code paths in labels.py."""
@@ -498,7 +572,10 @@ class TestLabelsIntegrationEdgeCases:
         # OUTLIER trimming sends the lone 2-point cluster to -1, collapsing
         # the labeling to a single cluster.
         cr = ClusteringResult(
-            data=X, seed=42, n_cluster_lower=lower, min_cluster_size=3,
+            data=X,
+            seed=42,
+            n_cluster_lower=lower,
+            min_cluster_size=3,
             small_cluster_mode=SmallClusterMode.OUTLIER,
         )
         labels = np.zeros(40, dtype=int)
@@ -568,7 +645,10 @@ class TestLabelsIntegrationEdgeCases:
         X = np.vstack([rng.normal(c, 0.4, (25, 4)) for c in (0, 6, 12)])
 
         cr = ClusteringResult(
-            data=X, seed=42, n_cluster_lower=2, min_cluster_size=3,
+            data=X,
+            seed=42,
+            n_cluster_lower=2,
+            min_cluster_size=3,
             small_cluster_mode=SmallClusterMode.OUTLIER,
         )
         cr.add(2, KMeans(n_clusters=2, n_init=3, random_state=0).fit_predict(X))
@@ -583,7 +663,8 @@ class TestLabelsIntegrationEdgeCases:
 
         none_slot = cr._insertion_order.index(None)
         monkeypatch.setattr(
-            _selection, "select_best_across_k",
+            _selection,
+            "select_best_across_k",
             lambda *a, **k: (none_slot, 0.0),
         )
 
@@ -601,8 +682,8 @@ class TestLabelsIntegrationEdgeCases:
 
         # Enable a cross-k metric in the council
         weights = {
-            'davies_bouldin_index': 1.0,
-            'krzanowski_lai_index': 1.0,
+            "davies_bouldin_index": 1.0,
+            "krzanowski_lai_index": 1.0,
         }
         ss = ScoreSettings(weights=weights)
         cr = ClusteringResult(data=X, score_settings=ss, seed=42)
@@ -618,8 +699,7 @@ class TestLabelsIntegrationEdgeCases:
             for lm in lms:
                 lm_to_k[id(lm)] = k
         council_candidates = [
-            c if c is None or lm_to_k.get(id(c), 0) >= 2 else None
-            for c in candidates
+            c if c is None or lm_to_k.get(id(c), 0) >= 2 else None for c in candidates
         ]
 
         extra = cr._build_cross_k_extra_scores(council_candidates, ss.weights)
@@ -632,7 +712,7 @@ class TestLabelsIntegrationEdgeCases:
                 assert extra[i] == {}
             else:
                 # Should have the cross-k metric injected
-                assert 'krzanowski_lai_index' in extra[i]
+                assert "krzanowski_lai_index" in extra[i]
 
     def test_has_cluster_structure_no_k1_skips_gate(self):
         """When k=1 is NOT in k_best, has_cluster_structure is still
@@ -710,6 +790,7 @@ class TestLabelsIntegrationEdgeCases:
 
 # ── Council k=1 exclusion ────────────────────────────────────────────────────
 
+
 class TestCouncilK1Exclusion:
     """Verify that k=1 is never selected by the council when data has structure."""
 
@@ -717,11 +798,13 @@ class TestCouncilK1Exclusion:
     def test_council_selects_k_ge_2_with_clustered_data(self):
         """With well-separated clusters and a k=1 candidate, council picks k>=2."""
         rng = np.random.default_rng(42)
-        X = np.vstack([
-            rng.normal([0, 0, 0], 0.3, (30, 3)),
-            rng.normal([10, 10, 10], 0.3, (30, 3)),
-            rng.normal([20, 20, 20], 0.3, (30, 3)),
-        ])
+        X = np.vstack(
+            [
+                rng.normal([0, 0, 0], 0.3, (30, 3)),
+                rng.normal([10, 10, 10], 0.3, (30, 3)),
+                rng.normal([20, 20, 20], 0.3, (30, 3)),
+            ]
+        )
         n = X.shape[0]
 
         cr = ClusteringResult(data=X, seed=42)
@@ -732,17 +815,17 @@ class TestCouncilK1Exclusion:
         assert cr.has_cluster_structure is True, (
             "Well-separated data should pass the structure gate"
         )
-        assert cr.k >= 2, (
-            f"Council should select k>=2 for clustered data, got k={cr.k}"
-        )
+        assert cr.k >= 2, f"Council should select k>=2 for clustered data, got k={cr.k}"
 
     def test_all_singletons_labeling_not_selected(self):
         """All-singletons labeling (k=n) does NOT win: all indices NaN -> excluded."""
         rng = np.random.default_rng(42)
-        X = np.vstack([
-            rng.normal([0, 0, 0], 0.3, (20, 3)),
-            rng.normal([10, 10, 10], 0.3, (20, 3)),
-        ])
+        X = np.vstack(
+            [
+                rng.normal([0, 0, 0], 0.3, (20, 3)),
+                rng.normal([10, 10, 10], 0.3, (20, 3)),
+            ]
+        )
         n = X.shape[0]
 
         cr = ClusteringResult(data=X, seed=42)
@@ -755,9 +838,5 @@ class TestCouncilK1Exclusion:
         assert cr.has_cluster_structure is True
         # The all-singletons labeling should NOT win — most indices return NaN
         # because every cluster is a singleton.
-        assert cr.k != n, (
-            f"All-singletons labeling (k={n}) should not be selected by the council"
-        )
-        assert cr.k >= 2, (
-            f"Council should select k>=2, got k={cr.k}"
-        )
+        assert cr.k != n, f"All-singletons labeling (k={n}) should not be selected by the council"
+        assert cr.k >= 2, f"Council should select k>=2, got k={cr.k}"

@@ -140,12 +140,12 @@ def confidence_ellipse(x, y, var=np.ones([2, 2]) * 1.96):
     # by this function: a = smaller semi-axis, b = larger semi-axis.
     ca, cb, cd = cov[0, 0], cov[0, 1], cov[1, 1]
     tr_half = (ca + cd) * 0.5
-    disc = np.sqrt(max(((ca - cd) * 0.5) ** 2 + cb ** 2, 0.0))
-    lam1 = tr_half + disc   # larger eigenvalue
-    lam2 = tr_half - disc   # smaller eigenvalue
+    disc = np.sqrt(max(((ca - cd) * 0.5) ** 2 + cb**2, 0.0))
+    lam1 = tr_half + disc  # larger eigenvalue
+    lam2 = tr_half - disc  # smaller eigenvalue
     # Clamp negative eigenvalues to zero before sqrt (rounding artefacts)
-    a = np.sqrt(max(lam2, 0.0))   # smaller semi-axis
-    b = np.sqrt(max(lam1, 0.0))   # larger semi-axis
+    a = np.sqrt(max(lam2, 0.0))  # smaller semi-axis
+    b = np.sqrt(max(lam1, 0.0))  # larger semi-axis
     # Eigenvector angle for the eigenvalue corresponding to 'a' (lam2)
     if cb != 0.0:
         phi = np.arctan2(lam2 - ca, cb)
@@ -262,9 +262,7 @@ def ellipsoid_split_filter(meter, n_std=[1.4, 1.4]):
                 idx_sorted = np.argsort(T)
                 T = T[idx_sorted]
                 obs = obs[idx_sorted]
-                mu, cov, a, b, phi = robust_confidence_ellipse(
-                    T, obs, var, outlier_std=3.6, N=3
-                )
+                mu, cov, a, b, phi = robust_confidence_ellipse(T, obs, var, outlier_std=3.6, N=3)
 
             cluster_ellipse[key] = {"mu": mu, "cov": cov, "a": a, "b": b, "phi": phi}
 
@@ -281,9 +279,7 @@ def ellipsoid_split_filter(meter, n_std=[1.4, 1.4]):
             [["wd-sh", "wd-wi"], ["we-sh", "we-wi"]],
             [["wd-su", "wd-wi"], ["we-su", "we-wi"]],
         ],
-        "weekday_weekend": [
-            [["wd-su", "we-su"], ["wd-sh", "we-sh"], ["wd-wi", "we-wi"]]
-        ],
+        "weekday_weekend": [[["wd-su", "we-su"], ["wd-sh", "we-sh"], ["wd-wi", "we-wi"]]],
     }
 
     ellipse_overlap = {}
@@ -306,9 +302,14 @@ def ellipsoid_split_filter(meter, n_std=[1.4, 1.4]):
 
                     if all([coef is not None for coef in [mu_A, mu_B, cov_A, cov_B]]):
                         ellipse_overlap[combo_str] = ellipsoid_intersection_test(
-                            mu_A, mu_B, cov_A, cov_B,
-                            a_A=ea["a"], b_A=ea["b"],
-                            a_B=eb["a"], b_B=eb["b"],
+                            mu_A,
+                            mu_B,
+                            cov_A,
+                            cov_B,
+                            a_A=ea["a"],
+                            b_A=ea["b"],
+                            a_B=eb["a"],
+                            b_B=eb["b"],
                         )
                     else:
                         ellipse_overlap[combo_str] = False

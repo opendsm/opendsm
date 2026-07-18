@@ -18,13 +18,13 @@ from statsmodels.robust.scale import Huber as huber_m_estimate
 
 from opendsm.common.stats.adaptive_loss import adaptive_weights
 from opendsm.common.stats.basic import (
-    MAD_k, 
+    MAD_k,
     weighted_quantile,
     median_absolute_deviation,
 )
 
 
-def adaptive_weighted_mu_sigma(x, use_mean=False, rel_err=1E-4, abs_err=1E-4):
+def adaptive_weighted_mu_sigma(x, use_mean=False, rel_err=1e-4, abs_err=1e-4):
     mu = np.median(x)
     sigma = median_absolute_deviation(x, median=mu)
 
@@ -33,15 +33,17 @@ def adaptive_weighted_mu_sigma(x, use_mean=False, rel_err=1E-4, abs_err=1E-4):
         sigma_prior = copy(sigma)
         weight = adaptive_weights(x)[0]
         if use_mean:
-            mu = np.sum(weight*x)/np.sum(weight)
-            sigma = np.sum(weight*(x - mu)**2)/np.sum(weight)
+            mu = np.sum(weight * x) / np.sum(weight)
+            sigma = np.sum(weight * (x - mu) ** 2) / np.sum(weight)
 
         else:
             mu = float(np.asarray(weighted_quantile(x, 0.5, weights=weight)).flat[0])
             sigma = median_absolute_deviation(x, median=mu, weights=weight)
 
         max_abs_err = np.max(np.abs([(mu - mu_prior), (sigma - sigma_prior)]))
-        max_rel_err = np.max(np.abs([(mu - mu_prior)/mu_prior, (sigma - sigma_prior)/sigma_prior]))
+        max_rel_err = np.max(
+            np.abs([(mu - mu_prior) / mu_prior, (sigma - sigma_prior) / sigma_prior])
+        )
 
         if (max_rel_err < rel_err) | (max_abs_err < abs_err):
             break
@@ -77,7 +79,7 @@ def robust_mu_sigma(x, robust_type="huber_m_estimate", **kwargs):
 
     if robust_type == "iqr":
         mu = weighted_quantile(x, 0.5)
-        sigma = weighted_quantile(np.abs(x - mu), 0.5)*MAD_k
+        sigma = weighted_quantile(np.abs(x - mu), 0.5) * MAD_k
 
     elif robust_type == "huber_m_estimate":
         try:
@@ -85,13 +87,13 @@ def robust_mu_sigma(x, robust_type="huber_m_estimate", **kwargs):
                 kwargs["maxiter"] = 30
 
             # raise RuntimeWarning to error
-            with np.errstate(all='raise'):
+            with np.errstate(all="raise"):
                 mu, sigma = huber_m_estimate(**kwargs)(x)
 
         except Exception as e:
             mu, sigma = robust_mu_sigma(x, robust_type="iqr")
 
-    elif robust_type == "adaptive_weighted": # slow
+    elif robust_type == "adaptive_weighted":  # slow
         mu, sigma = adaptive_weighted_mu_sigma(x, **kwargs)
 
     elif robust_type == "ransac":

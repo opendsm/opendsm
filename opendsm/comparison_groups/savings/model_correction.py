@@ -24,11 +24,10 @@ from opendsm.common.stats.basic import fast_std, unc_factor
 import opendsm.comparison_groups.savings.settings as _settings
 
 
-
 def _unit_correction_unc(
-    oTr, 
+    oTr,
     mTr,
-    oCGr, 
+    oCGr,
     mCGr,
     scale,
     CG_diff,
@@ -37,11 +36,11 @@ def _unit_correction_unc(
     mTr_unc,
     oCGr_unc,
     mCGr_unc,
-    CGr_corr, # only needed if oCGr_unc != 0
-    method=None
+    CGr_corr,  # only needed if oCGr_unc != 0
+    method=None,
 ):
     """Calculates correction uncertainty for each comparison group meter of a single treatment meter for a single hour
-    
+
     Args:
         oTr_unc: treatment meter observed uncertainty from reporting period
         mTr_unc: treatment meter model uncertainty from reporting period
@@ -61,48 +60,51 @@ def _unit_correction_unc(
         # scale = 1, so it carries no variance
         scale_var = 0
 
-    elif method in ("percent_difference_in_differences", "absolute_percent_difference_in_differences"):
+    elif method in (
+        "percent_difference_in_differences",
+        "absolute_percent_difference_in_differences",
+    ):
         # scale = mTr/mCGr (abs for the latter; |.| has unit-magnitude derivative).
         # Absolute form of Var(mTr/mCGr), neglecting covariance between mTr and mCGr;
         # avoids dividing by mTr (singular when mTr == 0).  A zero mCGr (guarded to
         # scale 0 in _unit_correction) likewise contributes no scale variance.
         denom = np.asarray(mCGr, dtype=float)
-        inv_sq = np.divide(1.0, denom ** 2, out=np.zeros_like(denom), where=denom != 0)
-        scale_var = mTr_var * inv_sq + (mTr ** 2) * mCGr_var * inv_sq ** 2
+        inv_sq = np.divide(1.0, denom**2, out=np.zeros_like(denom), where=denom != 0)
+        scale_var = mTr_var * inv_sq + (mTr**2) * mCGr_var * inv_sq**2
 
     else:
         raise ValueError(f"unknown correction method: {method}")
 
     if np.all(oCGr_unc == 0):
         CG_diff_var = mCGr_var
-    else: # if observed has uncertainty, it and it's covariance with model should be considered
-        cov = mCGr_unc*oCGr_unc*CGr_corr
-        CG_diff_var = mCGr_var + oCGr_unc**2 - 2*cov
+    else:  # if observed has uncertainty, it and it's covariance with model should be considered
+        cov = mCGr_unc * oCGr_unc * CGr_corr
+        CG_diff_var = mCGr_var + oCGr_unc**2 - 2 * cov
 
     # correction = scale * CG_diff. Propagate in absolute form (neglecting covariance
     # between scale and CG_diff) so CG_diff == 0 or scale == 0 do not divide by zero.
-    correction_var = scale**2*CG_diff_var + CG_diff**2*scale_var
+    correction_var = scale**2 * CG_diff_var + CG_diff**2 * scale_var
     correction_unc = np.sqrt(correction_var)
 
     return correction_unc
 
 
 def _unit_correction(
-    oTr, 
+    oTr,
     mTr,
-    oCGr, 
+    oCGr,
     mCGr,
     oTr_unc,
     mTr_unc,
     oCGr_unc,
     mCGr_unc,
-    CGr_corr, # only needed if oCGr_unc != 0
+    CGr_corr,  # only needed if oCGr_unc != 0
     calculate_unc,
-    method=None
+    method=None,
 ):
     """Calculates corrections for each comparison group meter of a single treatment meter for a single hour
        for a single cluster
-    
+
     Args:
         oTr: treatment meter observed from reporting period
         mTr: treatment meter model from reporting period
@@ -123,7 +125,7 @@ def _unit_correction(
         correction = np.zeros_like(mTr)
         correction_unc = np.zeros_like(mTr)
         return correction, correction_unc
-    
+
     if method == "ordinary_difference_in_differences":
         scale = 1
 
@@ -142,13 +144,13 @@ def _unit_correction(
     CG_diff = mCGr - oCGr
 
     # correction
-    correction = scale*CG_diff
+    correction = scale * CG_diff
 
     if calculate_unc:
         correction_unc = _unit_correction_unc(
-            oTr, 
+            oTr,
             mTr,
-            oCGr, 
+            oCGr,
             mCGr,
             scale,
             CG_diff,
@@ -157,8 +159,8 @@ def _unit_correction(
             mTr_unc,
             oCGr_unc,
             mCGr_unc,
-            CGr_corr, # only needed if oCGr_unc != 0
-            method=method
+            CGr_corr,  # only needed if oCGr_unc != 0
+            method=method,
         )
     else:
         correction_unc = np.full_like(correction, np.nan)
@@ -169,10 +171,10 @@ def _unit_correction(
 def _update_mask(global_mask, mask=None, idx_valid=None, idx_invalid=None):
     if sum(arg is not None for arg in [mask, idx_valid, idx_invalid]) > 1:
         raise ValueError("Only one of `mask`, `idx_valid`, or `idx_invalid` can be provided.")
-    
+
     if mask is not None:
         pass
-    
+
     elif idx_valid is not None:
         mask = np.full_like(global_mask, False, dtype=bool)
         mask[idx_valid] = True
@@ -198,7 +200,7 @@ def _apply_mask(mask, *arrays):
 
     if len(res) == 1:
         return res[0]
-    
+
     return tuple(res)
 
 
@@ -223,35 +225,35 @@ def _model_magnitude_weights(mCGr):
 
 
 def _cluster_correction(
-    oTr: float, 
+    oTr: float,
     mTr: float,
-    oCGr: np.ndarray, 
+    oCGr: np.ndarray,
     mCGr: np.ndarray,
     oTr_unc: Optional[float],
     mTr_unc: Optional[float],
     oCGr_unc: Optional[np.ndarray],
     mCGr_unc: Optional[np.ndarray],
-    CGr_corr: Optional[np.ndarray], # only needed if oCGr_unc != 0
+    CGr_corr: Optional[np.ndarray],  # only needed if oCGr_unc != 0
     calculate_unc: bool,
     settings: _settings.CGCorrectionSettings,
 ):
     # Operates on a single cluster's data for a single hour
-    
+
     mask = np.full_like(mCGr, True, dtype=bool)
 
     # get correction and correction uncertainty
     correct, correct_unc = _unit_correction(
-        oTr, 
+        oTr,
         mTr,
-        oCGr, 
+        oCGr,
         mCGr,
         oTr_unc,
         mTr_unc,
         oCGr_unc,
         mCGr_unc,
-        CGr_corr, # only needed if oCGr_unc != 0
+        CGr_corr,  # only needed if oCGr_unc != 0
         calculate_unc,
-        method=settings.algorithm
+        method=settings.algorithm,
     )
 
     # set initial weights
@@ -264,11 +266,11 @@ def _cluster_correction(
     if settings.outlier_rejection.enabled:
         # remove outliers
         _, idx_no_outliers = remove_outliers(
-            correct, # if normalized (correct / mTr), small denominator issue introduced
-            weights=cluster_weight, 
-            sigma_threshold=settings.outlier_rejection.std_threshold, 
-            quantile=settings.outlier_rejection.quantile, 
-            transform=settings.outlier_rejection.transform
+            correct,  # if normalized (correct / mTr), small denominator issue introduced
+            weights=cluster_weight,
+            sigma_threshold=settings.outlier_rejection.std_threshold,
+            quantile=settings.outlier_rejection.quantile,
+            transform=settings.outlier_rejection.transform,
         )
 
         # update global mask and cluster mask
@@ -285,14 +287,14 @@ def _cluster_correction(
     # apply caps
     # decision: should capped values have their uncertainty considered or excluded?
     if settings.correction_cap.enabled:
-        cap = np.abs(mTr)*settings.correction_cap.value
+        cap = np.abs(mTr) * settings.correction_cap.value
         if settings.correction_cap.type == _settings.CorrectionCapChoice.GLOBAL:
             correct = np.clip(correct, -cap, cap)
-            
+
         elif settings.correction_cap.type == _settings.CorrectionCapChoice.SOLAR:
             solar_threshold = settings.correction_cap.solar_threshold
             solar_mask = np.abs(mCGr) < solar_threshold
-            
+
             correct[solar_mask] = np.clip(correct[solar_mask], -cap, cap)
 
     # compute mean and unc
@@ -312,11 +314,7 @@ def _cluster_correction(
     cluster_unc = np.nan
     if calculate_unc:
         # aggregation uncertainty
-        correct_std = fast_std(
-            correct,
-            mean = cluster_mean,
-            weights = cluster_weight
-        )
+        correct_std = fast_std(correct, mean=cluster_mean, weights=cluster_weight)
         # uncertain if this should be a confidence interval or prediction interval, CI for now
         _unc_factor = unc_factor(n, interval="CI", alpha=settings.alpha)
         correct_agg_unc = correct_std * _unc_factor
@@ -330,15 +328,15 @@ def _cluster_correction(
 
 
 def model_correction(
-    oTr: float,         # observed treatment meter value during reporting period
-    mTr: float,         # model treatment meter value during reporting period
-    oCGr: np.ndarray, 
+    oTr: float,  # observed treatment meter value during reporting period
+    mTr: float,  # model treatment meter value during reporting period
+    oCGr: np.ndarray,
     mCGr: np.ndarray,
     oTr_unc: Optional[float],
     mTr_unc: Optional[float],
     oCGr_unc: Optional[np.ndarray],
     mCGr_unc: Optional[np.ndarray],
-    CGr_corr: Optional[np.ndarray], # only needed if oCGr_unc != 0
+    CGr_corr: Optional[np.ndarray],  # only needed if oCGr_unc != 0
     CG_label: np.ndarray,
     T_weight: np.ndarray,
     settings: _settings.CGCorrectionSettings,
@@ -357,19 +355,21 @@ def model_correction(
         mask = np.zeros(np.shape(oCGr), dtype=bool)
 
         return mTrc, mTrc_unc, mask
-    
+
     # input validation
     if mTr is None or not np.isfinite(mTr):
         raise ValueError("`mTr` must be a finite number")
 
     if len(oCGr) < 5:
         raise ValueError("`oCGr` cannot have a length less than 5")
-    
+
     if not (len(oCGr) == len(mCGr) == len(CG_label)):
         raise ValueError("`oCGr`, `mCGr`, and `CG_label` must have the same length")
-    
+
     if len(T_weight) != np.sum(np.unique(CG_label) >= 0):
-        raise ValueError("`T_weight` must have the same number of elements as the unique number of labels in `CG_label`")
+        raise ValueError(
+            "`T_weight` must have the same number of elements as the unique number of labels in `CG_label`"
+        )
 
     if oCGr_unc is None:
         oCGr_unc = np.zeros_like(oCGr)
@@ -386,7 +386,7 @@ def model_correction(
 
     if not (len(oCGr_unc) == len(CGr_corr)):
         raise ValueError("`oCGr_unc` and `CGr_corr` must have the same length")
-    
+
     # check length of CG inputs and set global_mask to exclude non-finite values
     global_mask = np.isfinite(oCGr) & np.isfinite(mCGr) & np.isfinite(CG_label)
     global_mask = global_mask & (oCGr is not None) & (mCGr is not None)
@@ -403,7 +403,7 @@ def model_correction(
 
     unique_labels = np.unique(CG_label)
     unique_labels = unique_labels[np.isfinite(unique_labels)]
-    unique_labels = unique_labels[unique_labels >= 0] # exclude outlier label(s)
+    unique_labels = unique_labels[unique_labels >= 0]  # exclude outlier label(s)
 
     # T_weight is positionally aligned with the sorted non-negative labels,
     # so index it by enumeration position, not by label value (which may be
@@ -431,7 +431,7 @@ def model_correction(
                 mTr_unc,
                 _apply_mask(mask, oCGr_unc),
                 _apply_mask(mask, mCGr_unc),
-                _apply_mask(mask, CGr_corr), # only needed if oCGr_unc != 0
+                _apply_mask(mask, CGr_corr),  # only needed if oCGr_unc != 0
                 calculate_unc,
                 settings,
             )
@@ -452,7 +452,7 @@ def model_correction(
 
     mTrc_unc = np.nan
     if calculate_unc:
-        correction_var = np.sum((T_weight[idx_valid]**2)*(cluster_correct_unc[idx_valid]**2))
+        correction_var = np.sum((T_weight[idx_valid] ** 2) * (cluster_correct_unc[idx_valid] ** 2))
         mTrc_unc = float(np.sqrt(mTr_unc**2 + correction_var))
 
     return mTrc, mTrc_unc, global_mask

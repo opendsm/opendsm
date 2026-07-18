@@ -29,7 +29,6 @@ from opendsm.common.stats.adaptive_loss import adaptive_weights
 from opendsm.comparison_groups.cg_clustering import settings as _settings
 
 
-
 def _get_cluster_ls(df_cp_ls: pd.DataFrame, cluster_df: pd.DataFrame, agg_type: str):
     """
     original cp loadshape and cluster df
@@ -41,7 +40,9 @@ def _get_cluster_ls(df_cp_ls: pd.DataFrame, cluster_df: pd.DataFrame, agg_type: 
 
     # calculate cp_df
     df_cluster_ls = cluster_df.groupby("cluster").agg(agg_type)  # type: ignore
-    df_cluster_ls = df_cluster_ls[df_cluster_ls.index.get_level_values(0) > -1]  # don't match to outlier cluster
+    df_cluster_ls = df_cluster_ls[
+        df_cluster_ls.index.get_level_values(0) > -1
+    ]  # don't match to outlier cluster
 
     return df_cluster_ls
 
@@ -76,13 +77,13 @@ def fit_to_clusters(
 
             else:
                 weight, _, _ = adaptive_weights(
-                    resid, 
-                    alpha=match_settings._adaptive_loss_alpha, 
-                    sigma=match_settings.adaptive_loss_sigma, 
+                    resid,
+                    alpha=match_settings._adaptive_loss_alpha,
+                    sigma=match_settings.adaptive_loss_sigma,
                     quantile=0.25,
                     min_weight=0.0,
                     C_algo=match_settings.adaptive_loss_c_algo,
-                ) # type: ignore
+                )  # type: ignore
 
                 wSSE = np.sum(weight * resid**2)
 
@@ -156,9 +157,7 @@ def _initial_cluster_weights(t_ls: np.ndarray, cp_ls: np.ndarray) -> np.ndarray:
 
 
 def _match_treatment_to_cluster(
-    df_ls_t: pd.DataFrame,
-    df_ls_cluster: pd.Series,
-    settings: _settings._CG_Clustering_Settings
+    df_ls_t: pd.DataFrame, df_ls_cluster: pd.Series, settings: _settings._CG_Clustering_Settings
 ):
     # Create null dataframe
     coeffs = np.empty((df_ls_t.shape[0], df_ls_cluster.shape[0]))
@@ -169,13 +168,15 @@ def _match_treatment_to_cluster(
     # error checking going into cdist
     if df_ls_t.shape[0] == 0:
         raise ClusterTreatmentMatchError("No valid treatment loadshapes")
-    
+
     if df_ls_cluster.shape[0] == 0:
         raise ClusterTreatmentMatchError("No valid cluster loadshapes")
-    
+
     if df_ls_t.shape[1] != df_ls_cluster.shape[1]:
         shape_str = f"Treatment[{df_ls_t.shape[1]}] != Cluster[{df_ls_cluster.shape[1]}]"
-        raise ClusterTreatmentMatchError(f"Treatment and cluster loadshapes have different lengths: {shape_str}")
+        raise ClusterTreatmentMatchError(
+            f"Treatment and cluster loadshapes have different lengths: {shape_str}"
+        )
 
     # identify invalid rows
     idx_invalid = df_ls_t.isnull().any(axis=1) | ~np.isfinite(df_ls_t).any(axis=1)

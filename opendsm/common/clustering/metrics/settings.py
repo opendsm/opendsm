@@ -14,6 +14,7 @@ class DistanceMetric(str, Enum):
     """
     what distance method to use
     """
+
     EUCLIDEAN = "euclidean"
     SEUCLIDEAN = "seuclidean"
     SQUARED_EUCLIDEAN = "sqeuclidean"
@@ -53,55 +54,61 @@ class SmallClusterMode(str, Enum):
                                                and algorithm-produced singletons)
         - Either                           →  ABSORB (no outlier budget at all)
     """
-    ABSORB  = "absorb"
+
+    ABSORB = "absorb"
     OUTLIER = "outlier"
-    KEEP    = "keep"
+    KEEP = "keep"
+
 
 # Complete registry of valid index names.  This is the single source of
 # truth — SingleKMetrics.available_indices() and CrossKMetrics.available_indices()
 # should return subsets of these.  Avoids circular import between settings
 # and the metric classes.
-SINGLE_K_INDEX_NAMES: frozenset[str] = frozenset({
-    "ball_hall_index",
-    "banfeld_raftery_index",
-    "c_index",
-    "calinski_harabasz_index",
-    "cop_index",
-    "davies_bouldin_index",
-    "density_based_clustering_validation_index",
-    "det_ratio_index",
-    "duda_hart_index",
-    "dunn_index",
-    "gamma_index",
-    "generalized_dunn_index",
-    "i_index",
-    "ksq_detw_index",
-    "log_det_ratio_index",
-    "log_ss_ratio_index",
-    "mcclain_rao_index",
-    "mean_squared_error_index",
-    "negentropy_index",
-    "point_biserial_index",
-    "s_dbw_index",
-    "scott_symons_index",
-    "sd_validity_index",
-    "silhouette_index",
-    "silhouette_median_index",
-    "simplified_silhouette_index",
-    "sum_of_squared_errors_index",
-    "trace_w_index",
-    "trace_wb_index",
-    "wb_index",
-    "xie_beni_index",
-})
+SINGLE_K_INDEX_NAMES: frozenset[str] = frozenset(
+    {
+        "ball_hall_index",
+        "banfeld_raftery_index",
+        "c_index",
+        "calinski_harabasz_index",
+        "cop_index",
+        "davies_bouldin_index",
+        "density_based_clustering_validation_index",
+        "det_ratio_index",
+        "duda_hart_index",
+        "dunn_index",
+        "gamma_index",
+        "generalized_dunn_index",
+        "i_index",
+        "ksq_detw_index",
+        "log_det_ratio_index",
+        "log_ss_ratio_index",
+        "mcclain_rao_index",
+        "mean_squared_error_index",
+        "negentropy_index",
+        "point_biserial_index",
+        "s_dbw_index",
+        "scott_symons_index",
+        "sd_validity_index",
+        "silhouette_index",
+        "silhouette_median_index",
+        "simplified_silhouette_index",
+        "sum_of_squared_errors_index",
+        "trace_w_index",
+        "trace_wb_index",
+        "wb_index",
+        "xie_beni_index",
+    }
+)
 
-CROSS_K_INDEX_NAMES: frozenset[str] = frozenset({
-    "distortion_jump_index",
-    "hartigan_index",
-    "krzanowski_lai_index",
-    "log_wcss_acceleration_index",
-    "xu_index",
-})
+CROSS_K_INDEX_NAMES: frozenset[str] = frozenset(
+    {
+        "distortion_jump_index",
+        "hartigan_index",
+        "krzanowski_lai_index",
+        "log_wcss_acceleration_index",
+        "xu_index",
+    }
+)
 
 ALL_INDEX_NAMES: frozenset[str] = SINGLE_K_INDEX_NAMES | CROSS_K_INDEX_NAMES
 
@@ -110,30 +117,28 @@ _DEFAULT_SCORE_WEIGHTS: dict[str, float] = {
     # Active by default — 4-member council.  Each measures a different
     # aspect of cluster quality.  Tested on 23 meters (7 regression +
     # 16 random/problem) across k=1..24.
-    'point_biserial_index': 1.0,             # distance-label correlation
-    'silhouette_median_index': 1.0,          # per-point cluster fit (robust median)
-    'xie_beni_index': 1.0,                   # density (min inter-cluster distance)
-    'wb_index': 1.0,                         # within/between scatter ratio
+    "point_biserial_index": 1.0,  # distance-label correlation
+    "silhouette_median_index": 1.0,  # per-point cluster fit (robust median)
+    "xie_beni_index": 1.0,  # density (min inter-cluster distance)
+    "wb_index": 1.0,  # within/between scatter ratio
     # wb_index has a moderate-k preference (median=4, std=5.6) that
     # counterbalances the low-k bias of the other three members.
     # Recovers higher k on undersplit meters (e.g. k=2→5 on reg_1501,
     # k=2→3 on solar meter 3875377852).
-
     # Tested and rejected:
     # - davies_bouldin_index: separation/compactness ratio, median=3 but
     #   std=5.7 — occasionally drifts to k=14-23, causing oversplitting.
-
     # Viable indices (inactive by default)
-    'calinski_harabasz_index': 0.0,          # variance ratio (F-statistic)
-    'cop_index': 0.0,                        # compactness (similar to silhouette)
-    'davies_bouldin_index': 0.0,             # separation / compactness ratio
-    'dunn_index': 0.0,                       # min inter / max intra distance
-    'generalized_dunn_index': 0.0,           # min-max separation ratio
-    'i_index': 0.0,                          # scatter, separation, and built-in 1/k penalty
-    'negentropy_index': 0.0,                 # information-theoretic
-    'sd_validity_index': 0.0,                # scatter + separation
-    'silhouette_index': 0.0,                 # per-point cluster fit (mean)
-    'simplified_silhouette_index': 0.0,      # per-point fit vs centroid
+    "calinski_harabasz_index": 0.0,  # variance ratio (F-statistic)
+    "cop_index": 0.0,  # compactness (similar to silhouette)
+    "davies_bouldin_index": 0.0,  # separation / compactness ratio
+    "dunn_index": 0.0,  # min inter / max intra distance
+    "generalized_dunn_index": 0.0,  # min-max separation ratio
+    "i_index": 0.0,  # scatter, separation, and built-in 1/k penalty
+    "negentropy_index": 0.0,  # information-theoretic
+    "sd_validity_index": 0.0,  # scatter + separation
+    "silhouette_index": 0.0,  # per-point cluster fit (mean)
+    "simplified_silhouette_index": 0.0,  # per-point fit vs centroid
 }
 
 
@@ -147,6 +152,7 @@ class KPenaltySettings(BaseSettings):
 
     Higher k values are less affected because 1/k^rate decays asymptotically.
     """
+
     enabled: bool = pydantic.Field(
         default=True,
         description="Enable the low-k complexity penalty.",
@@ -182,6 +188,7 @@ class KPenaltySettings(BaseSettings):
 
 class ScoreSettings(BaseSettings):
     """maximum number of non-outlier clusters"""
+
     max_non_outlier_cluster_count: int = pydantic.Field(
         default=200,
         ge=1,
@@ -191,10 +198,10 @@ class ScoreSettings(BaseSettings):
         default=10_000,
         ge=4,
         description="Maximum samples for scoring index evaluation.  When the dataset "
-                    "exceeds this size, a fixed random subsample is drawn once and "
-                    "shared across all k values so index comparisons remain consistent. "
-                    "This bounds the distance matrix to max_scoring_samples² entries, "
-                    "preventing OOM at large n.  None means no subsampling.",
+        "exceeds this size, a fixed random subsample is drawn once and "
+        "shared across all k values so index comparisons remain consistent. "
+        "This bounds the distance matrix to max_scoring_samples² entries, "
+        "preventing OOM at large n.  None means no subsampling.",
     )
 
     """scoring metric weights — keys must be valid *_index properties on SingleKMetrics"""
@@ -217,18 +224,18 @@ class ScoreSettings(BaseSettings):
         gt=0,
         lt=1,
         description="Significance threshold for the cluster structure null tests. "
-                    "Lower values require stronger evidence of structure before "
-                    "clustering (fewer false positives, more false negatives). "
-                    "Higher values are more permissive, catching weaker cluster "
-                    "separation at the cost of occasionally clustering "
-                    "structureless data. Only applies when k=1 is a candidate.",
+        "Lower values require stronger evidence of structure before "
+        "clustering (fewer false positives, more false negatives). "
+        "Higher values are more permissive, catching weaker cluster "
+        "separation at the cost of occasionally clustering "
+        "structureless data. Only applies when k=1 is a candidate.",
     )
 
     outlier_fraction_penalty: bool = pydantic.Field(
         default=True,
         description="Penalise labelings that discard a large fraction of samples as outliers. "
-                    "Divides each finite score by coverage = n_non_outlier / n_total so "
-                    "high-outlier solutions rank worse. No effect when coverage = 1.",
+        "Divides each finite score by coverage = n_non_outlier / n_total so "
+        "high-outlier solutions rank worse. No effect when coverage = 1.",
     )
 
     k_penalty: KPenaltySettings = pydantic.Field(
@@ -241,8 +248,7 @@ class ScoreSettings(BaseSettings):
         invalid = set(self.weights.keys()) - ALL_INDEX_NAMES
         if invalid:
             raise ValueError(
-                f"Unknown metric(s): {invalid}. "
-                f"Valid metrics: {sorted(ALL_INDEX_NAMES)}"
+                f"Unknown metric(s): {invalid}. Valid metrics: {sorted(ALL_INDEX_NAMES)}"
             )
 
         if not any(w > 0 for w in self.weights.values()):
@@ -257,6 +263,7 @@ class ScoreSettings(BaseSettings):
 
 class ClusterRangeSettings(BaseSettings):
     """lower bound for number of clusters"""
+
     lower: int = pydantic.Field(
         default=1,
         ge=1,
@@ -271,8 +278,6 @@ class ClusterRangeSettings(BaseSettings):
     @pydantic.model_validator(mode="after")
     def _check_n_cluster_range(self):
         if self.lower > self.upper:
-            raise ValueError(
-                "'n_cluster_lower' must be <= 'n_cluster_upper'"
-            )
+            raise ValueError("'n_cluster_lower' must be <= 'n_cluster_upper'")
 
         return self

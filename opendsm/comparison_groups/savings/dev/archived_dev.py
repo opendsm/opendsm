@@ -1,6 +1,3 @@
-
-
-
 # TODO: need to cap IMM size if doing this for memory reasons
 # TODO: In GRIDmeter potentially could reduce df_t_coeffs to remove unused clusters
 # Data classes previously made should be used here
@@ -44,10 +41,10 @@ Gridmeter (Savings)
 #         self.df_cluster = self._agg_cluster_data()
 #         self._df_t_cg = self._get_treatment_cg_data()
 
-    
+
 #     def _initialize_df(self, df, is_treatment=False):
 #         data_settings = self.data_settings
-        
+
 #         df["ratio"] = df["observed"]/df["modeled"]
 #         df["diff"] = df["modeled"] - df["observed"]
 
@@ -59,7 +56,7 @@ Gridmeter (Savings)
 #             # groupby_keys = ["id"]
 
 #             df_p = df[df["period"] == period]
-            
+
 #             df_p_grouped = df_p.groupby(groupby_keys)
 #             for col in ["diff"]:
 #                 # calculate IQR
@@ -103,7 +100,7 @@ Gridmeter (Savings)
 #             # get cluster data
 #             df_cluster = pd.concat(
 #                 [df_cp[["cluster", "datetime", "ls_key"]].groupby(["cluster", "datetime"]).first(),
-#                  df_cp[["cluster", "datetime", "temperature"]].groupby(["cluster", "datetime"]).median()], 
+#                  df_cp[["cluster", "datetime", "temperature"]].groupby(["cluster", "datetime"]).median()],
 #                 axis=1)
 
 #             for col in df_cols:
@@ -118,7 +115,7 @@ Gridmeter (Savings)
 #                 df_cluster = pd.concat([df_cluster, temp], axis=1)
 
 #             df_cluster = df_cluster.reset_index()
-            
+
 #         else:
 #             agg_dict = {col: agg_type for col in self.df_cols}
 
@@ -128,7 +125,7 @@ Gridmeter (Savings)
 #         cols_scaled = [col.replace("_scale", "") for col in df_cluster.columns if col.endswith("_scale")]
 #         for col in cols_scaled:
 #             df_cluster[col] *= df_cluster[f"{col}_scale"]
-        
+
 #         return df_cluster
 
 
@@ -137,11 +134,11 @@ Gridmeter (Savings)
 #         df_cluster = self.df_cluster
 #         df_t_coeffs = self.df_t_coeffs
 
-#         # rescale 
+#         # rescale
 #         # get comparison group data for each id
 #         df_cluster = df_cluster[df_cluster["cluster"] != -1]
 #         g = df_cluster.groupby('cluster', sort=False).cumcount()
-        
+
 #         cluster_data = np.array(df_cluster.set_index(['cluster', g])[self.df_cols]
 #             .unstack(fill_value=1E30)    # replace any empty values with one
 #             .stack().groupby(level=0)
@@ -167,7 +164,7 @@ Gridmeter (Savings)
 
 #         df_cg_dict = {"id": cg_ids, "datetime": cg_datetime}
 #         df_cg_dict.update({col: cg[col].flatten() for col in self.df_cols})
-        
+
 #         df_cg = pd.DataFrame(df_cg_dict)
 
 #         df_cg["datetime"] = pd.to_datetime(df_cg["datetime"])
@@ -198,7 +195,7 @@ Gridmeter (Savings)
 #             res = np.empty(len(df))
 
 #             # get sign matching indices
-#             match = np.sign(df["modeled_t"]) == np.sign(df["modeled_cg"])          
+#             match = np.sign(df["modeled_t"]) == np.sign(df["modeled_cg"])
 #             res[match] = df["ratio_cg"][match]*df["modeled_t"][match] - df["observed_t"][match]
 #             res[~match] = (2 - df["ratio_cg"][~match])*df["modeled_t"][~match] - df["observed_t"][~match]
 
@@ -217,19 +214,19 @@ Gridmeter (Savings)
 #         # df["scale"] = (df["abs_%did"] + df["observed_t"])/df["modeled_t"]
 
 #         scale = (
-#             ((df["modeled_t"] - df["observed_t"])*sigmoid(np.abs(df["modeled_t"]), m_0, k) + df["observed_t"]) / 
+#             ((df["modeled_t"] - df["observed_t"])*sigmoid(np.abs(df["modeled_t"]), m_0, k) + df["observed_t"]) /
 #             ((df["modeled_cg"] - df["observed_cg"])*sigmoid(np.abs(df["modeled_cg"]), m_0, k) + df["observed_cg"])
 #         )
 
 #         # scale = (
-#         #     (df["diff_t"]*sigmoid(np.abs(df["modeled_t"]), m_0, k) + df["observed_t"]) / 
+#         #     (df["diff_t"]*sigmoid(np.abs(df["modeled_t"]), m_0, k) + df["observed_t"]) /
 #         #     (df["diff_cg"]*sigmoid(np.abs(df["modeled_cg"]), m_0, k) + df["observed_cg"])
 #         # )
 
 #         res = df["diff_t"] - df["diff_cg"]*np.abs(scale)
 
 #         self._df_t_cg["sig_%did"] = res
-    
+
 
 #     def add_scaled_ordinary_did(self):
 #         # calculate scaled ordinary difference in differences
@@ -323,7 +320,7 @@ Gridmeter (Savings)
 #         df_t_cg = df_t_cg.drop(columns=["diff_t", "diff_cg"])
 
 #         return df_t_cg
-    
+
 
 #     def df_agg(self, period="reporting"):
 #         # TODO: This is only for testing new did methods

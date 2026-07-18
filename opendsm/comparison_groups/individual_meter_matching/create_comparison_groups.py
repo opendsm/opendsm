@@ -21,15 +21,16 @@ import pandas as pd
 from opendsm.comparison_groups.common.base_comparison_group import Comparison_Group_Algorithm
 
 from opendsm.comparison_groups.individual_meter_matching.settings import Settings
-from opendsm.comparison_groups.individual_meter_matching.distance_calc_selection import DistanceMatching
-
+from opendsm.comparison_groups.individual_meter_matching.distance_calc_selection import (
+    DistanceMatching,
+)
 
 
 class Individual_Meter_Matching(Comparison_Group_Algorithm):
     def __init__(self, settings: Optional[Settings] = None):
         if settings is None:
             settings = Settings()
-        
+
         self.settings = settings
 
     def _create_clusters_df(self, df_raw):
@@ -57,7 +58,6 @@ class Individual_Meter_Matching(Comparison_Group_Algorithm):
         clusters = clusters[cols]
 
         return clusters
-    
 
     def _create_treatment_weights_df(self, ids):
         coeffs = np.ones(len(ids))
@@ -66,7 +66,6 @@ class Individual_Meter_Matching(Comparison_Group_Algorithm):
         treatment_weights.index.name = "id"
 
         return treatment_weights
-    
 
     def get_comparison_group(self, treatment_data, comparison_pool_data, weights=None):
         treatment_ids = treatment_data.ids
@@ -98,7 +97,6 @@ class Individual_Meter_Matching(Comparison_Group_Algorithm):
         self.treatment_weights = treatment_weights
 
         return clusters, treatment_weights
-    
 
     def add_treatment_meters(self, treatment_data):
         # need some code to make life easier when adding treatment meters. Need to recalculate duplicate weights and unc_multiplier

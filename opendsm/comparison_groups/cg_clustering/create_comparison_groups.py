@@ -20,7 +20,7 @@ import pandas as pd
 from opendsm.comparison_groups.common.base_comparison_group import Comparison_Group_Algorithm
 from opendsm.comparison_groups.cg_clustering import settings as _settings
 import opendsm.comparison_groups.cg_clustering.bounds as _bounds
-from opendsm.comparison_groups.cg_clustering import treatment_fit as _treatment_fit 
+from opendsm.comparison_groups.cg_clustering import treatment_fit as _treatment_fit
 from opendsm.common.clustering.cluster import cluster_features as _cluster
 
 
@@ -46,7 +46,7 @@ class CG_Clustering(Comparison_Group_Algorithm):
             data_size=len(comparison_pool_data.ids),
             min_cluster_size=self.settings.min_cluster_size,
             num_cluster_bound_lower=algo_settings.n_cluster.lower,
-            num_cluster_bound_upper=algo_settings.n_cluster.upper
+            num_cluster_bound_upper=algo_settings.n_cluster.upper,
         )
 
         settings_dict = self.settings.model_dump()
@@ -55,15 +55,9 @@ class CG_Clustering(Comparison_Group_Algorithm):
         self.settings = _settings.CG_Clustering_Settings(**settings_dict)
 
         # perform clustering
-        labels = _cluster(
-            self.comparison_pool_loadshape,
-            self.settings
-        )
+        labels = _cluster(self.comparison_pool_loadshape, self.settings)
 
-        self.clusters = pd.DataFrame(
-            {"cluster": labels},
-            index=comparison_pool_data.ids
-        )
+        self.clusters = pd.DataFrame({"cluster": labels}, index=comparison_pool_data.ids)
         self.clusters.index.name = "id"
 
         return self.clusters
@@ -73,7 +67,7 @@ class CG_Clustering(Comparison_Group_Algorithm):
             raise ValueError(
                 "Comparison group has been not been clustered. Run 'get_labels' first."
             )
-        
+
         self.treatment_data = treatment_data
         self.treatment_ids = treatment_data.ids
         self.treatment_loadshape = treatment_data.loadshape
@@ -82,7 +76,7 @@ class CG_Clustering(Comparison_Group_Algorithm):
             self.treatment_loadshape,
             self.comparison_pool_loadshape,
             self.clusters,
-            settings=self.settings
+            settings=self.settings,
         )
 
         return self.treatment_weights

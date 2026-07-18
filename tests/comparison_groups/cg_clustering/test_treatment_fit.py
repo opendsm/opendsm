@@ -25,7 +25,6 @@ from opendsm.comparison_groups.cg_clustering.treatment_fit import (
 from opendsm.comparison_groups.cg_clustering.settings import CG_Clustering_Settings
 
 
-
 def test_initial_cluster_weights_exact_match_gets_full_weight():
     """Regression: a treatment equal to a cluster centroid must put full weight
     on that cluster. The previous in-place divide collapsed the row to uniform
@@ -49,7 +48,6 @@ def test_initial_cluster_weights_peak_on_nearest_and_normalized():
     assert weights[0].argmax() == 1
     np.testing.assert_allclose(weights[0].sum(), 1.0, atol=1e-6)
     assert (weights[0] >= 0).all()
-
 
 
 N_POOL = 60
@@ -76,7 +74,9 @@ def _build_inputs(seed: int = 0):
     )
 
     treatment_labels = rng.integers(0, N_CLUSTERS, size=N_TREATMENT)
-    treatment_data = cluster_centers[treatment_labels] + 0.1 * rng.normal(size=(N_TREATMENT, N_FEATURES))
+    treatment_data = cluster_centers[treatment_labels] + 0.1 * rng.normal(
+        size=(N_TREATMENT, N_FEATURES)
+    )
     df_ls_t = pd.DataFrame(
         treatment_data,
         index=pd.Index([f"treat_{i}" for i in range(N_TREATMENT)], name="id"),

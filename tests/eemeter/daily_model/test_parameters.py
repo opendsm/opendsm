@@ -18,14 +18,21 @@ import pytest
 from opendsm.eemeter.models.daily.parameters import ModelCoefficients, ModelType
 
 
-
 # (construction kwargs, coefficient_ids) per model type. The c_hdd_* id family
 # is shared by heating/cooling-only models; from_np_arrays disambiguates by the
 # sign of beta (negative -> heating), so the kwargs choose signs accordingly.
 # Full-model breakpoints keep hdd_bp < cdd_bp to avoid the reorder branch.
 _ROUNDTRIP = {
     ModelType.HDD_TIDD_CDD_SMOOTH: (
-        dict(hdd_bp=40.0, hdd_beta=-1.5, hdd_k=0.1, cdd_bp=70.0, cdd_beta=2.0, cdd_k=0.2, intercept=10.0),
+        dict(
+            hdd_bp=40.0,
+            hdd_beta=-1.5,
+            hdd_k=0.1,
+            cdd_bp=70.0,
+            cdd_beta=2.0,
+            cdd_k=0.2,
+            intercept=10.0,
+        ),
         ["hdd_bp", "hdd_beta", "hdd_k", "cdd_bp", "cdd_beta", "cdd_k", "intercept"],
     ),
     ModelType.HDD_TIDD_CDD: (

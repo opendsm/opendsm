@@ -97,7 +97,7 @@ class OptimizationSettings(BaseSettings):
         gt=0,
         description="Stopping criteria value for the optimization algorithm",
     )
-    
+
     initial_step: Optional[float] = CustomField(
         default=0.1,
         gt=0,
@@ -126,7 +126,6 @@ class OptimizationSettings(BaseSettings):
         description="Seed passed to nlopt.srand for deterministic convergence; set to None to use system entropy",
     )
 
-
     @pydantic.model_validator(mode="after")
     def _check_population_multiplier(self):
         if self.initial_population_multiplier is None:
@@ -137,6 +136,8 @@ class OptimizationSettings(BaseSettings):
                 if self.initial_population_multiplier <= 1:
                     raise ValueError("INITIAL_POPULATION_MULTIPLIER must be > 1 for nlopt_ISRES")
             else:
-                raise ValueError("INITIAL_POPULATION_MULTIPLIER must be None for all algorithms except nlopt_ISRES")
+                raise ValueError(
+                    "INITIAL_POPULATION_MULTIPLIER must be None for all algorithms except nlopt_ISRES"
+                )
 
         return self

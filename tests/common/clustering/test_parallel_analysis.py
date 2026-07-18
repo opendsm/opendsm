@@ -26,7 +26,6 @@ import pytest
 from opendsm.common.clustering.transform import parallel_analysis as pa
 
 
-
 def _blobs(k, n=50, d=20, sep=30.0, seed=0):
     """k well-separated isotropic blobs stacked into one array."""
     rng = np.random.default_rng(seed)
@@ -120,8 +119,10 @@ class TestBlockPermute:
     def test_output_shape_is_concatenated_bands(self):
         """The result stacks all subbands side by side."""
         rng = np.random.RandomState(0)
-        bands = [np.random.default_rng(1).normal(0, 1, (30, 4)),
-                 np.random.default_rng(2).normal(0, 1, (30, 6))]
+        bands = [
+            np.random.default_rng(1).normal(0, 1, (30, 4)),
+            np.random.default_rng(2).normal(0, 1, (30, 6)),
+        ]
         out = pa._block_permute_dwt(bands, rng)
         assert out.shape == (30, 10)
 

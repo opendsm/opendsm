@@ -122,7 +122,7 @@ def _nystrom_embedding(
         return None
 
     # Drop the trivial first eigenvector (constant, eigenvalue ≈ 0)
-    eigvecs_sample = eigenvectors[:, 1:n_eig]   # (m, n_components)
+    eigvecs_sample = eigenvectors[:, 1:n_eig]  # (m, n_components)
 
     # Diffusion scaling: λ_transition = 1 - λ_laplacian, scale by λ_t^t
     # diffusion_time=1 means no scaling (self-tuning only).
@@ -135,7 +135,7 @@ def _nystrom_embedding(
             t = _auto_diffusion_time(sorted_teigs)
         else:
             t = diffusion_time
-        scales = transition_eigs ** t
+        scales = transition_eigs**t
         eigvecs_sample *= scales[None, :]
 
     # Canonicalize sign: make the largest-magnitude entry positive per column.
@@ -162,12 +162,10 @@ def _nystrom_embedding(
     sigma_rest = np.clip(sigma_rest, 1e-10, 3.0 * sigma_global)
 
     # Sparse affinity between rest and sample neighbors
-    sigma_neighbors = sigma_sample[idx_nm]                     # (n_rest, k_nn+1)
-    affinities = np.exp(
-        -(dist_nm ** 2) / (sigma_rest[:, None] * sigma_neighbors)
-    )                                                          # (n_rest, k_nn+1)
+    sigma_neighbors = sigma_sample[idx_nm]  # (n_rest, k_nn+1)
+    affinities = np.exp(-(dist_nm**2) / (sigma_rest[:, None] * sigma_neighbors))  # (n_rest, k_nn+1)
     row_sums = np.maximum(affinities.sum(axis=1, keepdims=True), 1e-10)
-    affinities /= row_sums                                     # row-normalize in-place
+    affinities /= row_sums  # row-normalize in-place
 
     # Extend eigenvectors via sparse matmul: W @ eigvecs_sample
     # W is (n_rest, m) sparse with k_nn+1 entries per row.
@@ -238,7 +236,7 @@ def _apply_fiedler(
     # cutting off single points).  Unlike conductance (gap / min_vol),
     # this has no boundary bias — the balance factor in the NUMERATOR
     # penalizes extreme splits rather than rewarding them.
-    gaps = np.diff(sorted_vals[lo - 1:hi])
+    gaps = np.diff(sorted_vals[lo - 1 : hi])
     if len(gaps) == 0:
         return np.inf, indices, np.array([], dtype=np.intp)
 
@@ -308,26 +306,22 @@ def _fiedler_split(
 
     if use_pic:
         # Power iteration clustering: faster than eigsh for large sparse A
-        fiedler_vec, lambda2_pic = _power_iteration_fiedler(
-            A, seed=_sub_seed(seed, indices)
-        )
-        return _apply_fiedler(fiedler_vec, lambda2_pic, indices,
-                              min_split_size=min_split_size)
+        fiedler_vec, lambda2_pic = _power_iteration_fiedler(A, seed=_sub_seed(seed, indices))
+        return _apply_fiedler(fiedler_vec, lambda2_pic, indices, min_split_size=min_split_size)
 
     L = csgraph.laplacian(A, normed=True)
     try:
         v0 = np.random.default_rng(_sub_seed(seed, indices)).standard_normal(n_sub)
-        eigenvalues, eigenvectors = _sparse_eigsh(
-            L, k=2, which="SM", maxiter=2000, tol=1e-6, v0=v0
-        )
+        eigenvalues, eigenvectors = _sparse_eigsh(L, k=2, which="SM", maxiter=2000, tol=1e-6, v0=v0)
         idx = np.argsort(eigenvalues)
         eigenvalues = eigenvalues[idx]
         eigenvectors = eigenvectors[:, idx]
     except Exception:
         return np.inf, indices, np.array([], dtype=np.intp)
 
-    return _apply_fiedler(eigenvectors[:, 1], float(eigenvalues[1]), indices,
-                          min_split_size=min_split_size)
+    return _apply_fiedler(
+        eigenvectors[:, 1], float(eigenvalues[1]), indices, min_split_size=min_split_size
+    )
 
 
 def _embedding_split(
@@ -384,7 +378,7 @@ def _embedding_split(
                 break
             v = v_new
         fiedler = centered @ v
-        pca_variance = float(s1 ** 2 / (n_sub - 1))
+        pca_variance = float(s1**2 / (n_sub - 1))
     else:
         _, s, Vt = np.linalg.svd(centered, full_matrices=False)
         fiedler = centered @ Vt[0]
@@ -403,7 +397,7 @@ def _embedding_split(
         hi = n_sub - lo
         if lo >= hi:
             return np.inf, indices, np.array([], dtype=np.intp)
-        gaps = np.diff(sorted_proj[lo - 1:hi])
+        gaps = np.diff(sorted_proj[lo - 1 : hi])
         if len(gaps) == 0:
             return np.inf, indices, np.array([], dtype=np.intp)
         max_gap = float(gaps.max())
@@ -413,8 +407,7 @@ def _embedding_split(
         # Fiedler eigenvalue semantics used by _fiedler_split.
         lambda2 = pca_variance
 
-    return _apply_fiedler(fiedler, lambda2, indices,
-                          min_split_size=min_split_size)
+    return _apply_fiedler(fiedler, lambda2, indices, min_split_size=min_split_size)
 
 
 def _lambda2_eigengap_scores(
@@ -448,7 +441,6 @@ def _lambda2_eigengap_scores(
     jumps[-1] = np.nan  # last k has no next split to compare
 
     return -jumps
-
 
 
 def _spectral_divisive_single(data, settings, seed, k_st):
@@ -495,7 +487,12 @@ def _spectral_divisive_single(data, settings, seed, k_st):
         n_components = min(2 * n_upper, nystrom - 1, _MAX_EMBEDDING_COMPONENTS)
         diff_t = algo_settings.diffusion_time if use_diffusion else 1
         embedding = _nystrom_embedding(
-            data, k_st, nystrom, n_components, diff_t, seed,
+            data,
+            k_st,
+            nystrom,
+            n_components,
+            diff_t,
+            seed,
         )
         use_embedding = embedding is not None
     elif use_diffusion:
@@ -508,8 +505,12 @@ def _spectral_divisive_single(data, settings, seed, k_st):
         else:
             A = _self_tuning_affinity_dense(data, k_st)
         embedding, _t_used = _diffusion_map(
-            A, algo_settings.diffusion_time, n_components,
-            seed=seed, alpha=algo_settings.diffusion_alpha)
+            A,
+            algo_settings.diffusion_time,
+            n_components,
+            seed=seed,
+            alpha=algo_settings.diffusion_alpha,
+        )
         if embedding is not None and embedding.shape[1] > 0:
             # No row-normalization for diffusion maps — the magnitude
             # (eigenvalue^t scaling) carries cluster separation information.
@@ -534,9 +535,7 @@ def _spectral_divisive_single(data, settings, seed, k_st):
     # the algorithm must not produce them.  With OUTLIER/ABSORB, the
     # scoring pipeline handles small clusters via merge/penalty, so
     # let the algorithm explore freely.
-    enforce_min_split = (
-        settings.small_cluster_mode == SmallClusterMode.KEEP
-    )
+    enforce_min_split = settings.small_cluster_mode == SmallClusterMode.KEEP
     min_cs = settings.min_cluster_size if enforce_min_split else 1
     tiebreak = 0
     heap: list = []
@@ -564,14 +563,17 @@ def _spectral_divisive_single(data, settings, seed, k_st):
             # informative directions.  Switch to Fiedler-on-embedding when
             # PCA runs out (current_k exceeds informative dims).
             n_informative = (
-                emb_informative.shape[1] if emb_informative is not None
-                else embedding.shape[1]
+                emb_informative.shape[1] if emb_informative is not None else embedding.shape[1]
             )
             if k <= n_informative:
                 # Strategy 1: PCA on full embedding
                 lambda2, left_idx, right_idx = _embedding_split(
-                    embedding, indices, min_split_size=min_cs,
-                    use_gap_priority=use_diffusion, seed=seed)
+                    embedding,
+                    indices,
+                    min_split_size=min_cs,
+                    use_gap_priority=use_diffusion,
+                    seed=seed,
+                )
             else:
                 # Strategy 2: Fiedler on truncated embedding.
                 # Multiscale diffusion (Coifman & Maggioni 2006):
@@ -583,32 +585,40 @@ def _spectral_divisive_single(data, settings, seed, k_st):
                     if len(sub_data) > _SELF_TUNING_SPARSE_THRESHOLD:
                         k_c = min(2 * (k_st + 2), len(sub_data) - 2)
                         A_local = _self_tuning_affinity_sparse(
-                            sub_data.astype(np.float32), k_st, k_c)
+                            sub_data.astype(np.float32), k_st, k_c
+                        )
                     else:
-                        A_local = _self_tuning_affinity_dense(
-                            sub_data.astype(np.float32), k_st)
+                        A_local = _self_tuning_affinity_dense(sub_data.astype(np.float32), k_st)
                     local_emb, _ = _diffusion_map(
-                        A_local, diffusion_time=2,
+                        A_local,
+                        diffusion_time=2,
                         n_components=min(10, len(sub_data) - 2),
-                        seed=_sub_seed(seed, indices))
+                        seed=_sub_seed(seed, indices),
+                    )
                     # Use local embedding for Fiedler split
                     # Create a full-size array indexed by original indices
                     local_full = np.zeros(
-                        (emb_informative.shape[0], local_emb.shape[1]),
-                        dtype=local_emb.dtype)
+                        (emb_informative.shape[0], local_emb.shape[1]), dtype=local_emb.dtype
+                    )
                     local_full[indices] = local_emb
                     lambda2, left_idx, right_idx = _fiedler_split(
-                        local_full, indices, k_st,
-                        min_split_size=min_cs, seed=seed)
+                        local_full, indices, k_st, min_split_size=min_cs, seed=seed
+                    )
                 else:
                     lambda2, left_idx, right_idx = _fiedler_split(
-                        emb_informative, indices, k_st,
-                        min_split_size=min_cs, seed=seed)
+                        emb_informative, indices, k_st, min_split_size=min_cs, seed=seed
+                    )
         else:
             # Strategy 3: Fiedler on original data
             lambda2, left_idx, right_idx = _fiedler_split(
-                data, indices, k_st, min_split_size=min_cs, seed=seed,
-                anisotropic=use_anisotropic, use_pic=use_pic)
+                data,
+                indices,
+                k_st,
+                min_split_size=min_cs,
+                seed=seed,
+                anisotropic=use_anisotropic,
+                use_pic=use_pic,
+            )
         if lambda2 == np.inf:
             return
         heapq.heappush(heap, (lambda2, tiebreak, left_idx, right_idx))
@@ -640,8 +650,11 @@ def _spectral_divisive_single(data, settings, seed, k_st):
         if current_k >= n_lower:
             if refine and current_k >= 2:
                 refined = kmedians_refine(
-                    data, flat_labels, max_iter=refine_max_iter,
-                    min_cluster_size=min_cs, metric=settings._argmin_metric,
+                    data,
+                    flat_labels,
+                    max_iter=refine_max_iter,
+                    min_cluster_size=min_cs,
+                    metric=settings._argmin_metric,
                 )
                 actual_k = len(np.unique(refined[refined >= 0]))
                 if actual_k >= n_lower:
@@ -687,7 +700,10 @@ def spectral_divisive(data, settings):
     merged_lambda2: dict[int, list[float]] = {}
     for i in range(recluster_count + 1):
         lbl_i, lambda2_i = _spectral_divisive_single(
-            data, settings, seed, k_st_base + i * 3,
+            data,
+            settings,
+            seed,
+            k_st_base + i * 3,
         )
         for k, lms in lbl_i._labels_store.items():
             all_by_k.setdefault(k, []).extend(lms)

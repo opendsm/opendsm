@@ -25,7 +25,9 @@ from opendsm.common.clustering.settings import ClusteringSettings
 from .conftest import make_clustering_settings
 
 
-def _spectral_cs(spectral_settings: SpectralSettings | dict | None = None, seed: int = 42, **overrides) -> ClusteringSettings:
+def _spectral_cs(
+    spectral_settings: SpectralSettings | dict | None = None, seed: int = 42, **overrides
+) -> ClusteringSettings:
     """Build a ClusteringSettings for spectral from a SpectralSettings object."""
     if spectral_settings is None:
         spectral_settings = {}
@@ -34,13 +36,17 @@ def _spectral_cs(spectral_settings: SpectralSettings | dict | None = None, seed:
     return make_clustering_settings("spectral", seed=seed, spectral=spectral_settings, **overrides)
 
 
-def _spectral_div_cs(spectral_settings: SpectralSettings | dict | None = None, seed: int = 42, **overrides) -> ClusteringSettings:
+def _spectral_div_cs(
+    spectral_settings: SpectralSettings | dict | None = None, seed: int = 42, **overrides
+) -> ClusteringSettings:
     """Build a ClusteringSettings for spectral_divisive from a SpectralSettings object."""
     if spectral_settings is None:
         spectral_settings = {}
     elif isinstance(spectral_settings, SpectralSettings):
         spectral_settings = spectral_settings.model_dump(exclude_defaults=True)
-    return make_clustering_settings("spectral_divisive", seed=seed, spectral_divisive=spectral_settings, **overrides)
+    return make_clustering_settings(
+        "spectral_divisive", seed=seed, spectral_divisive=spectral_settings, **overrides
+    )
 
 
 # simple_2d_data fixture is provided by conftest.py
@@ -55,10 +61,12 @@ def default_settings():
 @pytest.fixture
 def custom_spectral_settings():
     """Create custom spectral clustering settings."""
-    return _spectral_cs(SpectralSettings(
-        recluster_count=2,
-        n_cluster={"lower": 2, "upper": 5},
-    ))
+    return _spectral_cs(
+        SpectralSettings(
+            recluster_count=2,
+            n_cluster={"lower": 2, "upper": 5},
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +196,7 @@ class TestAffinityMatrixOptions:
 # TestDataShapes, TestEdgeCases, TestClusterQuality are now in
 # test_algorithms.py::TestAlgorithmSharedBehavior.
 
+
 class TestSpectralSparseData:
     """Spectral-specific edge case: sparse data (many zeros)."""
 
@@ -240,11 +249,7 @@ class TestBaselineConsistency:
         """
         # Create deterministic test data with well-separated clusters
         data, _ = make_blobs(
-            n_samples=60,
-            n_features=10,
-            centers=3,
-            cluster_std=1.5,
-            random_state=42
+            n_samples=60, n_features=10, centers=3, cluster_std=1.5, random_state=42
         )
 
         # Configure settings for reproducible clustering
@@ -257,18 +262,77 @@ class TestBaselineConsistency:
         labels = spectral(data, _spectral_cs(settings)).labels
 
         # Expected baseline output - saved for version consistency
-        expected_labels = np.array([
-            1, 0, 1, 1, 2, 1, 1, 0, 2, 2, 1, 2, 2, 1, 0, 2, 0, 0, 0, 2,
-            1, 1, 0, 2, 1, 1, 0, 2, 1, 0, 0, 0, 1, 1, 1, 2, 2, 0, 0, 2,
-            1, 2, 1, 2, 1, 2, 2, 2, 0, 2, 0, 0, 0, 2, 1, 0, 1, 0, 2, 0
-        ])
+        expected_labels = np.array(
+            [
+                1,
+                0,
+                1,
+                1,
+                2,
+                1,
+                1,
+                0,
+                2,
+                2,
+                1,
+                2,
+                2,
+                1,
+                0,
+                2,
+                0,
+                0,
+                0,
+                2,
+                1,
+                1,
+                0,
+                2,
+                1,
+                1,
+                0,
+                2,
+                1,
+                0,
+                0,
+                0,
+                1,
+                1,
+                1,
+                2,
+                2,
+                0,
+                0,
+                2,
+                1,
+                2,
+                1,
+                2,
+                1,
+                2,
+                2,
+                2,
+                0,
+                2,
+                0,
+                0,
+                0,
+                2,
+                1,
+                0,
+                1,
+                0,
+                2,
+                0,
+            ]
+        )
 
         # Verify exact match against baseline
         np.testing.assert_array_equal(
             labels,
             expected_labels,
             err_msg="Spectral clustering output does not match saved baseline. "
-                    "This indicates a breaking change in the algorithm."
+            "This indicates a breaking change in the algorithm.",
         )
 
         # Verify cluster properties
@@ -277,8 +341,9 @@ class TestBaselineConsistency:
 
         assert len(unique_labels) == 3, "Expected 3 clusters"
         for label, count in zip(unique_labels, counts):
-            assert count == expected_counts[label], \
+            assert count == expected_counts[label], (
                 f"Cluster {label} has {count} samples, expected {expected_counts[label]}"
+            )
 
 
 class TestSpectralDivisive:
@@ -290,7 +355,10 @@ class TestSpectralDivisive:
         )
 
     def test_cluster_count_in_range(self, simple_2d_data):
-        from opendsm.common.clustering.algorithms.spectral.spectral_divisive import spectral_divisive
+        from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
+            spectral_divisive,
+        )
+
         settings = self._settings(n_lower=2, n_upper=6)
         labels = spectral_divisive(simple_2d_data, _spectral_div_cs(settings, seed=42)).labels
         assert len(labels) == len(simple_2d_data)
@@ -299,7 +367,10 @@ class TestSpectralDivisive:
 
     def test_valid_labels(self, simple_2d_data):
         """spectral_divisive returns valid label arrays."""
-        from opendsm.common.clustering.algorithms.spectral.spectral_divisive import spectral_divisive
+        from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
+            spectral_divisive,
+        )
+
         settings = self._settings()
         labels = spectral_divisive(simple_2d_data, _spectral_div_cs(settings, seed=42)).labels
         assert len(labels) == len(simple_2d_data)
@@ -309,7 +380,10 @@ class TestSpectralDivisive:
 
     def test_finds_reasonable_clusters(self, simple_2d_data):
         """Well-separated 3-cluster data should produce 2-4 clusters."""
-        from opendsm.common.clustering.algorithms.spectral.spectral_divisive import spectral_divisive
+        from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
+            spectral_divisive,
+        )
+
         settings = SpectralSettings(
             n_cluster={"lower": 2, "upper": 8},
             recluster_count=0,
@@ -323,6 +397,7 @@ class TestSpectralDivisive:
         """spectral_divisive is reachable through the top-level dispatch."""
         import pandas as pd
         from opendsm.common.clustering.cluster import cluster_features
+
         df = pd.DataFrame(simple_2d_data)
         settings = ClusteringSettings(
             algorithm_selection="spectral_divisive",
@@ -332,7 +407,7 @@ class TestSpectralDivisive:
             cluster_sort={
                 "enable": True,
                 "method": "size",
-            }
+            },
         )
         labels = cluster_features(df, settings)
         assert len(labels) == len(simple_2d_data)
@@ -345,15 +420,13 @@ class TestNystromEmbedding:
     @pytest.fixture
     def well_separated_data(self):
         """Three well-separated clusters, 200 points."""
-        X, _ = make_blobs(n_samples=200, centers=3, n_features=10,
-                          cluster_std=0.5, random_state=42)
+        X, _ = make_blobs(n_samples=200, centers=3, n_features=10, cluster_std=0.5, random_state=42)
         return X.astype(np.float32)
 
     @pytest.fixture
     def well_separated_data_with_labels(self):
         """Three well-separated clusters, 200 points, plus ground-truth labels."""
-        X, y = make_blobs(n_samples=200, centers=3, n_features=10,
-                          cluster_std=0.5, random_state=42)
+        X, y = make_blobs(n_samples=200, centers=3, n_features=10, cluster_std=0.5, random_state=42)
         return X.astype(np.float32), y
 
     def test_embedding_shape(self, well_separated_data):
@@ -361,9 +434,8 @@ class TestNystromEmbedding:
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
             _nystrom_embedding,
         )
-        embedding = _nystrom_embedding(
-            well_separated_data, k_st=7, m=100, n_components=5, seed=42
-        )
+
+        embedding = _nystrom_embedding(well_separated_data, k_st=7, m=100, n_components=5, seed=42)
         assert embedding is not None
         assert embedding.shape == (200, 5)
 
@@ -372,9 +444,8 @@ class TestNystromEmbedding:
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
             _nystrom_embedding,
         )
-        embedding = _nystrom_embedding(
-            well_separated_data, k_st=7, m=100, n_components=5, seed=42
-        )
+
+        embedding = _nystrom_embedding(well_separated_data, k_st=7, m=100, n_components=5, seed=42)
         norms = np.linalg.norm(embedding, axis=1)
         np.testing.assert_allclose(norms, 1.0, atol=1e-6)
 
@@ -400,6 +471,7 @@ class TestNystromEmbedding:
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
             _nystrom_embedding,
         )
+
         X, y = well_separated_data_with_labels
         embedding = _nystrom_embedding(X, k_st=7, m=100, n_components=5, seed=42)
 
@@ -411,8 +483,7 @@ class TestNystromEmbedding:
         same_label = y[idx[:, 1:]] == y[:, None]
         purity = float(same_label.mean())
         assert purity > 0.80, (
-            f"kNN cluster purity too low (random baseline ~0.33 for k=3): "
-            f"{purity:.3f}"
+            f"kNN cluster purity too low (random baseline ~0.33 for k=3): {purity:.3f}"
         )
 
     def test_nystrom_produces_valid_labels(self, well_separated_data):
@@ -428,17 +499,23 @@ class TestNystromEmbedding:
         )
         import pandas as pd
         from opendsm.common.clustering import cluster_result
+
         result = cluster_result(pd.DataFrame(well_separated_data), settings)
         assert len(result.labels) == 200
         assert result.k >= 2
 
-    @pytest.mark.parametrize("n_samples,nystrom_samples", [
-        (50, 100),   # n < nystrom_samples: exact path used
-    ], ids=["n_below_threshold"])
+    @pytest.mark.parametrize(
+        "n_samples,nystrom_samples",
+        [
+            (50, 100),  # n < nystrom_samples: exact path used
+        ],
+        ids=["n_below_threshold"],
+    )
     def test_nystrom_disabled_when_n_below_threshold(self, n_samples, nystrom_samples):
         """When n < nystrom_samples, exact path is used (no embedding)."""
-        X, _ = make_blobs(n_samples=n_samples, centers=2, n_features=5,
-                          cluster_std=0.5, random_state=42)
+        X, _ = make_blobs(
+            n_samples=n_samples, centers=2, n_features=5, cluster_std=0.5, random_state=42
+        )
         settings = ClusteringSettings(
             algorithm_selection="spectral_divisive",
             spectral_divisive={
@@ -450,13 +527,13 @@ class TestNystromEmbedding:
         )
         import pandas as pd
         from opendsm.common.clustering import cluster_result
+
         result = cluster_result(pd.DataFrame(X.astype(np.float32)), settings)
         assert len(result.labels) == n_samples
 
     def test_nystrom_none_disables(self):
         """nystrom_samples=None forces exact path regardless of n."""
-        X, _ = make_blobs(n_samples=200, centers=3, n_features=10,
-                          cluster_std=0.5, random_state=42)
+        X, _ = make_blobs(n_samples=200, centers=3, n_features=10, cluster_std=0.5, random_state=42)
         settings = ClusteringSettings(
             algorithm_selection="spectral_divisive",
             spectral_divisive={
@@ -468,6 +545,7 @@ class TestNystromEmbedding:
         )
         import pandas as pd
         from opendsm.common.clustering import cluster_result
+
         result = cluster_result(pd.DataFrame(X.astype(np.float32)), settings)
         assert len(result.labels) == 200
 
@@ -476,6 +554,7 @@ class TestNystromEmbedding:
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
             _nystrom_embedding,
         )
+
         e1 = _nystrom_embedding(well_separated_data, k_st=7, m=100, n_components=5, seed=42)
         e2 = _nystrom_embedding(well_separated_data, k_st=7, m=100, n_components=5, seed=42)
         np.testing.assert_array_equal(e1, e2)
@@ -489,8 +568,8 @@ class TestFiedlerSignConvention:
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
             _fiedler_split,
         )
-        X, _ = make_blobs(n_samples=100, centers=2, n_features=5,
-                          cluster_std=0.5, random_state=42)
+
+        X, _ = make_blobs(n_samples=100, centers=2, n_features=5, cluster_std=0.5, random_state=42)
         data = X.astype(np.float32)
         indices = np.arange(len(data))
         lambda2, left, right = _fiedler_split(data, indices, k_st=7)
@@ -503,8 +582,8 @@ class TestFiedlerSignConvention:
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
             _fiedler_split,
         )
-        X, _ = make_blobs(n_samples=50, centers=2, n_features=5,
-                          cluster_std=0.5, random_state=42)
+
+        X, _ = make_blobs(n_samples=50, centers=2, n_features=5, cluster_std=0.5, random_state=42)
         data = X.astype(np.float32)
         indices = np.arange(len(data))
         lambda2, left, right = _fiedler_split(data, indices, k_st=7)
@@ -517,8 +596,8 @@ class TestFiedlerSignConvention:
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
             _fiedler_split,
         )
-        X, _ = make_blobs(n_samples=100, centers=2, n_features=5,
-                          cluster_std=0.5, random_state=42)
+
+        X, _ = make_blobs(n_samples=100, centers=2, n_features=5, cluster_std=0.5, random_state=42)
         _, left, right = _fiedler_split(X.astype(np.float32), np.arange(100), k_st=7)
         assert len(left) == 50, f"Expected 50 left, got {len(left)}"
         assert len(right) == 50, f"Expected 50 right, got {len(right)}"
@@ -531,6 +610,7 @@ class TestAutoPCAFallback:
         """When n < d, output has n-1 features."""
         from opendsm.common.clustering.transform.transform import transform_features
         from opendsm.common.clustering.settings import ClusteringSettings
+
         data = np.random.default_rng(42).random((7, 504)).astype(np.float32)
         settings = ClusteringSettings(
             feature_transform={"wavelet": {"enabled": False}},
@@ -544,6 +624,7 @@ class TestAutoPCAFallback:
         """When n > d, features are unchanged."""
         from opendsm.common.clustering.transform.transform import transform_features
         from opendsm.common.clustering.settings import ClusteringSettings
+
         data = np.random.default_rng(42).random((100, 24)).astype(np.float32)
         settings = ClusteringSettings(seed=0)
         result = transform_features(data, settings).data
@@ -554,6 +635,7 @@ class TestAutoPCAFallback:
         """Auto-PCA fires after magnitude features are appended."""
         from opendsm.common.clustering.transform.transform import transform_features
         from opendsm.common.clustering.settings import ClusteringSettings
+
         # n=5 with d=504 + magnitude (3) = 507 features; should reduce to 4
         data = np.random.default_rng(42).random((5, 504)).astype(np.float32)
         settings = ClusteringSettings(
@@ -568,6 +650,7 @@ class TestAutoPCAFallback:
         """n=1 should not crash (PCA requires n>1)."""
         from opendsm.common.clustering.transform.transform import transform_features
         from opendsm.common.clustering.settings import ClusteringSettings
+
         data = np.random.default_rng(42).random((1, 504)).astype(np.float32)
         settings = ClusteringSettings(
             feature_transform={"wavelet": {"enabled": False}},
@@ -585,6 +668,7 @@ class TestNystromEdgeCases:
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
             _nystrom_embedding,
         )
+
         data = np.ones((200, 10), dtype=np.float32)
         result = _nystrom_embedding(data, k_st=7, m=100, n_components=5, seed=42)
         # May return None (eigsh fails on degenerate Laplacian) or a valid array
@@ -595,8 +679,8 @@ class TestNystromEdgeCases:
         """When m >= n, nystrom_samples threshold is not triggered."""
         import pandas as pd
         from opendsm.common.clustering import cluster_result
-        X, _ = make_blobs(n_samples=50, centers=2, n_features=5,
-                          cluster_std=0.5, random_state=42)
+
+        X, _ = make_blobs(n_samples=50, centers=2, n_features=5, cluster_std=0.5, random_state=42)
         settings = ClusteringSettings(
             algorithm_selection="spectral_divisive",
             spectral_divisive={
@@ -612,6 +696,7 @@ class TestNystromEdgeCases:
     def test_nystrom_minimum_threshold(self):
         """nystrom_samples has a minimum of 100."""
         from opendsm.common.clustering.algorithms.settings import SpectralSettings
+
         with pytest.raises(Exception):
             SpectralSettings(nystrom_samples=50)
 
@@ -625,6 +710,7 @@ class TestFiedlerTwoPointSplit:
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
             _fiedler_split,
         )
+
         data = np.array([[0.0, 0.0], [10.0, 10.0]], dtype=np.float32)
         indices = np.array([0, 1])
         lambda2, left, right = _fiedler_split(data, indices, k_st=7)
@@ -637,6 +723,7 @@ class TestFiedlerTwoPointSplit:
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
             _fiedler_split,
         )
+
         data = np.array([[1.0, 2.0]], dtype=np.float32)
         lambda2, left, right = _fiedler_split(data, np.array([0]), k_st=7)
         assert lambda2 == np.inf
@@ -649,6 +736,7 @@ class TestMagnitudeFeatureGate:
     def test_no_magnitude_at_short_T_no_wavelet(self):
         """Magnitude features don't fire at T=24 when wavelet is bypassed."""
         from opendsm.common.clustering.transform.transform import transform_features
+
         data = np.random.default_rng(42).random((50, 24)).astype(np.float32)
         settings = ClusteringSettings(
             feature_transform={
@@ -664,6 +752,7 @@ class TestMagnitudeFeatureGate:
     def test_magnitude_fires_when_centering_norm_active(self):
         """Magnitude features auto-fire when standardize (centering) normalization is used."""
         from opendsm.common.clustering.transform.transform import transform_features
+
         data = np.random.default_rng(42).random((50, 24)).astype(np.float32)
         settings = ClusteringSettings(
             feature_transform={
@@ -717,7 +806,8 @@ class TestAffinityMatrix:
 
         A = _self_tuning_affinity_sparse(two_cluster_data, k=7, k_connect=10)
         np.testing.assert_array_equal(
-            A.diagonal(), np.zeros(40),
+            A.diagonal(),
+            np.zeros(40),
             err_msg="Diagonal should be all zeros",
         )
 
@@ -844,7 +934,9 @@ class TestAffinityMatrix:
 
         n = two_cluster_data.shape[0]
         A_sparse = _self_tuning_affinity_sparse(
-            two_cluster_data, k=7, k_connect=n - 1,
+            two_cluster_data,
+            k=7,
+            k_connect=n - 1,
         )
         A_dense = _self_tuning_affinity_dense(two_cluster_data, k=7)
 
@@ -853,7 +945,9 @@ class TestAffinityMatrix:
         np.fill_diagonal(dd, 0.0)
 
         np.testing.assert_allclose(
-            A_sparse.toarray(), dd, atol=1e-6,
+            A_sparse.toarray(),
+            dd,
+            atol=1e-6,
             err_msg="Sparse and dense paths disagree",
         )
 
@@ -892,6 +986,7 @@ class TestAffinityMatrix:
 
 # ── Constrained Fiedler split ─────────────────────────────────────────────────
 
+
 class TestConstrainedFiedlerSplit:
     """Tests for _apply_fiedler with min_split_size constraints."""
 
@@ -900,19 +995,18 @@ class TestConstrainedFiedlerSplit:
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
             _fiedler_split,
         )
+
         rng = np.random.default_rng(42)
-        X = np.vstack([
-            rng.normal([0, 0], 0.5, (16, 2)),
-            rng.normal([10, 10], 0.5, (16, 2)),
-        ]).astype(np.float32)
+        X = np.vstack(
+            [
+                rng.normal([0, 0], 0.5, (16, 2)),
+                rng.normal([10, 10], 0.5, (16, 2)),
+            ]
+        ).astype(np.float32)
         indices = np.arange(32)
         lambda2, left, right = _fiedler_split(X, indices, k_st=7, min_split_size=15)
-        assert len(left) >= 15, (
-            f"Left partition has {len(left)} points, expected >= 15"
-        )
-        assert len(right) >= 15, (
-            f"Right partition has {len(right)} points, expected >= 15"
-        )
+        assert len(left) >= 15, f"Left partition has {len(left)} points, expected >= 15"
+        assert len(right) >= 15, f"Right partition has {len(right)} points, expected >= 15"
         assert len(left) + len(right) == 32
 
     def test_unconstrained_split_with_min_split_size_1(self):
@@ -920,6 +1014,7 @@ class TestConstrainedFiedlerSplit:
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
             _apply_fiedler,
         )
+
         rng = np.random.default_rng(42)
         fiedler = rng.standard_normal(20)
         indices = np.arange(20)
@@ -970,6 +1065,7 @@ class TestConstrainedFiedlerSplit:
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
             _apply_fiedler,
         )
+
         # n=12, min_split_size=6 -> constrained path entered (12 >= 2*6),
         # lo=6, hi=12-6=6, lo>=hi -> returns inf (no valid split position).
         fiedler = np.linspace(-1, 1, 12)
@@ -985,19 +1081,19 @@ class TestConstrainedFiedlerSplit:
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
             _apply_fiedler,
         )
+
         # Constant Fiedler vector — all gaps are zero
         fiedler = np.ones(20)
         indices = np.arange(20)
         lambda2, left, right = _apply_fiedler(fiedler, 1.0, indices, min_split_size=5)
-        assert lambda2 == np.inf, (
-            "Gap of zero within valid range should return inf (no split)"
-        )
+        assert lambda2 == np.inf, "Gap of zero within valid range should return inf (no split)"
 
     def test_two_point_lambda2_distinct(self):
         """2-point lambda2 = 2*exp(-1) for distinct points."""
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
             _fiedler_split,
         )
+
         data = np.array([[0.0, 0.0], [10.0, 10.0]], dtype=np.float32)
         indices = np.array([0, 1])
         lambda2, left, right = _fiedler_split(data, indices, k_st=7)
@@ -1011,31 +1107,35 @@ class TestConstrainedFiedlerSplit:
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
             _fiedler_split,
         )
+
         data = np.array([[5.0, 5.0], [5.0, 5.0]], dtype=np.float32)
         indices = np.array([0, 1])
         lambda2, left, right = _fiedler_split(data, indices, k_st=7)
-        assert lambda2 == np.inf, (
-            f"Expected inf for identical points, got {lambda2}"
-        )
+        assert lambda2 == np.inf, f"Expected inf for identical points, got {lambda2}"
 
 
 # ── Bisection min_cluster_size ────────────────────────────────────────────────
+
 
 class TestBisectionMinClusterSize:
     """Tests for min_cluster_size enforcement in spectral_divisive."""
 
     def test_keep_mode_min_cs_1_allows_singletons(self):
         """KEEP mode with min_cs=1: singletons may appear in candidates."""
-        from opendsm.common.clustering.algorithms.spectral.spectral_divisive import spectral_divisive
+        from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
+            spectral_divisive,
+        )
         from opendsm.common.clustering.metrics.settings import ScoreSettings, SmallClusterMode
 
         rng = np.random.default_rng(42)
         # 4 well-separated clusters, one with a single isolated point
-        X = np.vstack([
-            rng.normal([0, 0, 0, 0, 0], 0.3, (20, 5)),
-            rng.normal([5, 5, 5, 5, 5], 0.3, (20, 5)),
-            rng.normal([10, 10, 10, 10, 10], 0.3, (20, 5)),
-        ]).astype(np.float32)
+        X = np.vstack(
+            [
+                rng.normal([0, 0, 0, 0, 0], 0.3, (20, 5)),
+                rng.normal([5, 5, 5, 5, 5], 0.3, (20, 5)),
+                rng.normal([10, 10, 10, 10, 10], 0.3, (20, 5)),
+            ]
+        ).astype(np.float32)
 
         settings = SpectralSettings(
             n_cluster={"lower": 2, "upper": 8},
@@ -1051,15 +1151,19 @@ class TestBisectionMinClusterSize:
 
     def test_keep_mode_min_cs_2_no_tiny_clusters(self):
         """KEEP mode with min_cs=2: no cluster in any candidate has <2 members."""
-        from opendsm.common.clustering.algorithms.spectral.spectral_divisive import spectral_divisive
+        from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
+            spectral_divisive,
+        )
         from opendsm.common.clustering.metrics.settings import ScoreSettings, SmallClusterMode
 
         rng = np.random.default_rng(42)
-        X = np.vstack([
-            rng.normal([0, 0, 0, 0, 0], 0.3, (30, 5)),
-            rng.normal([5, 5, 5, 5, 5], 0.3, (30, 5)),
-            rng.normal([10, 10, 10, 10, 10], 0.3, (30, 5)),
-        ]).astype(np.float32)
+        X = np.vstack(
+            [
+                rng.normal([0, 0, 0, 0, 0], 0.3, (30, 5)),
+                rng.normal([5, 5, 5, 5, 5], 0.3, (30, 5)),
+                rng.normal([10, 10, 10, 10, 10], 0.3, (30, 5)),
+            ]
+        ).astype(np.float32)
 
         settings = SpectralSettings(
             n_cluster={"lower": 2, "upper": 8},
@@ -1088,14 +1192,13 @@ class TestBisectionMinClusterSize:
 
     def test_outlier_mode_explores_freely(self):
         """OUTLIER mode with min_cs=15: algorithm explores many k values."""
-        from opendsm.common.clustering.algorithms.spectral.spectral_divisive import spectral_divisive
+        from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
+            spectral_divisive,
+        )
         from opendsm.common.clustering.metrics.settings import ScoreSettings, SmallClusterMode
 
         rng = np.random.default_rng(42)
-        X = np.vstack([
-            rng.normal(c * 5, 0.5, (30, 5))
-            for c in range(5)
-        ]).astype(np.float32)
+        X = np.vstack([rng.normal(c * 5, 0.5, (30, 5)) for c in range(5)]).astype(np.float32)
 
         settings = SpectralSettings(
             n_cluster={"lower": 2, "upper": 10},
@@ -1113,13 +1216,17 @@ class TestBisectionMinClusterSize:
 
     def test_council_never_selects_k1_when_gate_passes(self):
         """When the structure gate passes, council never picks k=1."""
-        from opendsm.common.clustering.algorithms.spectral.spectral_divisive import spectral_divisive
+        from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
+            spectral_divisive,
+        )
 
         rng = np.random.default_rng(42)
-        X = np.vstack([
-            rng.normal([0, 0, 0, 0, 0], 0.5, (30, 5)),
-            rng.normal([10, 10, 10, 10, 10], 0.5, (30, 5)),
-        ]).astype(np.float32)
+        X = np.vstack(
+            [
+                rng.normal([0, 0, 0, 0, 0], 0.5, (30, 5)),
+                rng.normal([10, 10, 10, 10, 10], 0.5, (30, 5)),
+            ]
+        ).astype(np.float32)
 
         settings = SpectralSettings(
             n_cluster={"lower": 1, "upper": 6},
@@ -1164,10 +1271,12 @@ class TestSweepCut:
     def test_clean_bimodal_200_400(self):
         """Clean bimodal 200/400 split produces left=200, right=400."""
         np.random.seed(42)
-        fiedler = np.concatenate([
-            np.random.normal(-5.0, 0.1, 200),
-            np.random.normal(5.0, 0.1, 400),
-        ])
+        fiedler = np.concatenate(
+            [
+                np.random.normal(-5.0, 0.1, 200),
+                np.random.normal(5.0, 0.1, 400),
+            ]
+        )
         indices = np.arange(600)
         lambda2, left, right = _apply_fiedler(fiedler, 0.5, indices)
         assert len(left) == 200
@@ -1176,10 +1285,12 @@ class TestSweepCut:
     def test_balanced_300_300(self):
         """Balanced 300/300 split produces left=300, right=300."""
         np.random.seed(42)
-        fiedler = np.concatenate([
-            np.random.normal(-5.0, 0.1, 300),
-            np.random.normal(5.0, 0.1, 300),
-        ])
+        fiedler = np.concatenate(
+            [
+                np.random.normal(-5.0, 0.1, 300),
+                np.random.normal(5.0, 0.1, 300),
+            ]
+        )
         indices = np.arange(600)
         lambda2, left, right = _apply_fiedler(fiedler, 0.5, indices)
         assert len(left) == 300
@@ -1188,10 +1299,12 @@ class TestSweepCut:
     def test_imbalanced_10_590(self):
         """Imbalanced 10/590 split correctly isolates the 10-point group."""
         np.random.seed(42)
-        fiedler = np.concatenate([
-            np.random.normal(-10.0, 0.05, 10),
-            np.random.normal(5.0, 0.05, 590),
-        ])
+        fiedler = np.concatenate(
+            [
+                np.random.normal(-10.0, 0.05, 10),
+                np.random.normal(5.0, 0.05, 590),
+            ]
+        )
         indices = np.arange(600)
         lambda2, left, right = _apply_fiedler(fiedler, 0.5, indices)
         assert len(left) == 10
@@ -1200,10 +1313,12 @@ class TestSweepCut:
     def test_noisy_bimodal_approximate(self):
         """Noisy bimodal produces approximately correct split (within +/-25)."""
         np.random.seed(42)
-        fiedler = np.concatenate([
-            np.random.normal(-3.0, 1.5, 250),
-            np.random.normal(3.0, 1.5, 350),
-        ])
+        fiedler = np.concatenate(
+            [
+                np.random.normal(-3.0, 1.5, 250),
+                np.random.normal(3.0, 1.5, 350),
+            ]
+        )
         indices = np.arange(600)
         lambda2, left, right = _apply_fiedler(fiedler, 0.5, indices)
         assert abs(len(left) - 250) <= 25
@@ -1220,14 +1335,14 @@ class TestSweepCut:
     def test_constrained_sweep_min_split_size(self):
         """Constrained sweep with min_split_size=15 on n=32 produces both halves >= 15."""
         np.random.seed(42)
-        fiedler = np.concatenate([
-            np.random.normal(-5.0, 0.1, 16),
-            np.random.normal(5.0, 0.1, 16),
-        ])
-        indices = np.arange(32)
-        lambda2, left, right = _apply_fiedler(
-            fiedler, 0.5, indices, min_split_size=15
+        fiedler = np.concatenate(
+            [
+                np.random.normal(-5.0, 0.1, 16),
+                np.random.normal(5.0, 0.1, 16),
+            ]
         )
+        indices = np.arange(32)
+        lambda2, left, right = _apply_fiedler(fiedler, 0.5, indices, min_split_size=15)
         assert len(left) >= 15
         assert len(right) >= 15
 
@@ -1245,8 +1360,11 @@ class TestDiffusionMap:
 
         np.random.seed(42)
         X, true_labels = make_blobs(
-            n_samples=90, centers=3, cluster_std=0.3,
-            center_box=(-10, 10), random_state=42,
+            n_samples=90,
+            centers=3,
+            cluster_std=0.3,
+            center_box=(-10, 10),
+            random_state=42,
         )
         A = _self_tuning_affinity_dense(X, k=7)
         embedding, t_used = _diffusion_map(A, diffusion_time=3, n_components=5, seed=42)
@@ -1260,8 +1378,11 @@ class TestDiffusionMap:
         # Well-separated clusters should have eigenvalues near 1 above gap,
         # so auto-selection picks a higher t to suppress below-gap noise.
         X_sep, _ = make_blobs(
-            n_samples=90, centers=3, cluster_std=0.3,
-            center_box=(-15, 15), random_state=42,
+            n_samples=90,
+            centers=3,
+            cluster_std=0.3,
+            center_box=(-15, 15),
+            random_state=42,
         )
         A_sep = _self_tuning_affinity_dense(X_sep, k=7)
         _, t_sep = _diffusion_map(A_sep, diffusion_time=None, n_components=10, seed=42)
@@ -1313,8 +1434,11 @@ class TestPowerIterationFiedler:
         """Well-separated 2 clusters: Fiedler vector signs match true labels."""
         np.random.seed(42)
         X, true_labels = make_blobs(
-            n_samples=80, centers=2, cluster_std=0.3,
-            center_box=(-10, 10), random_state=42,
+            n_samples=80,
+            centers=2,
+            cluster_std=0.3,
+            center_box=(-10, 10),
+            random_state=42,
         )
         A = _self_tuning_affinity_dense(X, k=7)
         fiedler, lambda2 = _power_iteration_fiedler(A, seed=42)
@@ -1345,12 +1469,15 @@ class TestPowerIterationFiedler:
         Fiedler value (~0.06).
         """
         np.random.seed(42)
-        X = np.vstack([
-            np.random.normal([0.0, 0.0], 1.0, (40, 2)),
-            np.random.normal([2.5, 0.0], 1.0, (40, 2)),
-        ]).astype(np.float32)
+        X = np.vstack(
+            [
+                np.random.normal([0.0, 0.0], 1.0, (40, 2)),
+                np.random.normal([2.5, 0.0], 1.0, (40, 2)),
+            ]
+        ).astype(np.float32)
         A = _self_tuning_affinity_dense(X, k=7)
         from scipy.sparse import csr_matrix
+
         A_sp = csr_matrix(A)
         L = csgraph.laplacian(A_sp, normed=True)
         eigvals, _ = _sparse_eigsh(L, k=2, which="SM")
@@ -1411,16 +1538,20 @@ class TestAnisotropicAffinity:
         """Within-cluster affinity > between-cluster affinity for well-separated elongated clusters."""
         np.random.seed(42)
         # Elongated clusters along different axes
-        c1 = np.column_stack([
-            np.random.randn(40) * 5.0,  # elongated along dim 0
-            np.random.randn(40) * 0.2,
-            np.random.randn(40) * 0.2,
-        ])
-        c2 = np.column_stack([
-            np.random.randn(40) * 0.2,
-            np.random.randn(40) * 5.0,  # elongated along dim 1
-            np.random.randn(40) * 0.2,
-        ]) + np.array([15.0, 15.0, 0.0])  # shifted away
+        c1 = np.column_stack(
+            [
+                np.random.randn(40) * 5.0,  # elongated along dim 0
+                np.random.randn(40) * 0.2,
+                np.random.randn(40) * 0.2,
+            ]
+        )
+        c2 = np.column_stack(
+            [
+                np.random.randn(40) * 0.2,
+                np.random.randn(40) * 5.0,  # elongated along dim 1
+                np.random.randn(40) * 0.2,
+            ]
+        ) + np.array([15.0, 15.0, 0.0])  # shifted away
         X = np.vstack([c1, c2])
         A = _anisotropic_affinity_sparse(X, k=10, k_connect=20)
         A_dense = A.toarray()
@@ -1431,16 +1562,20 @@ class TestAnisotropicAffinity:
     def test_anisotropic_vs_self_tuning_elongated(self):
         """Elongated clusters: anisotropic gives higher within-cluster affinity than self-tuning."""
         np.random.seed(42)
-        c1 = np.column_stack([
-            np.random.randn(50) * 6.0,
-            np.random.randn(50) * 0.1,
-            np.random.randn(50) * 0.1,
-        ])
-        c2 = np.column_stack([
-            np.random.randn(50) * 0.1,
-            np.random.randn(50) * 6.0,
-            np.random.randn(50) * 0.1,
-        ]) + np.array([20.0, 20.0, 0.0])
+        c1 = np.column_stack(
+            [
+                np.random.randn(50) * 6.0,
+                np.random.randn(50) * 0.1,
+                np.random.randn(50) * 0.1,
+            ]
+        )
+        c2 = np.column_stack(
+            [
+                np.random.randn(50) * 0.1,
+                np.random.randn(50) * 6.0,
+                np.random.randn(50) * 0.1,
+            ]
+        ) + np.array([20.0, 20.0, 0.0])
         X = np.vstack([c1, c2])
 
         A_aniso = _anisotropic_affinity_sparse(X, k=10, k_connect=20)
@@ -1521,15 +1656,14 @@ class TestSpectralDivisiveConfigurations:
         Algorithmic robustness for degenerate eigenstructure is tracked as
         a future improvement (PR 9 in the plan).
         """
-        from opendsm.common.clustering.algorithms.spectral.spectral_divisive import spectral_divisive
+        from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
+            spectral_divisive,
+        )
         from opendsm.common.clustering.algorithms.settings import AffinityMatrixOptions
 
         np.random.seed(42)
         rng = np.random.default_rng(42)
-        X = np.vstack([
-            rng.normal(c * 5, 1.0, (50, 5))
-            for c in range(3)
-        ]).astype(np.float32)
+        X = np.vstack([rng.normal(c * 5, 1.0, (50, 5)) for c in range(3)]).astype(np.float32)
 
         settings = SpectralSettings(
             affinity=AffinityMatrixOptions(affinity),
@@ -1556,15 +1690,14 @@ class TestSpectralDivisiveConfigurations:
     )
     def test_deterministic_seed42(self, affinity, use_pic):
         """All 6 configs are deterministic (seed=42 twice gives same labels)."""
-        from opendsm.common.clustering.algorithms.spectral.spectral_divisive import spectral_divisive
+        from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
+            spectral_divisive,
+        )
         from opendsm.common.clustering.algorithms.settings import AffinityMatrixOptions
 
         np.random.seed(42)
         rng = np.random.default_rng(42)
-        X = np.vstack([
-            rng.normal(c * 20, 0.3, (30, 5))
-            for c in range(3)
-        ]).astype(np.float32)
+        X = np.vstack([rng.normal(c * 20, 0.3, (30, 5)) for c in range(3)]).astype(np.float32)
 
         settings = SpectralSettings(
             affinity=AffinityMatrixOptions(affinity),
@@ -1620,15 +1753,17 @@ class TestSparseEigshFallback:
 
         monkeypatch.setattr(spectral_mod, "_sparse_eigsh", _arpack_fails)
 
-        cs = _spectral_cs(SpectralSettings(
-            affinity="self_tuning",
-            n_cluster={"lower": 2, "upper": 4},
-        ))
+        cs = _spectral_cs(
+            SpectralSettings(
+                affinity="self_tuning",
+                n_cluster={"lower": 2, "upper": 4},
+            )
+        )
         result = spectral(X, cs)
 
         assert len(result.labels) == len(X)
         assert result.k >= 2
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

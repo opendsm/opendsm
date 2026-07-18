@@ -106,12 +106,8 @@ def plot(
 
     if not plot_outliers:
         # Ignores crazy points when plotting based on iqr
-        ylim = IQR_outlier(
-            meter_eval["observed"].values, sigma_threshold=1.0, quantile=0.025
-        )
-        ylim_idx = [
-            np.argmin(np.abs(x - meter_eval["observed"].values), axis=0) for x in ylim
-        ]
+        ylim = IQR_outlier(meter_eval["observed"].values, sigma_threshold=1.0, quantile=0.025)
+        ylim_idx = [np.argmin(np.abs(x - meter_eval["observed"].values), axis=0) for x in ylim]
         ylim = meter_eval["observed"].values[ylim_idx]
     else:
         ylim = np.quantile(meter_eval["observed"], [0, 1])
