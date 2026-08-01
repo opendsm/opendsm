@@ -20,6 +20,7 @@ classifiers = [
 ]
 
 dependencies = [
+  "matplotlib",  # imported at module scope by the plotting and diagnostics modules
   "nlopt>=2.10",  # first release with cp313 / cp314 wheels
   "numba",
   "numpy>=1.24.4",
