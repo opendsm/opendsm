@@ -76,6 +76,11 @@ Issues = "https://github.com/opendsm/opendsm/issues"
 addopts = [
   "-n", "auto",            # parallel run (pytest-xdist)
   "-vv",                   # verbose
+  # The regression snapshots are split by platform (`SNAP_SUFFIX`), so the
+  # variants for the other platform are always unused and syrupy would
+  # otherwise fail the run. Deleting them is not an option: each set is the
+  # one in use on its own platform. Mismatches remain fatal.
+  "--snapshot-warn-unused",
   # "--cov=./",
   # "--cov-report", "term-missing",
 ]
