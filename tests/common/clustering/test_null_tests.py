@@ -356,12 +356,15 @@ class TestK1IndexAbstention:
     ]
 
     @pytest.fixture(scope="class")
-    def k1_metrics(self):
+    @classmethod
+    def k1_metrics(cls):
         rng = np.random.default_rng(42)
-        return SingleKMetrics(
+        metrics = SingleKMetrics(
             data=rng.normal(0, 1, (30, 5)).astype(np.float32),
             labels=np.zeros(30, dtype=int), seed=42,
         )
+
+        return metrics
 
     @pytest.mark.parametrize("index", ALL_INDICES)
     def test_returns_nan_at_k1(self, k1_metrics, index):
