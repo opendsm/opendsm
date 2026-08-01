@@ -19,10 +19,10 @@ jobs:
       fail-fast: false
       matrix:
         python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
-        # nlopt and fdasrsf publish wheels only for linux-x86_64, macOS-arm64,
-        # and win-amd64; one runner per OS covers exactly those architectures.
-        # ARM-Linux and Intel-Mac are omitted because those two deps ship no
-        # wheels there (a source build would just reproduce #578). Snapshot
+        # nlopt publishes wheels only for linux-x86_64, macOS-arm64, and
+        # win-amd64; one runner per OS covers exactly those architectures.
+        # ARM-Linux and Intel-Mac are omitted because it ships no wheels
+        # there (a source build would just reproduce #578). Snapshot
         # tolerances absorb cross-platform BLAS/FMA drift, so floating -latest
         # images are fine and no second macOS-version runner is needed.
         os: [ubuntu-latest, windows-latest, macos-latest]

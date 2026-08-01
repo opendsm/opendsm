@@ -20,9 +20,6 @@ classifiers = [
 ]
 
 dependencies = [
-  "fdasrsf>=2.4.1",
-  # "fdasrsf>=2.4.1,<=2.5.2", # library broken on higher versions. Issue tracked here https://github.com/jdtuck/fdasrsf_python/issues/41
-  # "mkl-devel",  # needed for fdasrsf to work: https://github.com/jdtuck/fdasrsf_python/issues/41
   "nlopt>=2.10",  # first release with cp313 / cp314 wheels
   "numba",
   "numpy>=1.24.4",
@@ -33,8 +30,7 @@ dependencies = [
   "pywavelets",
   "requests",
   "qpsolvers[highs]",
-  "scikit-fda>0.7.1",
-  "scikit-learn>=1.3.0",
+  "scikit-learn>=1.5.0",  # first release with the covariance_eigh PCA solver
   "scipy>=1.10.1",
   "statsmodels",
 ]

@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 
 from opendsm.common.clustering.transform import parallel_analysis as pa
+from opendsm.common.test_data import load_test_data
 
 
 
@@ -154,6 +155,89 @@ class TestComponentSelection:
         """When no component can be tested (n_max < 1) the floor of 1 applies."""
         single = np.random.default_rng(0).normal(0, 1, (50, 1))
         assert pa._parallel_analysis_n_components(single, method="pca", seed=0) == 1
+
+
+class TestFourierBasis:
+    """The basis must stay orthonormal: FPCA-as-PCA depends on it."""
+
+    @pytest.mark.parametrize("n_basis", [5, 9, 13, 21])
+    def test_basis_is_orthonormal_in_l2(self, n_basis):
+        """The L2 Gram matrix is the identity, so no Gram weighting is needed.
+
+        Quadrature on a fine grid stands in for the analytic inner product.
+        """
+        x = np.linspace(0.0, 1.0, 4001)
+        design = pa._fourier_design(x, n_basis)
+        gram = np.trapezoid(design[:, :, None] * design[:, None, :], x, axis=0)
+        np.testing.assert_allclose(
+            gram, np.eye(design.shape[1]), atol=1e-12,
+            err_msg="Fourier basis lost L2 orthonormality; FPCA can no longer "
+                    "reduce to PCA on the basis coefficients",
+        )
+
+    def test_even_n_basis_is_rounded_up(self):
+        """Sine/cosine terms only pair off at odd sizes, so 8 yields 9 columns."""
+        assert pa._fourier_design(np.arange(48), 8).shape[1] == 9
+
+    def test_integer_grid_is_promoted_to_float(self):
+        """``fpca_transform`` passes ``np.arange``; integer maths would zero the basis."""
+        design = pa._fourier_design(np.arange(24), 7)
+        assert design.dtype == np.float64
+        assert np.all(design[:, 0] != 0.0)
+
+
+class TestFpcaRegression:
+    """Values pinned from the bundled seasonal-hourly loadshape.
+
+    The recorded numbers come from the functional-PCA implementation these
+    helpers replaced, so a drift here means the transform changed behaviour.
+    """
+
+    @pytest.fixture(scope="class")
+    @classmethod
+    def loadshape(cls):
+        """First 200 meters of the real seasonal-hourly-day-of-week loadshape."""
+        df = load_test_data("seasonal_hourly_day_of_week_loadshape")
+        data = df.to_numpy(dtype=float)[:200]
+
+        return data
+
+    def test_explained_variance_matches_recorded_spectrum(self, loadshape):
+        """The retained variance spectrum is unchanged."""
+        expected = [
+            0.97572792048, 0.021075190686, 0.002041678573,
+            0.000661840778, 0.000308584399, 9.3366674e-05,
+        ]
+        actual = pa._fpca_explained_variance(loadshape, np.arange(loadshape.shape[1]), 6)
+        np.testing.assert_allclose(actual, expected, rtol=1e-6)
+
+    def test_transform_matches_recorded_scores(self, loadshape):
+        """Scores keep both magnitude and sign convention."""
+        expected = [
+            [-507.654806453, -177.194137477, -64.644063494, -28.377360186],
+            [-1875.158207141, -58.601913192, 31.757905136, 73.847300205],
+            [-911.7350883, -56.447863958, -80.121285112, 173.219428201],
+        ]
+        scores = pa._fpca_transform_with_n(np.arange(loadshape.shape[1]), loadshape, 4)
+        np.testing.assert_allclose(scores[:3, :4], expected, rtol=1e-7)
+
+    def test_parallel_analysis_selects_recorded_component_count(self, loadshape):
+        """The retained component count is the quantity clustering consumes."""
+        n = pa._parallel_analysis_n_components(
+            loadshape, method="fpca", grid_points=np.arange(loadshape.shape[1]), seed=0,
+        )
+        assert n == 2, f"expected 2 retained components, got {n}"
+
+    def test_transform_is_reproducible(self, loadshape):
+        """Guards against an SVD solver that samples a random subspace."""
+        x = np.arange(loadshape.shape[1])
+        first = pa._fpca_transform_with_n(x, loadshape, 4)
+        second = pa._fpca_transform_with_n(x, loadshape, 4)
+        np.testing.assert_array_equal(
+            first, second,
+            err_msg="FPCA scores differ between identical calls; the PCA solver "
+                    "is no longer deterministic",
+        )
 
 
 if __name__ == "__main__":

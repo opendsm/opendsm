@@ -16,11 +16,63 @@ from __future__ import annotations
 
 import numpy as np
 
-from skfda.representation.grid import FDataGrid as _FDataGrid
-from skfda.representation.basis import FourierBasis as _FourierBasis
-from skfda.preprocessing.dim_reduction import FPCA as _FPCA
-
 from sklearn.decomposition import PCA
+
+
+
+# ---------------------------------------------------------------------------
+# Fourier basis
+# ---------------------------------------------------------------------------
+
+def _fourier_design(x: np.ndarray, n_basis: int) -> np.ndarray:
+    """Orthonormal Fourier basis evaluated on ``x``, one column per function.
+
+    The period is the span of ``x``.  An even ``n_basis`` is rounded up, since
+    the sine/cosine terms only pair off at odd sizes.
+    """
+    x = np.asarray(x, dtype=float)
+    n_basis += 1 - n_basis % 2
+    period = x[-1] - x[0]
+
+    columns = [np.full_like(x, 1.0 / np.sqrt(period))]
+    k = 1
+    while len(columns) < n_basis:
+        w = 2.0 * np.pi * k / period
+        columns.append(np.sqrt(2.0 / period) * np.sin(w * x))
+
+        if len(columns) < n_basis:
+            columns.append(np.sqrt(2.0 / period) * np.cos(w * x))
+        k += 1
+    design = np.column_stack(columns)
+
+    return design
+
+
+def _fourier_coefficient_map(x: np.ndarray, n_basis: int) -> np.ndarray:
+    """Least-squares map from samples on the grid ``x`` to Fourier coefficients.
+
+    Depends only on the grid and the basis size, so callers that transform many
+    curve sets on one grid build it once and reuse it.
+    """
+    coefficient_map = np.linalg.pinv(_fourier_design(x, n_basis))
+
+    return coefficient_map
+
+
+def _fpca_eigenvalues(y: np.ndarray, coefficient_map: np.ndarray) -> np.ndarray:
+    """Descending eigenvalues of the Fourier-coefficient covariance.
+
+    The Fourier basis is orthonormal, so its Gram matrix is the identity and
+    functional PCA reduces to ordinary PCA on the basis coefficients.  Any
+    non-orthonormal basis would need the coefficients weighted by the Cholesky
+    factor of the Gram matrix first.
+    """
+    coefficients = (coefficient_map @ y.T).T
+    centered = coefficients - coefficients.mean(axis=0)
+    covariance = centered.T @ centered / (len(centered) - 1)
+    eigenvalues = np.linalg.eigvalsh(covariance)[::-1]
+
+    return np.maximum(eigenvalues, 0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -33,6 +85,7 @@ def _sigmoid_scalar(x: float, x0: float, k: float) -> float:
     if z >= 0:
         return 1.0 / (1.0 + np.exp(-z))
     ez = np.exp(z)
+
     return ez / (ez + 1.0)
 
 
@@ -67,22 +120,28 @@ def _fpca_explained_variance(
     Used for both the variance-ratio threshold in ``_fpca_base`` and the
     parallel analysis null distribution in ``_parallel_analysis_n_components``.
     """
-    n_basis = n_max + 4
-    fd = _FDataGrid(grid_points=x, data_matrix=y)
-    basis_fd = fd.to_basis(_FourierBasis(n_basis=n_basis))
-    fpca = _FPCA(n_components=n_max, components_basis=_FourierBasis(n_basis=n_basis))
-    fpca.fit(basis_fd)
-    return np.asarray(fpca.explained_variance_ratio_)
+    eigenvalues = _fpca_eigenvalues(y, _fourier_coefficient_map(x, n_max + 4))
+    total = eigenvalues.sum()
+
+    if total < 1e-10:
+        return np.zeros(n_max)
+    ratios = eigenvalues[:n_max] / total
+
+    return ratios
 
 
 def _fpca_transform_with_n(x: np.ndarray, y: np.ndarray, n: int) -> np.ndarray:
-    """Fit FPCA with exactly n components and return the transformed features."""
-    n_basis = n + 4
-    fd = _FDataGrid(grid_points=x, data_matrix=y)
-    basis_fd = fd.to_basis(_FourierBasis(n_basis=n_basis))
-    fpca = _FPCA(n_components=n, components_basis=_FourierBasis(n_basis=n_basis))
-    fpca.fit(basis_fd)
-    return fpca.transform(basis_fd)
+    """Fit FPCA with exactly n components and return the transformed features.
+
+    ``covariance_eigh`` is requested explicitly because the default ``auto``
+    solver selects randomised SVD at the shapes this path produces, which is
+    seeded by ``random_state`` and would make the scores non-reproducible.
+    """
+    coefficients = (_fourier_coefficient_map(x, n + 4) @ y.T).T
+    fpca = PCA(n_components=n, svd_solver="covariance_eigh")
+    scores = fpca.fit_transform(coefficients)
+
+    return scores
 
 
 def _compute_pa_eigenvalues(
@@ -90,18 +149,25 @@ def _compute_pa_eigenvalues(
     method: str,
     grid_points: np.ndarray | None,
     n_max: int,
+    coefficient_map: np.ndarray | None = None,
 ) -> np.ndarray:
     """Compute eigenvalues for parallel analysis, normalised to sum to 1.
 
     Returns an array of length n_max.  Any trailing components beyond what
     the decomposition produces are zero-padded.
+
+    ``coefficient_map`` is the FPCA basis map for ``grid_points``; it is built
+    here when omitted, and passed in by the permutation loop so the
+    pseudo-inverse is factored once rather than per permutation.
     """
     if method == "pca":
         pca = PCA(n_components=None)
         pca.fit(flat)
         eigs = pca.explained_variance_
     elif method == "fpca":
-        eigs = _fpca_explained_variance(flat, grid_points, n_max)
+        if coefficient_map is None:
+            coefficient_map = _fourier_coefficient_map(grid_points, n_max + 4)
+        eigs = _fpca_eigenvalues(flat, coefficient_map)
     else:
         raise ValueError(f"Unknown PA method: {method!r}")
 
@@ -112,6 +178,7 @@ def _compute_pa_eigenvalues(
     total = result.sum()
     if total < 1e-10:
         return result
+
     return result / total
 
 
@@ -177,7 +244,10 @@ def _parallel_analysis_n_components(
     """
     rng = np.random.RandomState(seed)
 
-    flat = np.hstack(features) if isinstance(features, list) else features
+    if isinstance(features, list):
+        flat = np.hstack(features)
+    else:
+        flat = features
     n_samples, n_features = flat.shape
 
     if method == "fpca":
@@ -191,7 +261,12 @@ def _parallel_analysis_n_components(
     n_B = _pa_n_permutations(n_samples)
     pct = _pa_percentile(n_samples)
 
-    actual = _compute_pa_eigenvalues(flat, method, grid_points, n_max)
+    # Column shuffling preserves the shape, so every permutation shares this map.
+    coefficient_map = None
+    if method == "fpca":
+        coefficient_map = _fourier_coefficient_map(grid_points, n_max + 4)
+
+    actual = _compute_pa_eigenvalues(flat, method, grid_points, n_max, coefficient_map)
 
     null = np.zeros((n_B, n_max))
     for i in range(n_B):
@@ -212,10 +287,11 @@ def _parallel_analysis_n_components(
             continue
 
         null_eigs = _compute_pa_eigenvalues(
-            perm_flat, method, grid_points, null_n_max
+            perm_flat, method, grid_points, null_n_max, coefficient_map
         )
         n_fill = min(null_n_max, n_max)
         null[i, :n_fill] = null_eigs[:n_fill]
 
     threshold = np.percentile(null, pct, axis=0)
+
     return max(1, int(np.sum(actual > threshold)))
