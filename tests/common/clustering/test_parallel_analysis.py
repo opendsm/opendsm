@@ -87,16 +87,16 @@ class TestSigmoidScalar:
 
 
 class TestEigenvalues:
-    """``_compute_pa_eigenvalues`` returns a normalised, padded spectrum."""
+    """``_normalised_spectrum`` returns a normalised, padded spectrum."""
 
     def test_sums_to_one(self):
         """Non-degenerate eigenvalues are normalised to sum to 1."""
-        eigs = pa._compute_pa_eigenvalues(_blobs(3), "pca", None, n_max=10)
+        eigs = pa._normalised_spectrum(pa._pca_spectrum(_blobs(3)), n_max=10)
         assert float(eigs.sum()) == pytest.approx(1.0)
 
     def test_length_is_n_max_zero_padded(self):
         """Output length equals n_max regardless of available components."""
-        eigs = pa._compute_pa_eigenvalues(_blobs(2), "pca", None, n_max=15)
+        eigs = pa._normalised_spectrum(pa._pca_spectrum(_blobs(2)), n_max=15)
         assert eigs.shape == (15,)
 
     @pytest.mark.filterwarnings("ignore:invalid value encountered in divide:RuntimeWarning")
@@ -106,13 +106,22 @@ class TestEigenvalues:
         sklearn PCA emits a benign 0/0 divide warning on constant input; the
         near-zero-total guard then returns the un-normalised (all-zero) array.
         """
-        eigs = pa._compute_pa_eigenvalues(np.ones((50, 20)), "pca", None, n_max=10)
+        eigs = pa._normalised_spectrum(pa._pca_spectrum(np.ones((50, 20))), n_max=10)
         assert float(eigs.sum()) == 0.0
 
-    def test_unknown_method_raises(self):
-        """An unrecognised decomposition method is rejected."""
-        with pytest.raises(ValueError, match="Unknown PA method"):
-            pa._compute_pa_eigenvalues(_blobs(2), "lda", None, n_max=5)
+
+class TestPcaSpectrum:
+    """``_pca_spectrum`` is the default decomposition Horn's method assumes."""
+
+    def test_truncated_to_supported_component_count(self):
+        """Length is min(n_samples - 1, n_features), not min(n_samples, n_features)."""
+        spectrum = pa._pca_spectrum(_blobs(1, n=8, d=20))
+        assert len(spectrum) == 7
+
+    def test_eigenvalues_are_descending(self):
+        """Parallel analysis compares rank-for-rank, so order matters."""
+        spectrum = pa._pca_spectrum(_blobs(3))
+        assert np.all(np.diff(spectrum) <= 0), f"not descending: {spectrum}"
 
 
 class TestBlockPermute:
@@ -140,104 +149,22 @@ class TestComponentSelection:
 
     def test_deterministic_under_seed(self):
         """Same seed and data -> identical component count."""
-        a = pa._parallel_analysis_n_components(_blobs(3), method="pca", seed=7)
-        b = pa._parallel_analysis_n_components(_blobs(3), method="pca", seed=7)
+        a = pa._parallel_analysis_n_components(_blobs(3), seed=7)
+        b = pa._parallel_analysis_n_components(_blobs(3), seed=7)
         assert a == b
 
     def test_always_at_least_one(self):
         """The retained count is floored at 1 for structured and noise inputs."""
         rng = np.random.default_rng(0)
         noise = rng.normal(0, 1, (100, 20))
-        assert pa._parallel_analysis_n_components(_blobs(3), method="pca", seed=0) >= 1
-        assert pa._parallel_analysis_n_components(noise, method="pca", seed=0) >= 1
+        assert pa._parallel_analysis_n_components(_blobs(3), seed=0) >= 1
+        assert pa._parallel_analysis_n_components(noise, seed=0) >= 1
 
     def test_single_feature_returns_one(self):
         """When no component can be tested (n_max < 1) the floor of 1 applies."""
         single = np.random.default_rng(0).normal(0, 1, (50, 1))
-        assert pa._parallel_analysis_n_components(single, method="pca", seed=0) == 1
+        assert pa._parallel_analysis_n_components(single, seed=0) == 1
 
-
-class TestFourierBasis:
-    """The basis must stay orthonormal: FPCA-as-PCA depends on it."""
-
-    @pytest.mark.parametrize("n_basis", [5, 9, 13, 21])
-    def test_basis_is_orthonormal_in_l2(self, n_basis):
-        """The L2 Gram matrix is the identity, so no Gram weighting is needed.
-
-        Quadrature on a fine grid stands in for the analytic inner product.
-        """
-        x = np.linspace(0.0, 1.0, 4001)
-        design = pa._fourier_design(x, n_basis)
-        gram = np.trapezoid(design[:, :, None] * design[:, None, :], x, axis=0)
-        np.testing.assert_allclose(
-            gram, np.eye(design.shape[1]), atol=1e-12,
-            err_msg="Fourier basis lost L2 orthonormality; FPCA can no longer "
-                    "reduce to PCA on the basis coefficients",
-        )
-
-    def test_even_n_basis_is_rounded_up(self):
-        """Sine/cosine terms only pair off at odd sizes, so 8 yields 9 columns."""
-        assert pa._fourier_design(np.arange(48), 8).shape[1] == 9
-
-    def test_integer_grid_is_promoted_to_float(self):
-        """``fpca_transform`` passes ``np.arange``; integer maths would zero the basis."""
-        design = pa._fourier_design(np.arange(24), 7)
-        assert design.dtype == np.float64
-        assert np.all(design[:, 0] != 0.0)
-
-
-class TestFpcaRegression:
-    """Values pinned from the bundled seasonal-hourly loadshape.
-
-    The recorded numbers come from the functional-PCA implementation these
-    helpers replaced, so a drift here means the transform changed behaviour.
-    """
-
-    @pytest.fixture(scope="class")
-    @classmethod
-    def loadshape(cls):
-        """First 200 meters of the real seasonal-hourly-day-of-week loadshape."""
-        df = load_test_data("seasonal_hourly_day_of_week_loadshape")
-        data = df.to_numpy(dtype=float)[:200]
-
-        return data
-
-    def test_explained_variance_matches_recorded_spectrum(self, loadshape):
-        """The retained variance spectrum is unchanged."""
-        expected = [
-            0.97572792048, 0.021075190686, 0.002041678573,
-            0.000661840778, 0.000308584399, 9.3366674e-05,
-        ]
-        actual = pa._fpca_explained_variance(loadshape, np.arange(loadshape.shape[1]), 6)
-        np.testing.assert_allclose(actual, expected, rtol=1e-6)
-
-    def test_transform_matches_recorded_scores(self, loadshape):
-        """Scores keep both magnitude and sign convention."""
-        expected = [
-            [-507.654806453, -177.194137477, -64.644063494, -28.377360186],
-            [-1875.158207141, -58.601913192, 31.757905136, 73.847300205],
-            [-911.7350883, -56.447863958, -80.121285112, 173.219428201],
-        ]
-        scores = pa._fpca_transform_with_n(np.arange(loadshape.shape[1]), loadshape, 4)
-        np.testing.assert_allclose(scores[:3, :4], expected, rtol=1e-7)
-
-    def test_parallel_analysis_selects_recorded_component_count(self, loadshape):
-        """The retained component count is the quantity clustering consumes."""
-        n = pa._parallel_analysis_n_components(
-            loadshape, method="fpca", grid_points=np.arange(loadshape.shape[1]), seed=0,
-        )
-        assert n == 2, f"expected 2 retained components, got {n}"
-
-    def test_transform_is_reproducible(self, loadshape):
-        """Guards against an SVD solver that samples a random subspace."""
-        x = np.arange(loadshape.shape[1])
-        first = pa._fpca_transform_with_n(x, loadshape, 4)
-        second = pa._fpca_transform_with_n(x, loadshape, 4)
-        np.testing.assert_array_equal(
-            first, second,
-            err_msg="FPCA scores differ between identical calls; the PCA solver "
-                    "is no longer deterministic",
-        )
 
 
 if __name__ == "__main__":
