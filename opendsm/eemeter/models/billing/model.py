@@ -174,5 +174,6 @@ class BillingModel(DailyModel):
         """
         model_dict = super().to_dict()
         model_dict["settings"]["developer_mode"] = True
+        model_dict["model_type"] = "billing"
 
         return model_dict

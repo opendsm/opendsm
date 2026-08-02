@@ -65,6 +65,25 @@ def test_to_dict_sets_developer_mode(fitted_model):
     assert model_dict["settings"]["developer_mode"] is True
 
 
+def test_to_dict_tags_model_type_billing(fitted_model):
+    """to_dict tags a billing payload with model_type='billing', overriding the
+    inherited daily tag."""
+    model_dict = fitted_model.to_dict()
+
+    assert model_dict["model_type"] == "billing"
+
+
+def test_from_dict_round_trips_tagged_billing_payload(fitted_model):
+    """A billing-tagged payload round-trips through BillingModel.from_dict: the
+    tag is tolerated and the rebuilt model re-serialises with the same tag."""
+    model_dict = fitted_model.to_dict()
+
+    rebuilt = BillingModel.from_dict(model_dict)
+
+    assert isinstance(rebuilt, BillingModel)
+    assert rebuilt.to_dict()["model_type"] == "billing"
+
+
 # ---------------------------------------------------------------------------
 # aggregation arithmetic identity
 # ---------------------------------------------------------------------------
