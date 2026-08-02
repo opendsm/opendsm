@@ -47,6 +47,21 @@ def test_good_data(baseline, reporting):
     assert p1.equals(p2)
 
 
+def test_to_dict_tags_model_type_hourly(baseline):
+    """to_dict tags an hourly payload with model_type='hourly', and from_dict
+    tolerates the tag on a round trip."""
+    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
+    hm = HourlyModel().fit(baseline_data)
+
+    model_dict = hm.to_dict()
+
+    assert model_dict["model_type"] == "hourly"
+
+    rebuilt = HourlyModel.from_dict(model_dict)
+
+    assert rebuilt.to_dict()["model_type"] == "hourly"
+
+
 def test_misaligned_data(baseline, reporting):
     reporting.index = reporting.index.shift(8, freq="h")
     baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
