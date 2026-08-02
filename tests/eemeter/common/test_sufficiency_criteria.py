@@ -19,9 +19,12 @@ import pytest
 from opendsm.eemeter.common.data_settings import (
     BillingDataSufficiencySettings,
     DailyDataSufficiencySettings,
+    HourlyDataSufficiencySettings,
 )
 from opendsm.eemeter.common.sufficiency_criteria import (
     BillingSufficiencyCriteria,
+    DailySufficiencyCriteria,
+    HourlySufficiencyCriteria,
     SufficiencyCriteria,
 )
 
@@ -428,3 +431,102 @@ def test_fresh_instances_have_independent_result_lists():
 
     assert second.disqualification == []
     assert second.warnings == []
+
+
+# ---------------------------------------------------------------------------
+# reporting sufficiency auto-runs observed-facing checks when observed is
+# present (valid-days, unique-values), and still skips baseline day-length
+# and extreme-values on the reporting path regardless
+# ---------------------------------------------------------------------------
+
+_GRANULARITY_CLASSES = [
+    (SufficiencyCriteria, DailyDataSufficiencySettings),
+    (DailySufficiencyCriteria, DailyDataSufficiencySettings),
+    (HourlySufficiencyCriteria, HourlyDataSufficiencySettings),
+    (BillingSufficiencyCriteria, BillingDataSufficiencySettings),
+]
+
+_UNIQUE_VALUES_CLASSES = [
+    (DailySufficiencyCriteria, DailyDataSufficiencySettings),
+    (HourlySufficiencyCriteria, HourlyDataSufficiencySettings),
+]
+
+
+@pytest.mark.parametrize("cls, settings_cls", _GRANULARITY_CLASSES)
+def test_reporting_flags_observed_valid_days_when_coverage_insufficient(cls, settings_cls):
+    """Reporting observed below the daily-coverage floor is disqualified once observed is present."""
+    df = _daily_frame()
+    df.iloc[50:110, df.columns.get_loc("observed")] = np.nan
+    sc = cls(data=df, is_electricity_data=True, is_reporting_data=True, settings=settings_cls())
+
+    sc.check_sufficiency_reporting()
+
+    assert "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data" in _dq_names(sc)
+
+
+@pytest.mark.parametrize("cls, settings_cls", _UNIQUE_VALUES_CLASSES)
+def test_reporting_flags_unique_values_when_observed_flat(cls, settings_cls):
+    """A constant reporting observed series fails the unique-values floor once observed is present."""
+    df = _daily_frame()
+    df["observed"] = 5.0
+    sc = cls(data=df, is_electricity_data=True, is_reporting_data=True, settings=settings_cls())
+
+    sc.check_sufficiency_reporting()
+
+    assert "eemeter.sufficiency_criteria.insufficient_unique_observed_values" in _dq_names(sc)
+
+
+@pytest.mark.parametrize("cls, settings_cls", _GRANULARITY_CLASSES)
+def test_reporting_skips_observed_checks_for_all_nan_observed(cls, settings_cls):
+    """An all-NaN (prediction-only) reporting observed column triggers neither observed check."""
+    df = _daily_frame()
+    df["observed"] = np.nan
+    sc = cls(data=df, is_electricity_data=True, is_reporting_data=True, settings=settings_cls())
+
+    sc.check_sufficiency_reporting()
+
+    dq_names = _dq_names(sc)
+    assert "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data" not in dq_names
+    assert "eemeter.sufficiency_criteria.insufficient_unique_observed_values" not in dq_names
+
+
+def _frame_long_with_extreme_observed(n_days=400):
+    df = _daily_frame(n_days=n_days)
+    df.iloc[10, df.columns.get_loc("observed")] = 1e6
+
+    return df
+
+
+@pytest.mark.parametrize("cls, settings_cls", _GRANULARITY_CLASSES)
+def test_baseline_still_runs_day_length_and_extreme_values(cls, settings_cls):
+    """Sanity check: the frame below would fail baseline day-length and extreme-values.
+
+    Confirms the reporting-path skip asserted next is not a vacuous frame choice.
+    """
+    sc = cls(
+        data=_frame_long_with_extreme_observed(),
+        is_electricity_data=True,
+        is_reporting_data=False,
+        settings=settings_cls(),
+    )
+
+    sc.check_sufficiency_baseline()
+
+    assert "eemeter.sufficiency_criteria.incorrect_number_of_total_days" in _dq_names(sc)
+    assert "eemeter.sufficiency_criteria.extreme_values_detected" in _warning_names(sc)
+
+
+@pytest.mark.parametrize("cls, settings_cls", _GRANULARITY_CLASSES)
+def test_reporting_skips_day_length_and_extreme_values(cls, settings_cls):
+    """A large, extreme-valued reporting frame is not disqualified by baseline-only rules."""
+    sc = cls(
+        data=_frame_long_with_extreme_observed(),
+        is_electricity_data=True,
+        is_reporting_data=True,
+        settings=settings_cls(),
+    )
+
+    sc.check_sufficiency_reporting()
+
+    assert "eemeter.sufficiency_criteria.incorrect_number_of_total_days" not in _dq_names(sc)
+    assert "eemeter.sufficiency_criteria.extreme_values_detected" not in _warning_names(sc)
