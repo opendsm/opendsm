@@ -110,8 +110,6 @@ core = "sysmon"
 # uncovered even when exercised.
 omit = [
   ".tox/*",
-  # work-in-progress scratch, excluded from coverage rather than tested
-  "*/comparison_groups/savings/dev/*",
 ]
 
 [tool.coverage.report]
