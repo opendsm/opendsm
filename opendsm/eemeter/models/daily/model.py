@@ -334,7 +334,10 @@ class DailyModel:
         Returns:
             Model parameters.
         """
-        return self.params.model_dump()
+        model_dict = self.params.model_dump()
+        model_dict["model_type"] = "daily"
+
+        return model_dict
 
     def to_json(self) -> str:
         """Returns a JSON string of model parameters.
