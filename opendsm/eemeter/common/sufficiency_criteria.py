@@ -97,7 +97,7 @@ class SufficiencyCriteria(BaseSettings):
 
     def _should_skip_col(self, col: str) -> bool:
         """Check if a column-based check should be skipped."""
-        if self.is_reporting_data and col == "observed":
+        if self.is_reporting_data and col == "observed" and not self._has_observed_values:
             return True
         if col == "ghi" and not self._has_ghi:
             return True
@@ -114,6 +114,10 @@ class SufficiencyCriteria(BaseSettings):
     @computed_field_cached_property()
     def _has_ghi(self) -> bool:
         return "ghi" in self.data.columns
+
+    @computed_field_cached_property()
+    def _has_observed_values(self) -> bool:
+        return "observed" in self.data.columns and bool(self.data.observed.notnull().any())
 
     @computed_field_cached_property()
     def n_days_total(self) -> float:
@@ -161,7 +165,7 @@ class SufficiencyCriteria(BaseSettings):
 
         valid_rows = valid_temperature_rows
 
-        if not self.is_reporting_data:
+        if not self.is_reporting_data or self._has_observed_values:
             valid_observed_rows = self.data.observed.notnull()
             valid_rows = valid_rows & valid_observed_rows
             self._n_valid_observed_days = _valid_days(valid_observed_rows, step)
@@ -446,6 +450,7 @@ class SufficiencyCriteria(BaseSettings):
         self._check_negative_observed_values()
 
         self._check_valid_days_percentage(col="temperature")
+        self._check_valid_days_percentage(col="observed")
         self._check_valid_days_percentage(col="joint")
         self._check_valid_monthly_coverage(col="temperature")
 
@@ -503,6 +508,8 @@ class HourlySufficiencyCriteria(SufficiencyCriteria):
     def check_sufficiency_reporting(self):
         super().check_sufficiency_reporting()
 
+        self._check_unique_values(col="observed")
+
         self._check_valid_monthly_coverage(col="ghi")
 
 
@@ -535,6 +542,8 @@ class DailySufficiencyCriteria(SufficiencyCriteria):
 
     def check_sufficiency_reporting(self):
         super().check_sufficiency_reporting()
+
+        self._check_unique_values(col="observed")
 
 
 class BillingSufficiencyCriteria(SufficiencyCriteria):

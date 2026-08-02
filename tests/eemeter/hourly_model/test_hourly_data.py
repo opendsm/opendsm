@@ -1162,12 +1162,25 @@ class TestHourlySufficiencyCriteria:
             "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data",
         )
 
-    def test_observed_daily_coverage_reporting_skipped(self):
-        """Reporting exempt"""
+    def test_observed_daily_coverage_reporting_flagged(self):
+        """Reporting with observed present runs the coverage check"""
         df = create_hourly_dataframe(start="2019-01-01", end="2019-03-31")
         np.random.seed(57)
         mask = np.random.random(len(df)) < 0.15
         df.loc[mask, "observed"] = np.nan
+
+        reporting_data = HourlyReportingData(df=df, is_electricity_data=True)
+
+        dq_names = [dq.qualified_name for dq in reporting_data.disqualification]
+        assert (
+            "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data"
+            in dq_names
+        )
+
+    def test_observed_daily_coverage_reporting_skipped_when_all_nan(self):
+        """Prediction-only reporting (all-NaN observed) does not run the coverage check"""
+        df = create_hourly_dataframe(start="2019-01-01", end="2019-03-31")
+        df = df.drop(columns=["observed"])
 
         reporting_data = HourlyReportingData(df=df, is_electricity_data=True)
 
@@ -1589,10 +1602,23 @@ class TestHourlySufficiencyCriteria:
             "eemeter.sufficiency_criteria.insufficient_unique_observed_values",
         )
 
-    def test_unique_observed_reporting_skipped(self):
-        """Reporting exempt"""
+    def test_unique_observed_reporting_flagged_when_observed_present(self):
+        """Reporting with observed present runs the uniqueness check"""
         df = create_hourly_dataframe(start="2019-01-01", end="2019-03-31")
-        df = create_repeated_values(df, 0.76)
+        df = create_repeated_values(df, 0.91)
+
+        reporting_data = HourlyReportingData(df=df, is_electricity_data=True)
+
+        assert_has_disqualification(
+            reporting_data,
+            "eemeter.sufficiency_criteria.insufficient_unique_observed_values",
+        )
+
+    def test_unique_observed_reporting_skipped_when_all_nan(self):
+        """Prediction-only reporting (all-NaN observed) does not run the uniqueness check"""
+        df = create_hourly_dataframe(start="2019-01-01", end="2019-03-31")
+        df = create_repeated_values(df, 0.91)
+        df = df.drop(columns=["observed"])
 
         reporting_data = HourlyReportingData(df=df, is_electricity_data=True)
 
