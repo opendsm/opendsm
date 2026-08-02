@@ -1230,11 +1230,28 @@ def BaselineMetricsFromDict(input_dict: dict) -> BaselineMetrics:
     BaselineMetrics
         Constructed BaselineMetrics instance.
     """
-    for k in ["observed", "predicted", "residuals"]:
-        if k in input_dict:
-            input_dict[k] = PydanticFromDict(input_dict[k], name="ColumnMetrics")
+    # model_construct builds genuine instances without running the from-dataframe
+    # validators, so a deserialized model re-serializes through SerializeModel's
+    # isinstance validation. Computed fields are cached_property based; priming the
+    # instance __dict__ with the dumped values keeps them as data, since recomputing
+    # would need the excluded dataframe.
+    def _construct(cls, data):
+        fields = {k: v for k, v in data.items() if k in cls.model_fields}
+        computed = {k: v for k, v in data.items() if k in cls.model_computed_fields}
+        instance = cls.model_construct(**fields)
+        instance.__dict__.update(computed)
 
-    return PydanticFromDict(input_dict, name="BaselineMetrics")
+        return instance
+
+    values = dict(input_dict)
+
+    for k in ["observed", "predicted", "residuals"]:
+        if k in values and isinstance(values[k], dict):
+            values[k] = _construct(ColumnMetrics, values[k])
+
+    result = _construct(BaselineMetrics, values)
+
+    return result
 
 
 class ModelChoice(str, Enum):
