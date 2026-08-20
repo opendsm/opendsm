@@ -123,13 +123,14 @@ def test_linear_fit():
     assert slope == res[0]
     assert intercept == res[1]
 
-    # Test case 3: Test with alpha = 2 and identical observations
+    # Test case 3: Test with alpha = 2 and identical observations.
+    # linear_fit short-circuits identical x itself, so linregress is never
+    # reached; how scipy reacts to that input is not this package's contract
+    # and has changed between releases.
     x = np.array([10, 10, 10, 10, 10])
     y = np.array([2, 4, 6, 8, 10])
     alpha = 2
     slope, intercept = linear_fit(x, y, alpha)
-    with pytest.raises(ValueError):
-        res = linregress(x, y)
     assert slope == 0
     assert intercept == x[0]
 

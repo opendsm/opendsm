@@ -20,9 +20,7 @@ classifiers = [
 ]
 
 dependencies = [
-  "fdasrsf>=2.4.1",
-  # "fdasrsf>=2.4.1,<=2.5.2", # library broken on higher versions. Issue tracked here https://github.com/jdtuck/fdasrsf_python/issues/41
-  # "mkl-devel",  # needed for fdasrsf to work: https://github.com/jdtuck/fdasrsf_python/issues/41
+  "matplotlib",  # imported at module scope by the plotting and diagnostics modules
   "nlopt>=2.10",  # first release with cp313 / cp314 wheels
   "numba",
   "numpy>=1.24.4",
@@ -33,10 +31,10 @@ dependencies = [
   "pywavelets",
   "requests",
   "qpsolvers[highs]",
-  "scikit-fda>0.7.1",
-  "scikit-learn>=1.3.0",
+  "scikit-learn>=1.5.0",  # first release with the covariance_eigh PCA solver
   "scipy>=1.10.1",
   "statsmodels",
+  "threadpoolctl>=3.2.0",
 ]
 
 [project.optional-dependencies]
@@ -78,6 +76,11 @@ Issues = "https://github.com/opendsm/opendsm/issues"
 addopts = [
   "-n", "auto",            # parallel run (pytest-xdist)
   "-vv",                   # verbose
+  # The regression snapshots are split by platform (`SNAP_SUFFIX`), so the
+  # variants for the other platform are always unused and syrupy would
+  # otherwise fail the run. Deleting them is not an option: each set is the
+  # one in use on its own platform. Mismatches remain fatal.
+  "--snapshot-warn-unused",
   # "--cov=./",
   # "--cov-report", "term-missing",
 ]

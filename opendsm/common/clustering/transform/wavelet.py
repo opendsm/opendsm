@@ -27,6 +27,7 @@ from opendsm.common.clustering import settings as _settings
 from opendsm.common.clustering.transform.normalize import normalize
 from opendsm.common.clustering.transform.parallel_analysis import (
     _parallel_analysis_n_components,
+    _pca_spectrum,
 )
 
 
@@ -110,7 +111,7 @@ def _reduce_single_subband(
 
     max_components = min(n_samples - 1, n_coeffs)
     if n_components == "parallel_analysis":
-        n = _parallel_analysis_n_components(band, method="pca", seed=seed or 0)
+        n = _parallel_analysis_n_components(band, _pca_spectrum, seed=seed or 0)
         n = min(n, max_components)
         pca = PCA(n_components=n, random_state=random_state)
     elif isinstance(n_components, int):
@@ -184,7 +185,7 @@ def _reduce_wavelet_subbands(
     random_state = int(seed) if seed is not None else None
 
     if n_components == "parallel_analysis":
-        n = _parallel_analysis_n_components(subbands, method="pca", seed=seed or 0)
+        n = _parallel_analysis_n_components(subbands, _pca_spectrum, seed=seed or 0)
         pca = PCA(n_components=n, random_state=random_state)
     elif n_components is not None:
         pca = PCA(n_components=n_components, random_state=random_state)

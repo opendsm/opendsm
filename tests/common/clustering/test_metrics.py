@@ -1296,7 +1296,8 @@ class TestSingletonIndexBehavior:
     """Verify that singleton clusters are handled correctly by all indices."""
 
     @pytest.fixture(scope="class")
-    def singleton_lm(self):
+    @classmethod
+    def singleton_lm(cls):
         """k=3 labeling with 5+1+1: clusters 1 and 2 are singletons."""
         rng = np.random.default_rng(42)
         X = np.vstack([
@@ -1305,6 +1306,7 @@ class TestSingletonIndexBehavior:
             np.array([[30.0, 30.0]]),
         ])
         labels = np.array([0, 0, 0, 0, 0, 1, 2])
+
         return SingleKMetrics(data=X, labels=labels)
 
     def test_silhouette_zero_for_singleton_points(self, singleton_lm):
@@ -1495,11 +1497,13 @@ class TestValidityIndexMonotonicity:
     """
 
     @pytest.fixture(scope="class")
-    def low_sep(self):
+    @classmethod
+    def low_sep(cls):
         return _blob_lm(sep=2.0)
 
     @pytest.fixture(scope="class")
-    def high_sep(self):
+    @classmethod
+    def high_sep(cls):
         return _blob_lm(sep=30.0)
 
     @pytest.mark.parametrize("index", _SEPARATION_MONOTONE_INDICES)

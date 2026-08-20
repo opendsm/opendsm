@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from math import ceil
+from threadpoolctl import threadpool_info
 
 
 
@@ -286,3 +287,40 @@ def test_hourly_dict_settings():
     m = HourlyModel(settings={"cvrmse_threshold": 1.0})
     assert isinstance(m.settings, BaseHourlySettings)
     assert m.settings.train_features == None
+
+
+class TestBlasThreadLimit:
+    """Fitting and predicting run with the native thread pools pinned to one.
+
+    Setting the ``*_NUM_THREADS`` environment variables cannot do this: the
+    native pools read them when they load, on the first numpy import, long
+    before any opendsm module runs.
+    """
+
+    def test_pools_are_single_threaded_during_fit(self, baseline, monkeypatch):
+        """Every native pool reports one thread while the model is fitting."""
+        baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
+        seen = []
+        original = HourlyModel._prepare_features
+
+        def spy(self, meter_data):
+            seen.append([info["num_threads"] for info in threadpool_info()])
+
+            return original(self, meter_data)
+
+        monkeypatch.setattr(HourlyModel, "_prepare_features", spy)
+        HourlyModel().fit(baseline_data)
+
+        assert seen, "_prepare_features was never called; the spy missed the fit path"
+        for counts in seen:
+            assert set(counts) == {1}, (
+                f"expected every native pool pinned to 1 thread during fit, got {counts}"
+            )
+
+    def test_limit_does_not_leak_past_fit(self, baseline):
+        """The cap is scoped, so the caller's threading is restored afterwards."""
+        baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
+        before = [info["num_threads"] for info in threadpool_info()]
+        HourlyModel().fit(baseline_data)
+        after = [info["num_threads"] for info in threadpool_info()]
+        assert before == after, f"thread limits leaked out of fit: {before} -> {after}"

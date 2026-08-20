@@ -14,12 +14,6 @@
 
 from __future__ import annotations
 
-import os
-
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-
 import re
 
 import numpy as np
@@ -36,6 +30,8 @@ from scipy.sparse import csr_matrix
 
 from sklearn.linear_model import ElasticNet, Ridge
 from sklearn.kernel_ridge import KernelRidge
+
+from threadpoolctl import threadpool_limits
 
 import json
 
@@ -447,23 +443,27 @@ class HourlyModel:
     def _fit(self, meter_data):
         self._is_fit = False
 
-        # Initialize dataframe
-        df_meter = meter_data.df  # used to have a copy here
-        self.baseline_timezone = meter_data.tz
+        # Single-threaded BLAS: the matrices here are small enough that thread
+        # overhead dominates, and callers commonly fit many meters in parallel
+        # processes, where nested threading oversubscribes the machine.
+        with threadpool_limits(limits=1):
+            # Initialize dataframe
+            df_meter = meter_data.df  # used to have a copy here
+            self.baseline_timezone = meter_data.tz
 
-        # Prepare feature arrays/matrices
-        X, y, fit_mask = self._prepare_features(df_meter)
-        X_fit = X[fit_mask, :]
-        y_fit = y[fit_mask]
+            # Prepare feature arrays/matrices
+            X, y, fit_mask = self._prepare_features(df_meter)
+            X_fit = X[fit_mask, :]
+            y_fit = y[fit_mask]
 
-        # fit the model
-        self._model.fit(X_fit, y_fit)
-        self._is_fit = True
+            # fit the model
+            self._model.fit(X_fit, y_fit)
+            self._is_fit = True
 
-        # get model prediction of baseline
-        df_meter = self._predict(meter_data, X=X)
+            # get model prediction of baseline
+            df_meter = self._predict(meter_data, X=X)
 
-        self._set_baseline_metrics(df_meter, X_fit=X_fit)
+            self._set_baseline_metrics(df_meter, X_fit=X_fit)
 
         return self
 
@@ -529,29 +529,30 @@ class HourlyModel:
             pandas.DataFrame: The evaluation dataframe with model predictions added.
         """
 
-        df_eval = eval_data.df  # used to have a copy here
-        dst_indices = _get_dst_indices(df_eval)
-        datetime_original = df_eval.index
-        # get list of columns to keep in output
-        columns = df_eval.columns.tolist()
-        if "datetime" in columns:
-            columns.remove("datetime")  # index in output, not column
+        with threadpool_limits(limits=1):
+            df_eval = eval_data.df  # used to have a copy here
+            dst_indices = _get_dst_indices(df_eval)
+            datetime_original = df_eval.index
+            # get list of columns to keep in output
+            columns = df_eval.columns.tolist()
+            if "datetime" in columns:
+                columns.remove("datetime")  # index in output, not column
 
-        if X is None:
-            X, _, _ = self._prepare_features(df_eval)
+            if X is None:
+                X, _, _ = self._prepare_features(df_eval)
 
-        y_predict = self._y_scaler.inverse_transform(self._model.predict(X)).flatten()
+            y_predict = self._y_scaler.inverse_transform(self._model.predict(X)).flatten()
 
-        y_predict = _transform_dst(y_predict, dst_indices)
+            y_predict = _transform_dst(y_predict, dst_indices)
 
-        df_eval["predicted"] = y_predict
-        df_eval = self._calculate_predicted_uncertianty(df_eval)
+            df_eval["predicted"] = y_predict
+            df_eval = self._calculate_predicted_uncertianty(df_eval)
 
-        # remove columns not in original columns and predicted
-        df_eval = df_eval[[*columns, "predicted", "predicted_unc"]]
+            # remove columns not in original columns and predicted
+            df_eval = df_eval[[*columns, "predicted", "predicted_unc"]]
 
-        # reindex to original datetime index
-        df_eval = df_eval.reindex(datetime_original)
+            # reindex to original datetime index
+            df_eval = df_eval.reindex(datetime_original)
 
         return df_eval
 
