@@ -30,7 +30,7 @@ def daily_series(comstock_daily):
     """(meter_df, temperature_series) extracted from ComStock daily baseline."""
     df_b, _ = comstock_daily
     meter = df_b[["observed"]].rename(columns={"observed": "value"}).copy()
-    meter.index = meter.index.tz_convert("US/Pacific")
+    meter.index = meter.index.tz_convert("America/Los_Angeles")
     temp = df_b["temperature"].copy()
     temp.index = temp.index.tz_convert("UTC")
 
@@ -83,7 +83,7 @@ def test_timezone_behavior(daily_series):
     # TODO probably move some of this to dataclass tests
     meter, temp = daily_series
     # ensure that meter is using local tz
-    assert str(meter.index.tz) == "US/Pacific"
+    assert str(meter.index.tz) == "America/Los_Angeles"
     assert str(temp.index.tz) == "UTC"
 
     baseline_data = DailyBaselineData.from_series(meter, temp, is_electricity_data=True)

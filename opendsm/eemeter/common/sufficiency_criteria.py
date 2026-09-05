@@ -15,11 +15,11 @@
 from __future__ import annotations
 
 import math
+from datetime import timezone
 from typing import Literal
 
 import numpy as np
 import pandas as pd
-import pytz
 
 import pydantic
 
@@ -99,12 +99,12 @@ class SufficiencyCriteria(BaseSettings):
 
         n_days_start_gap = 0
         if requested_start is not None:
-            requested_start = requested_start.astimezone(pytz.UTC)
+            requested_start = requested_start.astimezone(timezone.utc)
             n_days_start_gap = (data_start - requested_start).days
 
         n_days_end_gap = 0
         if requested_end is not None:
-            requested_end = requested_end.astimezone(pytz.UTC)
+            requested_end = requested_end.astimezone(timezone.utc)
             n_days_end_gap = (requested_end - data_end).days
 
         return n_days_data + n_days_start_gap + n_days_end_gap

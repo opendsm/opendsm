@@ -13,8 +13,11 @@
 #  limitations under the License.
 
 from io import StringIO
+from warnings import catch_warnings, simplefilter
+
 import pandas as pd
 import statsmodels.formula.api as smf
+from statsmodels.tools.sm_exceptions import SingularMatrixWarning
 
 from opendsm.eemeter.common.features import (
     compute_occupancy_feature,
@@ -529,6 +532,7 @@ def fit_caltrack_hourly_model_segment(segment_name, segment_data):
     warnings = []
     if segment_data.dropna().empty:
         model = None
+        fit_result = None
         formula = None
         model_params = None
         warnings.append(
@@ -561,7 +565,13 @@ def fit_caltrack_hourly_model_segment(segment_name, segment_data):
             ordered=False,
         )
         model = smf.wls(formula=formula, data=segment_data, weights=segment_data.weight)
-        model_params = {coeff: value for coeff, value in model.fit().params.items()}
+        # the segment design is rank-deficient by construction: temperature bins the
+        # segment never reaches are all-zero columns, resolved by the pseudo-inverse
+        with catch_warnings():
+            simplefilter("ignore", SingularMatrixWarning)
+            fit_result = model.fit()
+
+        model_params = {coeff: value for coeff, value in fit_result.params.items()}
 
     segment_model = CalTRACKSegmentModel(
         segment_name=segment_name,
@@ -572,7 +582,7 @@ def fit_caltrack_hourly_model_segment(segment_name, segment_data):
     )
     if model:
         this_segment_data = segment_data[segment_data.weight == 1]
-        predicted_value = pd.Series(model.fit().predict(this_segment_data))
+        predicted_value = pd.Series(fit_result.predict(this_segment_data))
         segment_model.totals_metrics = ModelMetrics(
             this_segment_data.meter_value, predicted_value, len(model_params)
         )

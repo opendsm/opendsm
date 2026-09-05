@@ -34,7 +34,7 @@ def get_datetime_index(request):
         end="2024-01-01",
         inclusive="left",
         freq=request.param[0],
-        tz="US/Eastern" if request.param[1] else None,
+        tz="America/New_York" if request.param[1] else None,
     )
 
     return datetime_index
@@ -48,7 +48,7 @@ def get_datetime_index_half_hourly_with_timezone():
         end="2024-01-01",
         inclusive="left",
         freq="30min",
-        tz="US/Eastern",
+        tz="America/New_York",
     )
 
     return datetime_index
@@ -62,7 +62,7 @@ def get_datetime_index_hourly_with_timezone():
         end="2024-01-01",
         inclusive="left",
         freq="h",
-        tz="US/Eastern",
+        tz="America/New_York",
     )
 
     return datetime_index
@@ -76,7 +76,7 @@ def get_datetime_index_daily_with_timezone():
         end="2024-01-01",
         inclusive="left",
         freq="D",
-        tz="US/Eastern",
+        tz="America/New_York",
     )
 
     return datetime_index
@@ -637,7 +637,7 @@ def test_duplicate_datetime_index_values():
     timestamp = pd.Timestamp("2023-01-01")
 
     # Create an Index with 365 identical timestamps
-    datetime_index = pd.DatetimeIndex([timestamp] * 365, tz="US/Eastern")
+    datetime_index = pd.DatetimeIndex([timestamp] * 365, tz="America/New_York")
 
     # Create random values for 'observed' and 'temperature'
     observed = np.random.rand(len(datetime_index))
@@ -728,7 +728,7 @@ def test_daily_reporting_data_with_missing_half_hourly_and_hourly_frequencies(
 def test_daily_reporting_data_high_frequency_temperature_warning_gives_proper_results():
 
     datetime_index = pd.date_range(
-        "2023-01-01", "2023-01-08", freq="h", tz="US/Eastern"
+        "2023-01-01", "2023-01-08", freq="h", tz="America/New_York"
     )
     np.random.seed(TEMPERATURE_SEED)
     # Create a 'temperature_mean' and meter_value columns with random data
@@ -811,7 +811,7 @@ def baseline_data_daily_params(comstock_daily, comstock_hourly):
 
 @pytest.mark.parametrize(
     ["tz", "hour"],
-    [["US/Pacific", 3], ["US/Eastern", 8], ["Europe/London", 13]],
+    [["America/Los_Angeles", 3], ["America/New_York", 8], ["Europe/London", 13]],
     ids=["pacific_3", "eastern_8", "london_13"],
 )
 def test_offset_temperature_aggregations(baseline_data_daily_params, tz, hour, snapshot):

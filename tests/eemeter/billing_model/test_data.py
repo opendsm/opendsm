@@ -36,7 +36,7 @@ def get_datetime_index(request):
         end="2024-01-01",
         inclusive=inclusive,
         freq=request.param[0],
-        tz="US/Eastern" if request.param[1] else None,
+        tz="America/New_York" if request.param[1] else None,
     )
 
     return datetime_index
@@ -50,7 +50,7 @@ def get_datetime_index_half_hourly_with_timezone():
         end="2024-01-01",
         inclusive="left",
         freq="30min",
-        tz="US/Eastern",
+        tz="America/New_York",
     )
 
     return datetime_index
@@ -64,7 +64,7 @@ def get_datetime_index_hourly_with_timezone():
         end="2024-01-01",
         inclusive="left",
         freq="h",
-        tz="US/Eastern",
+        tz="America/New_York",
     )
 
     return datetime_index
@@ -78,7 +78,7 @@ def get_datetime_index_daily_with_timezone():
         end="2024-01-01",
         inclusive="left",
         freq="D",
-        tz="US/Eastern",
+        tz="America/New_York",
     )
 
     return datetime_index
@@ -92,7 +92,7 @@ def get_datetime_index_monthly_with_timezone():
         end="2024-01-01",
         inclusive="both",
         freq="MS",
-        tz="US/Eastern",
+        tz="America/New_York",
     )
 
     return datetime_index
@@ -106,7 +106,7 @@ def get_datetime_index_bimonthly_with_timezone():
         end="2024-01-01",
         inclusive="both",
         freq="2MS",
-        tz="US/Eastern",
+        tz="America/New_York",
     )
 
     return datetime_index

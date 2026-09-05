@@ -62,9 +62,9 @@ def test_tz_naive(baseline):
 
 def test_tz_mismatch(baseline):
     # might allow automatic adjustment from the model in the future, but hard requirement for now
-    baseline.index = baseline.index.tz_convert("US/Pacific")
+    baseline.index = baseline.index.tz_convert("America/Los_Angeles")
     reporting = baseline.copy()
-    reporting.index = reporting.index.tz_convert("US/Eastern")
+    reporting.index = reporting.index.tz_convert("America/New_York")
     baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
     reporting_data = HourlyReportingData(reporting, is_electricity_data=True)
     hm = HourlyModel().fit(baseline_data)

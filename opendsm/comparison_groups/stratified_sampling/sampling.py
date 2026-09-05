@@ -26,7 +26,6 @@ from .bins import (
     get_counts_and_update_n_samples_approx,
 )
 
-pd.options.mode.chained_assignment = None  # suppress warnings
 
 logger = logging.getLogger(__name__)
 

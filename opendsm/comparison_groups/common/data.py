@@ -216,7 +216,7 @@ class Data:
     def _validate_format_loadshape(self, df: pd.DataFrame) -> pd.DataFrame:
         # Reset index to remove any existing index
         df = df.reset_index()
-        df = df.drop(columns="index", axis=1, errors="ignore")
+        df = df.drop(columns="index", errors="ignore")
 
         # Check columns missing in loadshape_df
         expected_columns = ["id", "time", "loadshape"]
@@ -332,7 +332,7 @@ class Data:
             df.rename_axis(None, axis=1)
             .reset_index()
             .set_index("id")
-            .drop(columns="index", axis=1, errors="ignore")
+            .drop(columns="index", errors="ignore")
         )
 
         # Convert columns to int
@@ -344,7 +344,7 @@ class Data:
     def _validate_format_features(self, df: pd.DataFrame) -> pd.DataFrame:
         # Reset index to remove any existing index
         df = df.reset_index()
-        df = df.drop(columns="index", axis=1, errors="ignore")
+        df = df.drop(columns="index", errors="ignore")
 
         # Check columns missing in features_df
         if "id" not in df.columns:
@@ -367,7 +367,7 @@ class Data:
         df = (
             df.reset_index()
             .set_index("id")
-            .drop(columns="index", axis=1, errors="ignore")
+            .drop(columns="index", errors="ignore")
         )
 
         # sort by id
@@ -391,7 +391,7 @@ class Data:
 
         # Reset index to remove any existing index
         base_df = base_df.reset_index()
-        base_df = base_df.drop(columns="index", axis=1, errors="ignore")
+        base_df = base_df.drop(columns="index", errors="ignore")
 
         # Check columns missing in time_series_df
         df_type = self._settings.loadshape_type

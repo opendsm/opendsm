@@ -849,8 +849,11 @@ class HourlyModel:
             right_index=True,
         )
 
+        # labels outside the known clusters (unassigned, -1) get no dummy
+        known_cluster = df["temporal_cluster"].isin(range(n_clusters))
+        cluster_labels = df["temporal_cluster"].where(known_cluster)
         cluster_dummies = pd.get_dummies(
-            pd.Categorical(df["temporal_cluster"], categories=range(n_clusters)),
+            pd.Categorical(cluster_labels, categories=range(n_clusters)),
             prefix="temporal_cluster",
         )
         cluster_dummies.index = df.index

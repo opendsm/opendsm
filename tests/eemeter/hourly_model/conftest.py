@@ -49,7 +49,7 @@ def reporting(hourly_data):
 def create_hourly_dataframe(
     start="2019-01-01",
     end="2019-12-31",
-    tz="US/Eastern",
+    tz="America/New_York",
     include_ghi=False,
     observed_mean=5.0,
     temperature_mean=60.0,
@@ -161,7 +161,7 @@ def create_extreme_values(df, n_extreme, column="observed"):
 
 @pytest.fixture
 def synthetic_hourly_data():
-    """Clean 365 days of hourly data, US/Eastern timezone"""
+    """Clean 365 days of hourly data, America/New_York timezone"""
     return create_hourly_dataframe()
 
 
@@ -289,10 +289,10 @@ def baseline_extreme_temperatures(baseline):
 @pytest.fixture
 def dst_transition_baseline():
     """Baseline data spanning DST transitions for testing DST handling"""
-    return create_hourly_dataframe(start="2019-01-01", end="2019-12-31", tz="US/Eastern")
+    return create_hourly_dataframe(start="2019-01-01", end="2019-12-31", tz="America/New_York")
 
 
 @pytest.fixture
 def dst_transition_reporting():
     """Reporting data spanning DST transitions for testing DST handling"""
-    return create_hourly_dataframe(start="2020-01-01", end="2020-12-31", tz="US/Eastern")
+    return create_hourly_dataframe(start="2020-01-01", end="2020-12-31", tz="America/New_York")
