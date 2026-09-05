@@ -97,17 +97,29 @@ def _merge_bins(bin_edges, temp, min_bin_count):
     return np.unique(bin_edges)
 
 
-def _fit_exp_growth_decay(x, y, k_only=True, is_x_sorted=False):
+# Relative Gram-determinant floor below which an hour's load is treated as carrying no
+# measurable exponential curvature; separates numerically-zero determinants (float
+# cancellation floor, ~1e-16) from real curvature evidence by several orders of magnitude.
+_MIN_CURVATURE_EVIDENCE = 1e-12
+
+
+def _fit_exp_growth_decay(x, y, is_x_sorted=False):
+    """Rate k of a b*exp(x/k) + a fit by Jacquelin's integral method.
+
+    Returns inf when the data carry no measurable exponential curvature (including
+    too few points, non-finite input, or a zero fitted rate), never raises.
+    """
     # Courtsey: https://math.stackexchange.com/questions/1337601/fit-exponential-with-constant
     #           https://www.scribd.com/doc/14674814/Regressions-et-equations-integrales
     #           Jean Jacquelin
 
-    # fitting function is actual b*exp(c*x) + a
-
-    # sort x in order
     x = np.array(x)
     y = np.array(y)
-    n = len(x)
+
+    # fewer than 3 points cannot support a 3-parameter exponential, and non-finite
+    # input has no curvature to measure
+    if len(x) < 3 or not (np.all(np.isfinite(x)) and np.all(np.isfinite(y))):
+        return np.inf
 
     if not is_x_sorted:
         sort_idx = np.argsort(x)
@@ -126,29 +138,24 @@ def _fit_exp_growth_decay(x, y, k_only=True, is_x_sorted=False):
     xy_diff = np.sum(x_shifted * y_shifted)
     ys_diff = np.sum(s * y_shifted)
 
+    # The 2x2 system below is the Gram matrix of (x_shifted, s), so
+    # det/(x_diff_sq*s_sq) = sin^2 of the angle between them, which is 0 exactly when
+    # the cumulative integral s is proportional to x, i.e. y carries no exponential
+    # curvature. There the solve amplifies float-level noise into arbitrary rates
+    # (machine-dependent results) or raises on singularity, so those cases are excluded
+    # on this smooth, scale-free statistic, which keeps the decision deterministic.
+    gram_det = x_diff_sq * s_sq - xs_diff**2
+    if not (gram_det > _MIN_CURVATURE_EVIDENCE * x_diff_sq * s_sq):
+        return np.inf
+
     A = np.array([[x_diff_sq, xs_diff], [xs_diff, s_sq]])
     b = np.array([xy_diff, ys_diff])
 
     _, c = np.linalg.solve(A, b)
-    with np.errstate(divide='ignore'):
-        k = 1 / c # ignore divide by zero, it will be filtered later
+    if c == 0:
+        return np.inf
 
-    if k_only:
-        a, b = None, None
-    else:
-        theta_i = np.exp(c * x)
-
-        theta = np.sum(theta_i)
-        theta_sq = np.sum(theta_i**2)
-        y_sum = np.sum(y)
-        y_theta = np.sum(y * theta_i)
-
-        A = np.array([[n, theta], [theta, theta_sq]])
-        b = np.array([y_sum, y_theta])
-
-        a, b = np.linalg.solve(A, b)
-
-    return a, b, k
+    return 1 / c
 
 
 def _get_dst_indices(df):
@@ -961,15 +968,9 @@ class HourlyModel:
                 x_data = a * df_hour[int_col].values + b
                 y_data = df_hour["observed"].values
 
-                # Fit the model using robust least squares
-                try:
-                    params = _fit_exp_growth_decay(
-                        x_data, y_data, k_only=True, is_x_sorted=True
-                    )
-                    # save k for each hour
-                    k.append(params[2])
-                except Exception:
-                    pass
+                # hours without exponential evidence return inf and are excluded by
+                # the k < 5 gate below
+                k.append(_fit_exp_growth_decay(x_data, y_data, is_x_sorted=True))
 
             k = np.abs(np.array(k))
             k_valid = k[k < 5]
