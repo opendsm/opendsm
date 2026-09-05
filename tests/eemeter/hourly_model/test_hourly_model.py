@@ -19,6 +19,7 @@ from opendsm.eemeter import (
     HourlySolarSettings,
     HourlyNonSolarSettings,
 )
+from opendsm.eemeter.models.hourly.model import _fit_exp_growth_decay
 from opendsm.eemeter.models.hourly.settings import BaseHourlySettings
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
@@ -287,6 +288,104 @@ def test_hourly_dict_settings():
     m = HourlyModel(settings={"cvrmse_threshold": 1.0})
     assert isinstance(m.settings, BaseHourlySettings)
     assert m.settings.train_features == None
+
+
+class TestFitExpGrowthDecay:
+    """The edge-bin rate estimator: k for data with exponential curvature, a
+    deterministic no-evidence result (k = inf) otherwise, and never an exception."""
+
+    def test_recovers_known_growth_rate(self):
+        x = np.linspace(-1, 1, 2001)
+        y = 2.0 + 0.5 * np.exp(4.0 * x)
+        k = _fit_exp_growth_decay(x, y, is_x_sorted=True)
+        assert np.isclose(k, 0.25, rtol=1e-3), f"expected k=0.25, got {k}"
+
+    def test_recovers_known_decay_rate(self):
+        x = np.linspace(-1, 1, 2001)
+        y = 2.0 + 0.5 * np.exp(-4.0 * x)
+        k = _fit_exp_growth_decay(x, y, is_x_sorted=True)
+        assert np.isclose(k, -0.25, rtol=1e-3), f"expected k=-0.25, got {k}"
+
+    def test_sorts_unsorted_input(self):
+        rng = np.random.default_rng(0)
+        x = rng.uniform(-1, 1, 2001)
+        y = 2.0 + 0.5 * np.exp(4.0 * x)
+        k = _fit_exp_growth_decay(x, y, is_x_sorted=False)
+        assert np.isclose(k, 0.25, rtol=1e-2), f"expected k=0.25, got {k}"
+
+    def test_weak_but_real_curvature_is_kept(self):
+        """A 0.1% exponential ripple on a constant load is measurable curvature,
+        far above the no-evidence floor, and its rate must still be recovered."""
+        x = np.linspace(-1, 1, 2001)
+        y = 10.0 + 0.01 * np.exp(4.0 * x)
+        k = _fit_exp_growth_decay(x, y, is_x_sorted=True)
+        assert np.isfinite(k), "weak curvature was wrongly excluded as no-evidence"
+        assert np.isclose(k, 0.25, rtol=1e-2), f"expected k=0.25, got {k}"
+
+    def test_constant_load_returns_no_evidence(self):
+        x = np.linspace(-1, 1, 200)
+        y = np.full(200, 3.7)
+        k = _fit_exp_growth_decay(x, y, is_x_sorted=True)
+        assert np.isinf(k), f"constant load must return k=inf, got {k}"
+
+    @pytest.mark.parametrize("n", [0, 1, 2])
+    def test_too_few_points_returns_no_evidence(self, n):
+        x = np.linspace(-1, 1, n)
+        y = np.full(n, 3.7)
+        k = _fit_exp_growth_decay(x, y, is_x_sorted=True)
+        assert np.isinf(k), f"n={n} points must return k=inf, got {k}"
+
+    @pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf])
+    def test_non_finite_load_returns_no_evidence(self, bad):
+        x = np.linspace(-1, 1, 200)
+        y = 2.0 + 0.5 * np.exp(4.0 * x)
+        y[100] = bad
+        k = _fit_exp_growth_decay(x, y, is_x_sorted=True)
+        assert np.isinf(k) and k > 0, f"non-finite load must return k=inf, got {k}"
+
+    def test_non_finite_temperature_returns_no_evidence(self):
+        x = np.linspace(-1, 1, 200)
+        y = 2.0 + 0.5 * np.exp(4.0 * x)
+        x[100] = np.nan
+        k = _fit_exp_growth_decay(x, y, is_x_sorted=True)
+        assert np.isinf(k) and k > 0, f"non-finite x must return k=inf, got {k}"
+
+    def test_zero_fitted_rate_returns_no_evidence(self, monkeypatch):
+        """A well-conditioned system whose solution has c = 0 is a flat exponential;
+        it must report no evidence rather than divide by zero."""
+        monkeypatch.setattr(np.linalg, "solve", lambda A, b: np.array([1.0, 0.0]))
+        x = np.linspace(-1, 1, 200)
+        y = 2.0 + 0.5 * np.exp(4.0 * x)
+        k = _fit_exp_growth_decay(x, y, is_x_sorted=True)
+        assert np.isinf(k) and k > 0, f"c=0 must return k=inf, got {k}"
+
+    def test_float_noise_cannot_flip_the_no_evidence_decision(self):
+        """Noise at the 1e-13 level on curvature-free load must not produce a
+        finite rate on any draw: near-singular hours are excluded by rule, not
+        by whichever side of a singular solve the noise lands on."""
+        x = np.linspace(-1, 1, 200)
+        y_flat = np.full(200, 3.7)
+        ks = []
+        for seed in range(20):
+            rng = np.random.default_rng(seed)
+            y = y_flat * (1 + 1e-13 * rng.standard_normal(200))
+            ks.append(_fit_exp_growth_decay(x, y, is_x_sorted=True))
+
+        assert all(np.isinf(k) for k in ks), (
+            f"perturbed curvature-free load produced finite rates: {ks}"
+        )
+
+    def test_float_noise_leaves_well_conditioned_rate_unchanged(self):
+        x = np.linspace(-1, 1, 200)
+        y_exp = 2.0 + 0.5 * np.exp(2.0 * x)
+        k_base = _fit_exp_growth_decay(x, y_exp, is_x_sorted=True)
+        for seed in range(20):
+            rng = np.random.default_rng(seed)
+            y = y_exp * (1 + 1e-13 * rng.standard_normal(200))
+            k = _fit_exp_growth_decay(x, y, is_x_sorted=True)
+            assert np.isclose(k, k_base, rtol=1e-9, atol=0), (
+                f"1e-13 input noise (seed {seed}) moved k from {k_base} to {k}"
+            )
 
 
 class TestBlasThreadLimit:
