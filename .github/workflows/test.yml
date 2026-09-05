@@ -26,6 +26,16 @@ jobs:
         # tolerances absorb cross-platform BLAS/FMA drift, so floating -latest
         # images are fine and no second macOS-version runner is needed.
         os: [ubuntu-latest, windows-latest, macos-latest]
+        pandas: [latest]
+        include:
+          # pandas 2 remains a supported major (pandas<4); one extra job pins it
+          # so that coverage does not depend on which Python still resolves it.
+          # The differing `pandas` value makes this a new combination rather
+          # than an addition to the existing 3.12 / ubuntu job.
+          - python: "3.12"
+            os: ubuntu-latest
+            pandas: "2"
+            toxenv: 3.12-pandas2
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -37,7 +47,7 @@ jobs:
       - name: Install tox
         run: pip install tox
       - name: Run tox
-        run: tox -e ${{ matrix.python }}
+        run: tox -e ${{ matrix.toxenv || matrix.python }}
 
   # Fan-in over the build matrix so branch protection can require a single
   # context instead of every (python, os) combination. needs.build.result is

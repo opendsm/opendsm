@@ -17,7 +17,6 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 import pytest
-import pytz
 
 from opendsm.eemeter.common.transform import (
     as_freq,

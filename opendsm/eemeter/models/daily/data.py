@@ -24,6 +24,7 @@ from opendsm.eemeter.common.data_processor_utilities import (
     as_freq,
     clean_billing_daily_data,
     compute_minimum_granularity,
+    frequency_duration,
     remove_duplicates,
 )
 from opendsm.eemeter.common.features import compute_temperature_features
@@ -218,7 +219,7 @@ class _DailyData:
             # TODO consider adding misaligned data warning here if final row was not already NaN
             meter_data.iloc[-1] = np.nan
 
-        df = pd.concat([meter_data, temperature_data], axis=1)
+        df = pd.concat([meter_data, temperature_data], axis=1, sort=True)
 
         return cls(df, is_electricity_data, settings=settings)
 
@@ -321,9 +322,9 @@ class _DailyData:
         temp_series = df["temperature"]
         temp_series.index.freq = temp_series.index.inferred_freq
         if temp_series.index.freq != "h":
-            if temp_series.index.freq is None or temp_series.index.freq > pd.Timedelta(
-                hours=1
-            ):
+            if temp_series.index.freq is None or frequency_duration(
+                temp_series.index.freq
+            ) > pd.Timedelta(hours=1):
                 # Add warning for frequencies longer than 1 hour
                 self.warnings.append(
                     EEMeterWarning(

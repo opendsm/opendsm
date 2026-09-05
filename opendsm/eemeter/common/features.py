@@ -12,9 +12,12 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+from warnings import catch_warnings, simplefilter
+
 import numpy as np
 import pandas as pd
 import statsmodels.formula.api as smf
+from statsmodels.tools.sm_exceptions import SingularMatrixWarning
 
 from ..models.hourly_caltrack.segmentation import iterate_segmented_dataset
 from .transform import day_counts, overwrite_partial_rows_with_nan
@@ -553,9 +556,14 @@ def _estimate_hour_of_week_occupancy(model_data, threshold):
         data=model_data,
         weights=model_data.weight,
     )
+    # a segment with no heating or no cooling hours has an all-zero degree-day column,
+    # a rank-deficient design the pseudo-inverse resolves
+    with catch_warnings():
+        simplefilter("ignore", SingularMatrixWarning)
+        usage_fit = usage_model.fit()
 
     model_data_with_residuals = model_data.merge(
-        pd.DataFrame({"residuals": usage_model.fit().resid}),
+        pd.DataFrame({"residuals": usage_fit.resid}),
         left_index=True,
         right_index=True,
     )

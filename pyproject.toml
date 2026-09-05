@@ -24,7 +24,7 @@ dependencies = [
   "nlopt>=2.10",  # first release with cp313 / cp314 wheels
   "numba",
   "numpy>=1.24.4",
-  "pandas>=1.1.0,<3.0.0",
+  "pandas>=1.1.0,<4.0.0",
   "platformdirs",
   "pyarrow>=15.0.0",
   "pydantic>=2.0",

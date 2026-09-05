@@ -17,8 +17,8 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-import pytz
-from pandas.tseries.offsets import MonthBegin, MonthEnd
+from pandas.tseries.frequencies import to_offset
+from pandas.tseries.offsets import Day, MonthBegin, MonthEnd, Tick
 
 from opendsm.eemeter.common.warnings import EEMeterWarning
 
@@ -176,6 +176,53 @@ def clean_billing_data(data, source_interval, warnings):
     return data["value"].to_frame()
 
 
+def frequency_duration(freq):
+    """Fixed duration of a frequency as a Timedelta.
+
+    Accepts an offset object or alias. Tick offsets (hours, minutes, ...) and calendar
+    days have a fixed duration, a calendar day counting as 24 hours. Offsets whose
+    length depends on the calendar position (month, quarter and year starts and ends)
+    raise TypeError.
+    """
+    offset = to_offset(freq)
+    if not isinstance(offset, (Tick, Day)):
+        raise TypeError(f"frequency {offset} has no fixed duration")
+
+    return pd.Timedelta(offset.nanos, unit="ns")
+
+
+def _aggregate_anchored(series, freq, origin, how):
+    """Aggregate into bins of ``freq`` anchored on ``origin``, with the resampler
+    method named by ``how``.
+
+    Fixed-duration frequencies (hours, minutes, ...) start their bins at ``origin``.
+    Daily bins are wall-clock days starting at ``origin``'s time of day: they are formed
+    in local time, so a day containing a daylight-saving transition is 23 or 25 hours
+    long, a bin label on a nonexistent local time is pushed forward, and an ambiguous one
+    takes its daylight-time reading. Calendar frequencies such as month starts have no
+    anchor.
+    """
+    offset = to_offset(freq)
+    if isinstance(offset, Day):
+        tz = series.index.tz
+        local_bins = series.tz_localize(None).resample(
+            pd.Timedelta(days=offset.n), origin=origin.tz_localize(None)
+        )
+        aggregated = getattr(local_bins, how)()
+        if tz is not None:
+            daylight_time = np.ones(len(aggregated), dtype=bool)
+            aggregated.index = aggregated.index.tz_localize(
+                tz, nonexistent="shift_forward", ambiguous=daylight_time
+            )
+
+        return aggregated
+
+    if isinstance(offset, Tick):
+        return getattr(series.resample(freq, origin=origin), how)()
+
+    return getattr(series.resample(freq), how)()
+
+
 def as_freq(
     data_series,
     freq,
@@ -247,11 +294,9 @@ def as_freq(
         spread_factor = target_freq.total_seconds() / timedeltas.total_seconds()
         series_spread = series * spread_factor
         atomic_series = series_spread.asfreq(atomic_freq, method="ffill")
-        resampled = atomic_series.resample(freq, origin=series.index[0]).sum()
-        resampled_with_nans = atomic_series.resample(
-            freq, origin=series.index[0]
-        ).first()
-        n_coverage = atomic_series.resample(freq, origin=series.index[0]).count()
+        resampled = _aggregate_anchored(atomic_series, freq, series.index[0], "sum")
+        resampled_with_nans = _aggregate_anchored(atomic_series, freq, series.index[0], "first")
+        n_coverage = _aggregate_anchored(atomic_series, freq, series.index[0], "count")
         resampled = resampled[resampled_with_nans.notnull()].reindex(resampled.index)
 
     elif series_type == "instantaneous":
@@ -263,8 +308,8 @@ def as_freq(
         # of a series. this could happen if you concat a monthly series with an hourly one at an offset.
         # the call to asfreq() could erroneously fill in a month of data, followed by NaNs
         atomic_series = series.asfreq(atomic_freq, method="ffill")
-        resampled = atomic_series.resample(freq, origin=series.index[0]).mean()
-        n_coverage = atomic_series.resample(freq, origin=series.index[0]).count()
+        resampled = _aggregate_anchored(atomic_series, freq, series.index[0], "mean")
+        n_coverage = _aggregate_anchored(atomic_series, freq, series.index[0], "count")
 
     # Edit : Added a check so that hourly and daily frequencies don't have a null value at the end
     if freq not in ["h", "D"] and resampled.index[-1] < series.index[-1]:
@@ -276,11 +321,8 @@ def as_freq(
             .mean()
         )
     if include_coverage:
-        n_total = (
-            resampled.resample(atomic_freq)
-            .count()
-            .resample(freq, origin=resampled.index[0])
-            .count()
+        n_total = _aggregate_anchored(
+            resampled.resample(atomic_freq).count(), freq, resampled.index[0], "count"
         )
         resampled = resampled.to_frame("value")
         resampled["coverage"] = n_coverage / n_total
@@ -371,13 +413,15 @@ def compute_minimum_granularity(index: pd.Series, default_granularity: Optional[
             min_granularity = "billing_monthly"
         else:
             min_granularity = "billing_bimonthly"
-    elif index.freq <= pd.Timedelta(hours=1):
-        min_granularity = "hourly"
-    elif index.freq <= pd.Timedelta(days=1):
-        min_granularity = "daily"
-    elif index.freq <= pd.Timedelta(days=30):
-        min_granularity = "billing_monthly"
     else:
-        min_granularity = "billing_bimonthly"
+        duration = frequency_duration(index.freq)
+        if duration <= pd.Timedelta(hours=1):
+            min_granularity = "hourly"
+        elif duration <= pd.Timedelta(days=1):
+            min_granularity = "daily"
+        elif duration <= pd.Timedelta(days=30):
+            min_granularity = "billing_monthly"
+        else:
+            min_granularity = "billing_bimonthly"
 
     return min_granularity

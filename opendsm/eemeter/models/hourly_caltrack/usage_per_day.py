@@ -12,7 +12,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-import pytz
+from datetime import timezone
 
 from opendsm.eemeter.common.transform import day_counts
 from opendsm.eemeter.common.warnings import EEMeterWarning
@@ -155,14 +155,14 @@ def caltrack_sufficiency_criteria(
 
     if requested_start is not None:
         # check for gap at beginning
-        requested_start = requested_start.astimezone(pytz.UTC)
+        requested_start = requested_start.astimezone(timezone.utc)
         n_days_start_gap = (data_start - requested_start).days
     else:
         n_days_start_gap = 0
 
     if requested_end is not None:
         # check for gap at end
-        requested_end = requested_end.astimezone(pytz.UTC)
+        requested_end = requested_end.astimezone(timezone.utc)
         n_days_end_gap = (requested_end - data_end).days
     else:
         n_days_end_gap = 0

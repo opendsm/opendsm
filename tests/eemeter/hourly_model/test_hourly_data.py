@@ -42,7 +42,7 @@ from opendsm.eemeter.common.sufficiency_criteria import HourlySufficiencyCriteri
 def create_hourly_dataframe(
     start="2019-01-01",
     end="2019-12-31",
-    tz="US/Eastern",
+    tz="America/New_York",
     include_ghi=False,
     observed_mean=5.0,
     temperature_mean=60.0,
@@ -330,7 +330,7 @@ class TestHourlyDataClassInit:
         )
 
         assert data.tz is not None
-        assert str(data.tz) == "US/Eastern"
+        assert str(data.tz) == "America/New_York"
 
     def test_settings_property(self, synthetic_hourly_data):
         """Settings accessible and correct type"""
@@ -604,7 +604,7 @@ class TestHourlyDataProcessing:
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        assert str(data.df.index.tz) == "US/Eastern"
+        assert str(data.df.index.tz) == "America/New_York"
 
     def test_date_and_hour_columns_added(self):
         """date, hour_of_day columns created"""
@@ -1923,7 +1923,7 @@ class TestHourlyDataEdgeCases:
 
     def test_spring_forward_missing_hour(self):
         """2am doesn't exist"""
-        df = create_hourly_dataframe(start="2019-03-09", end="2019-03-11", tz="US/Eastern")
+        df = create_hourly_dataframe(start="2019-03-09", end="2019-03-11", tz="America/New_York")
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
@@ -1932,7 +1932,7 @@ class TestHourlyDataEdgeCases:
 
     def test_fall_back_duplicate_hour(self):
         """1am appears twice"""
-        df = create_hourly_dataframe(start="2019-11-02", end="2019-11-04", tz="US/Eastern")
+        df = create_hourly_dataframe(start="2019-11-02", end="2019-11-04", tz="America/New_York")
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
@@ -1951,15 +1951,15 @@ class TestHourlyDataEdgeCases:
 
     def test_timezone_conversion_preserved(self):
         """Convert before input"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31", tz="US/Pacific")
+        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31", tz="America/Los_Angeles")
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        assert "Pacific" in str(data.tz)
+        assert "Los_Angeles" in str(data.tz)
 
     def test_dst_gap_filled_correctly(self):
         """Spring forward handled"""
-        df = create_hourly_dataframe(start="2019-03-09", end="2019-03-11", tz="US/Eastern")
+        df = create_hourly_dataframe(start="2019-03-09", end="2019-03-11", tz="America/New_York")
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 

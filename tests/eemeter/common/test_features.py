@@ -1176,3 +1176,26 @@ def test_compute_occupancy_feature_hour_of_week_has_nan(even_occupancy):
     assert occupancy.name == "occupancy"
     assert occupancy.shape == (72,)
     assert occupancy.sum() == 36
+
+
+def test_estimate_hour_of_week_occupancy_without_heating_hours_is_silent():
+    """A segment whose heating degree-day column is all zeros is a rank-deficient
+    design; the fit must complete without emitting a warning."""
+    index = pd.date_range("2024-06-03", periods=24 * 14, freq="h", tz="UTC")
+    rng = np.random.default_rng(0)
+    cdd_65 = np.clip(rng.normal(8, 4, len(index)), 0, None)
+    data = pd.DataFrame(
+        {
+            "meter_value": 2.0 + 0.1 * cdd_65 + rng.normal(0, 0.2, len(index)),
+            "hour_of_week": index.dayofweek * 24 + index.hour,
+            "cdd_65": cdd_65,
+            "hdd_50": 0.0,
+        },
+        index=index,
+    )
+
+    occupancy = estimate_hour_of_week_occupancy(data)
+
+    assert occupancy.shape == (168, 1)
+    assert occupancy["occupancy"].dtype == bool
+

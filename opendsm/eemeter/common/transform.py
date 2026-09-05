@@ -17,7 +17,6 @@ from datetime import timedelta
 import numpy as np
 import pandas as pd
 from pandas.tseries.offsets import MonthEnd
-import pytz
 
 from .exceptions import NoBaselineDataError, NoReportingDataError
 from .warnings import EEMeterWarning
@@ -291,14 +290,14 @@ def get_baseline_data(
     start_inf = False
     if start is None:
         # py datetime min/max are out of range of pd.Timestamp min/max
-        start_target = pytz.UTC.localize(pd.Timestamp.min) + timedelta(days=1)
+        start_target = pd.Timestamp.min.tz_localize("UTC") + timedelta(days=1)
         start_inf = True
     else:
         start_target = start
 
     end_inf = False
     if end is None:
-        end_limit = pytz.UTC.localize(pd.Timestamp.max) - timedelta(days=1)
+        end_limit = pd.Timestamp.max.tz_localize("UTC") - timedelta(days=1)
         end_inf = True
     else:
         end_limit = end
@@ -449,14 +448,14 @@ def get_reporting_data(
     start_inf = False
     if start is None:
         # py datetime min/max are out of range of pd.Timestamp min/max
-        start_limit = pytz.UTC.localize(pd.Timestamp.min) + timedelta(days=1)
+        start_limit = pd.Timestamp.min.tz_localize("UTC") + timedelta(days=1)
         start_inf = True
     else:
         start_limit = start
 
     end_inf = False
     if end is None:
-        end_target = pytz.UTC.localize(pd.Timestamp.max) - timedelta(days=1)
+        end_target = pd.Timestamp.max.tz_localize("UTC") - timedelta(days=1)
         end_inf = True
     else:
         end_target = end

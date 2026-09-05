@@ -22,6 +22,14 @@ from typing import Any, Optional
 from functools import cached_property  # TODO: This requires Python 3.8
 
 
+def _is_numeric_dtype(dtype):
+    """Numeric in the numpy sense: ints and floats, not booleans, for numpy dtypes,
+    dtype aliases and pandas extension dtypes alike."""
+    is_numeric = pd.api.types.is_numeric_dtype(dtype) and not pd.api.types.is_bool_dtype(dtype)
+
+    return is_numeric
+
+
 class PydanticDf(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
 
@@ -45,9 +53,7 @@ class PydanticDf(pydantic.BaseModel):
 
                 if self.df[col].dtype != col_type:
                     # attempt to coerce numeric columns
-                    if np.issubdtype(col_type, np.number) and np.issubdtype(
-                        self.df[col].dtype, np.number
-                    ):
+                    if _is_numeric_dtype(col_type) and _is_numeric_dtype(self.df[col].dtype):
                         self.df[col] = self.df[col].astype(col_type)
                     else:
                         raise ValueError(
