@@ -21,7 +21,6 @@ individual test file.
 
 import numpy as np
 import pytest
-from sklearn.datasets import make_blobs
 
 from opendsm.common.clustering.settings import ClusteringSettings
 
@@ -79,6 +78,16 @@ def run_cluster(data, algorithm, seed=42, **overrides):
 
     cs = make_clustering_settings(algorithm, seed=seed, **overrides)
     return _cluster_features(data, cs)
+
+
+def three_blobs(n_per=30, d=5, sep=50.0, seed=0):
+    """Three well-separated blobs with ground-truth labels."""
+    rng = np.random.default_rng(seed)
+    blocks = [rng.normal(np.full(d, i * sep), 1.0, size=(n_per, d)) for i in range(3)]
+    data = np.vstack(blocks)
+    truth = np.repeat(np.arange(3), n_per)
+
+    return data, truth
 
 
 # ---------------------------------------------------------------------------
