@@ -12,7 +12,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import numpy as np
 import pandas as pd
@@ -38,56 +38,6 @@ from opendsm.eemeter.common.transform import (
 )
 
 
-def _utc_meter(df):
-    out = df[["observed"]].rename(columns={"observed": "value"}).copy()
-    out.index = out.index.tz_convert("UTC")
-
-    return out
-
-
-def _utc_temperature(df):
-    out = df["temperature"].copy()
-    out.index = out.index.tz_convert("UTC")
-
-    return out
-
-
-@pytest.fixture
-def monthly_meter(comstock_monthly):
-    df_b, df_r = comstock_monthly
-    return _utc_meter(pd.concat([df_b, df_r]).dropna(subset=["observed"]))
-
-
-@pytest.fixture
-def monthly_temperature(comstock_hourly):
-    df_b, df_r = comstock_hourly
-    return _utc_temperature(pd.concat([df_b, df_r]).asfreq("h"))
-
-
-@pytest.fixture
-def daily_meter(comstock_daily):
-    df_b, df_r = comstock_daily
-    return _utc_meter(pd.concat([df_b, df_r]))
-
-
-@pytest.fixture
-def daily_temperature(comstock_hourly):
-    df_b, df_r = comstock_hourly
-    return _utc_temperature(pd.concat([df_b, df_r]).asfreq("h"))
-
-
-@pytest.fixture
-def hourly_meter(comstock_hourly):
-    df_b, df_r = comstock_hourly
-    return _utc_meter(pd.concat([df_b, df_r]).asfreq("h"))
-
-
-@pytest.fixture
-def hourly_temperature(comstock_hourly):
-    df_b, df_r = comstock_hourly
-    return _utc_temperature(pd.concat([df_b, df_r]).asfreq("h"))
-
-
 def test_as_freq_not_series(monthly_meter, monthly_temperature, snapshot):
     meter_data = monthly_meter
     assert list(meter_data.shape) == snapshot(name="meter_data_shape")
@@ -95,22 +45,18 @@ def test_as_freq_not_series(monthly_meter, monthly_temperature, snapshot):
         as_freq(meter_data, freq="h")
 
 
-def test_as_freq_hourly(monthly_meter, monthly_temperature, snapshot):
+@pytest.mark.parametrize(
+    "freq, result_label",
+    [("h", "as_hourly"), ("D", "as_daily"), ("MS", "as_month_start")],
+    ids=["hourly", "daily", "month_start"],
+)
+def test_as_freq(monthly_meter, monthly_temperature, snapshot, freq, result_label):
     meter_data = monthly_meter
     assert list(meter_data.shape) == snapshot(name="meter_data_shape")
-    as_hourly = as_freq(meter_data.value, freq="h")
-    assert list(as_hourly.shape) == snapshot(name="as_hourly_shape")
+    resampled = as_freq(meter_data.value, freq=freq)
+    assert list(resampled.shape) == snapshot(name=f"{result_label}_shape")
     assert round(meter_data.value.sum(), 1) == snapshot(name="meter_data_sum")
-    assert round(as_hourly.sum(), 1) == snapshot(name="as_hourly_sum")
-
-
-def test_as_freq_daily(monthly_meter, monthly_temperature, snapshot):
-    meter_data = monthly_meter
-    assert list(meter_data.shape) == snapshot(name="meter_data_shape")
-    as_daily = as_freq(meter_data.value, freq="D")
-    assert list(as_daily.shape) == snapshot(name="as_daily_shape")
-    assert round(meter_data.value.sum(), 1) == snapshot(name="meter_data_sum")
-    assert round(as_daily.sum(), 1) == snapshot(name="as_daily_sum")
+    assert round(resampled.sum(), 1) == snapshot(name=f"{result_label}_sum")
 
 
 def test_as_freq_daily_all_nones_instantaneous(monthly_meter, monthly_temperature, snapshot):
@@ -129,15 +75,6 @@ def test_as_freq_daily_all_nones(monthly_meter, monthly_temperature, snapshot):
     as_daily = as_freq(meter_data.value, freq="D")
     assert list(as_daily.shape) == snapshot(name="as_daily_shape")
     assert round(meter_data.value.sum(), 1) == round(as_daily.sum(), 1) == 0
-
-
-def test_as_freq_month_start(monthly_meter, monthly_temperature, snapshot):
-    meter_data = monthly_meter
-    assert list(meter_data.shape) == snapshot(name="meter_data_shape")
-    as_month_start = as_freq(meter_data.value, freq="MS")
-    assert list(as_month_start.shape) == snapshot(name="as_month_start_shape")
-    assert round(meter_data.value.sum(), 1) == snapshot(name="meter_data_sum")
-    assert round(as_month_start.sum(), 1) == snapshot(name="as_month_start_sum")
 
 
 def test_as_freq_hourly_temperature(monthly_meter, monthly_temperature, snapshot):
@@ -250,7 +187,6 @@ def test_get_baseline_data_with_end_no_max_days(hourly_meter, hourly_temperature
 
 def test_get_baseline_data_empty(hourly_meter, hourly_temperature):
     meter_data = hourly_meter
-    blackout_start_date = pd.Timestamp("2019-01-01", tz="UTC")
     with pytest.raises(NoBaselineDataError):
         get_baseline_data(meter_data, end=pd.Timestamp("2000").tz_localize("UTC"))
 
@@ -485,7 +421,6 @@ def test_get_reporting_data_with_start_no_max_days(hourly_meter, hourly_temperat
 
 def test_get_reporting_data_empty(hourly_meter, hourly_temperature):
     meter_data = hourly_meter
-    blackout_end_date = pd.Timestamp("2019-01-02", tz="UTC")
     with pytest.raises(NoReportingDataError):
         get_reporting_data(meter_data, start=pd.Timestamp("2030").tz_localize("UTC"))
 
@@ -637,7 +572,7 @@ def test_get_terms_bad_term_labels(monthly_meter, monthly_temperature):
     meter_data = monthly_meter
 
     with pytest.raises(ValueError):
-        terms = get_terms(
+        get_terms(
             meter_data.index,
             term_lengths=[60, 60, 60],
             term_labels=["abc", "def"],  # too short
@@ -902,9 +837,6 @@ def test_overwrite_partial_rows_with_nan(monthly_meter, monthly_temperature):
     meter_data.iloc[:3, meter_data.columns.get_loc("other_column")] = np.nan
     meter_data_nanned = overwrite_partial_rows_with_nan(meter_data)
     assert pd.isnull(meter_data_nanned["value"][:3]).all()
-
-
-import pandas as pd
 
 
 def test_add_freq(hourly_meter, hourly_temperature):
