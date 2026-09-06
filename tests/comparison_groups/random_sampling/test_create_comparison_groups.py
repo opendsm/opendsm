@@ -53,24 +53,19 @@ def test_seed_makes_sample_reproducible(cg_loadshape_data):
     assert list(clusters_1.index) == list(clusters_2.index)
 
 
-def test_requires_one_of_n_meters_total_or_per_treatment():
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        dict(n_meters_total=None, n_meters_per_treatment=None),
+        dict(n_meters_total=10, n_meters_per_treatment=4),
+        dict(n_meters_total=0, n_meters_per_treatment=None),
+        dict(n_meters_per_treatment=0),
+    ],
+    ids=["neither_size", "both_sizes", "non_positive_total", "non_positive_per_treatment"],
+)
+def test_settings_rejects_an_invalid_sample_size(kwargs):
     with pytest.raises(ValueError):
-        Settings(n_meters_total=None, n_meters_per_treatment=None)
-
-
-def test_rejects_both_n_meters_total_and_per_treatment():
-    with pytest.raises(ValueError):
-        Settings(n_meters_total=10, n_meters_per_treatment=4)
-
-
-def test_rejects_non_positive_n_meters_total():
-    with pytest.raises(ValueError):
-        Settings(n_meters_total=0, n_meters_per_treatment=None)
-
-
-def test_rejects_non_positive_n_meters_per_treatment():
-    with pytest.raises(ValueError):
-        Settings(n_meters_per_treatment=0)
+        Settings(**kwargs)
 
 
 def test_oversampling_pool_raises(cg_loadshape_data):

@@ -13,7 +13,6 @@
 #  limitations under the License.
 
 import numpy as np
-import pytest
 
 from opendsm.comparison_groups.stratified_sampling.create_comparison_groups import Stratified_Sampling
 from opendsm.comparison_groups.stratified_sampling.settings import (
@@ -70,13 +69,18 @@ def test_default_path_sets_loadshape_attributes(stratified_feature_loadshape_dat
     assert len(loadshapes) == 3
 
 
-def test_diagnostics_ratio_is_float(stratified_feature_loadshape_data):
+def test_diagnostics_ratio_is_the_smallest_per_bin_sampled_to_treatment_ratio(
+    stratified_feature_loadshape_data,
+):
     treatment_data, comparison_pool_data = stratified_feature_loadshape_data
     sampler = Stratified_Sampling(_settings())
     sampler.get_comparison_group(treatment_data, comparison_pool_data)
+    counts = sampler.count_bins()
+    expected = (counts["n_sampled"] / counts["n_treatment"]).min()
 
     ratio = sampler.n_sampled_to_n_treatment_ratio()
 
+    assert ratio == expected
     assert isinstance(ratio, (float, np.floating))
 
 
