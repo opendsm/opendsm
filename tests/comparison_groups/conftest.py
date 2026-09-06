@@ -20,6 +20,7 @@ import pytest
 
 from opendsm.comparison_groups.common import Data, Data_Settings
 from opendsm.comparison_groups.common import const as _const
+from savings.equivalence_env import ComStockData, build_variant, load_models_fixture
 
 
 
@@ -36,6 +37,42 @@ def _hour_loadshape_data(df_baseline, meter_ids):
     data = Data(time_series_df=time_series, settings=settings)
 
     return data
+
+
+@pytest.fixture(scope="session")
+def comstock(_comstock_daily_all, _comstock_monthly_all, _comstock_hourly_all):
+    """The ComStock frame pairs with a shared cache of the data objects built
+    from them."""
+    return ComStockData(_comstock_daily_all, _comstock_monthly_all, _comstock_hourly_all)
+
+
+@pytest.fixture(scope="session")
+def pinned_models():
+    """The pinned model bank and the equivalence variants' selections."""
+    return load_models_fixture()
+
+
+@pytest.fixture(scope="session")
+def model_bank(pinned_models):
+    return pinned_models["bank"]
+
+
+@pytest.fixture(scope="session")
+def variant_env(comstock, pinned_models):
+    """Lazily built, session-cached equivalence variant environments (treatment,
+    pool, selection) from the pinned models and selections, with the real
+    ComStock data attached; variants with the same populations share them. No
+    model is fit here, and tests must not mutate what it returns."""
+    cache = {}
+    populations = {}
+
+    def build(name):
+        if name not in cache:
+            cache[name] = build_variant(name, comstock, pinned_models, populations)
+
+        return cache[name]
+
+    return build
 
 
 @pytest.fixture(scope="session")
