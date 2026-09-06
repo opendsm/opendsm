@@ -20,6 +20,8 @@ from sklearn.datasets import make_blobs
 
 from opendsm.common.clustering.algorithms.spectral import spectral
 from opendsm.common.clustering.algorithms.settings import SpectralSettings
+from opendsm.common.clustering.algorithms.spectral.spectral_divisive import spectral_divisive
+from opendsm.common.clustering.metrics.settings import ScoreSettings, SmallClusterMode
 from opendsm.common.clustering.settings import ClusteringSettings
 
 from .conftest import make_clustering_settings
@@ -47,7 +49,7 @@ def _spectral_div_cs(spectral_settings: SpectralSettings | dict | None = None, s
 
 
 @pytest.fixture
-def default_settings():
+def default_spectral_settings():
     """Create default ClusteringSettings for spectral."""
     return _spectral_cs()
 
@@ -946,14 +948,6 @@ class TestConstrainedFiedlerSplit:
         rng = np.random.default_rng(42)
         # 10 points, min_cs=6 -> 2*6=12 > 10, so no split should happen
         X = rng.normal(0, 1, (10, 3)).astype(np.float32)
-        settings = SpectralSettings(
-            n_cluster={"lower": 1, "upper": 5},
-            recluster_count=0,
-            scoring=ScoreSettings(
-                min_cluster_size=6,
-                small_cluster_mode=SmallClusterMode.OUTLIER,
-            ),
-        )
         # With OUTLIER mode, min_cs is not enforced at split time
         # (algorithm explores freely), so this tests KEEP mode instead.
         settings_keep = SpectralSettings(
@@ -964,7 +958,7 @@ class TestConstrainedFiedlerSplit:
                 small_cluster_mode=SmallClusterMode.KEEP,
             ),
         )
-        result = spectral_divisive(X, _spectral_div_cs(settings_keep, seed=42))
+        spectral_divisive(X, _spectral_div_cs(settings_keep, seed=42))
         # With only 10 points and min_cs=1 in KEEP mode, the algorithm
         # can split freely. Now test with n < 2*min_cs via _apply_fiedler:
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
@@ -985,7 +979,7 @@ class TestConstrainedFiedlerSplit:
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
             _apply_fiedler,
         )
-        # Constant Fiedler vector — all gaps are zero
+        # Constant Fiedler vector, all gaps are zero
         fiedler = np.ones(20)
         indices = np.arange(20)
         lambda2, left, right = _apply_fiedler(fiedler, 1.0, indices, min_split_size=5)
@@ -1051,9 +1045,6 @@ class TestBisectionMinClusterSize:
 
     def test_keep_mode_min_cs_2_no_tiny_clusters(self):
         """KEEP mode with min_cs=2: no cluster in any candidate has <2 members."""
-        from opendsm.common.clustering.algorithms.spectral.spectral_divisive import spectral_divisive
-        from opendsm.common.clustering.metrics.settings import ScoreSettings, SmallClusterMode
-
         rng = np.random.default_rng(42)
         X = np.vstack([
             rng.normal([0, 0, 0, 0, 0], 0.3, (30, 5)),
@@ -1070,10 +1061,6 @@ class TestBisectionMinClusterSize:
             ),
         )
         result = spectral_divisive(X, _spectral_div_cs(settings, seed=42))
-        # In KEEP mode the algorithm enforces min_cs at split time.
-        # With OUTLIER mode, the algorithm explores freely (min_cs=1 internally),
-        # but the scoring pipeline would handle small clusters.
-        # Here we test that at least some candidates are produced.
         for k in result.k_values:
             store = result._labels_store.get(k, [])
             for lm in store:
@@ -1082,9 +1069,9 @@ class TestBisectionMinClusterSize:
                 if len(non_outlier) > 0:
                     counts = np.bincount(non_outlier)
                     counts = counts[counts > 0]
-                    # With OUTLIER mode, small clusters get relabeled to -1
-                    # so remaining non-outlier clusters should be >= min_cs
-                    # (This is handled by the scoring pipeline, not the algo)
+                    assert np.all(counts >= 2), (
+                        f"k={k}: found a non-outlier cluster with <2 members: {counts}"
+                    )
 
     def test_outlier_mode_explores_freely(self):
         """OUTLIER mode with min_cs=15: algorithm explores many k values."""
@@ -1151,7 +1138,6 @@ from opendsm.common.clustering.algorithms.spectral._affinity import (
 from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
     _apply_fiedler,
     _sub_seed,
-    _embedding_split,
 )
 
 
@@ -1161,41 +1147,28 @@ from opendsm.common.clustering.algorithms.spectral.spectral_divisive import (
 class TestSweepCut:
     """Tests for the sweep-cut logic inside _apply_fiedler."""
 
-    def test_clean_bimodal_200_400(self):
-        """Clean bimodal 200/400 split produces left=200, right=400."""
+    @pytest.mark.parametrize(
+        "left_n, left_mean, left_std, right_n, right_mean, right_std",
+        [
+            (200, -5.0, 0.1, 400, 5.0, 0.1),
+            (300, -5.0, 0.1, 300, 5.0, 0.1),
+            (10, -10.0, 0.05, 590, 5.0, 0.05),
+        ],
+        ids=["clean_bimodal_200_400", "balanced_300_300", "imbalanced_10_590"],
+    )
+    def test_sweep_cut_group_sizes(
+        self, left_n, left_mean, left_std, right_n, right_mean, right_std
+    ):
+        """Clean bimodal splits produce left/right groups of the expected sizes."""
         np.random.seed(42)
         fiedler = np.concatenate([
-            np.random.normal(-5.0, 0.1, 200),
-            np.random.normal(5.0, 0.1, 400),
+            np.random.normal(left_mean, left_std, left_n),
+            np.random.normal(right_mean, right_std, right_n),
         ])
-        indices = np.arange(600)
+        indices = np.arange(left_n + right_n)
         lambda2, left, right = _apply_fiedler(fiedler, 0.5, indices)
-        assert len(left) == 200
-        assert len(right) == 400
-
-    def test_balanced_300_300(self):
-        """Balanced 300/300 split produces left=300, right=300."""
-        np.random.seed(42)
-        fiedler = np.concatenate([
-            np.random.normal(-5.0, 0.1, 300),
-            np.random.normal(5.0, 0.1, 300),
-        ])
-        indices = np.arange(600)
-        lambda2, left, right = _apply_fiedler(fiedler, 0.5, indices)
-        assert len(left) == 300
-        assert len(right) == 300
-
-    def test_imbalanced_10_590(self):
-        """Imbalanced 10/590 split correctly isolates the 10-point group."""
-        np.random.seed(42)
-        fiedler = np.concatenate([
-            np.random.normal(-10.0, 0.05, 10),
-            np.random.normal(5.0, 0.05, 590),
-        ])
-        indices = np.arange(600)
-        lambda2, left, right = _apply_fiedler(fiedler, 0.5, indices)
-        assert len(left) == 10
-        assert len(right) == 590
+        assert len(left) == left_n
+        assert len(right) == right_n
 
     def test_noisy_bimodal_approximate(self):
         """Noisy bimodal produces approximately correct split (within +/-25)."""
@@ -1329,7 +1302,7 @@ class TestPowerIterationFiedler:
         """Lambda2 from power iteration matches eigsh within bias tolerance.
 
         Power iteration has a small systematic underestimate (~15%) relative
-        to ARPACK eigsh on self-tuning affinity matrices at this size — the
+        to ARPACK eigsh on self-tuning affinity matrices at this size: the
         deflation step converges before the iterate fully aligns with the
         Fiedler eigenvector.  Tolerance set to 25% to absorb that bias while
         still flagging convergence failures (PIC returning ~0 on a connected
@@ -1508,18 +1481,15 @@ class TestSpectralDivisiveConfigurations:
         """Well-separated 3-cluster data gives k=3 for all 6 configs.
 
         Uses centers at multiples of 5 with std=1.0 (sep/std=5) and 50 points
-        per cluster.  Earlier formulations used 30 points per cluster with
-        centers at multiples of 20 and std=0.3 (sep/std=67); that regime is
-        not "well-separated" in any practical sense — inter-cluster affinity
-        underflows to 0 in float32 and the top Laplacian eigenvalues collapse
-        to a rotation-degenerate subspace, where different BLAS pick
+        per cluster. A much larger separation (sep/std=67, 30 points per
+        cluster) is not "well-separated" in any practical sense: inter-cluster
+        affinity underflows to 0 in float32 and the top Laplacian eigenvalues
+        collapse to a rotation-degenerate subspace, where different BLAS pick
         different orthonormal bases and the score function reads them as
         different winners (k=2 on Windows, k=3 on Linux, k=4 on macOS).
         sep/std=5 + n=50 keeps the eigengap wide enough for stable
-        cross-platform agreement; n=30 alone was insufficient because the
+        cross-platform agreement; n=30 alone is insufficient because the
         score function in self_tuning + no_PIC becomes small-sample noisy.
-        Algorithmic robustness for degenerate eigenstructure is tracked as
-        a future improvement (PR 9 in the plan).
         """
         from opendsm.common.clustering.algorithms.spectral.spectral_divisive import spectral_divisive
         from opendsm.common.clustering.algorithms.settings import AffinityMatrixOptions

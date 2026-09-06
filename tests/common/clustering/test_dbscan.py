@@ -27,6 +27,8 @@ from sklearn.metrics import adjusted_rand_score
 from opendsm.common.clustering.settings import ClusteringSettings
 from opendsm.common.clustering.algorithms.dbscan import dbscan
 
+from .conftest import three_blobs
+
 
 
 def _dcs(**dbscan_settings):
@@ -36,29 +38,19 @@ def _dcs(**dbscan_settings):
     return cs
 
 
-def _three_blobs(n_per=30, d=5, sep=50.0, seed=0):
-    """Three well-separated blobs with ground-truth labels."""
-    rng = np.random.default_rng(seed)
-    blocks = [rng.normal(np.full(d, i * sep), 1.0, size=(n_per, d)) for i in range(3)]
-    data = np.vstack(blocks)
-    truth = np.repeat(np.arange(3), n_per)
-
-    return data, truth
-
-
 class TestDBSCANHappyPath:
     """Valid density structure is recovered."""
 
     def test_recovers_well_separated_blobs(self):
         """eps inside the blob, below the gap -> exact recovery (ARI ~ 1)."""
-        data, truth = _three_blobs()
+        data, truth = three_blobs()
         result = dbscan(data, _dcs(epsilon=5.0, min_samples=3))
         assert result.k == 3
         assert adjusted_rand_score(truth, result.labels) > 0.99
 
     def test_huge_epsilon_merges_into_one_cluster(self):
         """eps spanning the whole space yields a single cluster."""
-        data, _ = _three_blobs()
+        data, _ = three_blobs()
         result = dbscan(data, _dcs(epsilon=1e9, min_samples=1))
         assert result.k == 1
         assert len(np.unique(result.labels)) == 1
@@ -71,7 +63,7 @@ class TestDBSCANHappyPath:
 
     def test_deterministic(self):
         """DBSCAN is deterministic: same input -> identical labels."""
-        data, _ = _three_blobs()
+        data, _ = three_blobs()
         a = dbscan(data, _dcs(epsilon=5.0, min_samples=3)).labels
         b = dbscan(data, _dcs(epsilon=5.0, min_samples=3)).labels
         assert np.array_equal(a, b)
@@ -82,14 +74,14 @@ class TestDBSCANNoiseOnly:
 
     def test_tiny_epsilon_all_noise_raises(self):
         """eps below every pairwise distance with min_samples>1 -> all noise."""
-        data, _ = _three_blobs()
+        data, _ = three_blobs()
         result = dbscan(data, _dcs(epsilon=1e-9, min_samples=5))
         with pytest.raises(ValueError, match="No clustering met"):
             _ = result.labels
 
     def test_min_samples_above_n_all_noise_raises(self):
         """min_samples exceeding n leaves every point as noise."""
-        data, _ = _three_blobs()
+        data, _ = three_blobs()
         result = dbscan(data, _dcs(epsilon=5.0, min_samples=200))
         with pytest.raises(ValueError, match="No clustering met"):
             _ = result.labels
@@ -109,7 +101,7 @@ class TestDBSCANInputHandling:
         sklearn's DBSCAN finds no finite-distance neighbours for the NaN row,
         so it falls out as -1 while the remaining points cluster normally.
         """
-        data, _ = _three_blobs()
+        data, _ = three_blobs()
         data[0, 0] = np.nan
         labels = dbscan(data, _dcs(epsilon=5.0, min_samples=3)).labels
         assert labels[0] == -1

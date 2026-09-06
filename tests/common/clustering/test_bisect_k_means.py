@@ -17,7 +17,6 @@ import pytest
 from sklearn.datasets import make_blobs
 
 from opendsm.common.clustering.algorithms.bisect_k_means import bisect_k_means
-from opendsm.common.clustering.settings import ClusteringSettings
 from opendsm.common.clustering.algorithms.settings import BisectingKMeansSettings
 
 from .conftest import make_clustering_settings
@@ -51,7 +50,7 @@ def _make_bisect_settings(settings_dict: dict) -> BisectingKMeansSettings:
 
 
 @pytest.fixture
-def default_settings():
+def default_bisect_kmeans_settings():
     """Create default bisecting k-means ClusteringSettings."""
     return _bkm_cs()
 
@@ -160,8 +159,6 @@ class TestBaselineConsistency:
             random_state=42
         )
 
-        # Configure settings for reproducible clustering
-        settings_dict = get_default_settings_dict()
         algo_settings = BisectingKMeansSettings(
             n_cluster={"lower": 2, "upper": 4},
             recluster_count=2,
