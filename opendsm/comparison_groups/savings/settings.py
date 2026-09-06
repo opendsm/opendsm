@@ -122,8 +122,32 @@ class CGCorrectionSettings(BaseSettings):
     )
 
     weight_cluster_aggregation: Optional[WeightClusterAggChoice] = pydantic.Field(
-        default = None,
-        description="how to weight cluster aggregation"
+        default = WeightClusterAggChoice.MODEL,
+        description=(
+            "how to weight cluster aggregation. Model-magnitude weighting can "
+            "concentrate weight on a single meter in small or magnitude-skewed "
+            "clusters; `weight_cap` bounds this, but when it doesn't (a cap "
+            "above 0.5, or a cluster too small to redistribute into) the Kish "
+            "effective sample size can still drop below 2. When that happens "
+            "the point correction stays weighted, but the cluster's "
+            "uncertainty is estimated with uniform weights over its finite "
+            "meters, since an effective sample size below 2 cannot support a "
+            "weighted interval."
+        )
+    )
+
+    weight_cap: float = pydantic.Field(
+        default=0.5,
+        gt=0.0,
+        le=1.0,
+        description=(
+            "upper bound on any single meter's model-magnitude weight within a "
+            "cluster. Weights above the cap are clipped to it and the excess is "
+            "redistributed proportionally over the uncapped meters (equally if "
+            "they all carry zero weight), iterating until no weight exceeds the "
+            "cap. A cap of 0.5 or below guarantees a Kish effective sample size "
+            "of at least 2 for clusters of 2 or more meters."
+        )
     )
 
     outlier_rejection: OutlierRejectionSettings = pydantic.Field(
@@ -142,9 +166,16 @@ class CGCorrectionSettings(BaseSettings):
         lt=1.0,
         description="significance level for uncertainty calculations"
     )
-    
 
-if __name__ == "__main__":
-    s = CGCorrectionSettings()
-
-    print(s.model_dump_json())
+    min_window_coverage: float = pydantic.Field(
+        default=0.9,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "minimum fraction of the reporting group window a meter must cover "
+            "with finite observed and temperature to be corrected. Treatment and "
+            "pool meters below it, and meters carrying an eemeter observed "
+            "disqualification, are dropped before prediction and recorded on the "
+            "correction ledger."
+        )
+    )
