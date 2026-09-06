@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import pydantic
 
+from pydantic_core import to_jsonable_python
+
 from typing import Any
+
 
 
 class BaseSettings(pydantic.BaseModel):
@@ -55,6 +58,32 @@ class MutableBaseSettings(BaseSettings):
 
 
 # add developer field to pydantic Field
-def CustomField(developer=False, *args, **kwargs):
+def CustomField(developer=True, *args, **kwargs):
     field = pydantic.Field(json_schema_extra={"developer": developer}, *args, **kwargs)
     return field
+
+
+def _collect_deviations(settings: BaseSettings, reference: BaseSettings, prefix: str) -> list[tuple[str, Any, Any]]:
+    deviations = []
+    for name, field in type(settings).model_fields.items():
+        extra = field.json_schema_extra or {}
+        developer = extra.get("developer", True)
+        if not developer:
+            continue
+
+        value = getattr(settings, name)
+        default = getattr(reference, name)
+        path = f"{prefix}{name}"
+
+        if isinstance(value, BaseSettings) and isinstance(default, BaseSettings):
+            deviations.extend(_collect_deviations(value, default, f"{path}."))
+        elif value != default:
+            deviations.append((path, to_jsonable_python(value), to_jsonable_python(default)))
+
+    return deviations
+
+
+def settings_deviations(settings: BaseSettings, reference: BaseSettings) -> list[tuple[str, Any, Any]]:
+    """Return (path, value, default) for every developer-tier leaf that differs from the reference."""
+
+    return _collect_deviations(settings, reference, "")
