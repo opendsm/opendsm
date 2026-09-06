@@ -27,7 +27,9 @@ from opendsm.eemeter.models.billing.data import (
     BillingReportingData,
 )
 from opendsm.eemeter.models.daily.model import DailyModel
+from opendsm.eemeter.models.billing.settings import BillingSettings
 from opendsm.common.const import ModelFrequency
+
 
 
 class BillingModel(DailyModel):
@@ -57,9 +59,10 @@ class BillingModel(DailyModel):
     _baseline_data_type = BillingBaselineData
     _reporting_data_type = BillingReportingData
     _data_df_name = "df"
+    _settings_class = BillingSettings
 
-    def __init__(self, settings=None, verbose: bool = False,):
-        super().__init__(model="legacy", settings=settings, verbose=verbose)
+    def _reference_settings(self) -> BillingSettings:
+        return BillingSettings()
 
     def fit(
         self, 
@@ -168,14 +171,3 @@ class BillingModel(DailyModel):
         # TODO: pass more kwargs to plotting function
 
         plot(self, self.predict(data, aggregation=aggregation))
-
-    def to_dict(self) -> dict:
-        """Returns a dictionary of model parameters.
-
-        Returns:
-            Model parameters.
-        """
-        model_dict = super().to_dict()
-        model_dict["settings"]["developer_mode"] = True
-
-        return model_dict

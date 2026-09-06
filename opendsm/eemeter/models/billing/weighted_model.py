@@ -26,13 +26,18 @@ from opendsm.eemeter.models.billing.data import (
     BillingBaselineData,
     BillingReportingData,
 )
-from opendsm.eemeter.models.billing.settings import BillingSettings
 from opendsm.eemeter.models.daily.model import DailyModel
+from opendsm.eemeter.models.billing.settings import BillingSettings
+from opendsm.eemeter.models.daily.utilities.settings import DailySettings
 from opendsm.common.const import ModelFrequency
+
 
 
 class BillingWeightedModel(DailyModel):
     """A class to fit a model to the input meter data.
+
+    Not yet ready for public use: the weighted billing method is under development and
+    may change without notice.
 
     BillingModel is a wrapper for the DailyModel class using billing presets.
 
@@ -59,30 +64,22 @@ class BillingWeightedModel(DailyModel):
     _baseline_data_type = BillingBaselineData
     _reporting_data_type = BillingReportingData
     _data_df_name = "billing_df"
+    _default_overrides = {"segment_minimum_count": 3}
+    _settings_class = BillingSettings
 
     # TODO: lot of duplicated code between this and daily model, refactor later
     def __init__(
         self,
-        settings: dict | None = None,
+        settings: dict | DailySettings | None = None,
         verbose: bool = False,
     ):
-        super().__init__(model="legacy", settings=settings, verbose=verbose)
+        if settings is None or isinstance(settings, dict):
+            settings = {**self._default_overrides, **(settings or {})}
 
-        print("The weighted billing model is under development and is not ready for public use.")
+        super().__init__(settings=settings, verbose=verbose)
 
-    def _initialize_settings(
-        self,
-        model: str = "current",
-        settings: dict | None = None
-    ) -> None:
-
-        # Note: Model designates the base settings, it can be 'current' or 'legacy'
-        #       Settings is to be a dictionary of settings to be changed
-
-        if settings is None:
-            settings = {}
-
-        self.settings = BillingSettings(**settings)
+    def _reference_settings(self) -> BillingSettings:
+        return BillingSettings(**self._default_overrides)
 
     def fit(
         self, 
@@ -191,14 +188,3 @@ class BillingWeightedModel(DailyModel):
         # TODO: pass more kwargs to plotting function
 
         plot(self, self.predict(data, aggregation=aggregation))
-
-    def to_dict(self) -> dict:
-        """Returns a dictionary of model parameters.
-
-        Returns:
-            Model parameters.
-        """
-        model_dict = super().to_dict()
-        model_dict["settings"]["developer_mode"] = True
-
-        return model_dict
