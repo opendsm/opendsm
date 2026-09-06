@@ -19,7 +19,9 @@ from opendsm.comparison_groups.savings.settings import (
     CorrectionCapSettings,
     CorrectionCapChoice,
     OutlierRejectionSettings,
+    WeightClusterAggChoice,
 )
+
 
 
 def test_correction_cap_defaults_are_valid():
@@ -53,3 +55,31 @@ def test_alpha_out_of_range_rejected():
 def test_outlier_quantile_out_of_range_rejected():
     with pytest.raises(ValueError):
         OutlierRejectionSettings(quantile=0.6)
+
+
+def test_weight_cluster_aggregation_defaults_to_model():
+    settings = CGCorrectionSettings()
+
+    assert settings.weight_cluster_aggregation == WeightClusterAggChoice.MODEL
+
+
+def test_weight_cap_defaults_to_one_half():
+    settings = CGCorrectionSettings()
+
+    assert settings.weight_cap == 0.5
+
+
+def test_weight_cap_rejects_zero():
+    with pytest.raises(ValueError):
+        CGCorrectionSettings(weight_cap=0.0)
+
+
+def test_weight_cap_rejects_above_one():
+    with pytest.raises(ValueError):
+        CGCorrectionSettings(weight_cap=1.1)
+
+
+def test_weight_cap_accepts_upper_bound():
+    settings = CGCorrectionSettings(weight_cap=1.0)
+
+    assert settings.weight_cap == 1.0

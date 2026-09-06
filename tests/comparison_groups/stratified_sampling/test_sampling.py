@@ -17,7 +17,7 @@ import pytest
 import numpy as np
 import pandas as pd
 
-from opendsm.comparison_groups.stratified_sampling.sampling import StratifiedSampler, BinnedData
+from opendsm.comparison_groups.stratified_sampling.sampling import StratifiedSampler
 from opendsm.comparison_groups.stratified_sampling.bins import ModelSamplingException
 from opendsm.comparison_groups.stratified_sampling.settings import StratificationColumnSettings
 
@@ -203,37 +203,6 @@ def test_stratified_sampling_fit_and_sample_n_samples_approx_limit(
 
     n_samples_approx = 40
     stratified_sampling_obj.fit_and_sample(
-        df_treatment, df_pool, n_samples_approx=n_samples_approx, random_seed=1
-    )
-    output = stratified_sampling_obj.data_sample.df
-    assert output["_bin_label"].nunique() == 2
-    bins_df = stratified_sampling_obj.diagnostics().count_bins()
-    assert (bins_df["n_sampled"] / bins_df["n_pct_sampled"]).round() == n_samples_approx
-
-
-def test_stratified_sampling_fit_and_sample_n_samples_approx_limit(
-    df_treatment, df_pool, col_name
-):
-    stratified_sampling_obj = StratifiedSampler()
-    col_name = "col1"
-    df_treatment = pd.DataFrame(
-        [
-            {"id": f"id_{x}", col_name: x}
-            for x in (
-                list(np.arange(0, 2, 0.1))
-                + list(np.arange(2, 4, 0.5))
-                + list(np.arange(4, 6, 1))
-                + list(np.arange(6, 10, 0.2))
-            )
-        ]
-    )
-    df_pool = pd.DataFrame(
-        [{"id": f"id_{x}", col_name: x} for x in np.arange(0, 20, 0.01)]
-    )
-    stratified_sampling_obj.add_column(col_name)
-
-    n_samples_approx = 40
-    stratified_sampling_obj.fit_and_sample(
         df_treatment,
         df_pool,
         n_samples_approx=n_samples_approx,
@@ -242,7 +211,6 @@ def test_stratified_sampling_fit_and_sample_n_samples_approx_limit(
     )
     output = stratified_sampling_obj.data_sample.df
     assert output["_bin_label"].nunique() == 2
-    bins_df = stratified_sampling_obj.diagnostics().count_bins()
     assert abs(len(output) - n_samples_approx) <= 1
 
 
@@ -316,7 +284,6 @@ def test_stratified_sampling_fit_and_sample_dont_require_equivalence(
     ## attempting to estimate both n_bins and n_samples
     stratified_sampling_obj.fit_and_sample(df_treatment, df_pool, random_seed=1)
     output = stratified_sampling_obj.data_sample.df
-    bins_df = stratified_sampling_obj.diagnostics().count_bins()
     assert not output.empty
 
 
@@ -338,5 +305,4 @@ def test_stratified_sampling_fit_and_sample_upper_limit_n_samples_approx(
         relax_n_samples_approx_constraint=True,
     )
     output = stratified_sampling_obj.data_sample.df
-    bins_df = stratified_sampling_obj.diagnostics().count_bins()
     assert not output.empty
