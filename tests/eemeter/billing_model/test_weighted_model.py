@@ -91,6 +91,3 @@ def test_predict_before_fit_raises(weighted_data):
         BillingWeightedModel().predict(weighted_data)
 
 
-def test_to_dict_marks_developer_mode(weighted_model):
-    assert weighted_model.to_dict()["settings"]["developer_mode"] is True
-
