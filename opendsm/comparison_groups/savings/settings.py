@@ -186,9 +186,17 @@ class CGCorrectionSettings(BaseSettings):
         lt=1.0,
         description="significance level for uncertainty calculations"
     )
-    
 
-if __name__ == "__main__":
-    s = CGCorrectionSettings()
-
-    print(s.model_dump_json())
+    min_window_coverage: float = pydantic.Field(
+        default=0.9,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "minimum fraction of the treatment meter's reporting span a meter must "
+            "cover with finite observed and temperature to be corrected. The "
+            "treatment meter and its comparison-group members below it, and meters "
+            "carrying an eemeter observed "
+            "disqualification, are dropped before prediction and recorded on the "
+            "correction ledger."
+        )
+    )
