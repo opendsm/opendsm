@@ -22,10 +22,12 @@ Tests cover:
 - Integration scenarios and edge cases
 """
 
+import logging
+
 import pytest
 import numpy as np
 import pandas as pd
-from datetime import datetime, date, timedelta
+from datetime import date
 
 from opendsm.eemeter.models.hourly.data import (
     _HourlyData,
@@ -33,132 +35,17 @@ from opendsm.eemeter.models.hourly.data import (
     HourlyReportingData,
 )
 from opendsm.eemeter.common.data_settings import HourlyDataSettings
-from opendsm.eemeter.common.sufficiency_criteria import HourlySufficiencyCriteria
 
+from .conftest import (
+    create_hourly_dataframe,
+    create_repeated_values,
+    create_extreme_values,
+    assert_has_disqualification,
+    assert_has_warning,
+    assert_column_exists,
+    assert_all_hours_present,
+)
 
-# ===== Helper Functions =====
-
-
-def create_hourly_dataframe(
-    start="2019-01-01",
-    end="2019-12-31",
-    tz="America/New_York",
-    include_ghi=False,
-    observed_mean=5.0,
-    temperature_mean=60.0,
-    add_noise=True,
-):
-    """Create synthetic hourly data for testing"""
-    start_dt = pd.Timestamp(start, tz=tz)
-    end_dt = pd.Timestamp(end, tz=tz)
-    index = pd.date_range(start_dt, end_dt, freq="h")
-
-    n = len(index)
-
-    # Temperature: seasonal + daily cycle + noise
-    day_of_year = index.dayofyear
-    hour_of_day = index.hour
-    seasonal = 20 * np.sin(2 * np.pi * (day_of_year - 80) / 365)
-    daily = 10 * np.sin(2 * np.pi * (hour_of_day - 6) / 24)
-    noise = np.random.normal(0, 3, n) if add_noise else 0
-    temperature = temperature_mean + seasonal + daily + noise
-
-    # Observed: correlated with temperature + noise
-    base_load = observed_mean
-    temp_correlation = 0.02 * (temperature - temperature_mean)
-    obs_noise = np.random.normal(0, 0.5, n) if add_noise else 0
-    observed = np.maximum(0, base_load + temp_correlation + obs_noise)
-
-    df = pd.DataFrame(
-        {"observed": observed, "temperature": temperature}, index=index
-    )
-
-    if include_ghi:
-        # GHI: daytime only, seasonal variation
-        is_daytime = (hour_of_day >= 6) & (hour_of_day <= 18)
-        sun_angle = np.sin(np.pi * (hour_of_day - 6) / 12)
-        seasonal_ghi = 300 + 200 * np.sin(2 * np.pi * (day_of_year - 172) / 365)
-        ghi = np.where(is_daytime, seasonal_ghi * sun_angle, 0)
-        df["ghi"] = ghi
-
-    return df
-
-
-def create_repeated_values(df, repeat_pct):
-    """Reduce uniqueness by repeating values"""
-    df = df.copy()
-    n_repeat = int(len(df) * repeat_pct)
-    repeated_value = df["observed"].iloc[0]
-    df.loc[df.index[:n_repeat], "observed"] = repeated_value
-
-    return df
-
-
-def create_extreme_values(df, n_extreme, column="observed"):
-    """Add outliers beyond 3x IQR"""
-    df = df.copy()
-    q1 = df[column].quantile(0.25)
-    q3 = df[column].quantile(0.75)
-    iqr = q3 - q1
-    upper_bound = q3 + 3 * iqr
-
-    # Add values beyond upper bound
-    extreme_indices = np.random.choice(len(df), n_extreme, replace=False)
-    df.loc[df.index[extreme_indices], column] = upper_bound * 2
-
-    return df
-
-
-def assert_has_disqualification(data, qualified_name):
-    """Assert data has at least this disqualification"""
-    names = {dq.qualified_name for dq in data.disqualification}
-    assert qualified_name in names, f"{qualified_name} not in {names}"
-
-
-def assert_has_warning(data, qualified_name):
-    """Assert data has at least this warning"""
-    names = {w.qualified_name for w in data.warnings}
-    assert qualified_name in names, f"{qualified_name} not in {names}"
-
-
-def assert_disqualification(data, expected_qualified_names):
-    """Assert data has exactly these disqualifications"""
-    if isinstance(expected_qualified_names, str):
-        expected_qualified_names = [expected_qualified_names]
-
-    actual = {dq.qualified_name for dq in data.disqualification}
-    expected = set(expected_qualified_names)
-
-    assert actual == expected, f"Expected {expected}, got {actual}"
-
-
-def assert_warning(data, expected_qualified_names):
-    """Assert data has exactly these warnings"""
-    if isinstance(expected_qualified_names, str):
-        expected_qualified_names = [expected_qualified_names]
-
-    actual = {w.qualified_name for w in data.warnings}
-    expected = set(expected_qualified_names)
-
-    assert actual == expected, f"Expected {expected}, got {actual}"
-
-
-def assert_no_disqualifications(data):
-    """Assert data passes all checks"""
-    actual = [dq.qualified_name for dq in data.disqualification]
-    assert len(actual) == 0, f"Expected no disqualifications, got {actual}"
-
-
-def assert_column_exists(df, column):
-    """Assert column present in dataframe"""
-    assert column in df.columns, f"Column {column} not found in {list(df.columns)}"
-
-
-def assert_all_hours_present(df):
-    """Assert dataframe has contiguous hourly index"""
-    expected_hours = (df.index.max() - df.index.min()).total_seconds() / 3600 + 1
-    actual_hours = len(df)
-    assert actual_hours == expected_hours, f"Expected {expected_hours} hours, got {actual_hours}"
 
 
 class TestHourlyDataClassInit:
@@ -642,33 +529,18 @@ class TestHourlyDataProcessing:
 
     # ===== Interpolation Tests =====
 
-    def test_interpolation_fills_small_gaps(self):
-        """Few missing hours filled"""
+    @pytest.mark.parametrize(
+        "column",
+        ["observed", "temperature"],
+        ids=["observed_small_gap", "temperature_small_gap"],
+    )
+    def test_interpolation_fills_small_gaps(self, column):
         df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        df.loc[df.index[100:103], "observed"] = np.nan
+        df.loc[df.index[100:103], column] = np.nan
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        # Gaps should be filled
-        assert not data.df.loc[df.index[100:103], "observed"].isna().all()
-
-    def test_interpolation_temperature_column(self):
-        """Temperature interpolated"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        df.loc[df.index[100:103], "temperature"] = np.nan
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        assert not data.df.loc[df.index[100:103], "temperature"].isna().all()
-
-    def test_interpolation_observed_column(self):
-        """Observed interpolated"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        df.loc[df.index[100:103], "observed"] = np.nan
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        assert not data.df.loc[df.index[100:103], "observed"].isna().all()
+        assert not data.df.loc[df.index[100:103], column].isna().all()
 
     def test_interpolation_ghi_column(self):
         """GHI interpolated if present"""
@@ -927,52 +799,35 @@ class TestHourlySufficiencyCriteria:
 
     # ===== Baseline Length Check =====
 
-    def test_baseline_full_year(self):
-        """365 days (valid)"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
+    @pytest.mark.parametrize(
+        "start, end, expect_disqualified",
+        [
+            ("2019-01-01", "2019-12-31", False),
+            ("2019-01-01", "2019-11-26", False),
+            ("2020-01-01", "2020-12-31", False),
+            ("2019-01-01", "2019-11-20", True),
+            ("2019-01-01", "2020-01-10", True),
+        ],
+        ids=[
+            "full_year_365_days",
+            "minimum_329_days",
+            "leap_year_366_days",
+            "under_329_days",
+            "over_366_days",
+        ],
+    )
+    def test_baseline_length(self, start, end, expect_disqualified):
+        df = create_hourly_dataframe(start=start, end=end)
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert "eemeter.sufficiency_criteria.incorrect_number_of_total_days" not in dq_names
+        dq_name = "eemeter.sufficiency_criteria.incorrect_number_of_total_days"
 
-    def test_baseline_minimum_valid(self):
-        """Exactly 329 days (valid)"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-11-26")
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert "eemeter.sufficiency_criteria.incorrect_number_of_total_days" not in dq_names
-
-    def test_baseline_leap_year(self):
-        """366 days (valid)"""
-        df = create_hourly_dataframe(start="2020-01-01", end="2020-12-31")
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert "eemeter.sufficiency_criteria.incorrect_number_of_total_days" not in dq_names
-
-    def test_baseline_too_short(self):
-        """Less than 329 days disqualifies"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-11-20")
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        assert_has_disqualification(
-            data, "eemeter.sufficiency_criteria.incorrect_number_of_total_days"
-        )
-
-    def test_baseline_too_long(self):
-        """More than 366 days disqualifies"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2020-01-10")
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        assert_has_disqualification(
-            data, "eemeter.sufficiency_criteria.incorrect_number_of_total_days"
-        )
+        if expect_disqualified:
+            assert_has_disqualification(data, dq_name)
+        else:
+            dq_names = [dq.qualified_name for dq in data.disqualification]
+            assert dq_name not in dq_names
 
     def test_reporting_skips_length_check(self):
         """No check for reporting data"""
@@ -1027,85 +882,70 @@ class TestHourlySufficiencyCriteria:
         dq_names = [dq.qualified_name for dq in data.disqualification]
         assert "eemeter.sufficiency_criteria.negative_observed_values" not in dq_names
 
-    @pytest.mark.skip(
-        reason=(
-            "SufficiencyCriteria._check_negative_observed_values currently "
-            "skips when is_reporting_data=True. Enabling the check for "
-            "reporting data is a sufficiency-criteria behavior change "
-            "deferred to a follow-up sufficiency-criteria PR."
-        )
+    # ===== Daily Coverage Checks =====
+
+    @pytest.mark.parametrize(
+        "column, seed",
+        [("temperature", 50), ("observed", 55)],
+        ids=["temperature_15_pct_missing", "observed_15_pct_missing"],
     )
-    def test_negative_values_gas_reporting(self):
-        """Gas reporting with negatives disqualified"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-03-31")
-        df.loc[df.index[:10], "observed"] = -5.0
-
-        data = HourlyReportingData(df=df, is_electricity_data=False)
-
-        assert_has_disqualification(
-            data, "eemeter.sufficiency_criteria.negative_observed_values"
-        )
-
-    # ===== Temperature Daily Coverage Check =====
-
-    def test_temperature_daily_coverage_below_threshold(self):
-        """Less than 90% disqualified"""
+    def test_daily_coverage_below_threshold(self, column, seed):
         df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        # Remove temperature for many hours to bring daily coverage below 90%
-        np.random.seed(50)
-        mask = np.random.random(len(df)) < 0.15  # 15% missing
-        df.loc[mask, "temperature"] = np.nan
+        np.random.seed(seed)
+        mask = np.random.random(len(df)) < 0.15
+        df.loc[mask, column] = np.nan
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
         assert_has_disqualification(
             data,
-            "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data",
+            f"eemeter.sufficiency_criteria.too_many_days_with_missing_{column}_data",
         )
 
-    def test_temperature_daily_coverage_above_threshold(self):
-        """More than 90% passes"""
+    @pytest.mark.parametrize(
+        "column",
+        ["temperature", "observed"],
+        ids=["temperature_at_or_above_90_pct", "observed_at_or_above_90_pct"],
+    )
+    def test_daily_coverage_above_threshold(self, column):
         df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        # Minimal missing data
-        df.loc[df.index[:5], "temperature"] = np.nan
+        df.loc[df.index[:5], column] = np.nan
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
         dq_names = [dq.qualified_name for dq in data.disqualification]
         assert (
-            "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data"
+            f"eemeter.sufficiency_criteria.too_many_days_with_missing_{column}_data"
             not in dq_names
         )
 
-    def test_temperature_daily_coverage_custom_threshold(self):
-        """Override to 80%"""
+    @pytest.mark.parametrize(
+        "column, missing_columns, seed",
+        [
+            ("temperature", ["temperature"], 52),
+            ("observed", ["observed"], 58),
+            ("joint", ["temperature", "observed"], 62),
+        ],
+        ids=[
+            "temperature_80_pct_threshold",
+            "observed_80_pct_threshold",
+            "joint_80_pct_threshold",
+        ],
+    )
+    def test_daily_coverage_custom_threshold(self, column, missing_columns, seed):
         df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        np.random.seed(52)
-        mask = np.random.random(len(df)) < 0.15  # 15% missing
-        df.loc[mask, "temperature"] = np.nan
+        np.random.seed(seed)
+        mask = np.random.random(len(df)) < 0.15
+        df.loc[mask, missing_columns] = np.nan
 
-        settings = {"sufficiency": {"temperature": {"min_pct_daily_coverage": 0.8}}}
+        settings = {"sufficiency": {column: {"min_pct_daily_coverage": 0.8}}}
         data = HourlyBaselineData(df=df, is_electricity_data=True, settings=settings)
 
-        # With 85% coverage and 80% threshold, should pass
         dq_names = [dq.qualified_name for dq in data.disqualification]
         assert (
-            "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data"
+            f"eemeter.sufficiency_criteria.too_many_days_with_missing_{column}_data"
             not in dq_names
         )
-
-    def test_temperature_daily_coverage_baseline(self):
-        """Applies to baseline"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        np.random.seed(53)
-        mask = np.random.random(len(df)) < 0.15
-        df.loc[mask, "temperature"] = np.nan
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        # Should have disqualification
-        dq_names = [dq.qualified_name for dq in data.disqualification]
-        # Will fail if coverage too low
 
     def test_temperature_daily_coverage_reporting(self):
         """Applies to reporting"""
@@ -1116,50 +956,9 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyReportingData(df=df, is_electricity_data=True)
 
-        dq_names = [dq.qualified_name for dq in data.disqualification]
-        # Will fail if coverage too low
-
-    # ===== Observed Daily Coverage Check =====
-
-    def test_observed_daily_coverage_below_threshold(self):
-        """Below 90% disqualifies"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        np.random.seed(55)
-        mask = np.random.random(len(df)) < 0.15
-        df.loc[mask, "observed"] = np.nan
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
         assert_has_disqualification(
             data,
-            "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data",
-        )
-
-    def test_observed_daily_coverage_at_above_threshold(self):
-        """At/above 90% passes"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        df.loc[df.index[:5], "observed"] = np.nan  # Minimal missing
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data"
-            not in dq_names
-        )
-
-    def test_observed_daily_coverage_baseline_only(self):
-        """Only baseline checked"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        np.random.seed(56)
-        mask = np.random.random(len(df)) < 0.15
-        df.loc[mask, "observed"] = np.nan
-
-        baseline_data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        assert_has_disqualification(
-            baseline_data,
-            "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data",
+            "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data",
         )
 
     def test_observed_daily_coverage_reporting_flagged(self):
@@ -1185,23 +984,6 @@ class TestHourlySufficiencyCriteria:
         reporting_data = HourlyReportingData(df=df, is_electricity_data=True)
 
         dq_names = [dq.qualified_name for dq in reporting_data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data"
-            not in dq_names
-        )
-
-    def test_observed_daily_coverage_custom_threshold(self):
-        """Custom threshold"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        np.random.seed(58)
-        mask = np.random.random(len(df)) < 0.15
-        df.loc[mask, "observed"] = np.nan
-
-        settings = {"sufficiency": {"observed": {"min_pct_daily_coverage": 0.8}}}
-        data = HourlyBaselineData(df=df, is_electricity_data=True, settings=settings)
-
-        # With 85% coverage and 80% threshold, should pass
-        dq_names = [dq.qualified_name for dq in data.disqualification]
         assert (
             "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data"
             not in dq_names
@@ -1267,52 +1049,94 @@ class TestHourlySufficiencyCriteria:
             data, "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data"
         )
 
-    def test_joint_daily_coverage_custom_threshold(self):
-        """Custom threshold"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        np.random.seed(62)
-        mask = np.random.random(len(df)) < 0.15
-        df.loc[mask, ["temperature", "observed"]] = np.nan
+    # ===== Monthly Coverage Checks =====
 
-        settings = {"sufficiency": {"joint": {"min_pct_daily_coverage": 0.8}}}
-        data = HourlyBaselineData(df=df, is_electricity_data=True, settings=settings)
-
-        # With 85% coverage and 80% threshold, should pass
-        dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data"
-            not in dq_names
+    @pytest.mark.parametrize(
+        "column, include_ghi, n_missing",
+        [
+            ("temperature", False, 10),
+            ("ghi", True, 5),
+            ("observed", False, 5),
+        ],
+        ids=["temperature", "ghi", "observed"],
+    )
+    def test_monthly_coverage_all_months_pass(self, column, include_ghi, n_missing):
+        df = create_hourly_dataframe(
+            start="2019-01-01", end="2019-12-31", include_ghi=include_ghi
         )
-
-    # ===== Temperature Monthly Coverage Check =====
-
-    def test_temperature_monthly_coverage_all_months_pass(self):
-        """All above 90%"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        # Minimal missing data spread across year
-        df.loc[df.index[:10], "temperature"] = np.nan
+        df.loc[df.index[:n_missing], column] = np.nan
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
         dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.missing_monthly_temperature_data"
-            not in dq_names
-        )
+        assert f"eemeter.sufficiency_criteria.missing_monthly_{column}_data" not in dq_names
 
-    def test_temperature_monthly_coverage_one_month_low(self):
-        """Feb with 85% fails"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        # Remove 15% of February
-        feb_mask = df.index.month == 2
-        feb_indices = df[feb_mask].index
-        n_remove = int(len(feb_indices) * 0.15)
-        df.loc[feb_indices[:n_remove], "temperature"] = np.nan
+    @pytest.mark.parametrize(
+        "column, include_ghi, month",
+        [
+            ("temperature", False, 2),
+            ("ghi", True, 6),
+            ("observed", False, 2),
+        ],
+        ids=["temperature_february", "ghi_june", "observed_february"],
+    )
+    def test_monthly_coverage_one_month_low(self, column, include_ghi, month):
+        df = create_hourly_dataframe(
+            start="2019-01-01", end="2019-12-31", include_ghi=include_ghi
+        )
+        month_indices = df[df.index.month == month].index
+        n_remove = int(len(month_indices) * 0.15)
+        df.loc[month_indices[:n_remove], column] = np.nan
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
         assert_has_disqualification(
-            data, "eemeter.sufficiency_criteria.missing_monthly_temperature_data"
+            data, f"eemeter.sufficiency_criteria.missing_monthly_{column}_data"
+        )
+
+    @pytest.mark.parametrize(
+        "column, include_ghi, month",
+        [
+            ("temperature", False, 2),
+            ("ghi", True, 6),
+            ("observed", False, 2),
+        ],
+        ids=["temperature_february", "ghi_june", "observed_february"],
+    )
+    def test_monthly_coverage_custom_threshold(self, column, include_ghi, month):
+        df = create_hourly_dataframe(
+            start="2019-01-01", end="2019-12-31", include_ghi=include_ghi
+        )
+        month_indices = df[df.index.month == month].index
+        n_remove = int(len(month_indices) * 0.15)
+        df.loc[month_indices[:n_remove], column] = np.nan
+
+        settings = {"sufficiency": {column: {"min_pct_monthly_coverage": 0.8}}}
+        data = HourlyBaselineData(df=df, is_electricity_data=True, settings=settings)
+
+        dq_names = [dq.qualified_name for dq in data.disqualification]
+        assert f"eemeter.sufficiency_criteria.missing_monthly_{column}_data" not in dq_names
+
+    @pytest.mark.parametrize(
+        "column, include_ghi",
+        [
+            ("temperature", False),
+            ("ghi", True),
+        ],
+        ids=["temperature", "ghi"],
+    )
+    def test_monthly_coverage_reporting(self, column, include_ghi):
+        df = create_hourly_dataframe(
+            start="2019-01-01", end="2019-03-31", include_ghi=include_ghi
+        )
+        feb_indices = df[df.index.month == 2].index
+        n_remove = int(len(feb_indices) * 0.15)
+        df.loc[feb_indices[:n_remove], column] = np.nan
+
+        data = HourlyReportingData(df=df, is_electricity_data=True)
+
+        assert_has_disqualification(
+            data, f"eemeter.sufficiency_criteria.missing_monthly_{column}_data"
         )
 
     def test_temperature_monthly_coverage_multiple_months_fail(self):
@@ -1331,65 +1155,6 @@ class TestHourlySufficiencyCriteria:
             data, "eemeter.sufficiency_criteria.missing_monthly_temperature_data"
         )
 
-    def test_temperature_monthly_coverage_custom_threshold(self):
-        """Override to 80%"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        feb_mask = df.index.month == 2
-        feb_indices = df[feb_mask].index
-        n_remove = int(len(feb_indices) * 0.15)  # 85% coverage
-        df.loc[feb_indices[:n_remove], "temperature"] = np.nan
-
-        settings = {"sufficiency": {"temperature": {"min_pct_monthly_coverage": 0.8}}}
-        data = HourlyBaselineData(df=df, is_electricity_data=True, settings=settings)
-
-        dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.missing_monthly_temperature_data"
-            not in dq_names
-        )
-
-    def test_temperature_monthly_coverage_reporting(self):
-        """Reporting checked"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-03-31")
-        feb_mask = df.index.month == 2
-        feb_indices = df[feb_mask].index
-        n_remove = int(len(feb_indices) * 0.15)
-        df.loc[feb_indices[:n_remove], "temperature"] = np.nan
-
-        reporting_data = HourlyReportingData(df=df, is_electricity_data=True)
-
-        # Reporting should check temperature monthly coverage
-        assert_has_disqualification(
-            reporting_data,
-            "eemeter.sufficiency_criteria.missing_monthly_temperature_data",
-        )
-
-    # ===== GHI Monthly Coverage Check =====
-
-    def test_ghi_monthly_coverage_one_month_low(self):
-        """One month below 90% fails"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31", include_ghi=True)
-        jun_mask = df.index.month == 6
-        jun_indices = df[jun_mask].index
-        n_remove = int(len(jun_indices) * 0.15)
-        df.loc[jun_indices[:n_remove], "ghi"] = np.nan
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        assert_has_disqualification(
-            data, "eemeter.sufficiency_criteria.missing_monthly_ghi_data"
-        )
-
-    def test_ghi_monthly_coverage_all_months_pass(self):
-        """All above 90%"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31", include_ghi=True)
-        df.loc[df.index[:5], "ghi"] = np.nan  # Minimal
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert "eemeter.sufficiency_criteria.missing_monthly_ghi_data" not in dq_names
-
     def test_ghi_monthly_coverage_no_ghi_column_skipped(self):
         """No GHI, no check"""
         df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31", include_ghi=False)
@@ -1398,91 +1163,6 @@ class TestHourlySufficiencyCriteria:
 
         dq_names = [dq.qualified_name for dq in data.disqualification]
         assert "eemeter.sufficiency_criteria.missing_monthly_ghi_data" not in dq_names
-
-    def test_ghi_monthly_coverage_baseline(self):
-        """Baseline checked"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31", include_ghi=True)
-        jun_mask = df.index.month == 6
-        jun_indices = df[jun_mask].index
-        n_remove = int(len(jun_indices) * 0.15)
-        df.loc[jun_indices[:n_remove], "ghi"] = np.nan
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        assert_has_disqualification(
-            data, "eemeter.sufficiency_criteria.missing_monthly_ghi_data"
-        )
-
-    def test_ghi_monthly_coverage_reporting(self):
-        """Reporting checked"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-03-31", include_ghi=True)
-        feb_mask = df.index.month == 2
-        feb_indices = df[feb_mask].index
-        n_remove = int(len(feb_indices) * 0.15)
-        df.loc[feb_indices[:n_remove], "ghi"] = np.nan
-
-        data = HourlyReportingData(df=df, is_electricity_data=True)
-
-        assert_has_disqualification(
-            data, "eemeter.sufficiency_criteria.missing_monthly_ghi_data"
-        )
-
-    def test_ghi_monthly_coverage_custom_threshold(self):
-        """Override threshold"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31", include_ghi=True)
-        jun_mask = df.index.month == 6
-        jun_indices = df[jun_mask].index
-        n_remove = int(len(jun_indices) * 0.15)
-        df.loc[jun_indices[:n_remove], "ghi"] = np.nan
-
-        settings = {"sufficiency": {"ghi": {"min_pct_monthly_coverage": 0.8}}}
-        data = HourlyBaselineData(df=df, is_electricity_data=True, settings=settings)
-
-        dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert "eemeter.sufficiency_criteria.missing_monthly_ghi_data" not in dq_names
-
-    # ===== Observed Monthly Coverage Check =====
-
-    def test_observed_monthly_coverage_one_month_low(self):
-        """One month below 90% disqualifies"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        feb_mask = df.index.month == 2
-        feb_indices = df[feb_mask].index
-        n_remove = int(len(feb_indices) * 0.15)
-        df.loc[feb_indices[:n_remove], "observed"] = np.nan
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        assert_has_disqualification(
-            data, "eemeter.sufficiency_criteria.missing_monthly_observed_data"
-        )
-
-    def test_observed_monthly_coverage_all_months_pass(self):
-        """All months pass"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        df.loc[df.index[:5], "observed"] = np.nan  # Minimal
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.missing_monthly_observed_data"
-            not in dq_names
-        )
-
-    def test_observed_monthly_coverage_baseline_only(self):
-        """Only baseline checked"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        feb_mask = df.index.month == 2
-        feb_indices = df[feb_mask].index
-        n_remove = int(len(feb_indices) * 0.15)
-        df.loc[feb_indices[:n_remove], "observed"] = np.nan
-
-        baseline_data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        assert_has_disqualification(
-            baseline_data, "eemeter.sufficiency_criteria.missing_monthly_observed_data"
-        )
 
     def test_observed_monthly_coverage_reporting_skipped(self):
         """Reporting exempt"""
@@ -1495,23 +1175,6 @@ class TestHourlySufficiencyCriteria:
         reporting_data = HourlyReportingData(df=df, is_electricity_data=True)
 
         dq_names = [dq.qualified_name for dq in reporting_data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.missing_monthly_observed_data"
-            not in dq_names
-        )
-
-    def test_observed_monthly_coverage_custom_threshold(self):
-        """Custom threshold"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        feb_mask = df.index.month == 2
-        feb_indices = df[feb_mask].index
-        n_remove = int(len(feb_indices) * 0.15)
-        df.loc[feb_indices[:n_remove], "observed"] = np.nan
-
-        settings = {"sufficiency": {"observed": {"min_pct_monthly_coverage": 0.8}}}
-        data = HourlyBaselineData(df=df, is_electricity_data=True, settings=settings)
-
-        dq_names = [dq.qualified_name for dq in data.disqualification]
         assert (
             "eemeter.sufficiency_criteria.missing_monthly_observed_data"
             not in dq_names
@@ -1557,17 +1220,6 @@ class TestHourlySufficiencyCriteria:
             data, "eemeter.sufficiency_criteria.insufficient_unique_observed_values"
         )
 
-    def test_unique_observed_highly_repeated(self):
-        """91% repeated values fails"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        df = create_repeated_values(df, 0.91)
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        assert_has_disqualification(
-            data, "eemeter.sufficiency_criteria.insufficient_unique_observed_values"
-        )
-
     def test_all_zeros_electricity_disqualified(self):
         """All zeros converted to NaN, triggers no_data disqualification"""
         df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
@@ -1588,18 +1240,6 @@ class TestHourlySufficiencyCriteria:
         # Only 1 unique value (0% unique), should trigger uniqueness disqualification
         assert_has_disqualification(
             data, "eemeter.sufficiency_criteria.insufficient_unique_observed_values"
-        )
-
-    def test_unique_observed_baseline_only(self):
-        """Only baseline checked"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        df = create_repeated_values(df, 0.91)
-
-        baseline_data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        assert_has_disqualification(
-            baseline_data,
-            "eemeter.sufficiency_criteria.insufficient_unique_observed_values",
         )
 
     def test_unique_observed_reporting_flagged_when_observed_present(self):
@@ -1719,7 +1359,7 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        # May or may not trigger depending on distribution
+        assert_has_warning(data, "eemeter.sufficiency_criteria.extreme_values_detected")
 
     def test_extreme_values_both_bounds(self):
         """Extremes on both sides"""
@@ -1786,7 +1426,7 @@ class TestHourlySufficiencyCriteria:
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
         warning_names = [w.qualified_name for w in data.warnings]
-        # May or may not have this warning depending on random data
+        assert "eemeter.sufficiency_criteria.extreme_values_detected" not in warning_names
 
 class TestHourlyDataIntegration:
     """Tests for end-to-end scenarios"""
@@ -1852,14 +1492,20 @@ class TestHourlyDataIntegration:
         assert len(data.disqualification) >= 1
         assert len(data.warnings) >= 1
 
-    def test_log_warnings_called(self):
+    def test_log_warnings_called(self, caplog):
         """Warnings logged"""
         df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
+        df = create_extreme_values(df, 10)
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        # Method should be callable
-        data.log_warnings()  # Should not raise
+        with caplog.at_level(logging.WARNING, logger="eemeter"):
+            data.log_warnings()
+
+        assert (
+            "Extreme values (outside 3x IQR) must be flagged for manual review."
+            in caplog.text
+        )
 
 
 class TestHourlyDataEdgeCases:
@@ -1867,102 +1513,93 @@ class TestHourlyDataEdgeCases:
 
     # ===== Boundary Conditions =====
 
-    def test_exactly_329_days(self):
-        """Minimum baseline length"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-11-26")
+    @pytest.mark.parametrize(
+        "start, end, expect_disqualified",
+        [
+            ("2019-01-01", "2019-11-26", False),
+            ("2020-01-01", "2020-12-31", False),
+            ("2019-01-01", "2019-01-01", True),
+        ],
+        ids=["exactly_329_days", "exactly_366_days", "single_day"],
+    )
+    def test_baseline_length_boundaries(self, start, end, expect_disqualified):
+        df = create_hourly_dataframe(start=start, end=end)
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.incorrect_number_of_total_days"
-            not in dq_names
-        )
+        dq_name = "eemeter.sufficiency_criteria.incorrect_number_of_total_days"
 
-    def test_exactly_366_days(self):
-        """Maximum baseline length"""
-        df = create_hourly_dataframe(start="2020-01-01", end="2020-12-31")
+        if expect_disqualified:
+            assert_has_disqualification(data, dq_name)
+        else:
+            dq_names = [dq.qualified_name for dq in data.disqualification]
+            assert dq_name not in dq_names
 
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        dq_names = [dq.qualified_name for dq in data.disqualification]
-        assert (
-            "eemeter.sufficiency_criteria.incorrect_number_of_total_days"
-            not in dq_names
-        )
-
-    def test_single_day_of_data(self):
-        """Too short, disqualified"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-01-01")
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        assert_has_disqualification(
-            data, "eemeter.sufficiency_criteria.incorrect_number_of_total_days"
-        )
-
-    def test_exactly_90_percent_coverage(self):
-        """At threshold"""
+    @pytest.mark.parametrize(
+        "seed, missing_fraction, expect_disqualified",
+        [
+            (65, 0.09, False),
+            (66, 0.11, True),
+        ],
+        ids=["exactly_90_percent", "89_9_percent"],
+    )
+    def test_temperature_daily_coverage_boundaries(
+        self, seed, missing_fraction, expect_disqualified
+    ):
         df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        # Remove exactly 10% (should be close to threshold)
-        np.random.seed(65)
-        mask = np.random.random(len(df)) < 0.09
+        np.random.seed(seed)
+        mask = np.random.random(len(df)) < missing_fraction
         df.loc[mask, "temperature"] = np.nan
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        # Should be close to passing
-
-    def test_89_point_9_percent_coverage(self):
-        """Just below threshold"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        # Remove slightly over 10%
-        np.random.seed(66)
-        mask = np.random.random(len(df)) < 0.11
-        df.loc[mask, "temperature"] = np.nan
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        # Likely to fail
-
-    def test_exactly_10_percent_unique(self):
-        """At uniqueness threshold"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        df = create_repeated_values(df, 0.90)
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        # Should be at boundary
-
-    def test_9_point_9_percent_unique(self):
-        """Just below threshold"""
-        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
-        df = create_repeated_values(df, 0.901)
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        assert_has_disqualification(
-            data, "eemeter.sufficiency_criteria.insufficient_unique_observed_values"
+        dq_name = (
+            "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data"
         )
+
+        if expect_disqualified:
+            assert_has_disqualification(data, dq_name)
+        else:
+            dq_names = [dq.qualified_name for dq in data.disqualification]
+            assert dq_name not in dq_names
+
+    @pytest.mark.parametrize(
+        "repeated_fraction, expect_disqualified",
+        [
+            (0.90, False),
+            (0.901, True),
+        ],
+        ids=["exactly_10_percent_unique", "9_9_percent_unique"],
+    )
+    def test_unique_observed_boundaries(self, repeated_fraction, expect_disqualified):
+        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
+        df = create_repeated_values(df, repeated_fraction)
+
+        data = HourlyBaselineData(df=df, is_electricity_data=True)
+
+        dq_name = "eemeter.sufficiency_criteria.insufficient_unique_observed_values"
+
+        if expect_disqualified:
+            assert_has_disqualification(data, dq_name)
+        else:
+            dq_names = [dq.qualified_name for dq in data.disqualification]
+            assert dq_name not in dq_names
 
     # ===== DST & Timezone Edge Cases =====
 
-    def test_spring_forward_missing_hour(self):
-        """2am doesn't exist"""
-        df = create_hourly_dataframe(start="2019-03-09", end="2019-03-11", tz="America/New_York")
+    @pytest.mark.parametrize(
+        "start, end",
+        [
+            ("2019-03-09", "2019-03-11"),
+            ("2019-11-02", "2019-11-04"),
+        ],
+        ids=["spring_forward_missing_hour", "fall_back_duplicate_hour"],
+    )
+    def test_dst_transition_handled(self, start, end):
+        df = create_hourly_dataframe(start=start, end=end, tz="America/New_York")
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        # Should handle DST transition
-        assert data.df is not None
-
-    def test_fall_back_duplicate_hour(self):
-        """1am appears twice"""
-        df = create_hourly_dataframe(start="2019-11-02", end="2019-11-04", tz="America/New_York")
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        # Should handle DST transition
         assert data.df is not None
 
     def test_utc_input_warning(self):
@@ -1982,15 +1619,6 @@ class TestHourlyDataEdgeCases:
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
         assert "Los_Angeles" in str(data.tz)
-
-    def test_dst_gap_filled_correctly(self):
-        """Spring forward handled"""
-        df = create_hourly_dataframe(start="2019-03-09", end="2019-03-11", tz="America/New_York")
-
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
-
-        # DST gap should be handled
-        assert data.df is not None
 
     # ===== Data Type Edge Cases =====
 
