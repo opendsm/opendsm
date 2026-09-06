@@ -13,7 +13,6 @@
 #  limitations under the License.
 
 import os
-import pathlib
 
 import numpy as np
 import pytest
@@ -207,9 +206,9 @@ def test_model_correction_contiguous_labels_runs():
     ids=["noncontiguous_int", "float_labels"],
 )
 def test_model_correction_label_indexed_by_position(cg_label):
-    """Regression: cluster outputs and T_weight must be indexed by enumeration
-    position, not label value. Non-contiguous or float labels previously raised
-    IndexError (T_weight[2]) or could not index at all (float)."""
+    """Regression: cluster outputs and T_weight are indexed by enumeration
+    position, not label value, so non-contiguous integer labels and
+    float-valued labels both index correctly."""
     mTrc, _, _ = model_correction(
         OTR, MTR, OCGR, MCGR,
         None, None, None, None, None,
@@ -570,7 +569,6 @@ def test_generate_correction_fixtures(
 
 # ── Real-data snapshot across granularities x correction algorithms ──────────
 
-_FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures"
 
 # Pinned corrected reporting-period usage (mTrc) and its uncertainty, produced
 # by model_correction on the committed real-ComStock fixtures. Regenerate the
@@ -584,13 +582,6 @@ _EXPECTED = {
     ("billing", CorrectionAlgorithm.ODID): (723322.1, 702686.8),
     ("billing", CorrectionAlgorithm.PCTDID): (774280.6, 108783.8),
 }
-
-
-def _load_fixture(granularity):
-    """Load committed real-data model_correction inputs for a granularity."""
-    data = np.load(_FIXTURE_DIR / f"model_correction_{granularity}.npz")
-
-    return data
 
 
 def _run_correction(data, algorithm, weight_cluster_aggregation=None, weight_cap=0.5):
@@ -622,9 +613,9 @@ class TestModelCorrectionRealData:
 
     @pytest.mark.parametrize("granularity", GRANULARITIES)
     @pytest.mark.parametrize("algorithm", [CorrectionAlgorithm.ODID, CorrectionAlgorithm.PCTDID])
-    def test_corrected_value_matches_snapshot(self, granularity, algorithm):
+    def test_corrected_value_matches_snapshot(self, granularity, algorithm, model_correction_inputs):
         """Corrected usage and uncertainty match the pinned real-data snapshot."""
-        data = _load_fixture(granularity)
+        data = model_correction_inputs[granularity]
         mTrc, mTrc_unc, _ = _run_correction(data, algorithm)
 
         expected_mTrc, expected_unc = _EXPECTED[(granularity, algorithm)]
@@ -632,20 +623,20 @@ class TestModelCorrectionRealData:
         assert mTrc_unc == pytest.approx(expected_unc, rel=1e-4)
 
     @pytest.mark.parametrize("granularity", GRANULARITIES)
-    def test_correction_pulls_inflated_estimate_toward_observed(self, granularity):
+    def test_correction_pulls_inflated_estimate_toward_observed(self, granularity, model_correction_inputs):
         """The DID correction moves the (over-predicting) model estimate toward
         observed: oTr < mTrc < mTr when the comparison group shares the gap."""
-        data = _load_fixture(granularity)
+        data = model_correction_inputs[granularity]
         oTr, mTr = float(data["oTr"]), float(data["mTr"])
         mTrc, _, _ = _run_correction(data, CorrectionAlgorithm.PCTDID)
 
         assert mTr > mTrc > oTr
 
     @pytest.mark.parametrize("granularity", GRANULARITIES)
-    def test_abspct_equals_pct_for_positive_magnitudes(self, granularity):
+    def test_abspct_equals_pct_for_positive_magnitudes(self, granularity, model_correction_inputs):
         """With positive model magnitudes the absolute-percent scale equals the
         percent scale (the |.| is a no-op)."""
-        data = _load_fixture(granularity)
+        data = model_correction_inputs[granularity]
         pct, pct_unc, _ = _run_correction(data, CorrectionAlgorithm.PCTDID)
         abspct, abspct_unc, _ = _run_correction(data, CorrectionAlgorithm.ABSPCTDID)
 
@@ -679,12 +670,12 @@ class TestModelCorrectionRealDataModelWeightedUncapped:
 
     @pytest.mark.parametrize("granularity", GRANULARITIES)
     @pytest.mark.parametrize("algorithm", [CorrectionAlgorithm.ODID, CorrectionAlgorithm.PCTDID])
-    def test_corrected_value_matches_snapshot(self, granularity, algorithm):
+    def test_corrected_value_matches_snapshot(self, granularity, algorithm, model_correction_inputs):
         """Corrected usage and uncertainty match the pinned real-data snapshot.
         One cluster's model-magnitude weighting drops its effective sample size
         below 2, so its uncertainty takes the uniform-weight fallback and the
         total uncertainty is finite and positive rather than NaN."""
-        data = _load_fixture(granularity)
+        data = model_correction_inputs[granularity]
         mTrc, mTrc_unc, _ = _run_correction(
             data,
             algorithm,
@@ -722,12 +713,12 @@ class TestModelCorrectionRealDataModelWeighted:
 
     @pytest.mark.parametrize("granularity", GRANULARITIES)
     @pytest.mark.parametrize("algorithm", [CorrectionAlgorithm.ODID, CorrectionAlgorithm.PCTDID])
-    def test_corrected_value_matches_snapshot(self, granularity, algorithm):
+    def test_corrected_value_matches_snapshot(self, granularity, algorithm, model_correction_inputs):
         """Corrected usage and uncertainty match the pinned real-data snapshot.
         The weight cap keeps every cluster's effective sample size at or above
         2, so the point correction and uncertainty both stay on the weighted
         path (finite and positive)."""
-        data = _load_fixture(granularity)
+        data = model_correction_inputs[granularity]
         mTrc, mTrc_unc, _ = _run_correction(
             data, algorithm, weight_cluster_aggregation=WeightClusterAggChoice.MODEL
         )
