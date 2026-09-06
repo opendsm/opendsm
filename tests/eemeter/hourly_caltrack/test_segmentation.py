@@ -25,6 +25,7 @@ from opendsm.eemeter.models.hourly_caltrack.segmentation import (
 )
 
 
+
 @pytest.fixture
 def index_8760():
     return pd.date_range("2017-01-01", periods=365 * 24, freq="h", tz="UTC")
@@ -35,80 +36,100 @@ def test_segment_time_series_invalid_type(index_8760):
         segment_time_series(index_8760, segment_type="unknown")
 
 
-def test_segment_time_series_single(index_8760):
-    weights = segment_time_series(index_8760, segment_type="single")
-    assert list(weights.columns) == ["all"]
-    assert weights.shape == (8760, 1)
-    assert weights.sum().sum() == 8760.0
-
-
-def test_segment_time_series_one_month(index_8760):
-    weights = segment_time_series(index_8760, segment_type="one_month")
-    assert list(weights.columns) == [
-        "jan",
-        "feb",
-        "mar",
-        "apr",
-        "may",
-        "jun",
-        "jul",
-        "aug",
-        "sep",
-        "oct",
-        "nov",
-        "dec",
-    ]
-    assert weights.shape == (8760, 12)
-    assert weights.sum().sum() == 8760.0
-
-
-def test_segment_time_series_three_month(index_8760):
-    weights = segment_time_series(index_8760, segment_type="three_month")
-    assert list(weights.columns) == [
-        "dec-jan-feb",
-        "jan-feb-mar",
-        "feb-mar-apr",
-        "mar-apr-may",
-        "apr-may-jun",
-        "may-jun-jul",
-        "jun-jul-aug",
-        "jul-aug-sep",
-        "aug-sep-oct",
-        "sep-oct-nov",
-        "oct-nov-dec",
-        "nov-dec-jan",
-    ]
-    assert weights.shape == (8760, 12)
-    assert weights.sum().sum() == 26280.0
-
-
-def test_segment_time_series_three_month_weighted(index_8760):
-    weights = segment_time_series(index_8760, segment_type="three_month_weighted")
-    assert list(weights.columns) == [
-        "dec-jan-feb-weighted",
-        "jan-feb-mar-weighted",
-        "feb-mar-apr-weighted",
-        "mar-apr-may-weighted",
-        "apr-may-jun-weighted",
-        "may-jun-jul-weighted",
-        "jun-jul-aug-weighted",
-        "jul-aug-sep-weighted",
-        "aug-sep-oct-weighted",
-        "sep-oct-nov-weighted",
-        "oct-nov-dec-weighted",
-        "nov-dec-jan-weighted",
-    ]
-    assert weights.shape == (8760, 12)
-    assert weights.sum().sum() == 17520.0
-
-
-def test_segment_time_series_drop_zero_weight_segments(index_8760):
+@pytest.mark.parametrize(
+    "segment_type, index_slice, drop_zero_weight_segments, expected_columns, expected_shape, expected_sum",
+    [
+        ("single", slice(None), False, ["all"], (8760, 1), 8760.0),
+        (
+            "one_month",
+            slice(None),
+            False,
+            [
+                "jan",
+                "feb",
+                "mar",
+                "apr",
+                "may",
+                "jun",
+                "jul",
+                "aug",
+                "sep",
+                "oct",
+                "nov",
+                "dec",
+            ],
+            (8760, 12),
+            8760.0,
+        ),
+        (
+            "three_month",
+            slice(None),
+            False,
+            [
+                "dec-jan-feb",
+                "jan-feb-mar",
+                "feb-mar-apr",
+                "mar-apr-may",
+                "apr-may-jun",
+                "may-jun-jul",
+                "jun-jul-aug",
+                "jul-aug-sep",
+                "aug-sep-oct",
+                "sep-oct-nov",
+                "oct-nov-dec",
+                "nov-dec-jan",
+            ],
+            (8760, 12),
+            26280.0,
+        ),
+        (
+            "three_month_weighted",
+            slice(None),
+            False,
+            [
+                "dec-jan-feb-weighted",
+                "jan-feb-mar-weighted",
+                "feb-mar-apr-weighted",
+                "mar-apr-may-weighted",
+                "apr-may-jun-weighted",
+                "may-jun-jul-weighted",
+                "jun-jul-aug-weighted",
+                "jul-aug-sep-weighted",
+                "aug-sep-oct-weighted",
+                "sep-oct-nov-weighted",
+                "oct-nov-dec-weighted",
+                "nov-dec-jan-weighted",
+            ],
+            (8760, 12),
+            17520.0,
+        ),
+        ("one_month", slice(0, 100), True, ["jan"], (100, 1), 100.0),
+    ],
+    ids=[
+        "single",
+        "one_month",
+        "three_month",
+        "three_month_weighted",
+        "drop_zero_weight_segments",
+    ],
+)
+def test_segment_time_series(
+    index_8760,
+    segment_type,
+    index_slice,
+    drop_zero_weight_segments,
+    expected_columns,
+    expected_shape,
+    expected_sum,
+):
     weights = segment_time_series(
-        index_8760[:100], segment_type="one_month", drop_zero_weight_segments=True
+        index_8760[index_slice],
+        segment_type=segment_type,
+        drop_zero_weight_segments=drop_zero_weight_segments,
     )
-    assert list(weights.columns) == ["jan"]
-    assert weights.shape == (100, 1)
-    assert weights.sum().sum() == 100.0
+    assert list(weights.columns) == expected_columns
+    assert weights.shape == expected_shape
+    assert weights.sum().sum() == expected_sum
 
 
 @pytest.fixture
@@ -210,10 +231,9 @@ def test_segmented_model():
     )
 
     def fake_feature_processor(segment_name, segment_data):
-        return pd.DataFrame(
-            {"hour_of_week": 1, "a": 1, "weight": segment_data.weight},
-            index=segment_data.index,
-        )
+        features = {"hour_of_week": 1, "a": 1, "weight": segment_data.weight}
+
+        return pd.DataFrame(features, index=segment_data.index)
 
     segmented_model = SegmentedModel(
         segment_models=[segment_model],
@@ -254,9 +274,9 @@ def test_segmented_model_serialized():
     )
 
     def fake_feature_processor(segment_name, segment_data):  # pragma: no cover
-        return pd.DataFrame(
-            {"a": 1, "b": 1, "weight": segment_data.weight}, index=segment_data.index
-        )
+        features = {"a": 1, "b": 1, "weight": segment_data.weight}
+
+        return pd.DataFrame(features, index=segment_data.index)
 
     segmented_model = SegmentedModel(
         segment_models=[segment_model],

@@ -15,7 +15,6 @@
 import pytest
 import numpy as np
 import pandas as pd
-from datetime import datetime, timedelta
 
 from opendsm.common.test_data import load_test_data
 
@@ -54,8 +53,10 @@ def create_hourly_dataframe(
     observed_mean=5.0,
     temperature_mean=60.0,
     add_noise=True,
+    seed=0,
 ):
-    """Create synthetic hourly data for testing"""
+    """Create synthetic hourly data for testing; ``seed`` fixes the noise."""
+    rng = np.random.default_rng(seed)
     start_dt = pd.Timestamp(start, tz=tz)
     end_dt = pd.Timestamp(end, tz=tz)
     index = pd.date_range(start_dt, end_dt, freq="h")
@@ -67,13 +68,13 @@ def create_hourly_dataframe(
     hour_of_day = index.hour
     seasonal = 20 * np.sin(2 * np.pi * (day_of_year - 80) / 365)
     daily = 10 * np.sin(2 * np.pi * (hour_of_day - 6) / 24)
-    noise = np.random.normal(0, 3, n) if add_noise else 0
+    noise = rng.normal(0, 3, n) if add_noise else 0
     temperature = temperature_mean + seasonal + daily + noise
 
     # Observed: correlated with temperature + noise
     base_load = observed_mean
     temp_correlation = 0.02 * (temperature - temperature_mean)
-    obs_noise = np.random.normal(0, 0.5, n) if add_noise else 0
+    obs_noise = rng.normal(0, 0.5, n) if add_noise else 0
     observed = np.maximum(0, base_load + temp_correlation + obs_noise)
 
     df = pd.DataFrame(
@@ -91,7 +92,7 @@ def create_hourly_dataframe(
     return df
 
 
-def create_gaps(df, gap_pattern):
+def create_gaps(df, gap_pattern, seed=0):
     """Add strategic gaps to dataframe
 
     Args:
@@ -102,7 +103,7 @@ def create_gaps(df, gap_pattern):
 
     if gap_pattern == "single_hour":
         # Random single hour gaps
-        mask = np.random.random(len(df)) > 0.95
+        mask = np.random.default_rng(seed).random(len(df)) > 0.95
         df.loc[mask, ["observed", "temperature"]] = np.nan
 
     elif gap_pattern == "multi_hour":
@@ -138,7 +139,7 @@ def create_repeated_values(df, repeat_pct):
     return df
 
 
-def create_extreme_values(df, n_extreme, column="observed"):
+def create_extreme_values(df, n_extreme, column="observed", seed=0):
     """Add outliers beyond 3x IQR
 
     Args:
@@ -153,7 +154,7 @@ def create_extreme_values(df, n_extreme, column="observed"):
     upper_bound = q3 + 3 * iqr
 
     # Add values beyond upper bound
-    extreme_indices = np.random.choice(len(df), n_extreme, replace=False)
+    extreme_indices = np.random.default_rng(seed).choice(len(df), n_extreme, replace=False)
     df.loc[df.index[extreme_indices], column] = upper_bound * 2
 
     return df

@@ -30,55 +30,6 @@ from opendsm.eemeter.common.features import (
 from opendsm.eemeter.models.hourly_caltrack.segmentation import segment_time_series
 
 
-def _utc_meter(df):
-    out = df[["observed"]].rename(columns={"observed": "value"}).copy()
-    out.index = out.index.tz_convert("UTC")
-
-    return out
-
-
-def _utc_temperature(df):
-    out = df["temperature"].copy()
-    out.index = out.index.tz_convert("UTC")
-
-    return out
-
-
-@pytest.fixture
-def monthly_meter(comstock_monthly):
-    df_b, df_r = comstock_monthly
-    return _utc_meter(pd.concat([df_b, df_r]).dropna(subset=["observed"]))
-
-
-@pytest.fixture
-def monthly_temperature(comstock_hourly):
-    df_b, df_r = comstock_hourly
-    return _utc_temperature(pd.concat([df_b, df_r]).asfreq("h"))
-
-
-@pytest.fixture
-def daily_meter(comstock_daily):
-    df_b, df_r = comstock_daily
-    return _utc_meter(pd.concat([df_b, df_r]))
-
-
-@pytest.fixture
-def daily_temperature(comstock_hourly):
-    df_b, df_r = comstock_hourly
-    return _utc_temperature(pd.concat([df_b, df_r]).asfreq("h"))
-
-
-@pytest.fixture
-def hourly_meter(comstock_hourly):
-    df_b, df_r = comstock_hourly
-    return _utc_meter(pd.concat([df_b, df_r]).asfreq("h"))
-
-
-@pytest.fixture
-def hourly_temperature(comstock_hourly):
-    df_b, df_r = comstock_hourly
-    return _utc_temperature(pd.concat([df_b, df_r]).asfreq("h"))
-
 
 def test_compute_temperature_features_no_freq_index(monthly_meter, monthly_temperature):
     # pick a slice with both hdd and cdd
@@ -265,9 +216,23 @@ def test_compute_temperature_features_hourly_data_quality(hourly_meter, hourly_t
     assert round(df.temperature_null.mean(), 2) == snapshot(name="temp_null_mean")
 
 
-def test_compute_temperature_features_daily_temp_mean(daily_meter, daily_temperature, snapshot):
-    meter_data = daily_meter
-    temperature_data = daily_temperature
+@pytest.fixture(
+    params=[
+        ("daily_meter", "daily_temperature"),
+        ("monthly_meter", "monthly_temperature"),
+    ],
+    ids=["daily", "billing_monthly"],
+)
+def meter_and_temperature(request):
+    meter_fixture, temperature_fixture = request.param
+    meter_data = request.getfixturevalue(meter_fixture)
+    temperature_data = request.getfixturevalue(temperature_fixture)
+
+    return meter_data, temperature_data
+
+
+def test_compute_temperature_features_temp_mean(meter_and_temperature, snapshot):
+    meter_data, temperature_data = meter_and_temperature
     df = compute_temperature_features(meter_data.index, temperature_data)
     assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
@@ -279,10 +244,8 @@ def test_compute_temperature_features_daily_temp_mean(daily_meter, daily_tempera
     assert round(df.temperature_mean.mean()) == snapshot(name="temp_mean")
 
 
-def test_compute_temperature_features_daily_daily_degree_days(daily_meter, daily_temperature, snapshot
-):
-    meter_data = daily_meter
-    temperature_data = daily_temperature
+def test_compute_temperature_features_daily_degree_days(meter_and_temperature, snapshot):
+    meter_data, temperature_data = meter_and_temperature
     df = compute_temperature_features(
         meter_data.index,
         temperature_data,
@@ -301,51 +264,17 @@ def test_compute_temperature_features_daily_daily_degree_days(daily_meter, daily
         "n_days_kept",
     ]
     assert [
-            round(df.hdd_60.mean(), 2),
-            round(df.hdd_61.mean(), 2),
-            round(df.cdd_65.mean(), 2),
-            round(df.cdd_66.mean(), 2),
-            round(df.n_days_kept.mean(), 2),
-            round(df.n_days_dropped.mean(), 2),
-        ] == snapshot(name="values")
+        round(df.hdd_60.mean(), 2),
+        round(df.hdd_61.mean(), 2),
+        round(df.cdd_65.mean(), 2),
+        round(df.cdd_66.mean(), 2),
+        round(df.n_days_kept.mean(), 2),
+        round(df.n_days_dropped.mean(), 2),
+    ] == snapshot(name="values")
 
 
-def test_compute_temperature_features_daily_daily_degree_days_use_mean_false(daily_meter, daily_temperature, snapshot
-):
-    meter_data = daily_meter
-    temperature_data = daily_temperature
-    df = compute_temperature_features(
-        meter_data.index,
-        temperature_data,
-        heating_balance_points=[60, 61],
-        cooling_balance_points=[65, 66],
-        temperature_mean=False,
-        degree_day_method="daily",
-        use_mean_daily_values=False,
-    )
-    assert list(df.shape) == snapshot(name="df_shape")
-    assert list(sorted(df.columns)) == [
-        "cdd_65",
-        "cdd_66",
-        "hdd_60",
-        "hdd_61",
-        "n_days_dropped",
-        "n_days_kept",
-    ]
-    assert [
-            round(df.hdd_60.mean(), 2),
-            round(df.hdd_61.mean(), 2),
-            round(df.cdd_65.mean(), 2),
-            round(df.cdd_66.mean(), 2),
-            round(df.n_days_kept.mean(), 2),
-            round(df.n_days_dropped.mean(), 2),
-        ] == snapshot(name="values")
-
-
-def test_compute_temperature_features_daily_hourly_degree_days(daily_meter, daily_temperature, snapshot
-):
-    meter_data = daily_meter
-    temperature_data = daily_temperature
+def test_compute_temperature_features_hourly_degree_days(meter_and_temperature, snapshot):
+    meter_data, temperature_data = meter_and_temperature
     df = compute_temperature_features(
         meter_data.index,
         temperature_data,
@@ -364,50 +293,17 @@ def test_compute_temperature_features_daily_hourly_degree_days(daily_meter, dail
         "n_hours_kept",
     ]
     assert [
-            round(df.hdd_60.mean(), 2),
-            round(df.hdd_61.mean(), 2),
-            round(df.cdd_65.mean(), 2),
-            round(df.cdd_66.mean(), 2),
-            round(df.n_hours_kept.mean(), 2),
-            round(df.n_hours_dropped.mean(), 2),
-        ] == snapshot(name="values")
+        round(df.hdd_60.mean(), 2),
+        round(df.hdd_61.mean(), 2),
+        round(df.cdd_65.mean(), 2),
+        round(df.cdd_66.mean(), 2),
+        round(df.n_hours_kept.mean(), 2),
+        round(df.n_hours_dropped.mean(), 2),
+    ] == snapshot(name="values")
 
 
-def test_compute_temperature_features_daily_hourly_degree_days_use_mean_false(daily_meter, daily_temperature, snapshot
-):
-    meter_data = daily_meter
-    temperature_data = daily_temperature
-    df = compute_temperature_features(
-        meter_data.index,
-        temperature_data,
-        heating_balance_points=[60, 61],
-        cooling_balance_points=[65, 66],
-        temperature_mean=False,
-        degree_day_method="hourly",
-        use_mean_daily_values=False,
-    )
-    assert list(df.shape) == snapshot(name="df_shape")
-    assert list(sorted(df.columns)) == [
-        "cdd_65",
-        "cdd_66",
-        "hdd_60",
-        "hdd_61",
-        "n_hours_dropped",
-        "n_hours_kept",
-    ]
-    assert [
-            round(df.hdd_60.mean(), 2),
-            round(df.hdd_61.mean(), 2),
-            round(df.cdd_65.mean(), 2),
-            round(df.cdd_66.mean(), 2),
-            round(df.n_hours_kept.mean(), 2),
-            round(df.n_hours_dropped.mean(), 2),
-        ] == snapshot(name="values")
-
-
-def test_compute_temperature_features_daily_bad_degree_days(daily_meter, daily_temperature):
-    meter_data = daily_meter
-    temperature_data = daily_temperature
+def test_compute_temperature_features_bad_degree_days(meter_and_temperature):
+    meter_data, temperature_data = meter_and_temperature
     with pytest.raises(ValueError):
         compute_temperature_features(
             meter_data.index,
@@ -418,9 +314,8 @@ def test_compute_temperature_features_daily_bad_degree_days(daily_meter, daily_t
         )
 
 
-def test_compute_temperature_features_daily_data_quality(daily_meter, daily_temperature, snapshot):
-    meter_data = daily_meter
-    temperature_data = daily_temperature
+def test_compute_temperature_features_data_quality(meter_and_temperature, snapshot):
+    meter_data, temperature_data = meter_and_temperature
     df = compute_temperature_features(
         meter_data.index, temperature_data, temperature_mean=False, data_quality=True
     )
@@ -435,23 +330,11 @@ def test_compute_temperature_features_daily_data_quality(daily_meter, daily_temp
     assert round(df.temperature_null.mean(), 2) == snapshot(name="temp_null_mean")
 
 
-def test_compute_temperature_features_billing_monthly_temp_mean(monthly_meter, monthly_temperature, snapshot):
-    meter_data = monthly_meter
-    temperature_data = monthly_temperature
-    df = compute_temperature_features(meter_data.index, temperature_data)
-    assert list(df.shape) == snapshot(name="df_shape")
-    assert list(sorted(df.columns)) == [
-        "n_days_dropped",
-        "n_days_kept",
-        "temperature_mean",
-    ]
-    assert round(df.temperature_mean.mean()) == snapshot(name="temp_mean")
-
-
-def test_compute_temperature_features_billing_monthly_daily_degree_days(monthly_meter, monthly_temperature, snapshot
+def test_compute_temperature_features_daily_daily_degree_days_use_mean_false(
+    daily_meter, daily_temperature, snapshot
 ):
-    meter_data = monthly_meter
-    temperature_data = monthly_temperature
+    meter_data = daily_meter
+    temperature_data = daily_temperature
     df = compute_temperature_features(
         meter_data.index,
         temperature_data,
@@ -459,6 +342,7 @@ def test_compute_temperature_features_billing_monthly_daily_degree_days(monthly_
         cooling_balance_points=[65, 66],
         temperature_mean=False,
         degree_day_method="daily",
+        use_mean_daily_values=False,
     )
     assert list(df.shape) == snapshot(name="df_shape")
     assert list(sorted(df.columns)) == [
@@ -470,16 +354,50 @@ def test_compute_temperature_features_billing_monthly_daily_degree_days(monthly_
         "n_days_kept",
     ]
     assert [
-            round(df.hdd_60.mean(), 2),
-            round(df.hdd_61.mean(), 2),
-            round(df.cdd_65.mean(), 2),
-            round(df.cdd_66.mean(), 2),
-            round(df.n_days_kept.mean(), 2),
-            round(df.n_days_dropped.mean(), 2),
-        ] == snapshot(name="values")
+        round(df.hdd_60.mean(), 2),
+        round(df.hdd_61.mean(), 2),
+        round(df.cdd_65.mean(), 2),
+        round(df.cdd_66.mean(), 2),
+        round(df.n_days_kept.mean(), 2),
+        round(df.n_days_dropped.mean(), 2),
+    ] == snapshot(name="values")
 
 
-def test_compute_temperature_features_billing_monthly_daily_degree_days_use_mean_false(monthly_meter, monthly_temperature, snapshot
+def test_compute_temperature_features_daily_hourly_degree_days_use_mean_false(
+    daily_meter, daily_temperature, snapshot
+):
+    meter_data = daily_meter
+    temperature_data = daily_temperature
+    df = compute_temperature_features(
+        meter_data.index,
+        temperature_data,
+        heating_balance_points=[60, 61],
+        cooling_balance_points=[65, 66],
+        temperature_mean=False,
+        degree_day_method="hourly",
+        use_mean_daily_values=False,
+    )
+    assert list(df.shape) == snapshot(name="df_shape")
+    assert list(sorted(df.columns)) == [
+        "cdd_65",
+        "cdd_66",
+        "hdd_60",
+        "hdd_61",
+        "n_hours_dropped",
+        "n_hours_kept",
+    ]
+    assert [
+        round(df.hdd_60.mean(), 2),
+        round(df.hdd_61.mean(), 2),
+        round(df.cdd_65.mean(), 2),
+        round(df.cdd_66.mean(), 2),
+        round(df.n_hours_kept.mean(), 2),
+        round(df.n_hours_dropped.mean(), 2),
+    ] == snapshot(name="values")
+
+
+def test_compute_temperature_features_billing_monthly_daily_degree_days_use_mean_false(
+    monthly_meter, monthly_temperature, snapshot
 ):
     meter_data = monthly_meter
     temperature_data = monthly_temperature
@@ -502,47 +420,17 @@ def test_compute_temperature_features_billing_monthly_daily_degree_days_use_mean
         "n_days_kept",
     ]
     assert [
-            round(df.hdd_60.mean(), 2),
-            round(df.hdd_61.mean(), 2),
-            round(df.cdd_65.mean(), 2),
-            round(df.cdd_66.mean(), 2),
-            round(df.n_days_kept.mean(), 2),
-            round(df.n_days_dropped.mean(), 2),
-        ] == snapshot(name="values")
+        round(df.hdd_60.mean(), 2),
+        round(df.hdd_61.mean(), 2),
+        round(df.cdd_65.mean(), 2),
+        round(df.cdd_66.mean(), 2),
+        round(df.n_days_kept.mean(), 2),
+        round(df.n_days_dropped.mean(), 2),
+    ] == snapshot(name="values")
 
 
-def test_compute_temperature_features_billing_monthly_hourly_degree_days(monthly_meter, monthly_temperature, snapshot
-):
-    meter_data = monthly_meter
-    temperature_data = monthly_temperature
-    df = compute_temperature_features(
-        meter_data.index,
-        temperature_data,
-        heating_balance_points=[60, 61],
-        cooling_balance_points=[65, 66],
-        temperature_mean=False,
-        degree_day_method="hourly",
-    )
-    assert list(df.shape) == snapshot(name="df_shape")
-    assert list(sorted(df.columns)) == [
-        "cdd_65",
-        "cdd_66",
-        "hdd_60",
-        "hdd_61",
-        "n_hours_dropped",
-        "n_hours_kept",
-    ]
-    assert [
-            round(df.hdd_60.mean(), 2),
-            round(df.hdd_61.mean(), 2),
-            round(df.cdd_65.mean(), 2),
-            round(df.cdd_66.mean(), 2),
-            round(df.n_hours_kept.mean(), 2),
-            round(df.n_hours_dropped.mean(), 2),
-        ] == snapshot(name="values")
-
-
-def test_compute_temperature_features_billing_monthly_hourly_degree_days_use_mean_false(monthly_meter, monthly_temperature, snapshot
+def test_compute_temperature_features_billing_monthly_hourly_degree_days_use_mean_false(
+    monthly_meter, monthly_temperature, snapshot
 ):
     meter_data = monthly_meter
     temperature_data = monthly_temperature
@@ -565,148 +453,13 @@ def test_compute_temperature_features_billing_monthly_hourly_degree_days_use_mea
         "n_hours_kept",
     ]
     assert [
-            round(df.hdd_60.mean(), 2),
-            round(df.hdd_61.mean(), 2),
-            round(df.cdd_65.mean(), 2),
-            round(df.cdd_66.mean(), 2),
-            round(df.n_hours_kept.mean(), 2),
-            round(df.n_hours_dropped.mean(), 2),
-        ] == snapshot(name="values")
-
-
-def test_compute_temperature_features_billing_monthly_bad_degree_day_method(monthly_meter, monthly_temperature):
-    meter_data = monthly_meter
-    temperature_data = monthly_temperature
-    with pytest.raises(ValueError):
-        compute_temperature_features(
-            meter_data.index,
-            temperature_data,
-            heating_balance_points=[60, 61],
-            cooling_balance_points=[65, 66],
-            degree_day_method="UNKNOWN",
-        )
-
-
-def test_compute_temperature_features_billing_monthly_data_quality(monthly_meter, monthly_temperature, snapshot):
-    meter_data = monthly_meter
-    temperature_data = monthly_temperature
-    df = compute_temperature_features(
-        meter_data.index, temperature_data, temperature_mean=False, data_quality=True
-    )
-    assert list(df.shape) == snapshot(name="df_shape")
-    assert list(sorted(df.columns)) == [
-        "n_days_dropped",
-        "n_days_kept",
-        "temperature_not_null",
-        "temperature_null",
-    ]
-    assert round(df.temperature_not_null.mean(), 2) == snapshot(name="temp_not_null_mean")
-    assert round(df.temperature_null.mean(), 2) == snapshot(name="temp_null_mean")
-
-
-def test_compute_temperature_features_billing_bimonthly_temp_mean(monthly_meter, monthly_temperature, snapshot):
-    meter_data = monthly_meter
-    temperature_data = monthly_temperature
-    df = compute_temperature_features(meter_data.index, temperature_data)
-    assert list(df.shape) == snapshot(name="df_shape")
-    assert list(sorted(df.columns)) == [
-        "n_days_dropped",
-        "n_days_kept",
-        "temperature_mean",
-    ]
-    assert round(df.temperature_mean.mean()) == snapshot(name="temp_mean")
-
-
-def test_compute_temperature_features_billing_bimonthly_daily_degree_days(monthly_meter, monthly_temperature, snapshot
-):
-    meter_data = monthly_meter
-    temperature_data = monthly_temperature
-    df = compute_temperature_features(
-        meter_data.index,
-        temperature_data,
-        heating_balance_points=[60, 61],
-        cooling_balance_points=[65, 66],
-        temperature_mean=False,
-        degree_day_method="daily",
-    )
-    assert list(df.shape) == snapshot(name="df_shape")
-    assert list(sorted(df.columns)) == [
-        "cdd_65",
-        "cdd_66",
-        "hdd_60",
-        "hdd_61",
-        "n_days_dropped",
-        "n_days_kept",
-    ]
-    assert [
-            round(df.hdd_60.mean(), 2),
-            round(df.hdd_61.mean(), 2),
-            round(df.cdd_65.mean(), 2),
-            round(df.cdd_66.mean(), 2),
-            round(df.n_days_kept.mean(), 2),
-            round(df.n_days_dropped.mean(), 2),
-        ] == snapshot(name="values")
-
-
-def test_compute_temperature_features_billing_bimonthly_hourly_degree_days(monthly_meter, monthly_temperature, snapshot
-):
-    meter_data = monthly_meter
-    temperature_data = monthly_temperature
-    df = compute_temperature_features(
-        meter_data.index,
-        temperature_data,
-        heating_balance_points=[60, 61],
-        cooling_balance_points=[65, 66],
-        temperature_mean=False,
-        degree_day_method="hourly",
-    )
-    assert list(df.shape) == snapshot(name="df_shape")
-    assert list(sorted(df.columns)) == [
-        "cdd_65",
-        "cdd_66",
-        "hdd_60",
-        "hdd_61",
-        "n_hours_dropped",
-        "n_hours_kept",
-    ]
-    assert [
-            round(df.hdd_60.mean(), 2),
-            round(df.hdd_61.mean(), 2),
-            round(df.cdd_65.mean(), 2),
-            round(df.cdd_66.mean(), 2),
-            round(df.n_hours_kept.mean(), 2),
-            round(df.n_hours_dropped.mean(), 2),
-        ] == snapshot(name="values")
-
-
-def test_compute_temperature_features_billing_bimonthly_bad_degree_days(monthly_meter, monthly_temperature):
-    meter_data = monthly_meter
-    temperature_data = monthly_temperature
-    with pytest.raises(ValueError):
-        compute_temperature_features(
-            meter_data.index,
-            temperature_data,
-            heating_balance_points=[60, 61],
-            cooling_balance_points=[65, 66],
-            degree_day_method="UNKNOWN",
-        )
-
-
-def test_compute_temperature_features_billing_bimonthly_data_quality(monthly_meter, monthly_temperature, snapshot):
-    meter_data = monthly_meter
-    temperature_data = monthly_temperature
-    df = compute_temperature_features(
-        meter_data.index, temperature_data, temperature_mean=False, data_quality=True
-    )
-    assert list(df.shape) == snapshot(name="df_shape")
-    assert list(sorted(df.columns)) == [
-        "n_days_dropped",
-        "n_days_kept",
-        "temperature_not_null",
-        "temperature_null",
-    ]
-    assert round(df.temperature_not_null.mean(), 2) == snapshot(name="temp_not_null_mean")
-    assert round(df.temperature_null.mean(), 2) == snapshot(name="temp_null_mean")
+        round(df.hdd_60.mean(), 2),
+        round(df.hdd_61.mean(), 2),
+        round(df.cdd_65.mean(), 2),
+        round(df.cdd_66.mean(), 2),
+        round(df.n_hours_kept.mean(), 2),
+        round(df.n_hours_dropped.mean(), 2),
+    ] == snapshot(name="values")
 
 
 def test_compute_temperature_features_shorter_temperature_data(daily_meter, daily_temperature, snapshot):
@@ -766,7 +519,7 @@ def test_compute_temperature_features_empty_temperature_data():
     meter_data_hack = pd.DataFrame({"value": 0}, index=result_index)
 
     with pytest.raises(ValueError):
-        df = compute_temperature_features(
+        compute_temperature_features(
             meter_data_hack.index,
             temperature_data,
             heating_balance_points=[65],
@@ -784,7 +537,7 @@ def test_compute_temperature_features_empty_meter_data():
     meter_data_hack.index.freq = None
 
     with pytest.raises(ValueError):
-        df = compute_temperature_features(
+        compute_temperature_features(
             meter_data_hack.index,
             temperature_data,
             heating_balance_points=[65],
@@ -816,7 +569,7 @@ def test_merge_features():
 
 def test_merge_features_empty_raises():
     with pytest.raises(ValueError):
-        features = merge_features([])
+        merge_features([])
 
 
 @pytest.fixture
@@ -1162,9 +915,24 @@ def segmentation_only_nan(occupancy_precursor_only_nan):
 def test_estimate_hour_of_week_occupancy_segmentation_only_nan(
     occupancy_precursor_only_nan, segmentation_only_nan
 ):
+    """Segments the meter data does not cover yield all-NaN occupancy columns while
+    the covered segments still resolve to boolean occupancy."""
     occupancy = estimate_hour_of_week_occupancy(
         occupancy_precursor_only_nan, segmentation=segmentation_only_nan
     )
+    assert occupancy.shape == (168, 12)
+
+    uncovered = sorted(occupancy.columns[occupancy.isna().all()])
+    assert uncovered == [
+        "aug-sep-oct-weighted",
+        "jul-aug-sep-weighted",
+        "oct-nov-dec-weighted",
+        "sep-oct-nov-weighted",
+    ]
+
+    covered = occupancy.drop(columns=uncovered)
+    assert list(covered.dtypes) == [bool] * 8
+    assert not covered.isna().any().any()
 
 
 def test_compute_occupancy_feature_hour_of_week_has_nan(even_occupancy):

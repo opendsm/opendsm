@@ -67,7 +67,18 @@ def test_misaligned_data(baseline, reporting):
     baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
     reporting_data = HourlyReportingData(reporting, is_electricity_data=True)
     hm = HourlyModel().fit(baseline_data)
-    hm.predict(reporting_data)
+
+    prediction = hm.predict(reporting_data)
+
+    # the shifted reporting period is padded out to whole local days
+    expected_index = pd.date_range(
+        reporting.index.min().replace(hour=0, minute=0, second=0, microsecond=0),
+        reporting.index.max().replace(hour=23, minute=0, second=0, microsecond=0),
+        freq="h",
+    )
+
+    assert prediction.index.equals(expected_index)
+    assert prediction.index.equals(reporting_data.df.index)
 
 
 def test_tz_naive(baseline):
@@ -156,10 +167,10 @@ def test_invalid_baseline_lengths(baseline):
     long_baseline = HourlyBaselineData(long_df, is_electricity_data=True)
     with pytest.raises(DataSufficiencyError):
         HourlyModel().fit(short_baseline)
-    hm_short = HourlyModel().fit(short_baseline, ignore_disqualification=True)
+    HourlyModel().fit(short_baseline, ignore_disqualification=True)
     with pytest.raises(DataSufficiencyError):
         HourlyModel().fit(long_baseline)
-    hm_long = HourlyModel().fit(long_baseline, ignore_disqualification=True)
+    HourlyModel().fit(long_baseline, ignore_disqualification=True)
 
 
 def test_low_freq_temp(baseline):
