@@ -116,7 +116,7 @@ def test_optimizer_run(get_x0, get_bnds):
     assert np.allclose(res.x, np.array([20.13393]), rtol=1e-5, atol=1e-5)
 
     # Test case 2: Test with scipy algorithm
-    settings = Settings(developer_mode=True, algorithm_choice="scipy_Nelder-Mead")
+    settings = Settings(algorithm_choice="scipy_Nelder-Mead")
     opt_settings = _get_opt_settings(settings)
     obj_fcn = get_obj_fcn(settings)
     optimizer = Optimizer(obj_fcn, x0, bnds, coef_id, settings, opt_settings)
@@ -124,7 +124,7 @@ def test_optimizer_run(get_x0, get_bnds):
     assert np.allclose(res.x, np.array([20.13393]), rtol=1e-5, atol=1e-5)
 
     # Test case 3: Test with nlopt algorithm
-    settings = Settings(developer_mode=True, algorithm_choice="nlopt_sbplx")
+    settings = Settings(algorithm_choice="nlopt_sbplx")
     opt_settings = _get_opt_settings(settings)
     obj_fcn = get_obj_fcn(settings)
     optimizer = Optimizer(obj_fcn, x0, bnds, coef_id, settings, opt_settings)
