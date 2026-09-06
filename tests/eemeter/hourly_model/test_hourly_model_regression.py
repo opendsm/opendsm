@@ -59,47 +59,25 @@ def hourly_solar_fit(hourly_baseline_data):
 
 @pytest.mark.slow
 @pytest.mark.regression
-def test_hourly_nonsolar_baseline_predict_regression(
-    hourly_nonsolar_fit, hourly_baseline_data, snapshot
-):
-    result = hourly_nonsolar_fit.predict(
-        hourly_baseline_data, ignore_disqualification=True
-    )
+@pytest.mark.parametrize(
+    "fit_fixture_name, data_fixture_name",
+    [
+        ("hourly_nonsolar_fit", "hourly_baseline_data"),
+        ("hourly_nonsolar_fit", "hourly_reporting_data"),
+        ("hourly_solar_fit", "hourly_baseline_data"),
+        ("hourly_solar_fit", "hourly_reporting_data"),
+    ],
+    ids=[
+        "nonsolar_baseline",
+        "nonsolar_reporting",
+        "solar_baseline",
+        "solar_reporting",
+    ],
+)
+def test_hourly_predict_regression(fit_fixture_name, data_fixture_name, request, snapshot):
+    fit = request.getfixturevalue(fit_fixture_name)
+    data = request.getfixturevalue(data_fixture_name)
 
-    assert regression_block(result, freq="hourly") == snapshot(name="regression")
-
-
-@pytest.mark.slow
-@pytest.mark.regression
-def test_hourly_nonsolar_reporting_predict_regression(
-    hourly_nonsolar_fit, hourly_reporting_data, snapshot
-):
-    result = hourly_nonsolar_fit.predict(
-        hourly_reporting_data, ignore_disqualification=True
-    )
-
-    assert regression_block(result, freq="hourly") == snapshot(name="regression")
-
-
-@pytest.mark.slow
-@pytest.mark.regression
-def test_hourly_solar_baseline_predict_regression(
-    hourly_solar_fit, hourly_baseline_data, snapshot
-):
-    result = hourly_solar_fit.predict(
-        hourly_baseline_data, ignore_disqualification=True
-    )
-
-    assert regression_block(result, freq="hourly") == snapshot(name="regression")
-
-
-@pytest.mark.slow
-@pytest.mark.regression
-def test_hourly_solar_reporting_predict_regression(
-    hourly_solar_fit, hourly_reporting_data, snapshot
-):
-    result = hourly_solar_fit.predict(
-        hourly_reporting_data, ignore_disqualification=True
-    )
+    result = fit.predict(data, ignore_disqualification=True)
 
     assert regression_block(result, freq="hourly") == snapshot(name="regression")
