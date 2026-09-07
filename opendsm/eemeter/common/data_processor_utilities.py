@@ -66,6 +66,50 @@ def day_counts(index):
     return pd.Series(timedelta_days, index=index)
 
 
+def trim_edge_rows(df, trailing_columns):
+    """Trim leading rows missing observed/temperature and trailing rows missing any of ``trailing_columns``.
+
+    An empty ``trailing_columns`` leaves the trailing edge untouched (billing frames end with a
+    row that only marks the close of the last period).
+
+    Returns the trimmed dataframe (the input itself when nothing is dropped, otherwise a
+    copy of the kept rows) along with the number of leading and trailing rows removed. Interior rows are never dropped.
+    The frame is returned untouched when it holds no trimmable columns, or when no row
+    qualifies, so that the caller's own validation reports the unusable data.
+    """
+    n = len(df)
+
+    required_columns = {"observed", "temperature", *trailing_columns}
+    if not required_columns.issubset(df.columns):
+        return df, 0, 0
+
+    valid_leading = ~df[["observed", "temperature"]].isna().any(axis=1)
+    valid_leading_arr = valid_leading.to_numpy()
+    if valid_leading_arr.any():
+        first_valid_pos = np.argmax(valid_leading_arr)
+    else:
+        first_valid_pos = n
+
+    if not trailing_columns:
+        last_valid_pos = n - 1
+    else:
+        valid_trailing = ~df[list(trailing_columns)].isna().any(axis=1)
+        valid_trailing_arr = valid_trailing.to_numpy()
+        if valid_trailing_arr.any():
+            last_valid_pos = n - 1 - np.argmax(valid_trailing_arr[::-1])
+        else:
+            last_valid_pos = -1
+
+    if first_valid_pos > last_valid_pos:
+        return df, 0, 0
+
+    n_leading = first_valid_pos
+    n_trailing = n - 1 - last_valid_pos
+    trimmed_df = df.iloc[first_valid_pos : last_valid_pos + 1].copy()
+
+    return trimmed_df, n_leading, n_trailing
+
+
 def clean_billing_data(data, source_interval, warnings):
     # check for empty data
     if data["value"].dropna().empty:

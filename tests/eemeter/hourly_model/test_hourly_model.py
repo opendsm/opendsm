@@ -13,18 +13,18 @@
 #  limitations under the License.
 
 from opendsm.eemeter import (
-    HourlyBaselineData,
-    HourlyReportingData,
     HourlyModel,
     HourlySolarSettings,
     HourlyNonSolarSettings,
 )
+from opendsm.eemeter.models.hourly.data import HourlyBaselineData, HourlyReportingData
 from opendsm.eemeter.models.hourly.model import _fit_exp_growth_decay
 from opendsm.eemeter.models.hourly.settings import BaseHourlySettings
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
     DisqualifiedModelError,
 )
+from opendsm.eemeter.common.warnings import EEMeterWarning
 import numpy as np
 import pandas as pd
 import pytest
@@ -34,24 +34,21 @@ from threadpoolctl import threadpool_info
 
 
 def test_good_data(baseline, reporting):
-    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
-    reporting_data = HourlyReportingData(reporting, is_electricity_data=True)
-    hm = HourlyModel().fit(baseline_data)
-    p1 = hm.predict(reporting_data)
+    hm = HourlyModel().fit(baseline, is_electricity_data=True)
+    p1 = hm.predict(reporting)
     assert np.isclose(
         p1["predicted"].sum(), 1135000, rtol=1e-2
     )  # quick check that model fit isn't changing drastically
     serialized = hm.to_json()
     hm2 = HourlyModel.from_json(serialized)
-    p2 = hm2.predict(reporting_data)
+    p2 = hm2.predict(reporting)
     assert p1.equals(p2)
 
 
 def test_to_dict_tags_model_type_hourly(baseline):
     """to_dict tags an hourly payload with model_type='hourly', and from_dict
     tolerates the tag on a round trip."""
-    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
-    hm = HourlyModel().fit(baseline_data)
+    hm = HourlyModel().fit(baseline, is_electricity_data=True)
 
     model_dict = hm.to_dict()
 
@@ -64,11 +61,9 @@ def test_to_dict_tags_model_type_hourly(baseline):
 
 def test_misaligned_data(baseline, reporting):
     reporting.index = reporting.index.shift(8, freq="h")
-    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
-    reporting_data = HourlyReportingData(reporting, is_electricity_data=True)
-    hm = HourlyModel().fit(baseline_data)
+    hm = HourlyModel().fit(baseline, is_electricity_data=True)
 
-    prediction = hm.predict(reporting_data)
+    prediction = hm.predict(reporting)
 
     # the shifted reporting period is padded out to whole local days
     expected_index = pd.date_range(
@@ -78,13 +73,12 @@ def test_misaligned_data(baseline, reporting):
     )
 
     assert prediction.index.equals(expected_index)
-    assert prediction.index.equals(reporting_data.df.index)
 
 
 def test_tz_naive(baseline):
     baseline.index = baseline.index.tz_localize(None)
     with pytest.raises(ValueError):
-        HourlyBaselineData(baseline, is_electricity_data=True)
+        HourlyModel().fit(baseline, is_electricity_data=True)
 
 
 def test_tz_mismatch(baseline):
@@ -92,42 +86,34 @@ def test_tz_mismatch(baseline):
     baseline.index = baseline.index.tz_convert("America/Los_Angeles")
     reporting = baseline.copy()
     reporting.index = reporting.index.tz_convert("America/New_York")
-    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
-    reporting_data = HourlyReportingData(reporting, is_electricity_data=True)
-    hm = HourlyModel().fit(baseline_data)
+    hm = HourlyModel().fit(baseline, is_electricity_data=True)
     with pytest.raises(ValueError):
-        hm.predict(reporting_data)
+        hm.predict(reporting)
 
 
 def test_predict_missing_fit_features(baseline, reporting):
-    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
-    hm = HourlyModel(settings=HourlySolarSettings()).fit(baseline_data)
+    hm = HourlyModel(settings=HourlySolarSettings()).fit(baseline, is_electricity_data=True)
     reporting.drop("ghi", axis=1, inplace=True)
-    reporting_data = HourlyReportingData(reporting, is_electricity_data=True)
     with pytest.raises(ValueError):
-        hm.predict(reporting_data)
+        hm.predict(reporting)
 
 
 def test_nonsolar_predict_with_ghi(baseline, reporting, caplog):
     baseline.drop("ghi", axis=1, inplace=True)
-    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
-    hm = HourlyModel().fit(baseline_data)
-    reporting_data = HourlyReportingData(reporting, is_electricity_data=True)
+    hm = HourlyModel().fit(baseline, is_electricity_data=True)
     with caplog.at_level("WARNING"):
-        hm.predict(reporting_data)
+        hm.predict(reporting)
         assert "GHI" in caplog.text
 
 
 def test_forced_solar_model_fit_no_ghi(baseline):
     baseline = baseline.drop("ghi", axis=1)
-    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
     with pytest.raises(ValueError):
-        HourlyModel(settings=HourlySolarSettings()).fit(baseline_data)
+        HourlyModel(settings=HourlySolarSettings()).fit(baseline, is_electricity_data=True)
 
 
 def test_forced_nonsolar_model_fit_with_ghi(baseline):
-    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
-    hm = HourlyModel(settings=HourlyNonSolarSettings()).fit(baseline_data)
+    hm = HourlyModel(settings=HourlyNonSolarSettings()).fit(baseline, is_electricity_data=True)
     assert [
         w for w in hm.warnings if w.qualified_name == "eemeter.potential_model_mismatch"
     ]
@@ -135,22 +121,19 @@ def test_forced_nonsolar_model_fit_with_ghi(baseline):
 
 def test_no_data(baseline):
     baseline["observed"] = 0
-    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
     with pytest.raises(DataSufficiencyError):
-        HourlyModel().fit(baseline_data)
+        HourlyModel().fit(baseline, is_electricity_data=True)
 
 
 def test_negative_meter_values(baseline):
     baseline.loc["2018-01-08", "observed"] = -1
 
     # gas data can't be negative
-    baseline_data = HourlyBaselineData(baseline, is_electricity_data=False)
     with pytest.raises(DataSufficiencyError):
-        HourlyModel().fit(baseline_data)
+        HourlyModel().fit(baseline, is_electricity_data=False)
 
     # elec can
-    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
-    HourlyModel().fit(baseline_data)
+    HourlyModel().fit(baseline, is_electricity_data=True)
 
 
 def test_invalid_baseline_lengths(baseline):
@@ -163,36 +146,32 @@ def test_invalid_baseline_lengths(baseline):
     extra_days.index += pd.Timedelta(days=2)
     long_df = pd.concat([baseline, extra_days])
 
-    short_baseline = HourlyBaselineData(short_df, is_electricity_data=True)
-    long_baseline = HourlyBaselineData(long_df, is_electricity_data=True)
     with pytest.raises(DataSufficiencyError):
-        HourlyModel().fit(short_baseline)
-    HourlyModel().fit(short_baseline, ignore_disqualification=True)
+        HourlyModel().fit(short_df, is_electricity_data=True)
+    HourlyModel().fit(short_df, is_electricity_data=True, ignore_disqualification=True)
     with pytest.raises(DataSufficiencyError):
-        HourlyModel().fit(long_baseline)
-    HourlyModel().fit(long_baseline, ignore_disqualification=True)
+        HourlyModel().fit(long_df, is_electricity_data=True)
+    HourlyModel().fit(long_df, is_electricity_data=True, ignore_disqualification=True)
 
 
 def test_low_freq_temp(baseline):
     baseline["temperature"] = baseline["temperature"].resample("D").mean()
-    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
+    with pytest.raises(DataSufficiencyError) as exc_info:
+        HourlyModel().fit(baseline, is_electricity_data=True)
     assert_dq(
-        baseline_data,
+        exc_info.value,
         ["eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data"],
     )
-    with pytest.raises(DataSufficiencyError):
-        HourlyModel().fit(baseline_data)
 
 
 def test_low_freq_meter(baseline):
     baseline["observed"] = baseline["observed"].resample("D").mean()
-    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
+    with pytest.raises(DataSufficiencyError) as exc_info:
+        HourlyModel().fit(baseline, is_electricity_data=True)
     assert_dq(
-        baseline_data,
+        exc_info.value,
         ["eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data"],
     )
-    with pytest.raises(DataSufficiencyError):
-        HourlyModel().fit(baseline_data)
 
 
 def test_monthly_percentage(baseline):
@@ -212,59 +191,48 @@ def test_monthly_percentage(baseline):
     invalid_meter = baseline.copy()
     invalid_meter.loc[invalid_meter.index.day < 5, "observed"] = np.nan
 
-    baseline_data = HourlyBaselineData(invalid_baseline, is_electricity_data=True)
+    with pytest.raises(DataSufficiencyError) as exc_info:
+        HourlyModel().fit(invalid_baseline, is_electricity_data=True)
     assert_dq(
-        baseline_data, ["eemeter.sufficiency_criteria.missing_monthly_temperature_data"]
+        exc_info.value, ["eemeter.sufficiency_criteria.missing_monthly_temperature_data"]
     )
-    with pytest.raises(DataSufficiencyError):
-        HourlyModel().fit(baseline_data)
-    baseline_data = HourlyBaselineData(valid_baseline, is_electricity_data=True)
-    HourlyModel().fit(baseline_data)
+    HourlyModel().fit(valid_baseline, is_electricity_data=True)
 
-    baseline_data = HourlyBaselineData(invalid_temp, is_electricity_data=True)
+    with pytest.raises(DataSufficiencyError) as exc_info:
+        HourlyModel().fit(invalid_temp, is_electricity_data=True)
     assert_dq(
-        baseline_data,
+        exc_info.value,
         [
             "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
             "eemeter.sufficiency_criteria.missing_monthly_temperature_data",
             "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data",
         ],
     )
-    with pytest.raises(DataSufficiencyError):
-        HourlyModel().fit(baseline_data)
 
-    baseline_data = HourlyBaselineData(invalid_meter, is_electricity_data=True)
+    with pytest.raises(DataSufficiencyError) as exc_info:
+        HourlyModel().fit(invalid_meter, is_electricity_data=True)
     assert_dq(
-        baseline_data,
+        exc_info.value,
         [
             "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
             "eemeter.sufficiency_criteria.missing_monthly_observed_data",
             "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data",
         ],
     )
-    with pytest.raises(DataSufficiencyError):
-        HourlyModel().fit(baseline_data)
 
 
 def test_monthly_ghi_percentage(baseline):
-    # create datetimeindex where a little over 10% of days are missing in feb, but still 90% overall
-    missing_idx = pd.date_range(
-        start=baseline.index.min(), end=baseline.index.max(), freq="h"
-    )
-    missing_idx = missing_idx[missing_idx.day < 4]
-
     invalid_ghi = baseline.copy()
     invalid_ghi.loc[invalid_ghi.index.day < 5, "ghi"] = np.nan
 
-    baseline_data = HourlyBaselineData(invalid_ghi, is_electricity_data=True)
+    with pytest.raises(DataSufficiencyError) as exc_info:
+        HourlyModel().fit(invalid_ghi, is_electricity_data=True)
     assert_dq(
-        baseline_data,
+        exc_info.value,
         [
             "eemeter.sufficiency_criteria.missing_monthly_ghi_data",
         ],
     )
-    with pytest.raises(DataSufficiencyError):
-        HourlyModel().fit(baseline_data)
 
 
 def test_hourly_fit_daily_threshold(baseline):
@@ -289,11 +257,10 @@ def test_hourly_fit_daily_threshold(baseline):
 @pytest.mark.filterwarnings("ignore:Objective did not converge.")
 def test_hourly_error_metric_dq(baseline):
     baseline["observed"] = np.random.normal(-1, 10, len(baseline)) ** 3
-    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
-    model = HourlyModel().fit(baseline_data)
-    assert_dq(baseline_data, ["eemeter.model_fit_metrics"])
+    model = HourlyModel().fit(baseline, is_electricity_data=True)
+    assert_dq(model, ["eemeter.model_fit_metrics"])
     with pytest.raises(DisqualifiedModelError):
-        model.predict(baseline_data)
+        model.predict(baseline)
 
 
 def assert_dq(data, expected_disqualifications):
@@ -321,15 +288,13 @@ def _nonstandard_settings_warnings(hm):
 
 
 def test_default_settings_fit_carries_no_nonstandard_settings_warning(baseline):
-    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
-    hm = HourlyModel().fit(baseline_data)
+    hm = HourlyModel().fit(baseline, is_electricity_data=True)
 
     assert _nonstandard_settings_warnings(hm) == []
 
 
 def test_nonstandard_developer_setting_fit_carries_one_warning(baseline):
-    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
-    hm = HourlyModel(settings={"cvrmse_threshold": 1.2}).fit(baseline_data)
+    hm = HourlyModel(settings={"cvrmse_threshold": 1.2}).fit(baseline, is_electricity_data=True)
 
     warnings = _nonstandard_settings_warnings(hm)
     assert len(warnings) == 1
@@ -339,8 +304,7 @@ def test_nonstandard_developer_setting_fit_carries_one_warning(baseline):
 
 
 def test_nonstandard_developer_setting_warning_survives_dict_round_trip(baseline):
-    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
-    hm = HourlyModel(settings={"cvrmse_threshold": 1.2}).fit(baseline_data)
+    hm = HourlyModel(settings={"cvrmse_threshold": 1.2}).fit(baseline, is_electricity_data=True)
 
     rebuilt = HourlyModel.from_dict(hm.to_dict())
 
@@ -352,8 +316,7 @@ def test_nonstandard_developer_setting_warning_survives_dict_round_trip(baseline
 
 
 def test_solar_default_settings_fit_carries_no_nonstandard_settings_warning(baseline):
-    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
-    hm = HourlyModel(settings=HourlySolarSettings()).fit(baseline_data)
+    hm = HourlyModel(settings=HourlySolarSettings()).fit(baseline, is_electricity_data=True)
 
     assert _nonstandard_settings_warnings(hm) == []
 
@@ -466,7 +429,6 @@ class TestBlasThreadLimit:
 
     def test_pools_are_single_threaded_during_fit(self, baseline, monkeypatch):
         """Every native pool reports one thread while the model is fitting."""
-        baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
         seen = []
         original = HourlyModel._prepare_features
 
@@ -476,7 +438,7 @@ class TestBlasThreadLimit:
             return original(self, meter_data)
 
         monkeypatch.setattr(HourlyModel, "_prepare_features", spy)
-        HourlyModel().fit(baseline_data)
+        HourlyModel().fit(baseline, is_electricity_data=True)
 
         assert seen, "_prepare_features was never called; the spy missed the fit path"
         for counts in seen:
@@ -486,8 +448,161 @@ class TestBlasThreadLimit:
 
     def test_limit_does_not_leak_past_fit(self, baseline):
         """The cap is scoped, so the caller's threading is restored afterwards."""
-        baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
         before = [info["num_threads"] for info in threadpool_info()]
-        HourlyModel().fit(baseline_data)
+        HourlyModel().fit(baseline, is_electricity_data=True)
         after = [info["num_threads"] for info in threadpool_info()]
         assert before == after, f"thread limits leaked out of fit: {before} -> {after}"
+
+
+class TestFrameAPI:
+    """fit/predict on plain dataframes: the argument contract, trimming, refusal,
+    and serialization behavior that the frame API adds on top of the data classes."""
+
+    def test_fit_rejects_data_object(self, baseline):
+        baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
+        with pytest.raises(TypeError):
+            HourlyModel().fit(baseline_data, is_electricity_data=True)
+
+    def test_fit_rejects_positional_is_electricity_data(self, baseline):
+        with pytest.raises(TypeError):
+            HourlyModel().fit(baseline, True)
+
+    def test_fit_with_pv_start(self, baseline):
+        pv_start = baseline.index[len(baseline) // 2].date()
+        hm = HourlyModel(settings=HourlySolarSettings()).fit(
+            baseline, is_electricity_data=True, pv_start=pv_start
+        )
+        assert hm._pv_start == pv_start
+
+        # pv_start must reach the baseline data object and split has_pv accordingly,
+        # not just be stored on the model
+        expected_has_pv = (hm.baseline_df.index.date >= pv_start).sum()
+        assert hm.baseline_df["has_pv"].sum() == expected_has_pv
+
+    def test_predict_without_observed_column_works(self, baseline, reporting):
+        hm = HourlyModel().fit(baseline, is_electricity_data=True)
+        reporting_no_observed = reporting.drop(columns=["observed"])
+
+        prediction = hm.predict(reporting_no_observed)
+
+        assert "predicted" in prediction.columns
+
+    def test_baseline_df_is_none_before_fit_and_a_dataframe_after(self, baseline):
+        hm = HourlyModel()
+        assert hm.baseline_df is None
+
+        hm.fit(baseline, is_electricity_data=True)
+
+        assert isinstance(hm.baseline_df, pd.DataFrame)
+
+    def test_padded_baseline_trims_to_the_same_fit_and_warns_once(self, baseline):
+        pad = pd.DataFrame(
+            np.nan,
+            index=pd.date_range(
+                baseline.index.min() - pd.Timedelta(hours=3),
+                baseline.index.min() - pd.Timedelta(hours=1),
+                freq="h",
+            ),
+            columns=baseline.columns,
+        )
+        trailing_pad = pd.DataFrame(
+            np.nan,
+            index=pd.date_range(
+                baseline.index.max() + pd.Timedelta(hours=1),
+                baseline.index.max() + pd.Timedelta(hours=5),
+                freq="h",
+            ),
+            columns=baseline.columns,
+        )
+        padded = pd.concat([pad, baseline, trailing_pad])
+
+        hm_padded = HourlyModel().fit(padded, is_electricity_data=True)
+        hm_unpadded = HourlyModel().fit(baseline, is_electricity_data=True)
+
+        np.testing.assert_allclose(
+            hm_padded._model.coef_, hm_unpadded._model.coef_, rtol=1e-12
+        )
+
+        trim_warnings = [
+            w for w in hm_padded.warnings
+            if w.qualified_name == "eemeter.data_quality.edge_rows_trimmed"
+        ]
+        assert len(trim_warnings) == 1
+        assert trim_warnings[0].data == {"leading": 3, "trailing": 5}
+
+    def test_predict_does_not_trim_padded_frame(self, baseline, reporting):
+        hm = HourlyModel().fit(baseline, is_electricity_data=True)
+        pad_start = reporting.index.min() - pd.Timedelta(hours=3)
+        pad = pd.DataFrame(
+            np.nan,
+            index=pd.date_range(pad_start, reporting.index.min() - pd.Timedelta(hours=1), freq="h"),
+            columns=reporting.columns,
+        )
+        padded_reporting = pd.concat([pad, reporting])
+
+        prediction = hm.predict(padded_reporting)
+
+        assert prediction.index.min() <= pad_start
+
+    def test_disqualified_frame_raises_with_matching_disqualification(self, baseline):
+        baseline["observed"] = 0
+        hm = HourlyModel()
+
+        with pytest.raises(DataSufficiencyError) as exc_info:
+            hm.fit(baseline, is_electricity_data=True)
+
+        assert exc_info.value.disqualification
+        assert exc_info.value.disqualification == hm.disqualification
+
+    def test_is_electricity_data_and_pv_start_round_trip_dict(self, baseline):
+        pv_start = baseline.index[len(baseline) // 2].date()
+        hm = HourlyModel(settings=HourlySolarSettings()).fit(
+            baseline, is_electricity_data=False, pv_start=pv_start
+        )
+
+        rebuilt = HourlyModel.from_dict(hm.to_dict())
+
+        assert rebuilt._is_electricity_data is False
+        assert rebuilt._pv_start == pv_start
+
+    def test_deserialized_model_predicts_on_a_frame(self, baseline, reporting):
+        hm = HourlyModel().fit(baseline, is_electricity_data=True)
+        rebuilt = HourlyModel.from_dict(hm.to_dict())
+
+        prediction = rebuilt.predict(reporting)
+
+        assert "predicted" in prediction.columns
+
+    def test_prior_format_payload_requires_is_electricity_data(self, baseline):
+        hm = HourlyModel().fit(baseline, is_electricity_data=True)
+        payload = hm.to_dict()
+        del payload["info"]["is_electricity_data"]
+        del payload["info"]["pv_start"]
+
+        with pytest.raises(ValueError):
+            HourlyModel.from_dict(payload)
+
+    def test_prior_format_payload_loads_with_is_electricity_data_and_warns(self, baseline, reporting):
+        hm = HourlyModel().fit(baseline, is_electricity_data=True)
+        payload = hm.to_dict()
+        del payload["info"]["is_electricity_data"]
+        del payload["info"]["pv_start"]
+
+        rebuilt = HourlyModel.from_dict(payload, is_electricity_data=True)
+
+        prior_format_warnings = [
+            w for w in rebuilt.warnings
+            if isinstance(w, EEMeterWarning)
+            and w.qualified_name == "eemeter.serialization.prior_format"
+        ]
+        assert len(prior_format_warnings) == 1
+
+        prediction = rebuilt.predict(reporting)
+        assert "predicted" in prediction.columns
+
+    def test_is_electricity_data_rejected_when_payload_already_carries_it(self, baseline):
+        hm = HourlyModel().fit(baseline, is_electricity_data=True)
+        payload = hm.to_dict()
+
+        with pytest.raises(ValueError):
+            HourlyModel.from_dict(payload, is_electricity_data=True)

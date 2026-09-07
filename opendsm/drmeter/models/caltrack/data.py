@@ -13,6 +13,6 @@
 #  limitations under the License.
 
 from opendsm.eemeter.models.hourly_caltrack.data import (
-    HourlyBaselineData as BaselineData,
-    HourlyReportingData as ReportingData,
+    _HourlyBaselineData as BaselineData,
+    _HourlyReportingData as ReportingData,
 )

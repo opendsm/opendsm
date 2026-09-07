@@ -19,8 +19,10 @@ from enum import Enum
 from typing import Any, ClassVar, Optional, Literal, Union
 
 from opendsm.common.base_settings import BaseSettings, CustomField
+from opendsm.eemeter.common.data_settings import DailyDataSettings
 import opendsm.eemeter.models.daily.utilities.const as _const
 from opendsm.eemeter.models.daily.utilities.opt_settings import AlgorithmChoice
+
 
 
 # region option definitions
@@ -220,14 +222,20 @@ def _merge_preset(preset: dict, values: dict) -> dict:
     merged = dict(preset)
     for key, value in values.items():
         preset_value = merged.get(key)
-        if isinstance(value, pydantic.BaseModel):
-            value = value.model_dump(exclude_unset=True)
 
-        if isinstance(preset_value, dict) and isinstance(value, dict):
-            merged[key] = _merge_preset(preset_value, value)
+        # Only dump nested settings objects into the merge when the preset itself
+        # defines that key as a nested dict; otherwise the value carries no
+        # preset overrides to merge and must pass through untouched so its type
+        # (e.g. a BillingDataSettings instance) is preserved.
+        if isinstance(preset_value, dict):
+            if isinstance(value, pydantic.BaseModel):
+                value = value.model_dump(exclude_unset=True)
 
-        else:
-            merged[key] = value
+            if isinstance(value, dict):
+                merged[key] = _merge_preset(preset_value, value)
+                continue
+
+        merged[key] = value
 
     return merged
 
@@ -244,6 +252,8 @@ class DailySettings(BaseSettings):
         developer=False,
         description="Named set of default values that all other settings fall back to",
     )
+
+    data: DailyDataSettings = pydantic.Field(default_factory=DailyDataSettings)
 
     algorithm_choice: Optional[AlgorithmChoice] = CustomField(
         default=AlgorithmChoice.NLOPT_SBPLX,
@@ -385,7 +395,7 @@ class DailySettings(BaseSettings):
 
         values = _lowercase_keys(values)
 
-        preset = values.get("preset", "current")
+        preset = values.get("preset", cls.model_fields["preset"].default)
         if isinstance(preset, str):
             preset = preset.lower().strip()
             values["preset"] = preset
@@ -495,4 +505,4 @@ def update_daily_settings(settings, update_dict):
     settings_dict = settings.model_dump()
     settings_dict.update(update_dict)
 
-    return DailySettings(**settings_dict)
+    return type(settings)(**settings_dict)

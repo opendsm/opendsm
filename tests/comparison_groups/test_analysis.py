@@ -30,14 +30,26 @@ from opendsm.comparison_groups.selection import (
     _normalize_treatment_weights,
     select_comparison_group,
 )
-from opendsm.eemeter.models import (
-    DailyBaselineData,
-    DailyReportingData,
-)
 
 
 
 # ── builders ─────────────────────────────────────────────────────────────────
+
+
+def _rewrap_meters(comstock, population):
+    """A meters dict reusing a population's fitted models with the ComStock
+    frames behind them (no refits)."""
+    granularity = population.granularity
+    meters = {}
+
+    for mid, rec in population._meters.items():
+        meters[mid] = {
+            "model": rec.model,
+            "baseline_df": comstock.baseline(granularity, mid),
+            "reporting_df": comstock.reporting(granularity, mid),
+        }
+
+    return meters
 
 
 # ── fixtures ─────────────────────────────────────────────────────────────────
@@ -85,26 +97,19 @@ def coverage_env(comstock, model_bank):
 
 
 def _daily_reporting_for(df_r, mid):
-    raw = df_r.xs(int(mid), level="id").reset_index()
-    data = DailyReportingData(raw, is_electricity_data=True)
-
-    return data
+    return df_r.xs(int(mid), level="id").reset_index()
 
 
 def _truncated_baseline(df_b, mid, n_days):
     """The first ``n_days`` of ``mid``'s real baseline, ~0.92 of the full
     365-day span; below a 0.95 coverage floor, above the 0.9 default."""
     raw = df_b.xs(int(mid), level="id").reset_index().iloc[:n_days]
-    data = DailyBaselineData(raw, is_electricity_data=True)
 
-    return data
+    return raw
 
 
 def _truncated_reporting(df_r, mid, n_days):
-    raw = df_r.xs(int(mid), level="id").reset_index().iloc[:n_days]
-    data = DailyReportingData(raw, is_electricity_data=True)
-
-    return data
+    return df_r.xs(int(mid), level="id").reset_index().iloc[:n_days]
 
 
 def _coverage_population(
@@ -117,8 +122,8 @@ def _coverage_population(
     for mid in ids:
         meters[mid] = {
             "model": records[mid]["model"],
-            "baseline_data": baseline_overrides.get(mid, records[mid]["baseline_data"]),
-            "reporting_data": reporting_overrides.get(mid, _daily_reporting_for(df_r, mid)),
+            "baseline_df": baseline_overrides.get(mid, records[mid]["baseline_df"]),
+            "reporting_df": reporting_overrides.get(mid, _daily_reporting_for(df_r, mid)),
         }
 
     with warnings.catch_warnings():
@@ -252,7 +257,7 @@ def test_explicit_reporting_window_governs_coverage(coverage_env):
     victim = pool_ids[0]
 
     victim_reporting = _truncated_reporting(df_r, victim, 200)
-    narrow_window = (victim_reporting.df.index.min(), victim_reporting.df.index.max())
+    narrow_window = (victim_reporting["datetime"].min(), victim_reporting["datetime"].max())
 
     treatment = _coverage_population(
         TreatmentGroup, records, df_r, treatment_ids, reporting_window=narrow_window
@@ -312,30 +317,24 @@ def test_analysis_corrects_only_its_own_meter(billing_env):
 # ── treatment observed_unc through the corrected column ──────────────────────
 
 
-def _treatment_with_observed_unc(billing_env, unc):
+def _treatment_with_observed_unc(comstock, billing_env, unc):
     """Rebuild the billing treatment reusing its fitted models, tagging every
     meter with a scalar observed uncertainty."""
-    source = billing_env["treatment"]
-    meters = {}
+    meters = _rewrap_meters(comstock, billing_env["treatment"])
 
-    for mid, rec in source._meters.items():
-        meters[mid] = {
-            "model": rec.model,
-            "baseline_data": rec.baseline_data,
-            "reporting_data": rec.reporting_data,
-            "observed_unc": unc,
-        }
+    for entry in meters.values():
+        entry["observed_unc"] = unc
 
     treatment = TreatmentGroup.from_fit_models(meters)
 
     return treatment
 
 
-def test_population_observed_unc_reaches_savings_via_corrected_column(billing_env):
+def test_population_observed_unc_reaches_savings_via_corrected_column(billing_env, comstock):
     """A treatment meter carrying observed_unc is threaded onto the correction's
     ``observed_unc`` column and, with no explicit kwarg, combined into
     savings_unc as the quadrature of the corrected band with that column."""
-    treatment = _treatment_with_observed_unc(billing_env, unc=4.0)
+    treatment = _treatment_with_observed_unc(comstock, billing_env, unc=4.0)
     analysis = _analysis(billing_env, treatment=treatment)
     analysis.correct().savings()
 
@@ -376,11 +375,11 @@ def test_unset_observed_unc_leaves_corrected_column_zero(billing_env):
     )
 
 
-def test_explicit_observed_unc_kwarg_overrides_corrected_column(billing_env):
+def test_explicit_observed_unc_kwarg_overrides_corrected_column(billing_env, comstock):
     """An explicit observed_unc passed to savings() wins over the population's
     threaded column (the 4.0 treatment value is ignored in favor of the 3.0
     kwarg)."""
-    treatment = _treatment_with_observed_unc(billing_env, unc=4.0)
+    treatment = _treatment_with_observed_unc(comstock, billing_env, unc=4.0)
     analysis = _analysis(billing_env, treatment=treatment)
     analysis.correct()
 
@@ -450,20 +449,6 @@ def test_meter_absent_from_selection_raises_with_ledger_row(billing_env):
 
 
 # ── meter_log ────────────────────────────────────────────────────────────────
-
-
-def _rewrap_meters(population):
-    """A meters dict reusing a population's fitted models (no refits)."""
-    meters = {}
-
-    for mid, rec in population._meters.items():
-        meters[mid] = {
-            "model": rec.model,
-            "baseline_data": rec.baseline_data,
-            "reporting_data": rec.reporting_data,
-        }
-
-    return meters
 
 
 def _manual_selection(treatment, pool, nan_weight_id):
@@ -561,12 +546,12 @@ def test_failed_correct_clears_the_previous_results(billing_env):
         analysis.savings()
 
 
-def test_meter_log_excludes_pool_meters_outside_this_comparison_group(billing_env):
+def test_meter_log_excludes_pool_meters_outside_this_comparison_group(billing_env, comstock):
     """Population-stage rows for pool meters trimmed before selection belong to
     no comparison group, so they stay out of this meter's log even though they
     are on the pool population's own ledger."""
     treatment = billing_env["treatment"]
-    pool_meters = _rewrap_meters(billing_env["pool"])
+    pool_meters = _rewrap_meters(comstock, billing_env["pool"])
     pool = ComparisonPool.from_fit_models(pool_meters, max_pool_size=len(pool_meters) - 2, seed=1)
 
     trimmed = pool.exclusions

@@ -13,6 +13,7 @@
 #  limitations under the License.
 
 import copy
+import json
 
 import numpy as np
 import pandas as pd
@@ -24,11 +25,7 @@ from opendsm.comparison_groups.population import (
     TreatmentGroup,
 )
 from opendsm.eemeter.common.warnings import EEMeterWarning
-from opendsm.eemeter.models import (
-    DailyBaselineData,
-    DailyReportingData,
-    HourlyReportingData,
-)
+from opendsm.eemeter.models.daily.data import DailyBaselineData
 
 
 
@@ -40,11 +37,11 @@ def _subset(meters, n):
 
 
 def _baseline_map(meters):
-    return {mid: entry["baseline_data"] for mid, entry in meters.items()}
+    return {mid: entry["baseline_df"] for mid, entry in meters.items()}
 
 
 def _reporting_map(meters):
-    return {mid: entry["reporting_data"] for mid, entry in meters.items()}
+    return {mid: entry["reporting_df"] for mid, entry in meters.items()}
 
 
 @pytest.fixture(scope="module")
@@ -62,8 +59,8 @@ def billing_pair(comstock, model_bank):
 
 @pytest.fixture(scope="module")
 def hourly_fit(comstock, model_bank):
-    """Two real ComStock hourly meters on pinned models: baseline data and full
-    plus first-half reporting data (for extension tests)."""
+    """Two real ComStock hourly meters on pinned models: baseline frames and full
+    plus first-half reporting frames (for extension tests)."""
     _, df_r = comstock.frames("hourly")
     ids = comstock.ids("hourly")[:2]
     records = comstock.meters(model_bank, "hourly", ids)
@@ -75,12 +72,11 @@ def hourly_fit(comstock, model_bank):
     for mid in ids:
         key = str(mid)
         models[key] = records[key]["model"]
-        baseline[key] = records[key]["baseline_data"]
-        full_reporting[key] = records[key]["reporting_data"]
+        baseline[key] = records[key]["baseline_df"]
+        full_reporting[key] = records[key]["reporting_df"]
         raw = df_r.xs(mid, level="id")
         cutoff = raw.index.min() + pd.Timedelta(days=180)
-        half = raw[raw.index < cutoff]
-        half_reporting[key] = HourlyReportingData(half.reset_index(), is_electricity_data=True)
+        half_reporting[key] = raw[raw.index < cutoff].reset_index()
 
     bundle = {
         "models": models,
@@ -114,7 +110,7 @@ def _dict_payload(meters, mid):
     payload = {
         mid: {
             "model": meters[mid]["model"].to_dict(),
-            "baseline_data": meters[mid]["baseline_data"],
+            "baseline_df": meters[mid]["baseline_df"],
         }
     }
 
@@ -135,7 +131,7 @@ def test_from_fit_models_infers_granularity_from_tagged_json_payload(daily_meter
     payload = {
         mid: {
             "model": daily_meters[mid]["model"].to_json(),
-            "baseline_data": daily_meters[mid]["baseline_data"],
+            "baseline_df": daily_meters[mid]["baseline_df"],
         }
     }
 
@@ -185,14 +181,16 @@ def test_from_fit_models_rejects_mismatched_declared_granularity(billing_pair):
 
 
 def test_uniform_fuel_validation_error(daily_meters):
+    """The model carries the fuel flag the data object is built with, so two
+    models disagreeing on it cannot form one population."""
     ids = list(daily_meters)[:2]
-    flipped = copy.deepcopy(daily_meters[ids[0]]["baseline_data"])
-    flipped.is_electricity_data = False
+    gas_model = copy.deepcopy(daily_meters[ids[0]]["model"])
+    gas_model._is_electricity_data = False
     meters = {
-        ids[0]: {"model": daily_meters[ids[0]]["model"], "baseline_data": flipped},
+        ids[0]: {"model": gas_model, "baseline_df": daily_meters[ids[0]]["baseline_df"]},
         ids[1]: {
             "model": daily_meters[ids[1]]["model"],
-            "baseline_data": daily_meters[ids[1]]["baseline_data"],
+            "baseline_df": daily_meters[ids[1]]["baseline_df"],
         },
     }
 
@@ -201,12 +199,11 @@ def test_uniform_fuel_validation_error(daily_meters):
 
 
 def _new_york_meter(comstock, daily_meters, mid):
-    """A pinned daily meter whose baseline data is converted to New York time."""
+    """A pinned daily meter whose baseline frame is converted to New York time."""
     df_b, _ = comstock.frames("daily")
     raw = df_b.xs(int(mid), level="id")
     raw.index = raw.index.tz_convert("America/New_York")
-    data = DailyBaselineData(raw.reset_index(), is_electricity_data=True)
-    meter = {"model": daily_meters[mid]["model"], "baseline_data": data}
+    meter = {"model": daily_meters[mid]["model"], "baseline_df": raw.reset_index()}
 
     return meter
 
@@ -216,7 +213,7 @@ def test_uniform_timezone_validation_error(comstock, daily_meters):
     ids = list(daily_meters)[:2]
     new_york = _new_york_meter(comstock, daily_meters, ids[1])
     new_york["model"] = copy.deepcopy(new_york["model"])
-    new_york["model"].baseline_timezone = new_york["baseline_data"].tz
+    new_york["model"].baseline_timezone = "America/New_York"
     meters = {ids[0]: daily_meters[ids[0]], ids[1]: new_york}
 
     with pytest.raises(ValueError, match="share one timezone"):
@@ -235,15 +232,15 @@ def test_model_and_baseline_data_timezone_mismatch_raises(comstock, daily_meters
 
 def test_disqualified_meter_warns(daily_meters):
     ids = list(daily_meters)[:2]
-    flagged = copy.deepcopy(daily_meters[ids[0]]["baseline_data"])
+    flagged = copy.deepcopy(daily_meters[ids[0]]["model"])
     flagged.disqualification = [
         EEMeterWarning(qualified_name="eemeter.test", description="flagged", data=None)
     ]
     meters = {
-        ids[0]: {"model": daily_meters[ids[0]]["model"], "baseline_data": flagged},
+        ids[0]: {"model": flagged, "baseline_df": daily_meters[ids[0]]["baseline_df"]},
         ids[1]: {
             "model": daily_meters[ids[1]]["model"],
-            "baseline_data": daily_meters[ids[1]]["baseline_data"],
+            "baseline_df": daily_meters[ids[1]]["baseline_df"],
         },
     }
 
@@ -252,14 +249,15 @@ def test_disqualified_meter_warns(daily_meters):
 
 
 def test_solar_mix_raises(hourly_fit):
+    """One hourly meter whose baseline frame carries no GHI column alongside one
+    that does is a solar mix the population refuses."""
     ids = list(hourly_fit["models"])[:2]
-    non_solar = copy.deepcopy(hourly_fit["baseline"][ids[0]])
-    non_solar._df = non_solar._df.drop(columns="ghi")
+    non_solar = hourly_fit["baseline"][ids[0]].drop(columns="ghi")
     meters = {
-        ids[0]: {"model": hourly_fit["models"][ids[0]], "baseline_data": non_solar},
+        ids[0]: {"model": hourly_fit["models"][ids[0]], "baseline_df": non_solar},
         ids[1]: {
             "model": hourly_fit["models"][ids[1]],
-            "baseline_data": hourly_fit["baseline"][ids[1]],
+            "baseline_df": hourly_fit["baseline"][ids[1]],
         },
     }
 
@@ -273,7 +271,7 @@ def test_solar_mix_raises(hourly_fit):
 def test_baseline_window_spans_meters(daily_meters):
     group = TreatmentGroup.from_fit_models(daily_meters)
     start, end = group.baseline_window
-    first_index = daily_meters[list(daily_meters)[0]]["baseline_data"].df.index
+    first_index = group._meters[list(daily_meters)[0]].baseline_data.df.index
 
     assert start == first_index.min()
     assert end == first_index.max()
@@ -289,13 +287,13 @@ def test_reporting_window_is_union_across_differing_spans(daily_meters, _comstoc
         if position == 0:
             cutoff = raw.index.max() - pd.Timedelta(days=45)
             raw = raw[raw.index <= cutoff]
-        reporting[str(mid)] = DailyReportingData(raw.reset_index(), is_electricity_data=True)
+        reporting[str(mid)] = raw.reset_index()
 
     group = TreatmentGroup.from_fit_models(daily_meters)
     group.add_reporting_data(reporting)
 
-    starts = [data.df.index.min() for data in reporting.values()]
-    ends = [data.df.index.max() for data in reporting.values()]
+    starts = [frame["datetime"].min() for frame in reporting.values()]
+    ends = [frame["datetime"].max() for frame in reporting.values()]
 
     assert min(ends) < max(ends)
     assert group.reporting_window == (min(starts), max(ends))
@@ -337,7 +335,7 @@ def test_naive_window_override_is_localized_to_the_population_timezone(daily_met
 
 def test_reporting_window_override_stays_none_without_reporting_data(daily_meters):
     meters = {
-        mid: {"model": entry["model"], "baseline_data": entry["baseline_data"]}
+        mid: {"model": entry["model"], "baseline_df": entry["baseline_df"]}
         for mid, entry in daily_meters.items()
     }
     reporting_window = (
@@ -399,11 +397,10 @@ def test_billing_predictions_ride_daily_substrate(billing_pair):
     frame = group.predictions("baseline")
 
     for mid in group.ids:
+        substrate = group._meters[mid].baseline_data.df
         n_rows = len(frame[frame["id"] == mid])
-        n_days = len(billing_pair[mid]["baseline_data"].df)
-        n_months = billing_pair[mid]["baseline_data"].df.index.tz_localize(None).to_period(
-            "M"
-        ).nunique()
+        n_days = len(substrate)
+        n_months = substrate.index.tz_localize(None).to_period("M").nunique()
 
         assert n_rows == n_days
         assert n_rows > n_months
@@ -425,7 +422,7 @@ def test_prediction_matrices_observed_unc_present_when_set(daily_meters):
 def test_observed_unc_series_not_covering_window_raises(daily_meters):
     meters = dict(_subset(daily_meters, 2))
     mid = next(iter(meters))
-    baseline_index = meters[mid]["baseline_data"].df.index
+    baseline_index = pd.DatetimeIndex(meters[mid]["baseline_df"]["datetime"])
     unc_series = pd.Series(2.0, index=baseline_index[: len(baseline_index) // 2])
     meters[mid] = {**meters[mid], "observed_unc": unc_series}
     group = TreatmentGroup.from_fit_models(meters, granularity="daily")
@@ -442,9 +439,9 @@ def test_reporting_extension_matches_full_repredict(hourly_fit):
     def _meters(reporting=None):
         built = {}
         for mid, model in hourly_fit["models"].items():
-            entry = {"model": model, "baseline_data": hourly_fit["baseline"][mid]}
+            entry = {"model": model, "baseline_df": hourly_fit["baseline"][mid]}
             if reporting is not None:
-                entry["reporting_data"] = reporting[mid]
+                entry["reporting_df"] = reporting[mid]
             built[mid] = entry
 
         return built
@@ -466,10 +463,68 @@ def test_reporting_extension_matches_full_repredict(hourly_fit):
 
 def test_add_reporting_data_unknown_meter_raises(daily_meters):
     group = TreatmentGroup.from_fit_models(_subset(daily_meters, 2))
-    stray = daily_meters[list(daily_meters)[-1]]["reporting_data"]
+    stray = daily_meters[list(daily_meters)[-1]]["reporting_df"]
 
     with pytest.raises(KeyError, match="not part of this population"):
         group.add_reporting_data({"does-not-exist": stray})
+
+
+def test_add_reporting_data_tz_mismatch_leaves_record_and_cache_untouched(daily_meters):
+    """A reporting frame is validated before it replaces the record, so a
+    rejected meter's reporting_data and the population's reporting_window
+    survive the call unchanged."""
+    meters = {
+        mid: {"model": entry["model"], "baseline_df": entry["baseline_df"]}
+        for mid, entry in _subset(daily_meters, 2).items()
+    }
+    ids = list(meters)
+    group = TreatmentGroup.from_fit_models(meters, granularity="daily")
+    group.add_reporting_data({ids[1]: daily_meters[ids[1]]["reporting_df"]})
+    stale_reporting_data = group._meters[ids[1]].reporting_data
+    stale_window = group.reporting_window
+
+    good_reporting = daily_meters[ids[0]]["reporting_df"]
+    bad_reporting = daily_meters[ids[1]]["reporting_df"].copy()
+    bad_reporting = bad_reporting.set_index("datetime")
+    bad_reporting.index = bad_reporting.index.tz_convert("America/New_York")
+    bad_reporting = bad_reporting.reset_index()
+
+    with pytest.raises(ValueError, match="does not match"):
+        group.add_reporting_data({ids[0]: good_reporting, ids[1]: bad_reporting})
+
+    assert group._meters[ids[0]].reporting_data is not None
+    assert group._meters[ids[1]].reporting_data is stale_reporting_data
+    assert group.reporting_window == stale_window
+
+
+def test_reporting_frame_attached_later_predicts(daily_meters):
+    """A population built from baseline frames alone predicts reporting once the
+    reporting frames arrive: the model builds each data object from the frame."""
+    meters = {
+        mid: {"model": entry["model"], "baseline_df": entry["baseline_df"]}
+        for mid, entry in _subset(daily_meters, 2).items()
+    }
+    group = TreatmentGroup.from_fit_models(meters, granularity="daily")
+
+    assert group.reporting_window is None
+
+    group.add_reporting_data(_reporting_map(_subset(daily_meters, 2)))
+    frame = group.predictions("reporting")
+
+    assert group.reporting_window is not None
+    assert set(frame["id"].unique()) == set(group.ids)
+    assert np.isfinite(frame["modeled"].to_numpy()).all()
+
+
+def test_from_fit_models_rejects_a_data_object_where_a_frame_belongs(daily_meters):
+    """Populations build the data objects themselves, so a prebuilt data object
+    passed as ``baseline_df`` is a TypeError naming the meter."""
+    mid = list(daily_meters)[0]
+    data = DailyBaselineData(daily_meters[mid]["baseline_df"], is_electricity_data=True)
+    meters = {mid: {"model": daily_meters[mid]["model"], "baseline_df": data}}
+
+    with pytest.raises(TypeError, match=f"Meter {mid}: baseline_df must be a pandas DataFrame"):
+        TreatmentGroup.from_fit_models(meters, granularity="daily")
 
 
 # -- loadshape data ----------------------------------------------------------
@@ -493,7 +548,7 @@ def test_loadshape_default_time_period_billing(billing_pair):
 
 def test_loadshape_default_time_period_hourly(hourly_fit):
     meters = {
-        mid: {"model": model, "baseline_data": hourly_fit["baseline"][mid]}
+        mid: {"model": model, "baseline_df": hourly_fit["baseline"][mid]}
         for mid, model in hourly_fit["models"].items()
     }
     group = TreatmentGroup.from_fit_models(meters, granularity="hourly")
@@ -524,29 +579,27 @@ def test_loadshape_error_basis_guards_zero_modeled(daily_meters):
     assert not np.isinf(data.loadshape.to_numpy()).any()
 
 
+def _truncate_baseline_months(population, ids, n_months=6):
+    """Cut each named meter's attached billing baseline down to ``n_months``,
+    after construction so the truncation is not itself a sufficiency failure."""
+    for mid in ids:
+        baseline_data = population._meters[mid].baseline_data
+        baseline_data._df = baseline_data._df.head(n_months)
+
+
 def test_billing_loadshape_requires_full_year(billing_pair):
-    truncated = {}
-    for mid, entry in billing_pair.items():
-        baseline_data = copy.deepcopy(entry["baseline_data"])
-        baseline_data._df = baseline_data._df.head(6)
-        truncated[mid] = {"model": entry["model"], "baseline_data": baseline_data}
-    group = TreatmentGroup.from_fit_models(truncated, granularity="billing")
+    group = TreatmentGroup.from_fit_models(billing_pair, granularity="billing")
+    _truncate_baseline_months(group, group.ids)
 
     with pytest.raises(ValueError, match="at least 12 baseline months"):
         group.loadshape_data("modeled")
 
 
 def test_billing_pool_short_baseline_excluded_not_raised(billing_pair):
-    good_mid, good_entry = list(billing_pair.items())[0]
-    bad_mid, bad_entry = list(billing_pair.items())[1]
+    good_mid, bad_mid = list(billing_pair)
 
-    truncated_baseline = copy.deepcopy(bad_entry["baseline_data"])
-    truncated_baseline._df = truncated_baseline._df.head(6)
-    meters = {
-        good_mid: good_entry,
-        bad_mid: {"model": bad_entry["model"], "baseline_data": truncated_baseline},
-    }
-    pool = ComparisonPool.from_fit_models(meters, granularity="billing")
+    pool = ComparisonPool.from_fit_models(billing_pair, granularity="billing")
+    _truncate_baseline_months(pool, [bad_mid])
 
     data = pool.loadshape_data("modeled")
 
@@ -559,12 +612,8 @@ def test_billing_pool_short_baseline_excluded_not_raised(billing_pair):
 
 
 def test_billing_treatment_all_excluded_raises_named_ids(billing_pair):
-    truncated = {}
-    for mid, entry in billing_pair.items():
-        baseline_data = copy.deepcopy(entry["baseline_data"])
-        baseline_data._df = baseline_data._df.head(6)
-        truncated[mid] = {"model": entry["model"], "baseline_data": baseline_data}
-    group = TreatmentGroup.from_fit_models(truncated, granularity="billing")
+    group = TreatmentGroup.from_fit_models(billing_pair, granularity="billing")
+    _truncate_baseline_months(group, group.ids)
 
     with pytest.raises(ValueError, match="all treatment meters excluded"):
         group.loadshape_data("modeled")
@@ -623,6 +672,25 @@ def test_json_roundtrip_restores_explicit_windows_not_recomputed(daily_meters):
     assert rebuilt.reporting_window != span_reporting
 
 
+def test_from_json_rebuilds_model_payload_missing_fuel_flag(daily_meters):
+    """A model payload written before the fuel flag was stored rebuilds using the
+    population header's is_electricity_data, and the rebuilt model records that."""
+    subset = _subset(daily_meters, 2)
+    group = TreatmentGroup.from_fit_models(subset, granularity="daily")
+    payload = json.loads(group.to_json())
+    for meter in payload["meters"]:
+        model_payload = json.loads(meter["model"])
+        del model_payload["info"]["is_electricity_data"]
+        meter["model"] = json.dumps(model_payload)
+
+    rebuilt = TreatmentGroup.from_json(json.dumps(payload), baseline=_baseline_map(subset))
+
+    assert rebuilt.is_electricity_data == group.is_electricity_data
+    for mid in rebuilt.ids:
+        names = {w.qualified_name for w in rebuilt._meters[mid].model.warnings}
+        assert "eemeter.serialization.prior_format" in names
+
+
 def test_from_json_pool_trim_is_recorded_alongside_the_serialized_ledger(daily_meters):
     """A trim requested on the rebuild lands on the ledger after the serialized
     rows instead of replacing them."""
@@ -653,15 +721,21 @@ def test_ndjson_roundtrip(daily_meters):
 
 def test_observed_unc_series_roundtrip_preserves_index_tz(daily_meters):
     mid = list(daily_meters)[0]
-    baseline_data = daily_meters[mid]["baseline_data"]
-    index = baseline_data.df.index
+    baseline_df = daily_meters[mid]["baseline_df"]
+    index = pd.DatetimeIndex(baseline_df["datetime"])
     unc = pd.Series(np.arange(len(index), dtype=float), index=index)
     group = TreatmentGroup.from_fit_models(
-        {mid: {"model": daily_meters[mid]["model"], "baseline_data": baseline_data, "observed_unc": unc}},
+        {
+            mid: {
+                "model": daily_meters[mid]["model"],
+                "baseline_df": baseline_df,
+                "observed_unc": unc,
+            }
+        },
         granularity="daily",
     )
 
-    rebuilt = TreatmentGroup.from_json(group.to_json(), baseline={mid: baseline_data})
+    rebuilt = TreatmentGroup.from_json(group.to_json(), baseline={mid: baseline_df})
     restored = rebuilt._meters[mid].observed_unc
 
     assert isinstance(restored, pd.Series)
@@ -723,18 +797,20 @@ def test_exclusions_roundtrip_through_json(daily_meters):
 # -- from_data serial fit ----------------------------------------------------
 
 
+def test_from_data_requires_is_electricity_data_as_keyword():
+    """is_electricity_data is keyword-only, so a positional third argument
+    (such as a settings object) cannot silently bind to it instead."""
+    with pytest.raises(TypeError):
+        TreatmentGroup.from_data({}, "daily", True)
+
+
 @pytest.mark.slow
 def test_from_data_fits_serially(_comstock_daily_all):
     df_b, _ = _comstock_daily_all
     ids = sorted(df_b.index.get_level_values("id").unique())[:2]
-    baseline = {
-        str(mid): DailyBaselineData(
-            df_b.xs(mid, level="id").reset_index(), is_electricity_data=True
-        )
-        for mid in ids
-    }
+    baseline = {str(mid): df_b.xs(mid, level="id").reset_index() for mid in ids}
 
-    group = TreatmentGroup.from_data(baseline, "daily")
+    group = TreatmentGroup.from_data(baseline, "daily", is_electricity_data=True)
 
     assert group.granularity == "daily"
     assert set(group.ids) == set(baseline)
@@ -751,14 +827,12 @@ def test_from_data_excludes_meter_failing_baseline_sufficiency(_comstock_daily_a
     baseline = {}
 
     for mid in ids[:2]:
-        baseline[str(mid)] = DailyBaselineData(
-            df_b.xs(mid, level="id").reset_index(), is_electricity_data=True
-        )
+        baseline[str(mid)] = df_b.xs(mid, level="id").reset_index()
 
     short = df_b.xs(ids[2], level="id").iloc[:60]
-    baseline[str(ids[2])] = DailyBaselineData(short.reset_index(), is_electricity_data=True)
+    baseline[str(ids[2])] = short.reset_index()
 
-    group = TreatmentGroup.from_data(baseline, "daily")
+    group = TreatmentGroup.from_data(baseline, "daily", is_electricity_data=True)
 
     assert set(group.ids) == {str(mid) for mid in ids[:2]}
     row = group.exclusions.set_index("id").loc[str(ids[2])]
@@ -773,7 +847,7 @@ def test_from_data_all_meters_failing_raises(_comstock_daily_all):
     df_b, _ = _comstock_daily_all
     mid = sorted(df_b.index.get_level_values("id").unique())[0]
     short = df_b.xs(mid, level="id").iloc[:60]
-    baseline = {str(mid): DailyBaselineData(short.reset_index(), is_electricity_data=True)}
+    baseline = {str(mid): short.reset_index()}
 
     with pytest.raises(ValueError, match="All meters failed to fit"):
-        TreatmentGroup.from_data(baseline, "daily")
+        TreatmentGroup.from_data(baseline, "daily", is_electricity_data=True)
