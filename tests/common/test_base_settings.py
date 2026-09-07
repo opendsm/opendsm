@@ -16,7 +16,12 @@ import pydantic
 
 from typing import Optional
 
-from opendsm.common.base_settings import BaseSettings, CustomField, settings_deviations
+from opendsm.common.base_settings import (
+    BaseSettings,
+    CustomField,
+    settings_deviation_report,
+    settings_deviations,
+)
 
 
 
@@ -93,3 +98,18 @@ def test_optional_block_none_versus_instance_is_a_single_entry():
     assert deviations == [("optional_block", {"multiplier": 1, "threshold": 10}, None)], (
         f"expected a single entry at the block's path, got {deviations}"
     )
+
+
+def test_report_is_empty_when_settings_match_the_reference():
+    report = settings_deviation_report(_Outer(), _Outer())
+
+    assert report == {}, f"identical settings must report no deviations, got {report}"
+
+
+def test_report_keys_each_deviation_by_path_with_value_and_default():
+    report = settings_deviation_report(_Outer(developer_value=99, block=_Block(multiplier=2)), _Outer())
+
+    assert report == {
+        "developer_value": {"value": 99, "default": 7},
+        "block.multiplier": {"value": 2, "default": 1},
+    }, f"expected both deviations keyed by path, got {report}"

@@ -606,3 +606,19 @@ class TestFrameAPI:
 
         with pytest.raises(ValueError):
             HourlyModel.from_dict(payload, is_electricity_data=True)
+
+
+def test_settings_deviations_property_reports_hourly_developer_tier_changes(baseline):
+    model = HourlyModel(settings=HourlyNonSolarSettings(cvrmse_threshold=1.2)).fit(
+        baseline, is_electricity_data=True
+    )
+
+    assert model.settings_deviations == {
+        "cvrmse_threshold": {"value": 1.2, "default": 1.4}
+    }
+
+
+def test_settings_deviations_property_is_empty_for_default_hourly_settings(baseline):
+    model = HourlyModel().fit(baseline, is_electricity_data=True)
+
+    assert model.settings_deviations == {}

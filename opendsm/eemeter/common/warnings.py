@@ -16,7 +16,7 @@ import logging
 from typing import Optional, Union
 import pydantic
 
-from opendsm.common.base_settings import BaseSettings, settings_deviations
+from opendsm.common.base_settings import BaseSettings, settings_deviation_report
 
 
 
@@ -76,13 +76,10 @@ def nonstandard_settings_warning(
     Returns None when `settings` matches `reference` on every developer-tier field.
     """
 
-    deviations = settings_deviations(settings, reference)
-    if not deviations:
+    deviation_data = settings_deviation_report(settings, reference)
+    if not deviation_data:
         return None
 
-    deviation_data = {
-        path: {"value": value, "default": default} for path, value, default in deviations
-    }
     warning = EEMeterWarning(
         qualified_name="eemeter.settings.nonstandard",
         description=(
