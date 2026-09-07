@@ -261,3 +261,43 @@ def test_legacy_deserialization_daily(comstock_daily, snapshot):
     ).sum()
 
     assert round(float(total_metered_savings), 2) == snapshot(name="total_metered_savings")
+
+
+def test_settings_deviations_property_matches_the_warning_payload(comstock_daily):
+    """The property and the warning report the same deviation, from one formatter."""
+    df_b, _ = comstock_daily
+    baseline_data = DailyBaselineData(df=df_b.reset_index(), is_electricity_data=True)
+    model = DailyModel(settings={"segment_minimum_count": 8}).fit(
+        baseline_data, ignore_disqualification=True
+    )
+
+    warning = next(
+        w for w in model.warnings if w.qualified_name == "eemeter.settings.nonstandard"
+    )
+
+    assert model.settings_deviations == warning.data["deviations"]
+
+
+def test_settings_deviations_property_is_empty_for_default_settings(default_fitted_daily_model):
+    assert default_fitted_daily_model.settings_deviations == {}
+
+
+def test_settings_deviations_property_recomputes_after_a_round_trip(comstock_daily):
+    """The property is derived from the model's own settings, so deserialization
+    restores it without storing it."""
+    df_b, _ = comstock_daily
+    baseline_data = DailyBaselineData(df=df_b.reset_index(), is_electricity_data=True)
+    model = DailyModel(settings={"segment_minimum_count": 8}).fit(
+        baseline_data, ignore_disqualification=True
+    )
+
+    rebuilt = DailyModel.from_dict(model.to_dict())
+
+    assert rebuilt.settings_deviations == model.settings_deviations
+    assert rebuilt.settings_deviations["segment_minimum_count"]["value"] == 8
+
+
+def test_settings_deviations_property_is_available_before_fit():
+    model = DailyModel(settings={"segment_minimum_count": 8})
+
+    assert model.settings_deviations["segment_minimum_count"]["default"] == 6

@@ -21,6 +21,7 @@ from typing import Union
 import numpy as np
 import pandas as pd
 
+from opendsm.common.base_settings import settings_deviation_report
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
     DisqualifiedModelError,
@@ -134,6 +135,22 @@ class DailyModel:
 
     def _reference_settings(self) -> DailySettings:
         return self._settings_class(preset=self.settings.preset)
+
+    @property
+    def settings_deviations(self) -> dict:
+        """Developer-tier settings that differ from this model's reference defaults.
+
+        Recomputed from the model's own settings, so it stays correct after
+        deserialization and cannot contradict the values it describes.
+
+        Returns:
+            A dictionary keyed by dotted field path, each entry holding the field's
+            ``value`` and the reference's ``default``. Empty when the model's settings
+            are the standard OpenDSM ones for its type.
+        """
+        report = settings_deviation_report(self.settings, self._reference_settings())
+
+        return report
 
     def fit(
         self, 
