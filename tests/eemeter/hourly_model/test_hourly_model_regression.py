@@ -15,7 +15,6 @@
 
 import pytest
 
-from opendsm.eemeter.models.hourly.data import HourlyBaselineData, HourlyReportingData
 from opendsm.eemeter.models.hourly.model import HourlyModel
 from opendsm.eemeter.models.hourly.settings import (
     HourlyNonSolarSettings,
@@ -29,14 +28,14 @@ from regression_metrics import regression_block
 def hourly_baseline_data(comstock_hourly):
     df_b, _ = comstock_hourly
 
-    return HourlyBaselineData(df=df_b.reset_index(), is_electricity_data=True)
+    return df_b.reset_index()
 
 
 @pytest.fixture(scope="session")
 def hourly_reporting_data(comstock_hourly):
     _, df_r = comstock_hourly
 
-    return HourlyReportingData(df=df_r.reset_index(), is_electricity_data=True)
+    return df_r.reset_index()
 
 
 @pytest.fixture(scope="session")
@@ -44,7 +43,7 @@ def hourly_nonsolar_fit(hourly_baseline_data):
     settings = HourlyNonSolarSettings(seed=42)
 
     return HourlyModel(settings=settings).fit(
-        hourly_baseline_data, ignore_disqualification=True
+        hourly_baseline_data, is_electricity_data=True, ignore_disqualification=True
     )
 
 
@@ -53,7 +52,7 @@ def hourly_solar_fit(hourly_baseline_data):
     settings = HourlySolarSettings(seed=42)
 
     return HourlyModel(settings=settings).fit(
-        hourly_baseline_data, ignore_disqualification=True
+        hourly_baseline_data, is_electricity_data=True, ignore_disqualification=True
     )
 
 

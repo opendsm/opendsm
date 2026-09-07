@@ -19,8 +19,8 @@ import pandas as pd
 import pytest
 
 from opendsm.eemeter.models.daily.model import DailyModel
-from opendsm.eemeter.models.daily.data import DailyBaselineData
 from opendsm.eemeter.models.daily.optimize_results import OptimizedResult
+
 
 
 # Define the current directory
@@ -34,12 +34,14 @@ class TestFitModel:
         df = pd.read_csv(current_dir / "test_data.csv")
         df.index = pd.to_datetime(df["datetime"])
         df = df[["temperature", "observed"]]
-        cls.meter_data = DailyBaselineData(df, is_electricity_data=True)
+        cls.meter_data = df
 
     @pytest.mark.slow
     def test_fit_model(self):
         # Create a DailyModel instance
-        fm = DailyModel().fit(self.meter_data, ignore_disqualification=True)
+        fm = DailyModel().fit(
+            self.meter_data, is_electricity_data=True, ignore_disqualification=True
+        )
 
         # Test that the combinations attribute is a list
         assert isinstance(fm.combinations, list)
