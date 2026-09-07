@@ -48,15 +48,6 @@ class BaseSettings(pydantic.BaseModel):
         return v
 
 
-class MutableBaseSettings(BaseSettings):
-    model_config = pydantic.ConfigDict(
-        frozen = False,
-        arbitrary_types_allowed=True,
-        str_to_lower = True,
-        str_strip_whitespace = True,
-    )
-
-
 # add developer field to pydantic Field
 def CustomField(developer=True, *args, **kwargs):
     field = pydantic.Field(json_schema_extra={"developer": developer}, *args, **kwargs)
@@ -87,3 +78,23 @@ def settings_deviations(settings: BaseSettings, reference: BaseSettings) -> list
     """Return (path, value, default) for every developer-tier leaf that differs from the reference."""
 
     return _collect_deviations(settings, reference, "")
+
+
+def settings_deviation_report(settings: BaseSettings, reference: BaseSettings) -> dict:
+    """Report the developer-tier settings that differ from a reference.
+
+    Args:
+        settings: The settings to judge.
+        reference: The settings they are judged against.
+
+    Returns:
+        A dictionary keyed by dotted field path, each entry holding the field's ``value``
+        and the reference's ``default``. Empty when the two agree on every developer-tier
+        field.
+    """
+    deviations = settings_deviations(settings, reference)
+    report = {
+        path: {"value": value, "default": default} for path, value, default in deviations
+    }
+
+    return report

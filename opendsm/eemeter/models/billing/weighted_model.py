@@ -17,17 +17,12 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from opendsm.eemeter.common.exceptions import (
-    DataSufficiencyError,
-    DisqualifiedModelError,
-)
-from opendsm.eemeter.common.warnings import EEMeterWarning
 from opendsm.eemeter.models.billing.data import (
     BillingBaselineData,
     BillingReportingData,
 )
 from opendsm.eemeter.models.daily.model import DailyModel
-from opendsm.eemeter.models.daily.utilities.settings import DailySettings
+from opendsm.eemeter.models.billing.settings import BillingSettings
 
 
 
@@ -35,6 +30,9 @@ class BillingWeightedModel(DailyModel):
     """A class to fit a model to the input meter data.
 
     BillingModel is a wrapper for the DailyModel class using billing presets.
+
+    Billing rows are period starts: each row's 'observed' value covers the span from that row
+    to the next one, and a trailing row with a NaN 'observed' value closes the last period.
 
     Attributes:
         settings (dict): A dictionary of settings.
@@ -57,65 +55,45 @@ class BillingWeightedModel(DailyModel):
     _baseline_data_type = BillingBaselineData
     _reporting_data_type = BillingReportingData
     _data_df_name = "billing_df"
+    _trim_trailing_columns = ()
+    _check_timezone = False
     _default_overrides = {"segment_minimum_count": 3}
+    _settings_class = BillingSettings
 
     # TODO: lot of duplicated code between this and daily model, refactor later
     def __init__(
         self,
-        settings: dict | DailySettings | None = None,
+        settings: dict | BillingSettings | None = None,
         verbose: bool = False,
     ):
-        if not isinstance(settings, DailySettings):
-            settings = {"preset": "legacy", **self._default_overrides, **(settings or {})}
+        if settings is None or isinstance(settings, dict):
+            settings = {**self._default_overrides, **(settings or {})}
 
         super().__init__(settings=settings, verbose=verbose)
 
-    def _reference_settings(self) -> DailySettings:
-        return DailySettings(preset="legacy", **self._default_overrides)
+    def _reference_settings(self) -> BillingSettings:
+        return BillingSettings(**self._default_overrides)
 
-    def fit(
-        self, 
-        baseline_data: BillingBaselineData, 
-        ignore_disqualification: bool = False
-    ) -> BillingWeightedModel:
-        return super().fit(baseline_data, ignore_disqualification=ignore_disqualification)
-
-    def predict(
+    def _predict_data(
         self,
-        reporting_data: BillingBaselineData | BillingReportingData,
+        data,
         aggregation: str | None = None,
         ignore_disqualification: bool = False,
     ) -> pd.DataFrame:
-        """Predicts the energy consumption using the fitted model.
+        """Predict on an already built reporting or baseline data object.
 
         Args:
-            reporting_data: The data used for prediction.
+            data: The billing data object to predict on.
             aggregation: The aggregation level for the prediction. One of [None, 'none', 'monthly', 'bimonthly'].
-            ignore_disqualification: Whether to ignore model disqualification. Defaults to False.
 
         Returns:
             Dataframe with input data along with predicted energy consumption.
 
         Raises:
-            RuntimeError: If the model is not fitted.
-            DisqualifiedModelError: If the model is disqualified and ignore_disqualification is False.
-            TypeError: If the reporting data is not of type BillingBaselineData or BillingReportingData.
             ValueError: If the aggregation is not one of [None, 'none', 'monthly', 'bimonthly'].
         """
-        if not self.is_fitted:
-            raise RuntimeError("Model must be fit before predictions can be made.")
-
-        if self.disqualification and not ignore_disqualification:
-            raise DisqualifiedModelError(
-                "Attempting to predict using disqualified model without setting ignore_disqualification=True"
-            )
-
-        if not isinstance(reporting_data, (BillingBaselineData, BillingReportingData)):
-            raise TypeError(
-                "reporting_data must be a BillingBaselineData or BillingReportingData object"
-            )
-
-        df = getattr(reporting_data, self._data_df_name)
+        self._check_predictable(data, ignore_disqualification)
+        df = getattr(data, self._data_df_name)
         df_res = self._predict(df)
 
         if aggregation is None:
@@ -161,15 +139,52 @@ class BillingWeightedModel(DailyModel):
 
         return df_res
 
+    def predict(
+        self,
+        df: pd.DataFrame,
+        *,
+        aggregation: str | None = None,
+        ignore_disqualification: bool = False,
+    ) -> pd.DataFrame:
+        """Predicts the energy consumption using the fitted model.
+
+        Args:
+            df: Reporting data indexed by a tz-aware DatetimeIndex, or containing a tz-aware
+                'datetime' column, with a 'temperature' column. Rows are period starts.
+            aggregation: The aggregation level for the prediction. One of [None, 'none', 'monthly', 'bimonthly'].
+            ignore_disqualification: Whether to ignore model disqualification. Defaults to False.
+
+        Returns:
+            Dataframe with input data along with predicted energy consumption.
+
+        Raises:
+            RuntimeError: If the model is not fitted.
+            DisqualifiedModelError: If the model is disqualified and ignore_disqualification is False.
+            TypeError: If df is not a dataframe.
+            ValueError: If the aggregation is not one of [None, 'none', 'monthly', 'bimonthly'].
+        """
+        self._reject_data_object(df)
+        if not self.is_fitted:
+            raise RuntimeError("Model must be fit before predictions can be made.")
+
+        df_res = self._predict_data(
+            self._reporting_data(df),
+            aggregation=aggregation,
+            ignore_disqualification=ignore_disqualification,
+        )
+
+        return df_res
+
     def plot(
         self,
-        data,
+        df: pd.DataFrame,
         aggregation: str | None = None,
     ):
         """Plot a model fit with baseline or reporting data. Requires matplotlib to use.
 
         Args:
-            df_eval: The baseline or reporting data object to plot.
+            df: Baseline or reporting data indexed by a tz-aware DatetimeIndex, or containing
+                a tz-aware 'datetime' column, with a 'temperature' column.
             aggregation: The aggregation level for the prediction. One of [None, 'none', 'monthly', 'bimonthly'].
         """
         try:
@@ -179,7 +194,7 @@ class BillingWeightedModel(DailyModel):
 
         # TODO: pass more kwargs to plotting function
 
-        plot(self, self.predict(data, aggregation=aggregation))
+        plot(self, self.predict(df, aggregation=aggregation))
 
     def to_dict(self) -> dict:
         """Returns a dictionary of model parameters.

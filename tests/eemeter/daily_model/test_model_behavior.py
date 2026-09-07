@@ -16,8 +16,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from opendsm.eemeter import DailyBaselineData, DailyModel, DailyReportingData
+from opendsm.eemeter import DailyModel
 
+
+
+def _daily_frame(meter, temperature):
+    """Combine a daily meter series and an hourly temperature series into a model input frame."""
+    return pd.concat([meter.rename("observed"), temperature.rename("temperature")], axis=1, sort=True)
 
 
 def _seasonal_temperature(year=2020, seed=1):
@@ -49,10 +54,10 @@ def heating_baseline(temperature):
     days = pd.date_range("2020-01-01", periods=365, freq="D", tz="America/Chicago")
     daily_temp = temperature.resample("D").mean().reindex(days)
     meter = pd.Series(_heating_load(daily_temp, seed=2), index=days)
-    data = DailyBaselineData.from_series(meter, temperature, is_electricity_data=True)
-    model = DailyModel().fit(data, ignore_disqualification=True)
+    df = _daily_frame(meter, temperature)
+    model = DailyModel().fit(df, is_electricity_data=True, ignore_disqualification=True)
 
-    return model, data
+    return model, df
 
 
 @pytest.mark.slow
@@ -66,9 +71,9 @@ def test_flat_load_does_not_fabricate_temperature_response(temperature):
     rng = np.random.default_rng(0)
     days = pd.date_range("2020-01-01", periods=365, freq="D", tz="America/Chicago")
     meter = pd.Series(40.0 + rng.normal(0, 1.0, 365), index=days)
-    data = DailyBaselineData.from_series(meter, temperature, is_electricity_data=True)
+    df = _daily_frame(meter, temperature)
 
-    model = DailyModel().fit(data, ignore_disqualification=True)
+    model = DailyModel().fit(df, is_electricity_data=True, ignore_disqualification=True)
 
     for submodel in model.params.submodels.values():
         coef = submodel.coefficients
@@ -76,7 +81,7 @@ def test_flat_load_does_not_fabricate_temperature_response(temperature):
             if beta is not None:
                 assert abs(beta) < 0.02 * abs(coef.intercept)
 
-    predicted = model.predict(data)["predicted"]
+    predicted = model.predict(df)["predicted"]
     assert predicted.std() < 0.1 * predicted.mean()
 
 
@@ -87,9 +92,9 @@ def test_no_load_change_gives_near_zero_savings(heating_baseline):
     With no load change, summed predicted ≈ summed observed; the savings
     fraction (1 - predicted/observed) sits near zero rather than drifting.
     """
-    model, data = heating_baseline
+    model, df = heating_baseline
 
-    result = model.predict(data)
+    result = model.predict(df)
     savings_fraction = 1.0 - result["predicted"].sum() / result["observed"].sum()
 
     assert abs(savings_fraction) < 0.05
@@ -110,11 +115,9 @@ def test_known_reduction_recovers_as_savings(heating_baseline, temperature):
     reporting_meter = pd.Series(
         _heating_load(daily_temp, seed=4) - reduction_per_day, index=days
     )
-    reporting = DailyReportingData.from_series(
-        reporting_meter, temperature, is_electricity_data=True
-    )
+    reporting_df = _daily_frame(reporting_meter, temperature)
 
-    result = model.predict(reporting)
+    result = model.predict(reporting_df)
     recovered = (result["predicted"] - result["observed"]).sum()
     expected = reduction_per_day * result["observed"].notna().sum()
 

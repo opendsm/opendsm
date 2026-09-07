@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import copy
 from datetime import date
 
 import numpy as np
@@ -151,7 +150,6 @@ class _HourlyData:
         is_electricity_data: bool,
         pv_start: date | str | None = None,
         settings: dict | None = None,
-        **kwargs: dict,
     ):
         self._df = None
         self.is_electricity_data = is_electricity_data
@@ -162,7 +160,7 @@ class _HourlyData:
 
         # TODO copied from HourlyData
         self._to_be_interpolated_columns = []
-        self._outputs = []
+        self._outputs = ["temperature", "observed"]
 
         self.pv_start = None
         if pv_start is not None:
@@ -180,15 +178,6 @@ class _HourlyData:
                 f"settings must be None, dict, or HourlyDataSettings instance, "
                 f"got {type(settings).__name__}"
             )
-
-        self._settings.is_electricity_data = is_electricity_data
-
-        # TODO not sure why we're keeping this copy
-        self._kwargs = copy.deepcopy(kwargs)
-        if "outputs" in self._kwargs:
-            self._outputs = copy.deepcopy(self._kwargs["outputs"])
-        else:
-            self._outputs = ["temperature", "observed"]
 
         self._df = self._set_data(df)
         disqualification, warnings = self._check_data_sufficiency()
@@ -243,26 +232,15 @@ class _HourlyData:
     def _interpolate(self, df):
         # make column of interpolated boolean if any observed or temperature is nan
         # check if in each row of the columns in output has nan values, the interpolated column will be true
-        if "to_be_interpolated_columns" in self._kwargs:
-            self._to_be_interpolated_columns = self._kwargs[
-                "to_be_interpolated_columns"
-            ].copy()
-            self._outputs += [
-                f"{col}"
-                for col in self._to_be_interpolated_columns
-                if col not in self._outputs
-            ]
-        else:
-            self._to_be_interpolated_columns = ["temperature", "observed"]
-            if "ghi" in df.columns:
-                self._to_be_interpolated_columns.append("ghi")
+        self._to_be_interpolated_columns = ["temperature", "observed"]
+        if "ghi" in df.columns:
+            self._to_be_interpolated_columns.append("ghi")
 
         for col in self._to_be_interpolated_columns:
             if f"interpolated_{col}" in df.columns:
                 continue
             self._outputs += [f"interpolated_{col}"]
 
-        # we can add kwargs to the interpolation class like: inter_kwargs = {"n_cor_idx": self.kwargs["n_cor_idx"]}
         df = interpolate(df, columns=self._to_be_interpolated_columns)
 
         return df
@@ -329,7 +307,6 @@ class _HourlyData:
                 )
             )
         self.tz = df.index.tz
-        self._settings.time_zone = self.tz
 
         # prevent later issues when merging on generated datetimes, which default to ns precision
         # there is almost certainly a smoother way to accomplish this conversion, but this works
@@ -421,13 +398,12 @@ class HourlyReportingData(_HourlyData):
         is_electricity_data: bool,
         pv_start: date | str | None = None,
         settings: dict | None = None,
-        **kwargs: dict,
     ):
         df = df.copy()
         if "observed" not in df.columns:
             df["observed"] = np.nan
 
-        super().__init__(df, is_electricity_data, pv_start, settings, **kwargs)
+        super().__init__(df, is_electricity_data, pv_start, settings)
 
     def _check_data_sufficiency(self):
         data = _create_sufficiency_df(self.df)

@@ -40,11 +40,6 @@ from opendsm.comparison_groups.savings.correction import (
 from opendsm.comparison_groups.savings.savings import compute_savings
 from opendsm.comparison_groups.savings.settings import CGCorrectionSettings
 from opendsm.eemeter.common.warnings import EEMeterWarning
-from opendsm.eemeter.models import (
-    BillingReportingData,
-    DailyReportingData,
-    HourlyReportingData,
-)
 from .equivalence_env import (
     VARIANT_NAMES,
     _manual_clustering_selection,
@@ -97,33 +92,59 @@ _EQUIVALENCE_ATOL = 1e-6
 # ── builders ─────────────────────────────────────────────────────────────────
 
 
-def _reporting_map(df_r, ids, cls, cutoff=None):
+def _reporting_map(df_r, ids, cutoff=None):
     reporting = {}
 
     for mid in ids:
         raw = df_r.xs(mid, level="id")
         if cutoff is not None:
             raw = raw[raw.index < cutoff]
-        reporting[str(mid)] = cls(raw.reset_index(), is_electricity_data=True)
+        reporting[str(mid)] = raw.reset_index()
 
     return reporting
 
 
-def _rewrap_population(population, df_r, cls, cutoff=None):
-    """Rebuild a meters dict reusing a population's already-fitted models, with a
-    (possibly truncated) reporting slice — avoids refitting for incremental
-    scenarios."""
+def _population_meters(comstock, population, reporting=True):
+    """A ``from_fit_models`` mapping reusing a population's already-fitted models
+    with the ComStock frames behind them, so a variant population is rebuilt
+    without refitting."""
+    granularity = population.granularity
     meters = {}
 
     for mid, rec in population._meters.items():
+        entry = {"model": rec.model, "baseline_df": comstock.baseline(granularity, mid)}
+        if reporting:
+            entry["reporting_df"] = comstock.reporting(granularity, mid)
+        meters[mid] = entry
+
+    return meters
+
+
+def _disqualified_copy(model):
+    """A copy of a fitted model carrying a constructed disqualification, so its
+    prediction fails."""
+    disqualified = copy.deepcopy(model)
+    disqualified.disqualification = [
+        EEMeterWarning(
+            qualified_name="eemeter.model_fit_metrics",
+            description="constructed disqualification",
+            data=None,
+        )
+    ]
+
+    return disqualified
+
+
+def _rewrap_population(comstock, population, df_r, cutoff=None):
+    """``_population_meters`` with a (possibly truncated) reporting slice taken
+    straight from ``df_r``."""
+    meters = _population_meters(comstock, population, reporting=False)
+
+    for mid, entry in meters.items():
         raw = df_r.xs(int(mid), level="id")
         if cutoff is not None:
             raw = raw[raw.index < cutoff]
-        meters[mid] = {
-            "model": rec.model,
-            "baseline_data": rec.baseline_data,
-            "reporting_data": cls(raw.reset_index(), is_electricity_data=True),
-        }
+        entry["reporting_df"] = raw.reset_index()
 
     return meters
 
@@ -302,6 +323,7 @@ def guard_env(comstock, model_bank):
         "pool": pool,
         "selection": selection,
         "cluster_of": cluster_of,
+        "comstock": comstock,
         "df_b": df_b,
         "df_r": df_r,
         "ids": ids,
@@ -338,15 +360,15 @@ def daily_dq_env(comstock, model_bank):
     return bundle
 
 
-def _daily_meters_with_overrides(records, ids, overrides):
-    """The pinned-model records for ``ids``, with reporting data replaced where
-    ``overrides`` supplies a prebuilt object."""
+def _meters_with_overrides(records, ids, overrides):
+    """The pinned-model records for ``ids``, with the reporting frame replaced
+    where ``overrides`` supplies one."""
     meters = {}
 
     for mid in ids:
         entry = dict(records[mid])
         if mid in overrides:
-            entry["reporting_data"] = overrides[mid]
+            entry["reporting_df"] = overrides[mid]
         meters[mid] = entry
 
     return meters
@@ -355,20 +377,20 @@ def _daily_meters_with_overrides(records, ids, overrides):
 def _build_daily_dq(daily_dq_env, treatment_overrides=None, pool_overrides=None):
     records = daily_dq_env["records"]
     treatment = TreatmentGroup.from_fit_models(
-        _daily_meters_with_overrides(records, daily_dq_env["treatment_ids"], treatment_overrides or {}
+        _meters_with_overrides(records, daily_dq_env["treatment_ids"], treatment_overrides or {}
         )
     )
     pool = ComparisonPool.from_fit_models(
-        _daily_meters_with_overrides(records, daily_dq_env["pool_ids"], pool_overrides or {})
+        _meters_with_overrides(records, daily_dq_env["pool_ids"], pool_overrides or {})
     )
 
     return treatment, pool
 
 
-def _daily_reporting_override(df_r, mid, transform):
+def _reporting_override(df_r, mid, transform):
+    """One meter's reporting frame, put through ``transform``."""
     raw = df_r.xs(int(mid), level="id").reset_index()
-    raw = transform(raw)
-    reporting = DailyReportingData(raw, is_electricity_data=True)
+    reporting = transform(raw)
 
     return reporting
 
@@ -401,40 +423,18 @@ def billing_dq_env(comstock, model_bank):
     return bundle
 
 
-def _billing_meters_with_overrides(records, ids, overrides):
-    """The pinned-model records for ``ids``, with reporting data replaced where
-    ``overrides`` supplies a prebuilt object."""
-    meters = {}
-
-    for mid in ids:
-        entry = dict(records[mid])
-        if mid in overrides:
-            entry["reporting_data"] = overrides[mid]
-        meters[mid] = entry
-
-    return meters
-
-
 def _build_billing_dq(billing_dq_env, treatment_overrides=None, pool_overrides=None):
     records = billing_dq_env["records"]
     treatment = TreatmentGroup.from_fit_models(
-        _billing_meters_with_overrides(records, billing_dq_env["treatment_ids"], treatment_overrides or {}
+        _meters_with_overrides(records, billing_dq_env["treatment_ids"], treatment_overrides or {}
         )
     )
     pool = ComparisonPool.from_fit_models(
-        _billing_meters_with_overrides(records, billing_dq_env["pool_ids"], pool_overrides or {}
+        _meters_with_overrides(records, billing_dq_env["pool_ids"], pool_overrides or {}
         )
     )
 
     return treatment, pool
-
-
-def _billing_reporting_override(df_r, mid, transform):
-    raw = df_r.xs(int(mid), level="id").reset_index()
-    raw = transform(raw)
-    reporting = BillingReportingData(raw, is_electricity_data=True)
-
-    return reporting
 
 
 @pytest.fixture(scope="module")
@@ -465,40 +465,18 @@ def hourly_dq_env(comstock, model_bank):
     return bundle
 
 
-def _hourly_meters_with_overrides(records, ids, overrides):
-    """The pinned-model records for ``ids``, with reporting data replaced where
-    ``overrides`` supplies a prebuilt object."""
-    meters = {}
-
-    for mid in ids:
-        entry = dict(records[mid])
-        if mid in overrides:
-            entry["reporting_data"] = overrides[mid]
-        meters[mid] = entry
-
-    return meters
-
-
 def _build_hourly_dq(hourly_dq_env, treatment_overrides=None, pool_overrides=None):
     records = hourly_dq_env["records"]
     treatment = TreatmentGroup.from_fit_models(
-        _hourly_meters_with_overrides(records, hourly_dq_env["treatment_ids"], treatment_overrides or {}
+        _meters_with_overrides(records, hourly_dq_env["treatment_ids"], treatment_overrides or {}
         )
     )
     pool = ComparisonPool.from_fit_models(
-        _hourly_meters_with_overrides(records, hourly_dq_env["pool_ids"], pool_overrides or {}
+        _meters_with_overrides(records, hourly_dq_env["pool_ids"], pool_overrides or {}
         )
     )
 
     return treatment, pool
-
-
-def _hourly_reporting_override(df_r, mid, transform):
-    raw = df_r.xs(int(mid), level="id").reset_index()
-    raw = transform(raw)
-    reporting = HourlyReportingData(raw, is_electricity_data=True)
-
-    return reporting
 
 
 # ── daily end-to-end (slow) ──────────────────────────────────────────────────
@@ -546,7 +524,7 @@ def test_daily_correction_regression_totals(daily_results):
     assert total_modeled == pytest.approx(5297171.84, rel=1e-3)
 
 
-def test_daily_cg_usage_fraction_reflects_finite_mask(daily_results, daily_env, daily_data):
+def test_daily_cg_usage_fraction_reflects_finite_mask(daily_results, daily_env, daily_data, comstock):
     """``cg_usage_fraction`` is the fraction of a treatment meter's comparison
     meters retained (finite, no outlier rejection). The fixture's comparison
     data is fully finite, so every meter is used (fraction 1.0); NaN-ing two of
@@ -576,7 +554,7 @@ def test_daily_cg_usage_fraction_reflects_finite_mask(daily_results, daily_env, 
     corrupt_ids = big_ids[:2]
 
     injected_pool = ComparisonPool.from_fit_models(
-        _rewrap_population(pool, daily_data["df_r"], DailyReportingData)
+        _rewrap_population(comstock, pool, daily_data["df_r"])
     )
     pred = injected_pool._ensure_pred("reporting")
     corrupt_dates = list(pred[corrupt_ids[0]].index[10:13])
@@ -597,7 +575,7 @@ def test_daily_cg_usage_fraction_reflects_finite_mask(daily_results, daily_env, 
 
 
 @pytest.fixture(scope="module")
-def degraded_daily(daily_env, daily_data):
+def degraded_daily(daily_env, daily_data, comstock):
     """One treatment meter corrected against a pool whose largest contributing
     cluster is NaN-ed down to two finite meters on three days, so the matrix
     kernel degrades exactly those timesteps."""
@@ -612,7 +590,7 @@ def degraded_daily(daily_env, daily_data):
     corrupt_ids = big_ids[:n_corrupt]
 
     injected_pool = ComparisonPool.from_fit_models(
-        _rewrap_population(daily_env["pool"], daily_data["df_r"], DailyReportingData)
+        _rewrap_population(comstock, daily_env["pool"], daily_data["df_r"])
     )
     pred = injected_pool._ensure_pred("reporting")
     corrupt_dates = list(pred[corrupt_ids[0]].index[20:23])
@@ -795,7 +773,7 @@ def test_hourly_pool_aggregates_to_billing_treatment_read_periods(mixed_hourly_b
 
 
 @pytest.mark.slow
-def test_hourly_pool_missing_read_period_degrades_to_nan_not_zero(mixed_hourly_billing_env):
+def test_hourly_pool_missing_read_period_degrades_to_nan_not_zero(mixed_hourly_billing_env, comstock):
     """A finer (hourly) pool NaN-ed across an entire read period for every
     member of the treatment's single cluster aggregates to NaN there (min_count
     1), leaving fewer than three finite comparison meters and degrading that
@@ -810,7 +788,7 @@ def test_hourly_pool_missing_read_period_degrades_to_nan_not_zero(mixed_hourly_b
     target_start, target_end = periods[len(periods) // 2]
 
     injected_pool = ComparisonPool.from_fit_models(
-        _rewrap_population(pool, df_rh, HourlyReportingData)
+        _rewrap_population(comstock, pool, df_rh)
     )
     pred = injected_pool._ensure_pred("reporting")
     for pid in injected_pool.ids:
@@ -918,7 +896,7 @@ def test_column_correlations_over_a_subset_equal_the_full_pool_restriction(guard
     np.testing.assert_array_equal(restricted, full[subset])
 
 
-def test_clusters_used_reflects_per_cluster_drop(guard_env):
+def test_clusters_used_reflects_per_cluster_drop(guard_env, comstock):
     """``clusters_used`` counts, per read period, the clusters that retain at
     least three finite meters. Billing correction runs at read-period cadence, so
     degradation fires per read period. NaN-ing a whole read period of one
@@ -944,7 +922,7 @@ def test_clusters_used_reflects_per_cluster_drop(guard_env):
     )
 
     injected_pool = ComparisonPool.from_fit_models(
-        _rewrap_population(pool, guard_env["df_r"], BillingReportingData)
+        _rewrap_population(comstock, pool, guard_env["df_r"])
     )
     pred = injected_pool._ensure_pred("reporting")
     # NaN the whole March read period of one cluster-1 meter: its March period
@@ -1075,13 +1053,15 @@ def test_billing_correction_bins_treatment_to_read_periods(guard_env):
     assert rows.loc[start, "observed"] == pytest.approx(expected)
 
 
-def test_billing_read_with_a_missing_day_sums_observed_and_modeled_over_the_same_days(guard_env):
+def test_billing_read_with_a_missing_day_sums_observed_and_modeled_over_the_same_days(
+    guard_env, comstock
+):
     """A day missing observed inside a read leaves that read's modeled total and
     uncertainty too, so the read compares like with like rather than a partial
     observed total against a full modeled one."""
     tid = guard_env["treatment"].ids[0]
     treatment = TreatmentGroup.from_fit_models(
-        _rewrap_population(guard_env["treatment"], guard_env["df_r"], BillingReportingData)
+        _rewrap_population(comstock, guard_env["treatment"], guard_env["df_r"])
     )
     clean = correct_reporting(guard_env["selection"], treatment, guard_env["pool"], tid)
     own = treatment._ensure_pred("reporting", ids=[tid])[tid]
@@ -1101,7 +1081,7 @@ def test_billing_read_with_a_missing_day_sums_observed_and_modeled_over_the_same
     assert row["modeled"] < clean.corrected.set_index("datetime").loc[period_start, "modeled"]
 
 
-def test_billing_missing_pool_period_degrades_to_nan_not_zero(guard_env):
+def test_billing_missing_pool_period_degrades_to_nan_not_zero(guard_env, comstock):
     """A read period with no finite pool observed aggregates to NaN, never 0
     (min_count 1). NaN-ing a whole read period across every pool meter of the
     single cluster leaves fewer than three finite meters there, so ``corrected``
@@ -1111,7 +1091,7 @@ def test_billing_missing_pool_period_degrades_to_nan_not_zero(guard_env):
     tid = treatment.ids[0]
 
     injected_pool = ComparisonPool.from_fit_models(
-        _rewrap_population(guard_env["pool"], guard_env["df_r"], BillingReportingData)
+        _rewrap_population(comstock, guard_env["pool"], guard_env["df_r"])
     )
     pred = injected_pool._ensure_pred("reporting")
     for pid in injected_pool.ids:
@@ -1195,13 +1175,8 @@ def _guard_missing_reporting(guard_env):
     pool = guard_env["pool"]
     tids = guard_env["treatment"].ids
     tid = tids[0]
-    meters = {}
-
-    for mid, rec in guard_env["treatment"]._meters.items():
-        entry = {"model": rec.model, "baseline_data": rec.baseline_data}
-        if mid != tid:
-            entry["reporting_data"] = rec.reporting_data
-        meters[mid] = entry
+    meters = _population_meters(guard_env["comstock"], guard_env["treatment"])
+    del meters[tid]["reporting_df"]
 
     treatment = TreatmentGroup.from_fit_models(meters)
 
@@ -1213,24 +1188,8 @@ def _guard_prediction_failure(guard_env):
     pool = guard_env["pool"]
     tids = guard_env["treatment"].ids
     tid = tids[0]
-    meters = {}
-
-    for mid, rec in guard_env["treatment"]._meters.items():
-        model = rec.model
-        if mid == tid:
-            model = copy.deepcopy(rec.model)
-            model.disqualification = [
-                EEMeterWarning(
-                    qualified_name="eemeter.model_fit_metrics",
-                    description="constructed disqualification",
-                    data=None,
-                )
-            ]
-        meters[mid] = {
-            "model": model,
-            "baseline_data": rec.baseline_data,
-            "reporting_data": rec.reporting_data,
-        }
+    meters = _population_meters(guard_env["comstock"], guard_env["treatment"])
+    meters[tid]["model"] = _disqualified_copy(meters[tid]["model"])
 
     with pytest.warns(UserWarning, match="disqualified"):
         treatment = TreatmentGroup.from_fit_models(meters)
@@ -1314,7 +1273,7 @@ def test_billing_read_cadence_unrecoverable_raises(billing_dq_env):
     unaffected."""
     victim = billing_dq_env["treatment_ids"][1]
     survivor = billing_dq_env["treatment_ids"][0]
-    flat = _billing_reporting_override(
+    flat = _reporting_override(
         billing_dq_env["df_r"], victim, lambda raw: raw.assign(observed=123.0)
     )
     treatment, pool = _build_billing_dq(billing_dq_env, treatment_overrides={victim: flat})
@@ -1397,16 +1356,11 @@ def _ledger_row(result, mid):
 def pool_missing_reporting(guard_env):
     """One treatment meter corrected against a pool whose first two meters carry
     no reporting data at all."""
-    meters = {}
-    missing_ids = []
+    meters = _population_meters(guard_env["comstock"], guard_env["pool"])
+    missing_ids = list(meters)[:2]
 
-    for i, (mid, rec) in enumerate(guard_env["pool"]._meters.items()):
-        entry = {"model": rec.model, "baseline_data": rec.baseline_data}
-        if i < 2:
-            missing_ids.append(mid)
-        else:
-            entry["reporting_data"] = rec.reporting_data
-        meters[mid] = entry
+    for mid in missing_ids:
+        del meters[mid]["reporting_df"]
 
     pool = ComparisonPool.from_fit_models(meters)
     tid = guard_env["treatment"].ids[0]
@@ -1449,24 +1403,8 @@ def test_failed_pool_meter_is_ledgered_in_every_call_that_selects_it(guard_env):
     that selects it; the row is not deduped away."""
     victim = guard_env["pool"].ids[0]
     tids = guard_env["treatment"].ids
-    meters = {}
-
-    for mid, rec in guard_env["pool"]._meters.items():
-        model = rec.model
-        if mid == victim:
-            model = copy.deepcopy(rec.model)
-            model.disqualification = [
-                EEMeterWarning(
-                    qualified_name="eemeter.model_fit_metrics",
-                    description="constructed disqualification",
-                    data=None,
-                )
-            ]
-        meters[mid] = {
-            "model": model,
-            "baseline_data": rec.baseline_data,
-            "reporting_data": rec.reporting_data,
-        }
+    meters = _population_meters(guard_env["comstock"], guard_env["pool"])
+    meters[victim]["model"] = _disqualified_copy(meters[victim]["model"])
 
     with pytest.warns(UserWarning, match="disqualified"):
         pool = ComparisonPool.from_fit_models(meters)
@@ -1499,7 +1437,7 @@ def test_reporting_gross_hole_pool_meter_pruned_before_predict(daily_dq_env):
     victim = daily_dq_env["pool_ids"][0]
     df_r = daily_dq_env["df_r"]
     cutoff = df_r.xs(int(victim), level="id").index.min() + pd.Timedelta(days=180)
-    truncated = _daily_reporting_override(
+    truncated = _reporting_override(
         df_r, victim, lambda raw: raw[raw["datetime"] < cutoff]
     )
     treatment, pool = _build_daily_dq(daily_dq_env, pool_overrides={victim: truncated})
@@ -1528,7 +1466,7 @@ def test_reporting_gross_hole_treatment_meter_raises_below_coverage(daily_dq_env
     survivor = daily_dq_env["treatment_ids"][0]
     df_r = daily_dq_env["df_r"]
     cutoff = df_r.xs(int(victim), level="id").index.min() + pd.Timedelta(days=180)
-    truncated = _daily_reporting_override(
+    truncated = _reporting_override(
         df_r, victim, lambda raw: raw[raw["datetime"] < cutoff]
     )
     treatment, pool = _build_daily_dq(daily_dq_env, treatment_overrides={victim: truncated})
@@ -1553,7 +1491,7 @@ def test_reporting_flat_treatment_meter_disqualified_via_unique_values(daily_dq_
     correction stage enforces that observed disqualification: the meter is
     ledgered verbatim, pruned before predicting, and the call raises."""
     victim = daily_dq_env["treatment_ids"][1]
-    flat = _daily_reporting_override(
+    flat = _reporting_override(
         daily_dq_env["df_r"], victim, lambda raw: raw.assign(observed=123.0)
     )
     treatment, pool = _build_daily_dq(daily_dq_env, treatment_overrides={victim: flat})
@@ -1590,7 +1528,7 @@ def test_reporting_joint_comissing_treatment_meter_disqualified(daily_dq_env):
 
         return raw
 
-    holed = _daily_reporting_override(daily_dq_env["df_r"], victim, _joint_comissing)
+    holed = _reporting_override(daily_dq_env["df_r"], victim, _joint_comissing)
     treatment, pool = _build_daily_dq(daily_dq_env, treatment_overrides={victim: holed})
 
     with pytest.raises(exclusions.MeterCorrectionError) as excinfo:
@@ -1615,7 +1553,7 @@ def test_reporting_large_savings_meter_is_not_disqualified(daily_dq_env):
     extreme-value screen on reporting observed, which would otherwise flag a
     meter precisely BECAUSE its savings are large."""
     saver = daily_dq_env["treatment_ids"][1]
-    reduced = _daily_reporting_override(
+    reduced = _reporting_override(
         daily_dq_env["df_r"], saver, lambda raw: raw.assign(observed=raw["observed"] * 0.3)
     )
     treatment, pool = _build_daily_dq(daily_dq_env, treatment_overrides={saver: reduced})
@@ -1631,7 +1569,7 @@ def test_reporting_flat_treatment_meter_disqualified_via_unique_values_hourly(ho
     hourly treatment meter with non-zero identical reporting reads is ledgered
     and pruned before predicting, same as daily."""
     victim = hourly_dq_env["treatment_ids"][1]
-    flat = _hourly_reporting_override(
+    flat = _reporting_override(
         hourly_dq_env["df_r"], victim, lambda raw: raw.assign(observed=123.0)
     )
     treatment, pool = _build_hourly_dq(hourly_dq_env, treatment_overrides={victim: flat})
@@ -1666,7 +1604,7 @@ def test_interior_reporting_hole_below_coverage_passes_e_and_degrades_via_r4(dai
     hole_start = victim_index.min() + pd.Timedelta(days=150)
     hole_end = hole_start + pd.Timedelta(days=25)
     hole_dates = victim_index[(victim_index >= hole_start) & (victim_index < hole_end)]
-    holed = _daily_reporting_override(
+    holed = _reporting_override(
         df_r,
         victim,
         lambda raw: raw.assign(
@@ -1714,7 +1652,7 @@ def heterogeneous_span_results(daily_dq_env):
     window still spans the longer meter's full year, so the coverage floor is
     lowered for the truncated meter to be corrected at all."""
     long_id, short_id = daily_dq_env["treatment_ids"]
-    truncated = _daily_reporting_override(
+    truncated = _reporting_override(
         daily_dq_env["df_r"], short_id, lambda raw: raw.iloc[:300]
     )
     treatment, pool = _build_daily_dq(daily_dq_env, treatment_overrides={short_id: truncated})
@@ -1794,7 +1732,7 @@ def test_imm_correction_uses_the_shared_cluster_union_not_the_matched_rows(
     victim = next(mid for mid in members if mid not in set(matched))
     _, df_r = comstock.frames("billing")
     injected_pool = ComparisonPool.from_fit_models(
-        _rewrap_population(env["pool"], df_r, BillingReportingData)
+        _rewrap_population(comstock, env["pool"], df_r)
     )
     pred = injected_pool._ensure_pred("reporting", ids=[victim])
     substrate = pred[victim].index
@@ -1928,7 +1866,7 @@ def test_prior_belonging_to_another_meter_raises_before_its_periods_are_read(gua
 # ── incremental hybrid semantics (slow) ──────────────────────────────────────
 
 
-def test_incremental_treatment_overlap_is_slice_invariant(daily_env, daily_data):
+def test_incremental_treatment_overlap_is_slice_invariant(daily_env, daily_data, comstock):
     df_r = daily_data["df_r"]
     ids = daily_data["treatment_ids"]
     selection = daily_env["selection"]
@@ -1936,11 +1874,11 @@ def test_incremental_treatment_overlap_is_slice_invariant(daily_env, daily_data)
     tid = str(ids[0])
 
     half = TreatmentGroup.from_fit_models(
-        _rewrap_population(daily_env["treatment"], df_r, DailyReportingData, cutoff=_MIDYEAR)
+        _rewrap_population(comstock, daily_env["treatment"], df_r, cutoff=_MIDYEAR)
     )
     result_half = correct_reporting(selection, half, pool, tid)
 
-    half.add_reporting_data(_reporting_map(df_r, ids, DailyReportingData))
+    half.add_reporting_data(_reporting_map(df_r, ids))
     result_full = correct_reporting(selection, half, pool, tid, prior=result_half)
 
     assert result_half.covered_window[1] < _MIDYEAR
@@ -1957,7 +1895,7 @@ def test_incremental_treatment_overlap_is_slice_invariant(daily_env, daily_data)
     )
 
 
-def test_incremental_prior_mismatch_raises(daily_env, daily_data):
+def test_incremental_prior_mismatch_raises(daily_env, daily_data, comstock):
     df_r = daily_data["df_r"]
     ids = daily_data["treatment_ids"]
     selection = daily_env["selection"]
@@ -1965,21 +1903,21 @@ def test_incremental_prior_mismatch_raises(daily_env, daily_data):
     tid = str(ids[0])
 
     half = TreatmentGroup.from_fit_models(
-        _rewrap_population(daily_env["treatment"], df_r, DailyReportingData, cutoff=_MIDYEAR)
+        _rewrap_population(comstock, daily_env["treatment"], df_r, cutoff=_MIDYEAR)
     )
     result_half = correct_reporting(selection, half, pool, tid)
 
     tampered = copy.deepcopy(result_half)
     tampered.corrected["corrected"] = tampered.corrected["corrected"] + 1.0
 
-    half.add_reporting_data(_reporting_map(df_r, ids, DailyReportingData))
+    half.add_reporting_data(_reporting_map(df_r, ids))
 
     with pytest.raises(ValueError, match="prior correction mismatch"):
         correct_reporting(selection, half, pool, tid, prior=tampered)
 
 
 @pytest.mark.slow
-def test_growing_pool_reporting_keeps_prior_points(daily_env, daily_data):
+def test_growing_pool_reporting_keeps_prior_points(daily_env, daily_data, comstock):
     df_r = daily_data["df_r"]
     pool_ids = daily_data["pool_ids"]
     treatment = daily_env["treatment"]
@@ -1992,14 +1930,14 @@ def test_growing_pool_reporting_keeps_prior_points(daily_env, daily_data):
     settings = CGCorrectionSettings(min_window_coverage=0.4)
 
     pool_half = ComparisonPool.from_fit_models(
-        _rewrap_population(daily_env["pool"], df_r, DailyReportingData, cutoff=_MIDYEAR)
+        _rewrap_population(comstock, daily_env["pool"], df_r, cutoff=_MIDYEAR)
     )
     result_half = correct_reporting(selection, treatment, pool_half, tid, settings=settings)
 
     late = result_half.corrected[result_half.corrected["datetime"] >= _MIDYEAR]
     assert not np.isfinite(late["corrected"].to_numpy()).any()
 
-    pool_half.add_reporting_data(_reporting_map(df_r, pool_ids, DailyReportingData))
+    pool_half.add_reporting_data(_reporting_map(df_r, pool_ids))
     result_full = correct_reporting(
         selection, treatment, pool_half, tid, settings=settings, prior=result_half
     )
@@ -2036,13 +1974,10 @@ def test_prior_freezes_the_comparison_group_against_new_entrants(guard_env):
     overlapping points reproduce exactly."""
     tid = guard_env["treatment"].ids[0]
     missing = guard_env["pool"].ids[:2]
-    meters = {}
+    meters = _population_meters(guard_env["comstock"], guard_env["pool"])
 
-    for mid, rec in guard_env["pool"]._meters.items():
-        entry = {"model": rec.model, "baseline_data": rec.baseline_data}
-        if mid not in missing:
-            entry["reporting_data"] = rec.reporting_data
-        meters[mid] = entry
+    for mid in missing:
+        del meters[mid]["reporting_df"]
 
     reduced_pool = ComparisonPool.from_fit_models(meters)
     prior = correct_reporting(guard_env["selection"], guard_env["treatment"], reduced_pool, tid)
@@ -2064,24 +1999,8 @@ def test_prior_member_that_no_longer_predicts_raises_with_ledger_rows(guard_env)
     tid = guard_env["treatment"].ids[0]
     victim = guard_env["pool"].ids[0]
     prior = correct_reporting(guard_env["selection"], guard_env["treatment"], guard_env["pool"], tid)
-    meters = {}
-
-    for mid, rec in guard_env["pool"]._meters.items():
-        model = rec.model
-        if mid == victim:
-            model = copy.deepcopy(rec.model)
-            model.disqualification = [
-                EEMeterWarning(
-                    qualified_name="eemeter.model_fit_metrics",
-                    description="constructed disqualification",
-                    data=None,
-                )
-            ]
-        meters[mid] = {
-            "model": model,
-            "baseline_data": rec.baseline_data,
-            "reporting_data": rec.reporting_data,
-        }
+    meters = _population_meters(guard_env["comstock"], guard_env["pool"])
+    meters[victim]["model"] = _disqualified_copy(meters[victim]["model"])
 
     with pytest.warns(UserWarning, match="disqualified"):
         pool = ComparisonPool.from_fit_models(meters)
@@ -2108,7 +2027,7 @@ def test_prior_member_with_disqualified_reporting_raises_with_ledger_rows(daily_
     prior = correct_reporting(daily_dq_env["selection"], treatment, pool, tid)
     assert victim in prior.cg_ids
 
-    flat = _daily_reporting_override(
+    flat = _reporting_override(
         daily_dq_env["df_r"], victim, lambda raw: raw.assign(observed=123.0)
     )
     _, flat_pool = _build_daily_dq(daily_dq_env, pool_overrides={victim: flat})
@@ -2139,7 +2058,9 @@ def test_prior_without_a_comparison_group_raises(guard_env):
 
 
 @pytest.mark.slow
-def test_lagging_pool_reporting_keeps_the_frozen_group_under_a_prior(daily_env, daily_data):
+def test_lagging_pool_reporting_keeps_the_frozen_group_under_a_prior(
+    daily_env, daily_data, comstock
+):
     """At the default coverage floor a pool meter whose reporting lags the
     treatment's growing window would be pruned, changing the group under every
     past point. A prior freezes the group instead: the lagging members stay, the
@@ -2150,16 +2071,16 @@ def test_lagging_pool_reporting_keeps_the_frozen_group_under_a_prior(daily_env, 
     tid = daily_env["treatment"].ids[0]
 
     treatment_half = TreatmentGroup.from_fit_models(
-        _rewrap_population(daily_env["treatment"], df_r, DailyReportingData, cutoff=_MIDYEAR)
+        _rewrap_population(comstock, daily_env["treatment"], df_r, cutoff=_MIDYEAR)
     )
     pool_half = ComparisonPool.from_fit_models(
-        _rewrap_population(daily_env["pool"], df_r, DailyReportingData, cutoff=_MIDYEAR)
+        _rewrap_population(comstock, daily_env["pool"], df_r, cutoff=_MIDYEAR)
     )
     prior = correct_reporting(selection, treatment_half, pool_half, tid)
     assert np.isfinite(prior.corrected["corrected"].to_numpy()).all()
 
     treatment_half.add_reporting_data(
-        _reporting_map(df_r, daily_data["treatment_ids"], DailyReportingData)
+        _reporting_map(df_r, daily_data["treatment_ids"])
     )
 
     # without the prior, the half-year pool fails coverage against the full-year window
@@ -2171,7 +2092,7 @@ def test_lagging_pool_reporting_keeps_the_frozen_group_under_a_prior(daily_env, 
     late = lagging.corrected[lagging.corrected["datetime"] >= _MIDYEAR]
     assert not np.isfinite(late["corrected"].to_numpy()).any()
 
-    pool_half.add_reporting_data(_reporting_map(df_r, daily_data["pool_ids"], DailyReportingData))
+    pool_half.add_reporting_data(_reporting_map(df_r, daily_data["pool_ids"]))
     full = correct_reporting(selection, treatment_half, pool_half, tid, prior=prior)
     assert np.isfinite(full.corrected["corrected"].to_numpy()).all()
 

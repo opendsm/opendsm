@@ -14,8 +14,6 @@
 
 from __future__ import annotations
 
-import datetime
-
 import numpy as np
 import pandas as pd
 
@@ -49,10 +47,10 @@ class _DailyData:
     _settings_class = DailyDataSettings
 
     def __init__(
-        self, 
-        df: pd.DataFrame, 
-        is_electricity_data: bool, 
-        settings: dict | None = None
+        self,
+        df: pd.DataFrame,
+        is_electricity_data: bool,
+        settings: dict | DailyDataSettings | None = None
     ):
         self._df = None
         self.is_electricity_data = is_electricity_data
@@ -66,9 +64,13 @@ class _DailyData:
             self.settings = self._settings_class()
         elif isinstance(settings, dict):
             self.settings = self._settings_class(**settings)
+        elif isinstance(settings, self._settings_class):
+            self.settings = settings
+        else:
+            raise TypeError(
+                f"settings must be a dict, {self._settings_class.__name__}, or None"
+            )
 
-        self.settings.is_electricity_data = is_electricity_data
-            
         # TODO re-examine dq/warning pattern. keep consistent between
         # either implicitly setting as side effects, or returning and assigning outside
         self._df, temp_coverage = self._set_data(df)
@@ -90,138 +92,6 @@ class _DailyData:
             return None
         else:
             return self._df.copy()
-
-    @classmethod
-    def from_series(
-        cls,
-        meter_data: pd.Series | pd.DataFrame,
-        temperature_data: pd.Series | pd.DataFrame,
-        is_electricity_data: bool,
-        settings: dict | None = None,
-    ):
-        """Create an instance of the Data class from meter data and temperature data.
-
-        Public method that can can handle two separate series (meter and temperature) and join them to create a single dataframe. The temperature column should have values in Fahrenheit.
-
-        Args:
-            meter_data: The meter data.
-            temperature_data: The temperature data.
-            is_electricity_data: A flag indicating whether the data represents electricity data. This is required as electricity data with 0 values are converted to NaNs.
-
-        Returns:
-            An instance of the Data class with the dataframe populated with the corrected data, along with warnings and disqualifications based on the input.
-        """
-        if isinstance(meter_data, pd.Series):
-            meter_data = meter_data.to_frame()
-        if isinstance(temperature_data, pd.Series):
-            temperature_data = temperature_data.to_frame()
-        meter_data = meter_data.rename(columns={meter_data.columns[0]: "observed"})
-        temperature_data = temperature_data.rename(
-            columns={temperature_data.columns[0]: "temperature"}
-        )
-        temperature_data.index = temperature_data.index.tz_convert(
-            meter_data.index.tzinfo
-        )
-
-        if temperature_data.empty:
-            raise ValueError("Temperature data cannot be empty.")
-        if meter_data.empty:
-            # reporting from_series always passes a full index of nan
-            raise ValueError("Meter data cannot by empty.")
-
-        is_billing_data = False
-        if not meter_data.empty:
-            is_billing_data = compute_minimum_granularity(
-                meter_data.index, "billing"
-            ).startswith("billing")
-
-        # first, trim the data to exclude NaNs on the outer edges of the data
-        last_meter_index = meter_data.last_valid_index()
-        if is_billing_data:
-            # preserve final NaN for billing data only
-            last = meter_data.last_valid_index()
-            if last and last != meter_data.index[-1]:
-                # TODO include warning here for non-NaN final billing row since it will be discarded
-                last_meter_index = meter_data.index[meter_data.index.get_loc(last) + 1]
-        meter_data = meter_data.loc[meter_data.first_valid_index() : last_meter_index]
-        temperature_data = temperature_data.loc[
-            temperature_data.first_valid_index() : temperature_data.last_valid_index()
-        ]
-
-        # TODO consider a refactor of the period offset calculation/slicing.
-        # it seems like a fairly dense block of code for something conceptually simple.
-        # at the very least, try to clarify variable names a bit
-
-        period_diff_first = pd.Timedelta(0)
-        period_diff_last = pd.Timedelta(0)
-        # calculate difference in period length for first and last rows in meter/temp
-        # first/last will generally be the same offset for daily/hourly, but billing can be quite variable
-        # could consider using to_offset(index.inferred_freq) if available,
-        # but the intent here is just to provide a lenient first trim.
-        # checking for consistent frequency is done later during __init__
-        if len(meter_data.index) > 1 and len(temperature_data.index) > 1:
-            period_meter_first = meter_data.index[1] - meter_data.index[0]
-            period_temp_first = temperature_data.index[1] - temperature_data.index[0]
-            period_diff_first = period_meter_first - period_temp_first
-
-            period_meter_last = meter_data.index[-1] - meter_data.index[-2]
-            period_temp_last = temperature_data.index[-1] - temperature_data.index[-2]
-            period_diff_last = period_meter_last - period_temp_last
-
-        # if diff is positive, meter period is longer (lower frequency)
-        zero_offset = pd.Timedelta(0)
-        meter_period_first_longer = period_diff_first > zero_offset
-        meter_period_last_longer = period_diff_last > zero_offset
-
-        # large period needs a buffer for the min index, and no buffer for the max index
-        # short period needs a buffer for the max index, and no buffer for the min index
-        meter_offset_first = (
-            period_diff_first if meter_period_first_longer else zero_offset
-        )
-        meter_offset_last = (
-            -period_diff_last if not meter_period_last_longer else zero_offset
-        )
-        temp_offset_first = (
-            -period_diff_first if not meter_period_first_longer else zero_offset
-        )
-        temp_offset_last = period_diff_last if meter_period_last_longer else zero_offset
-
-        # if the shorter period ends on an exact index of the longer, we accept it.
-        # the data should be DQ'd later due to insufficiency for the period
-
-        # constrain meter index to temperature index
-        temp_index_min = temperature_data.index.min() - meter_offset_first
-        temp_index_max = temperature_data.index.max() + meter_offset_last
-        meter_data = meter_data[temp_index_min:temp_index_max]
-        if meter_data.empty:
-            raise ValueError("Meter and temperature data are fully misaligned.")
-
-        # if billing detected, subtract one day from final index since dataframe input assumes final row is part of period
-        if is_billing_data:
-            new_index = meter_data.index[:-1].union(
-                [(meter_data.index[-1] - pd.Timedelta(days=1))]
-            )
-            if len(new_index) == len(meter_data.index):
-                meter_data.index = new_index
-            else:
-                # handles the case of a 1 day off-cycle read at end of series
-                meter_data = meter_data[:-1]
-
-        # constrain temperature index to meter index
-        meter_index_min = meter_data.index.min() - temp_offset_first
-        meter_index_max = meter_data.index.max() + temp_offset_last
-        if is_billing_data and len(meter_data) > 1:
-            # last billing period is offset by one index
-            meter_index_max = meter_data.index[-2] + temp_offset_last
-        temperature_data = temperature_data[meter_index_min:meter_index_max]
-
-        if is_billing_data:
-            # TODO consider adding misaligned data warning here if final row was not already NaN
-            meter_data.iloc[-1] = np.nan
-
-        df = pd.concat([meter_data, temperature_data], axis=1, sort=True)
-
-        return cls(df, is_electricity_data, settings=settings)
 
     def log_warnings(self) -> None:
         """Logs the warnings and disqualifications associated with the data.
@@ -529,7 +399,6 @@ class _DailyData:
                 )
             )
         self.tz = df.index.tz
-        self.settings.time_zone = self.tz
 
         # prevent later issues when merging on generated datetimes, which default to ns precision
         # there is almost certainly a smoother way to accomplish this conversion, but this works
@@ -622,59 +491,15 @@ class DailyReportingData(_DailyData):
 
     def __init__(
         self,
-        df: pd.DataFrame, 
-        is_electricity_data: bool, 
-        settings: dict | None = None
+        df: pd.DataFrame,
+        is_electricity_data: bool,
+        settings: dict | DailyDataSettings | None = None
     ):
         df = df.copy()
         if "observed" not in df.columns:
             df["observed"] = np.nan
 
         super().__init__(df, is_electricity_data, settings=settings)
-
-    @classmethod
-    def from_series(
-        cls,
-        meter_data: pd.Series | pd.DataFrame | None,
-        temperature_data: pd.Series | pd.DataFrame,
-        is_electricity_data: bool | None = None,
-        tzinfo: datetime.tzinfo | None = None,
-        settings: dict | None = None,
-    ) -> DailyReportingData:
-        """Create an instance of the Data class from meter data and temperature data.
-
-        Args:
-            meter_data: The meter data to be used for the DailyReportingData instance.
-            temperature_data: The temperature data to be used for the DailyReportingData instance.
-            is_electricity_data: Flag indicating whether the meter data represents electricity data.
-            tzinfo: Timezone information to be used for the meter data.
-
-        Returns:
-            An instance of the Data class.
-        """
-        if tzinfo and meter_data is not None:
-            raise ValueError(
-                "When passing meter data to DailyReportingData, convert its DatetimeIndex to local timezone first; `tzinfo` param should only be used in the absence of reporting meter data."
-            )
-        if is_electricity_data is None and meter_data is not None:
-            raise ValueError(
-                "Must specify is_electricity_data when passing meter data."
-            )
-        if meter_data is None:
-            meter_data = pd.DataFrame(
-                {"observed": np.nan}, index=temperature_data.index
-            )
-            if tzinfo:
-                meter_data = meter_data.tz_convert(tzinfo)
-
-            # If is_electricity_data is not specified, set it to True for proper functioning in the parent class. If it hits this point it's all NaNs anyway.
-            if is_electricity_data is None:
-                is_electricity_data = True
-        if meter_data.empty:
-            raise ValueError(
-                "Pass meter_data=None rather than an empty series in order to explicitly create a temperature-only reporting data instance."
-            )
-        return super().from_series(meter_data, temperature_data, is_electricity_data, settings=settings)
 
     def _check_data_sufficiency(self, sufficiency_df):
         """

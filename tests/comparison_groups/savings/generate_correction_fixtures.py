@@ -31,21 +31,13 @@ from opendsm.comparison_groups.common import Data, Data_Settings
 from opendsm.comparison_groups.common import const as _const
 from opendsm.comparison_groups.cg_clustering.create_comparison_groups import CG_Clustering
 from opendsm.comparison_groups.cg_clustering.settings import CG_Clustering_Settings
-from opendsm.eemeter import (
-    DailyModel, DailyBaselineData, DailyReportingData,
-    HourlyModel, HourlyBaselineData, HourlyReportingData,
-    BillingModel, BillingBaselineData, BillingReportingData,
-)
+from opendsm.eemeter import BillingModel, DailyModel, HourlyModel
 
 
 
 FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures"
 
-_MODELS = {
-    "hourly": (HourlyModel, HourlyBaselineData, HourlyReportingData),
-    "daily": (DailyModel, DailyBaselineData, DailyReportingData),
-    "billing": (BillingModel, BillingBaselineData, BillingReportingData),
-}
+_MODELS = {"hourly": HourlyModel, "daily": DailyModel, "billing": BillingModel}
 
 
 def _loadshape_data(df_baseline, meter_ids):
@@ -83,7 +75,7 @@ def _cluster_pool(df_hourly_baseline, treatment_id, pool_ids, min_cluster_size):
     return labels_by_id, weight_by_cluster
 
 
-def _model_reporting_totals(model_cls, baseline_cls, reporting_cls, df_b, df_r, meter_id):
+def _model_reporting_totals(model_cls, df_b, df_r, meter_id):
     """Fit a model on one meter's baseline, predict reporting, return totals.
 
     Returns (observed_sum, modelled_sum, modelled_unc) or None if the fit or
@@ -92,8 +84,8 @@ def _model_reporting_totals(model_cls, baseline_cls, reporting_cls, df_b, df_r, 
     try:
         b = df_b.xs(meter_id, level="id").reset_index()
         r = df_r.xs(meter_id, level="id").reset_index()
-        model = model_cls().fit(baseline_cls(b, is_electricity_data=True), ignore_disqualification=True)
-        pred = model.predict(reporting_cls(r, is_electricity_data=True), ignore_disqualification=True)
+        model = model_cls().fit(b, is_electricity_data=True, ignore_disqualification=True)
+        pred = model.predict(r, ignore_disqualification=True)
     except Exception:
         return None
 
@@ -126,17 +118,17 @@ def build_fixtures(hourly_data, daily_data, monthly_data, n_pool=99, min_cluster
     n_clusters = len(weight_by_cluster)
     print(f"clusters found: {n_clusters}  weights={weight_by_cluster}")
 
-    for gran, (model_cls, baseline_cls, reporting_cls) in _MODELS.items():
+    for gran, model_cls in _MODELS.items():
         df_b, df_r = granularity_data[gran]
 
-        treatment = _model_reporting_totals(model_cls, baseline_cls, reporting_cls, df_b, df_r, treatment_id)
+        treatment = _model_reporting_totals(model_cls, df_b, df_r, treatment_id)
         if treatment is None:
             raise RuntimeError(f"{gran}: treatment meter failed to model")
         oTr, mTr, mTr_unc = treatment
 
         oCGr, mCGr, mCGr_unc, labels = [], [], [], []
         for pid in pool_ids:
-            totals = _model_reporting_totals(model_cls, baseline_cls, reporting_cls, df_b, df_r, pid)
+            totals = _model_reporting_totals(model_cls, df_b, df_r, pid)
             label = labels_by_id[str(pid)]
             if totals is None or label < 0:
                 continue

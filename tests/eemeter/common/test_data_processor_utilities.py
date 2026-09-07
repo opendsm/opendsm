@@ -21,6 +21,7 @@ from opendsm.eemeter.common.data_processor_utilities import (
     as_freq,
     compute_minimum_granularity,
     frequency_duration,
+    trim_edge_rows,
 )
 
 
@@ -111,3 +112,55 @@ def test_as_freq_daily_bins_follow_wall_clock_across_dst():
     assert list(resampled.index.hour) == [2, 3, 2, 2], f"bin starts: {resampled.index}"
     assert resampled.tolist() == [24.0, 23.0, 24.0, 23.0], f"daily sums: {resampled.tolist()}"
 
+
+
+def _edge_frame(n_periods=6):
+    index = pd.date_range("2020-01-01", periods=n_periods, freq="D", tz="UTC")
+
+    return pd.DataFrame(
+        {"observed": 1.0, "temperature": 50.0, "ghi": 200.0}, index=index
+    )
+
+
+def test_trim_edge_rows_drops_incomplete_leading_and_trailing_rows():
+    """Leading rows missing observed and trailing rows missing a trailing column are dropped."""
+    df = _edge_frame()
+    df.iloc[0, df.columns.get_loc("observed")] = float("nan")
+    df.iloc[-1, df.columns.get_loc("ghi")] = float("nan")
+
+    trimmed, n_leading, n_trailing = trim_edge_rows(df, ("observed", "temperature", "ghi"))
+
+    assert (n_leading, n_trailing) == (1, 1), f"expected (1, 1), got ({n_leading}, {n_trailing})"
+    assert trimmed.index.equals(df.index[1:-1]), f"unexpected trimmed index {trimmed.index}"
+
+
+def test_trim_edge_rows_keeps_interior_missing_rows():
+    """Interior rows missing every value survive trimming."""
+    df = _edge_frame()
+    df.iloc[2:4, :] = float("nan")
+
+    trimmed, n_leading, n_trailing = trim_edge_rows(df, ("observed", "temperature", "ghi"))
+
+    assert (n_leading, n_trailing) == (0, 0), f"expected (0, 0), got ({n_leading}, {n_trailing})"
+    assert trimmed.index.equals(df.index), "interior missing rows were dropped"
+
+
+def test_trim_edge_rows_returns_frame_untouched_when_no_row_qualifies():
+    """A frame with no usable row is passed through for the caller's sufficiency check."""
+    df = _edge_frame()
+    df["observed"] = float("nan")
+
+    trimmed, n_leading, n_trailing = trim_edge_rows(df, ("observed", "temperature", "ghi"))
+
+    assert (n_leading, n_trailing) == (0, 0), f"expected (0, 0), got ({n_leading}, {n_trailing})"
+    assert trimmed.index.equals(df.index), "an unusable frame was trimmed to an empty frame"
+
+
+def test_trim_edge_rows_returns_frame_untouched_when_a_column_is_absent():
+    """A frame missing a trimmable column is passed through rather than raising KeyError."""
+    df = _edge_frame().drop(columns=["observed"])
+
+    trimmed, n_leading, n_trailing = trim_edge_rows(df, ("observed", "temperature", "ghi"))
+
+    assert (n_leading, n_trailing) == (0, 0), f"expected (0, 0), got ({n_leading}, {n_trailing})"
+    assert trimmed.index.equals(df.index), "a frame missing a column was modified"

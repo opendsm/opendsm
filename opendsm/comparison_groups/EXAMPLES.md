@@ -23,27 +23,18 @@ from opendsm.comparison_groups import (
     correct_reporting,
     select_comparison_group,
 )
-from opendsm.eemeter.models import (
-    DailyBaselineData,
-    DailyModel,
-    DailyReportingData,
-)
+from opendsm.eemeter.models import DailyModel
 
 
 def build_meters(df_b, df_r, ids):
     meters = {}
 
     for mid in ids:
-        baseline_data = DailyBaselineData(
-            df_b.xs(mid, level="id").reset_index(), is_electricity_data=True
-        )
-        reporting_data = DailyReportingData(
-            df_r.xs(mid, level="id").reset_index(), is_electricity_data=True
-        )
+        baseline_df = df_b.xs(mid, level="id").reset_index()
         meters[str(mid)] = {
-            "model": DailyModel().fit(baseline_data),
-            "baseline_data": baseline_data,
-            "reporting_data": reporting_data,
+            "model": DailyModel().fit(baseline_df, is_electricity_data=True),
+            "baseline_df": baseline_df,
+            "reporting_df": df_r.xs(mid, level="id").reset_index(),
         }
 
     return meters
@@ -128,12 +119,10 @@ def build_baseline_meters(df_b, ids):
     meters = {}
 
     for mid in ids:
-        baseline_data = DailyBaselineData(
-            df_b.xs(mid, level="id").reset_index(), is_electricity_data=True
-        )
+        baseline_df = df_b.xs(mid, level="id").reset_index()
         meters[str(mid)] = {
-            "model": DailyModel().fit(baseline_data),
-            "baseline_data": baseline_data,
+            "model": DailyModel().fit(baseline_df, is_electricity_data=True),
+            "baseline_df": baseline_df,
         }
 
     return meters
@@ -161,18 +150,8 @@ passes cumulative data, so each attachment replaces the previous reporting slice
 rather than appending to it.
 
 ```python
-reporting_t = {
-    str(mid): DailyReportingData(
-        df_r.xs(mid, level="id").reset_index(), is_electricity_data=True
-    )
-    for mid in treatment_ids
-}
-reporting_p = {
-    str(mid): DailyReportingData(
-        df_r.xs(mid, level="id").reset_index(), is_electricity_data=True
-    )
-    for mid in pool_ids
-}
+reporting_t = {str(mid): df_r.xs(mid, level="id").reset_index() for mid in treatment_ids}
+reporting_p = {str(mid): df_r.xs(mid, level="id").reset_index() for mid in pool_ids}
 
 treatment.add_reporting_data(reporting_t)
 pool.add_reporting_data(reporting_p)

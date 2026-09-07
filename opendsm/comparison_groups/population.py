@@ -29,15 +29,9 @@ from opendsm.eemeter.common.exceptions import (
     DisqualifiedModelError,
 )
 from opendsm.eemeter.models import (
-    BillingBaselineData,
     BillingModel,
-    BillingReportingData,
-    DailyBaselineData,
     DailyModel,
-    DailyReportingData,
-    HourlyBaselineData,
     HourlyModel,
-    HourlyReportingData,
 )
 
 
@@ -54,18 +48,6 @@ _MODEL_TYPES = {
     "hourly": HourlyModel,
     "daily": DailyModel,
     "billing": BillingModel,
-}
-
-_BASELINE_TYPES = {
-    "hourly": HourlyBaselineData,
-    "daily": DailyBaselineData,
-    "billing": BillingBaselineData,
-}
-
-_REPORTING_TYPES = {
-    "hourly": HourlyReportingData,
-    "daily": DailyReportingData,
-    "billing": BillingReportingData,
 }
 
 # BillingModel subclasses DailyModel and their payloads are structurally
@@ -107,6 +89,15 @@ def _model_from_payload(model_cls, payload):
     raise TypeError(f"Model payload must be a dict or JSON string, got {type(payload).__name__}")
 
 
+def _require_frame(mid, name, value):
+    """Reject a data object where a dataframe is expected."""
+    if not isinstance(value, pd.DataFrame) and hasattr(value, "df"):
+        raise TypeError(
+            f"Meter {mid}: {name} must be a pandas DataFrame, got a "
+            f"{type(value).__name__}. Populations build the data objects themselves."
+        )
+
+
 def _payload_model_type(payload):
     """The ``model_type`` granularity tag on a dict/JSON model payload, or
     ``None`` for a legacy payload written before the tag existed."""
@@ -116,6 +107,16 @@ def _payload_model_type(payload):
     tag = payload.get("model_type")
 
     return tag
+
+
+def _payload_has_is_electricity_data(payload):
+    """Whether a dict/JSON model payload already stores its own fuel flag."""
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+
+    info = payload.get("info") or {}
+
+    return "is_electricity_data" in info
 
 
 def _window_to_json(window):
@@ -235,9 +236,11 @@ class MeterPopulation:
         payloads).
 
         Args:
-            meters: ``{id: {model, baseline_data, reporting_data=None,
+            meters: ``{id: {model, baseline_df, reporting_df=None,
                 observed_unc=None}}``. ``model`` may be a fitted instance, a
-                ``to_dict()`` payload, or a ``to_json()`` string.
+                ``to_dict()`` payload, or a ``to_json()`` string. ``baseline_df``
+                and ``reporting_df`` are the meter's dataframes; the model builds
+                the data objects from them.
             granularity: Inferred from each model — from a fitted instance's type
                 or a payload's ``model_type`` tag — so it is optional for tagged
                 inputs. When supplied it is validated against the inferred value
@@ -286,13 +289,22 @@ class MeterPopulation:
             if resolved is None:
                 resolved = inferred
 
-            records[str(mid)] = _MeterRecord(
+            baseline_df = entry["baseline_df"]
+            _require_frame(mid, "baseline_df", baseline_df)
+            reporting_df = entry.get("reporting_df")
+
+            record = _MeterRecord(
                 id=mid,
                 model=model,
-                baseline_data=entry.get("baseline_data"),
-                reporting_data=entry.get("reporting_data"),
+                baseline_data=model._baseline_data(baseline_df),
                 observed_unc=entry.get("observed_unc"),
             )
+
+            if reporting_df is not None:
+                _require_frame(mid, "reporting_df", reporting_df)
+                record.reporting_data = model._reporting_data(reporting_df)
+
+            records[str(mid)] = record
 
         if resolved is None:
             raise ValueError("Could not resolve granularity; pass it explicitly.")
@@ -304,6 +316,8 @@ class MeterPopulation:
         cls,
         baseline,
         model_type,
+        *,
+        is_electricity_data,
         settings=None,
         ignore_disqualification=False,
         features=None,
@@ -316,29 +330,32 @@ class MeterPopulation:
         while the loop continues; raises only when every meter fails.
 
         Args:
-            baseline: ``{id: BaselineData}`` for the requested granularity.
+            baseline: ``{id: baseline_df}`` for the requested granularity.
             model_type: ``"hourly"``, ``"daily"``, or ``"billing"``.
+            is_electricity_data: Whether the observed values are electricity usage.
         """
         if model_type not in _MODEL_TYPES:
             raise ValueError(
                 f"model_type must be one of {list(_MODEL_TYPES)}, got {model_type!r}"
             )
 
-        baseline_cls = _BASELINE_TYPES[model_type]
         model_cls = _MODEL_TYPES[model_type]
         records = {}
         dropped = exclusions.empty_ledger()
 
-        for mid, bdata in baseline.items():
-            if not isinstance(bdata, baseline_cls):
-                raise TypeError(f"Meter {mid}: baseline data must be {baseline_cls.__name__}.")
+        for mid, df in baseline.items():
+            _require_frame(mid, "baseline data", df)
 
             model = model_cls(settings=settings)
 
             try:
-                model.fit(bdata, ignore_disqualification=ignore_disqualification)
+                model.fit(
+                    df,
+                    is_electricity_data=is_electricity_data,
+                    ignore_disqualification=ignore_disqualification,
+                )
             except DataSufficiencyError as exc:
-                detail = exclusions.format_warnings(bdata.disqualification) or str(exc)
+                detail = exclusions.format_warnings(exc.disqualification) or str(exc)
                 dropped = exclusions.append(
                     dropped,
                     [mid],
@@ -360,7 +377,9 @@ class MeterPopulation:
                 )
                 continue
 
-            records[str(mid)] = _MeterRecord(id=mid, model=model, baseline_data=bdata)
+            records[str(mid)] = _MeterRecord(
+                id=mid, model=model, baseline_data=model._baseline_data(df)
+            )
 
         if not records:
             summary = "; ".join(f"{row.id}: {row.reason}" for row in dropped.itertuples())
@@ -389,9 +408,6 @@ class MeterPopulation:
         return validated
 
     def _validate_meters(self):
-        baseline_cls = _BASELINE_TYPES[self.granularity]
-        reporting_cls = _REPORTING_TYPES[self.granularity]
-
         timezones = set()
         fuels = set()
         ghi_flags = set()
@@ -406,12 +422,6 @@ class MeterPopulation:
 
             if rec.baseline_data is None:
                 raise ValueError(f"Meter {mid}: baseline_data is required.")
-
-            if not isinstance(rec.baseline_data, baseline_cls):
-                raise TypeError(f"Meter {mid}: baseline_data must be {baseline_cls.__name__}.")
-
-            if rec.reporting_data is not None and not isinstance(rec.reporting_data, reporting_cls):
-                raise TypeError(f"Meter {mid}: reporting_data must be {reporting_cls.__name__}.")
 
             if str(rec.model.baseline_timezone) != str(rec.baseline_data.tz):
                 raise ValueError(
@@ -519,25 +529,25 @@ class MeterPopulation:
     # -- reporting data ------------------------------------------------------
 
     def add_reporting_data(self, reporting):
-        """Attach or replace per-meter reporting data (caller passes cumulative
+        """Attach or replace per-meter reporting frames (caller passes cumulative
         data) and invalidate the reporting prediction cache."""
-        reporting_cls = _REPORTING_TYPES[self.granularity]
-
-        for rid, data in reporting.items():
+        for rid, df in reporting.items():
             mid = str(rid)
             if mid not in self._meters:
                 raise KeyError(f"Meter {mid} is not part of this population.")
 
-            if not isinstance(data, reporting_cls):
-                raise TypeError(f"Meter {mid}: reporting data must be {reporting_cls.__name__}.")
+            _require_frame(mid, "reporting data", df)
 
-            if str(data.tz) != self.tz:
+            rec = self._meters[mid]
+            reporting_data = rec.model._reporting_data(df)
+
+            if str(reporting_data.tz) != self.tz:
                 raise ValueError(
-                    f"Meter {mid}: reporting timezone {data.tz} does not match population "
-                    f"timezone {self.tz}."
+                    f"Meter {mid}: reporting timezone {reporting_data.tz} does not match "
+                    f"population timezone {self.tz}."
                 )
 
-            self._meters[mid].reporting_data = data
+            rec.reporting_data = reporting_data
 
         self._reporting_pred = {}
         self.reporting_window = self._resolve_window("reporting")
@@ -559,9 +569,9 @@ class MeterPopulation:
             raise ValueError(f"Meter {rec.id}: no {period} data attached.")
 
         if self.granularity == "billing":
-            pred = rec.model.predict(data, aggregation=None)
+            pred = rec.model._predict_data(data, aggregation=None)
         else:
-            pred = rec.model.predict(data)
+            pred = rec.model._predict_data(data)
 
         frame = pd.DataFrame(
             {
@@ -851,7 +861,7 @@ class MeterPopulation:
             )
 
         if baseline is None:
-            raise ValueError("baseline data mapping is required to rebuild a population.")
+            raise ValueError("baseline frame mapping is required to rebuild a population.")
 
         granularity = header["granularity"]
         model_cls = _MODEL_TYPES[granularity]
@@ -865,15 +875,29 @@ class MeterPopulation:
             if mid not in baseline:
                 raise KeyError(f"Meter {mid}: baseline data not provided for re-attach.")
 
-            model = model_cls.from_json(meter["model"])
-            observed_unc = _deserialize_unc(meter["observed_unc"], tz)
-            records[mid] = _MeterRecord(
+            baseline_df = baseline[mid]
+            _require_frame(mid, "baseline data", baseline_df)
+            reporting_df = reporting.get(mid)
+
+            if _payload_has_is_electricity_data(meter["model"]):
+                model = model_cls.from_json(meter["model"])
+            else:
+                model = model_cls.from_json(
+                    meter["model"], is_electricity_data=header["is_electricity_data"]
+                )
+
+            record = _MeterRecord(
                 id=mid,
                 model=model,
-                baseline_data=baseline[mid],
-                reporting_data=reporting.get(mid),
-                observed_unc=observed_unc,
+                baseline_data=model._baseline_data(baseline_df),
+                observed_unc=_deserialize_unc(meter["observed_unc"], tz),
             )
+
+            if reporting_df is not None:
+                _require_frame(mid, "reporting data", reporting_df)
+                record.reporting_data = model._reporting_data(reporting_df)
+
+            records[mid] = record
 
         population = cls(
             records,
@@ -898,7 +922,7 @@ class MeterPopulation:
     @classmethod
     def from_json(cls, s, baseline=None, reporting=None, features=None, **kwargs):
         """Rebuild from ``to_json()`` output, re-attaching caller-supplied
-        baseline (and optional reporting) data by id."""
+        baseline (and optional reporting) frames by id."""
         payload = json.loads(s)
         population = cls._from_payload(
             payload["header"], payload["meters"], baseline, reporting, features, **kwargs

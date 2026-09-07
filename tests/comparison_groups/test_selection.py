@@ -40,10 +40,8 @@ from opendsm.comparison_groups.stratified_sampling.settings import (
     DistanceStratifiedSamplingSettings,
     DSS_StratificationColumnSettings,
 )
-from opendsm.eemeter.models import (
-    DailyBaselineData,
-    DailyModel,
-)
+from opendsm.eemeter.models import DailyModel
+from opendsm.eemeter.models.daily.data import DailyBaselineData
 
 
 
@@ -447,9 +445,10 @@ _COVERAGE_TZ = "America/New_York"
 
 
 def _daily_baseline(seed=0, hole=None, span=365, start="2020-01-01"):
-    """A constructed DailyBaselineData with a smooth weather-driven load. ``hole``
-    is a ``(start, stop)`` positional slice of observed rows set to NaN; ``span``
-    and ``start`` shift the meter's coverage relative to a group window."""
+    """A constructed daily baseline frame with a smooth weather-driven load.
+    ``hole`` is a ``(start, stop)`` positional slice of observed rows set to NaN;
+    ``span`` and ``start`` shift the meter's coverage relative to a group
+    window."""
     index = pd.date_range(start, periods=span, freq="D", tz=_COVERAGE_TZ)
     rng = np.random.default_rng(seed)
     temperature = 50 + 25 * np.sin(np.arange(span) / 365 * 2 * np.pi) + rng.normal(0, 2, span)
@@ -460,19 +459,22 @@ def _daily_baseline(seed=0, hole=None, span=365, start="2020-01-01"):
         lo, hi = hole
         frame.iloc[lo:hi, frame.columns.get_loc("observed")] = np.nan
 
-    baseline = DailyBaselineData(
-        frame.reset_index().rename(columns={"index": "datetime"}),
-        is_electricity_data=True,
-    )
+    baseline = frame.reset_index().rename(columns={"index": "datetime"})
 
     return baseline
 
 
+def _daily_baseline_data(**kwargs):
+    """``_daily_baseline`` as a data object, for the coverage helper that reads
+    one directly rather than through a population."""
+    return DailyBaselineData(_daily_baseline(**kwargs), is_electricity_data=True)
+
+
 def _daily_population(cls, specs, model, **kwargs):
-    """Build a daily population from ``{id: baseline_data}``, reusing one fitted
+    """Build a daily population from ``{id: baseline_df}``, reusing one fitted
     model (the coverage DQ reads only baseline data). The disqualified-meter
     warning is expected for gross-hole meters and suppressed here."""
-    meters = {mid: {"model": model, "baseline_data": bd} for mid, bd in specs.items()}
+    meters = {mid: {"model": model, "baseline_df": df} for mid, df in specs.items()}
 
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="Population includes disqualified")
@@ -485,7 +487,9 @@ def _daily_population(cls, specs, model, **kwargs):
 def daily_model():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        model = DailyModel().fit(_daily_baseline(seed=0), ignore_disqualification=True)
+        model = DailyModel().fit(
+            _daily_baseline(seed=0), is_electricity_data=True, ignore_disqualification=True
+        )
 
     return model
 
@@ -500,7 +504,7 @@ def _random_selection(treatment, pool):
 
 
 def test_window_coverage_is_finite_fraction_over_window_length():
-    baseline = _daily_baseline(hole=(100, 160))  # 60 of 365 observed days NaN
+    baseline = _daily_baseline_data(hole=(100, 160))  # 60 of 365 observed days NaN
     window = (baseline.df.index.min(), baseline.df.index.max())
 
     coverage = window_coverage(baseline, window, "D")
@@ -510,7 +514,7 @@ def test_window_coverage_is_finite_fraction_over_window_length():
 
 
 def test_window_coverage_full_clean_meter_is_one():
-    baseline = _daily_baseline()
+    baseline = _daily_baseline_data()
     window = (baseline.df.index.min(), baseline.df.index.max())
 
     coverage = window_coverage(baseline, window, "D")
@@ -519,7 +523,7 @@ def test_window_coverage_full_clean_meter_is_one():
 
 
 def test_window_coverage_penalizes_a_span_short_of_the_window():
-    baseline = _daily_baseline(span=300, start="2020-02-01")  # 300 finite days inside 2020
+    baseline = _daily_baseline_data(span=300, start="2020-02-01")  # 300 finite days inside 2020
     window = (
         pd.Timestamp("2020-01-01", tz=_COVERAGE_TZ),
         pd.Timestamp("2020-12-30", tz=_COVERAGE_TZ),

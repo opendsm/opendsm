@@ -29,7 +29,10 @@ from opendsm.common.clustering.settings import ClusteringSettings
 from opendsm.common.metrics import BaselineMetrics
 from opendsm.common.const import CAlgoChoice
 
+from opendsm.eemeter.common.data_settings import HourlyDataSettings
 from opendsm.eemeter.common.warnings import EEMeterWarning
+
+
 
 # from opendsm.common.const import CountryCode
 
@@ -322,6 +325,8 @@ class BaseHourlySettings(BaseSettings):
 
     train_features: Optional[list[str]] = CustomField(default=None, developer=False)
 
+    data: HourlyDataSettings = pydantic.Field(default_factory=HourlyDataSettings)
+
     """CVRMSE threshold for model disqualification"""
     cvrmse_threshold: float = pydantic.Field(
         default=1.4,
@@ -544,6 +549,8 @@ class ModelInfo(pydantic.BaseModel):
     disqualification: list[EEMeterWarning]
     warnings: list[EEMeterWarning]
     version: str
+    is_electricity_data: bool
+    pv_start: Optional[str] = None
 
 
 class SerializeModel(BaseSettings):
