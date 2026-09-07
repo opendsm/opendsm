@@ -34,7 +34,7 @@ def _daily_frame(meter, temperature):
     meter = meter.rename(columns={"value": "observed"})
     temperature = temperature.tz_convert(meter.index.tz).rename("temperature")
 
-    return pd.concat([meter, temperature], axis=1)
+    return pd.concat([meter, temperature], axis=1, sort=True)
 
 
 @pytest.fixture
