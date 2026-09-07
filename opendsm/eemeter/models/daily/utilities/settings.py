@@ -24,8 +24,10 @@ from opendsm.common.base_settings import (
     UserField,
     lowercase_keys,
 )
+from opendsm.eemeter.common.data_settings import DailyDataSettings
 import opendsm.eemeter.models.daily.utilities.const as _const
 from opendsm.eemeter.models.daily.utilities.opt_settings import AlgorithmChoice
+
 
 
 # region option definitions
@@ -216,14 +218,20 @@ def _merge_preset(preset: dict, values: dict) -> dict:
     merged = dict(preset)
     for key, value in values.items():
         preset_value = merged.get(key)
-        if isinstance(value, pydantic.BaseModel):
-            value = value.model_dump(exclude_unset=True)
 
-        if isinstance(preset_value, dict) and isinstance(value, dict):
-            merged[key] = _merge_preset(preset_value, value)
+        # Only dump nested settings objects into the merge when the preset itself
+        # defines that key as a nested dict; otherwise the value carries no
+        # preset overrides to merge and must pass through untouched so its type
+        # (e.g. a BillingDataSettings instance) is preserved.
+        if isinstance(preset_value, dict):
+            if isinstance(value, pydantic.BaseModel):
+                value = value.model_dump(exclude_unset=True)
 
-        else:
-            merged[key] = value
+            if isinstance(value, dict):
+                merged[key] = _merge_preset(preset_value, value)
+                continue
+
+        merged[key] = value
 
     return merged
 
@@ -239,6 +247,8 @@ class DailySettings(BaseSettings):
         default="current",
         description="Named set of default values that all other settings fall back to",
     )
+
+    data: DailyDataSettings = DeveloperField(default_factory=DailyDataSettings)
 
     algorithm_choice: Optional[AlgorithmChoice] = DeveloperField(
         default=AlgorithmChoice.NLOPT_SBPLX,

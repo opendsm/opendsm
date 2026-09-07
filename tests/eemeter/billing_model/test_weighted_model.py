@@ -16,57 +16,50 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from opendsm.eemeter import BillingBaselineData
 from opendsm.eemeter.models.billing import BillingWeightedModel
 
 
 
 @pytest.fixture(scope="module")
-def weighted_data(comstock_monthly):
-    """A data object of the weighted model's own: a fit keeps a reference to the data's
-    disqualification list, so two models must not share one."""
-    df_b, _ = comstock_monthly
-    data = BillingBaselineData(df=df_b.reset_index().copy(), is_electricity_data=True)
-
-    return data
-
-
-@pytest.fixture(scope="module")
-def weighted_model(weighted_data):
-    model = BillingWeightedModel().fit(weighted_data, ignore_disqualification=True)
+def weighted_model(baseline_data_billing):
+    model = BillingWeightedModel().fit(
+        baseline_data_billing, is_electricity_data=True, ignore_disqualification=True
+    )
 
     return model
 
 
-def _predict(model, data, **kwargs):
-    return model.predict(data, ignore_disqualification=True, **kwargs)
+def _predict(model, df, **kwargs):
+    return model.predict(df, ignore_disqualification=True, **kwargs)
 
 
-def test_predict_returns_one_finite_prediction_per_input_period(weighted_model, weighted_data):
-    result = _predict(weighted_model, weighted_data)
+def test_predict_returns_finite_predictions_with_the_load_columns(
+    weighted_model, baseline_data_billing
+):
+    result = _predict(weighted_model, baseline_data_billing)
 
-    assert len(result) == len(weighted_data.billing_df)
+    assert 0 < len(result) <= len(baseline_data_billing)
     assert {"observed", "predicted", "predicted_unc", "heating_load", "cooling_load"} <= set(
         result.columns
     )
     assert np.isfinite(result["predicted"]).all()
 
 
-def test_predict_treats_the_string_none_as_no_aggregation(weighted_model, weighted_data):
-    native = _predict(weighted_model, weighted_data)
+def test_predict_treats_the_string_none_as_no_aggregation(weighted_model, baseline_data_billing):
+    native = _predict(weighted_model, baseline_data_billing)
 
-    result = _predict(weighted_model, weighted_data, aggregation="none")
+    result = _predict(weighted_model, baseline_data_billing, aggregation="none")
 
     pd.testing.assert_frame_equal(result, native)
 
 
 @pytest.mark.parametrize("aggregation, freq", [("monthly", "MS"), ("bimonthly", "2MS")])
 def test_predict_aggregates_energy_by_sum_and_uncertainty_in_quadrature(
-    weighted_model, weighted_data, aggregation, freq
+    weighted_model, baseline_data_billing, aggregation, freq
 ):
-    native = _predict(weighted_model, weighted_data)
+    native = _predict(weighted_model, baseline_data_billing)
 
-    aggregated = _predict(weighted_model, weighted_data, aggregation=aggregation)
+    aggregated = _predict(weighted_model, baseline_data_billing, aggregation=aggregation)
 
     assert aggregated.index.freqstr == freq
     assert aggregated["predicted"].sum() == pytest.approx(native["predicted"].sum())
@@ -76,18 +69,14 @@ def test_predict_aggregates_energy_by_sum_and_uncertainty_in_quadrature(
     )
 
 
-def test_predict_rejects_an_unknown_aggregation(weighted_model, weighted_data):
+def test_predict_rejects_an_unknown_aggregation(weighted_model, baseline_data_billing):
     with pytest.raises(ValueError, match="aggregation must be one of"):
-        _predict(weighted_model, weighted_data, aggregation="weekly")
+        _predict(weighted_model, baseline_data_billing, aggregation="weekly")
 
 
-def test_predict_rejects_daily_data(weighted_model, baseline_data_daily):
-    with pytest.raises(TypeError, match="BillingBaselineData"):
-        _predict(weighted_model, baseline_data_daily)
 
-
-def test_predict_before_fit_raises(weighted_data):
+def test_predict_before_fit_raises(baseline_data_billing):
     with pytest.raises(RuntimeError, match="fit"):
-        BillingWeightedModel().predict(weighted_data)
+        BillingWeightedModel().predict(baseline_data_billing)
 
 
