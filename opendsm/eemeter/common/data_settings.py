@@ -18,15 +18,14 @@ import numpy as np
 import pandas as pd
 
 import pydantic
-import datetime
 
-from typing import Optional, Union
+from typing import Optional
 
-from opendsm.common.base_settings import MutableBaseSettings
-
+from opendsm.common.base_settings import BaseSettings, CustomField
 
 
-class ColumnSufficiencySettings(MutableBaseSettings):
+
+class ColumnSufficiencySettings(BaseSettings):
     min_pct_hourly_coverage: Optional[float] = pydantic.Field(
         default=None,
         gt=0,
@@ -119,19 +118,21 @@ class JointSufficiencySettings(ColumnSufficiencySettings):
         super().__init__(**settings)
 
 
-class BaseSufficiencySettings(MutableBaseSettings):
-    requested_start: Optional[pd.Timestamp] = pydantic.Field(
+class BaseSufficiencySettings(BaseSettings):
+    requested_start: Optional[pd.Timestamp] = CustomField(
+        developer=False,
         default=None,
         description="Requested start date for the data. If None, use the data start date."
     )
-    
-    requested_end: Optional[pd.Timestamp] = pydantic.Field(
+
+    requested_end: Optional[pd.Timestamp] = CustomField(
+        developer=False,
         default=None,
         description="Requested end date for the data. If None, use the data end date."
     )
 
     min_baseline_length: int = pydantic.Field(
-        default=np.ceil(0.9 * 365),
+        default=int(np.ceil(0.9 * 365)),
         ge=1,
         description="Minimum number of days in the baseline.",
     )
@@ -233,17 +234,9 @@ class HourlyDataSufficiencySettings(BaseSufficiencySettings):
     )
 
 
-class BaseDataSettings(MutableBaseSettings):
-    """is electricity data"""
-    is_electricity_data: bool = pydantic.Field(
-        default=True, # TODO: if is_electricity_data removed from data, this needs to be required
-        description="Boolean flag to specify if the data is electricity data or not.",
-    )
+class BaseDataSettings(BaseSettings):
+    pass
 
-    time_zone: Optional[datetime.timezone] = pydantic.Field(
-        default=None,
-        description="Time zone for the data, e.g., 'America/Los_Angeles'. If None, time zone is not set."
-    )
 
 class DailyDataSettings(BaseDataSettings):
     sufficiency: DailyDataSufficiencySettings = pydantic.Field(
@@ -256,11 +249,6 @@ class BillingDataSettings(BaseDataSettings):
     )
 
 class HourlyDataSettings(BaseDataSettings):
-    pv_start: Optional[Union[datetime.date, str]] = pydantic.Field(
-        default=None,
-        description="Date of the solar installation. If None, assume solar status is static."
-    )
-
     sufficiency: HourlyDataSufficiencySettings = pydantic.Field(
         default_factory=HourlyDataSufficiencySettings,
     )

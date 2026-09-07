@@ -14,8 +14,6 @@
 
 from __future__ import annotations
 
-import datetime
-
 import numpy as np
 import pandas as pd
 from pandas.tseries.offsets import MonthBegin, MonthEnd
@@ -414,55 +412,15 @@ class BillingReportingData(_BillingData):
 
     def __init__(
         self,
-        df: pd.DataFrame, 
-        is_electricity_data: bool, 
-        settings: dict | None = None
+        df: pd.DataFrame,
+        is_electricity_data: bool,
+        settings: dict | BillingDataSettings | None = None
     ):
         df = df.copy()
         if "observed" not in df.columns:
             df["observed"] = np.nan
 
         super().__init__(df, is_electricity_data, settings=settings)
-
-    @classmethod
-    def from_series(
-        cls,
-        meter_data: pd.Series | pd.DataFrame | None,
-        temperature_data: pd.Series | pd.DataFrame,
-        is_electricity_data: bool,
-        tzinfo: datetime.tzinfo | None = None,
-        settings: dict | None = None,
-    ):
-        """Create a BillingReportingData instance from meter data and temperature data.
-
-        Args:
-            meter_data: The meter data to be used for the BillingReportingData instance.
-            temperature_data: The temperature data to be used for the BillingReportingData instance.
-            is_electricity_data: Flag indicating whether the meter data represents electricity data.
-            tzinfo: Timezone information to be used for the meter data.
-
-        Returns:
-            An instance of the Data class.
-        """
-        if tzinfo and meter_data is not None:
-            raise ValueError(
-                "When passing meter data to BillingReportingData, convert its DatetimeIndex to local timezone first; `tzinfo` param should only be used in the absence of reporting meter data."
-            )
-        if is_electricity_data is None and meter_data is not None:
-            raise ValueError(
-                "Must specify is_electricity_data when passing meter data."
-            )
-        if meter_data is None:
-            meter_data = pd.DataFrame(
-                {"observed": np.nan}, index=temperature_data.index
-            )
-            if tzinfo:
-                meter_data = meter_data.tz_convert(tzinfo)
-        if meter_data.empty:
-            raise ValueError(
-                "Pass meter_data=None to explicitly create a temperature-only reporting data instance."
-            )
-        return super().from_series(meter_data, temperature_data, is_electricity_data, settings=settings)
 
     def _check_data_sufficiency(self, sufficiency_df):
         """

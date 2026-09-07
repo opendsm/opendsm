@@ -16,39 +16,40 @@
 import pytest
 
 from opendsm.eemeter.models.billing.model import BillingModel
-from opendsm.eemeter.models.billing.data import (
-    BillingBaselineData,
-    BillingReportingData,
-)
 
 from regression_metrics import regression_block
 
 
+
 @pytest.fixture(scope="session")
-def billing_baseline_data(comstock_monthly):
+def billing_baseline_df(comstock_monthly):
     df_b, _ = comstock_monthly
 
-    return BillingBaselineData(df=df_b.reset_index(), is_electricity_data=True)
+    return df_b.reset_index()
 
 
 @pytest.fixture(scope="session")
-def billing_reporting_data(comstock_monthly):
+def billing_reporting_df(comstock_monthly):
     _, df_r = comstock_monthly
 
-    return BillingReportingData(df=df_r.reset_index(), is_electricity_data=True)
+    return df_r.reset_index()
 
 
 @pytest.fixture(scope="session")
-def billing_model_fit(billing_baseline_data):
-    return BillingModel().fit(billing_baseline_data, ignore_disqualification=True)
+def billing_model_fit(billing_baseline_df):
+    model = BillingModel().fit(
+        billing_baseline_df, is_electricity_data=True, ignore_disqualification=True
+    )
+
+    return model
 
 
 @pytest.mark.slow
 @pytest.mark.regression
 def test_billing_baseline_predict_regression(
-    billing_model_fit, billing_baseline_data, snapshot
+    billing_model_fit, billing_baseline_df, snapshot
 ):
-    result = billing_model_fit.predict(billing_baseline_data)
+    result = billing_model_fit.predict(billing_baseline_df)
 
     assert regression_block(result, freq="daily") == snapshot(name="regression")
 
@@ -56,8 +57,8 @@ def test_billing_baseline_predict_regression(
 @pytest.mark.slow
 @pytest.mark.regression
 def test_billing_reporting_predict_regression(
-    billing_model_fit, billing_reporting_data, snapshot
+    billing_model_fit, billing_reporting_df, snapshot
 ):
-    result = billing_model_fit.predict(billing_reporting_data)
+    result = billing_model_fit.predict(billing_reporting_df)
 
     assert regression_block(result, freq="daily") == snapshot(name="regression")

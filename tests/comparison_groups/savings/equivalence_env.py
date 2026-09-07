@@ -20,7 +20,7 @@ with the ComStock data re-attached; the suite never fits those models. Model
 fitting converges to different optima on different machines, so the correction
 and savings values pinned in ``fixtures/equivalence_snapshot.json.gz`` are only
 reproducible against pinned models, while prediction from a deserialized model
-is deterministic. ``ComStockData`` caches the data objects so fixtures share
+is deterministic. ``ComStockData`` caches the per-meter frames so fixtures share
 them, and ``build_variant`` rebuilds each equivalence variant from the bank and
 its pinned selection.
 """
@@ -44,17 +44,7 @@ from opendsm.comparison_groups.selection import (
     _normalize_treatment_weights,
     select_comparison_group,
 )
-from opendsm.eemeter.models import (
-    BillingBaselineData,
-    BillingModel,
-    BillingReportingData,
-    DailyBaselineData,
-    DailyModel,
-    DailyReportingData,
-    HourlyBaselineData,
-    HourlyModel,
-    HourlyReportingData,
-)
+from opendsm.eemeter.models import BillingModel, DailyModel, HourlyModel
 
 
 
@@ -91,17 +81,11 @@ BANK_SIZES = {"daily": 68, "billing": 46, "hourly": 8}
 
 _MODEL_CLASSES = {"daily": DailyModel, "billing": BillingModel, "hourly": HourlyModel}
 
-_DATA_CLASSES = {
-    "daily": (DailyBaselineData, DailyReportingData),
-    "billing": (BillingBaselineData, BillingReportingData),
-    "hourly": (HourlyBaselineData, HourlyReportingData),
-}
-
 
 class ComStockData:
     """The ComStock ``(baseline, reporting)`` frame pairs per model frequency, with a
-    cache of the data objects built from them, so every population shares one
-    baseline and one reporting object per meter instead of rebuilding them."""
+    cache of the per-meter frames sliced out of them, so every population shares
+    one baseline and one reporting frame per meter."""
 
     def __init__(self, daily, monthly, hourly):
         self._frames = {"daily": daily, "billing": monthly, "hourly": hourly}
@@ -116,43 +100,42 @@ class ComStockData:
 
         return ids
 
-    def _data(self, role, model_frequency, mid):
+    def _frame(self, role, model_frequency, mid):
         key = (role, model_frequency, str(mid))
 
         if key not in self._cache:
             df_b, df_r = self._frames[model_frequency]
-            baseline_cls, reporting_cls = _DATA_CLASSES[model_frequency]
 
             if role == "baseline":
-                raw = df_b.xs(int(mid), level="id").reset_index()
-                self._cache[key] = baseline_cls(raw, is_electricity_data=True)
+                df = df_b
             else:
-                raw = df_r.xs(int(mid), level="id").reset_index()
-                self._cache[key] = reporting_cls(raw, is_electricity_data=True)
+                df = df_r
+
+            self._cache[key] = df.xs(int(mid), level="id").reset_index()
 
         return self._cache[key]
 
     def baseline(self, model_frequency, mid):
-        return self._data("baseline", model_frequency, mid)
+        return self._frame("baseline", model_frequency, mid)
 
     def reporting(self, model_frequency, mid):
-        return self._data("reporting", model_frequency, mid)
+        return self._frame("reporting", model_frequency, mid)
 
     def meters(self, bank, model_frequency, ids, observed_unc=None, reporting=True):
         """A ``from_fit_models`` meters mapping over ``ids``: the pinned models
-        from ``bank`` with the cached data objects attached."""
+        from ``bank`` with the cached per-meter frames attached."""
         model_cls = _MODEL_CLASSES[model_frequency]
         meters = {}
 
         for mid in ids:
             key = str(mid)
             entry = {
-                "model": model_cls.from_json(bank[model_frequency][key]),
-                "baseline_data": self.baseline(model_frequency, key),
+                "model": model_cls.from_json(bank[model_frequency][key], is_electricity_data=True),
+                "baseline_df": self.baseline(model_frequency, key),
                 "observed_unc": observed_unc,
             }
             if reporting:
-                entry["reporting_data"] = self.reporting(model_frequency, key)
+                entry["reporting_df"] = self.reporting(model_frequency, key)
             meters[key] = entry
 
         return meters
@@ -169,7 +152,10 @@ def fit_bank(comstock):
         models = {}
 
         for mid in comstock.ids(model_frequency)[:size]:
-            models[str(mid)] = model_cls().fit(comstock.baseline(model_frequency, mid)).to_json()
+            model = model_cls().fit(
+                comstock.baseline(model_frequency, mid), is_electricity_data=True
+            )
+            models[str(mid)] = model.to_json()
 
         bank[model_frequency] = models
 

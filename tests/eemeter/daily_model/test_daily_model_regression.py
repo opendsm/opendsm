@@ -18,9 +18,10 @@ import sys
 import pytest
 
 from opendsm.eemeter.models.daily.model import DailyModel
-from opendsm.eemeter.models.daily.data import DailyBaselineData, DailyReportingData
 
 from regression_metrics import regression_block
+
+
 
 # DailyModel's nlopt SBPLX optimizer lands at a different local minimum on
 # Windows. Aggregate sum/mean stay within ~0.05%, but per-bin residual means
@@ -33,19 +34,23 @@ SNAP_SUFFIX = "_win" if sys.platform == "win32" else ""
 def daily_baseline_data(comstock_daily):
     df_b, _ = comstock_daily
 
-    return DailyBaselineData(df=df_b.reset_index(), is_electricity_data=True)
+    return df_b.reset_index()
 
 
 @pytest.fixture(scope="session")
 def daily_reporting_data(comstock_daily):
     _, df_r = comstock_daily
 
-    return DailyReportingData(df=df_r.reset_index(), is_electricity_data=True)
+    return df_r.reset_index()
 
 
 @pytest.fixture(scope="session")
 def daily_model_fit(daily_baseline_data):
-    return DailyModel().fit(daily_baseline_data, ignore_disqualification=True)
+    model = DailyModel().fit(
+        daily_baseline_data, is_electricity_data=True, ignore_disqualification=True
+    )
+
+    return model
 
 
 @pytest.mark.slow
