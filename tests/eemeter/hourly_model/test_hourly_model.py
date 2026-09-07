@@ -1083,3 +1083,21 @@ def test_predict_labels_unseen_combinations_for_that_prediction_only(baseline, r
 
     assert predicted.loc[predicted.index.month == 12, "predicted"].notna().all()
     pd.testing.assert_frame_equal(hm._df_temporal_clusters, fitted)
+
+
+def test_settings_deviations_property_reports_hourly_developer_tier_changes(baseline):
+    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
+    model = HourlyModel(settings=HourlyNonSolarSettings(cvrmse_threshold=1.2)).fit(
+        baseline_data
+    )
+
+    assert model.settings_deviations == {
+        "cvrmse_threshold": {"value": 1.2, "default": 1.4}
+    }
+
+
+def test_settings_deviations_property_is_empty_for_default_hourly_settings(baseline):
+    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
+    model = HourlyModel().fit(baseline_data)
+
+    assert model.settings_deviations == {}

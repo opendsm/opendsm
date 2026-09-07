@@ -48,6 +48,7 @@ from opendsm.eemeter.models.hourly.regressors import (
     SafeElasticNet,
     AdaptiveElasticNetRegressor,
 )
+from opendsm.common.base_settings import settings_deviation_report
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
     DisqualifiedModelError,
@@ -438,6 +439,22 @@ class HourlyModel:
             model_fit_warning.warn()
             self.disqualification.append(model_fit_warning)
             raise DataSufficiencyError("Cannot fit model: Baseline data contains no finite observed values")
+
+    @property
+    def settings_deviations(self) -> dict:
+        """Developer-tier settings that differ from this model's reference defaults.
+
+        Recomputed from the model's own settings, so it stays correct after
+        deserialization and cannot contradict the values it describes.
+
+        Returns:
+            A dictionary keyed by dotted field path, each entry holding the field's
+            ``value`` and the reference's ``default``. Empty when the model's settings
+            are the standard OpenDSM ones for its type.
+        """
+        report = settings_deviation_report(self.settings, self._reference_settings())
+
+        return report
 
     def fit(
         self, baseline_data: HourlyBaselineData, ignore_disqualification: bool = False

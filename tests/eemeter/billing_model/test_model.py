@@ -22,6 +22,7 @@ from opendsm.eemeter.models.billing.data import (
     BillingReportingData,
 )
 from opendsm.eemeter.models.billing.model import BillingModel
+from opendsm.eemeter.models.billing.settings import BillingSettings
 from opendsm.eemeter.models.billing.weighted_model import BillingWeightedModel
 from opendsm.eemeter.models.daily.utilities.settings import DailySettings
 
@@ -188,3 +189,14 @@ def test_json_billing(comstock_monthly):
     ).sum()
 
     assert total_metered_savings == total_metered_savings_loaded
+
+
+def test_one_settings_object_is_judged_against_each_billing_model_reference():
+    """The reference belongs to the model, not to the settings: the same settings are
+    standard for the weighted model and nonstandard for the plain one."""
+    settings = BillingSettings(segment_minimum_count=3)
+
+    assert BillingWeightedModel(settings=settings).settings_deviations == {}
+    assert BillingModel(settings=settings).settings_deviations == {
+        "segment_minimum_count": {"value": 3, "default": 10}
+    }
