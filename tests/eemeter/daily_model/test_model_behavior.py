@@ -22,7 +22,7 @@ from opendsm.eemeter import DailyModel
 
 def _daily_frame(meter, temperature):
     """Combine a daily meter series and an hourly temperature series into a model input frame."""
-    return pd.concat([meter.rename("observed"), temperature.rename("temperature")], axis=1)
+    return pd.concat([meter.rename("observed"), temperature.rename("temperature")], axis=1, sort=True)
 
 
 def _seasonal_temperature(year=2020, seed=1):
