@@ -112,7 +112,7 @@ def _reporting_df(meter_data, temperature_data):
         meter_data = meter_data.to_frame()
     meter_data = meter_data.rename(columns={meter_data.columns[0]: "observed"})
 
-    return pd.concat([meter_data, temperature_data], axis=1)
+    return pd.concat([meter_data, temperature_data], axis=1, sort=True)
 
 
 @pytest.mark.regression

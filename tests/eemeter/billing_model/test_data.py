@@ -313,7 +313,7 @@ def test_billing_baseline_data_with_specific_hourly_input(comstock_hourly, snaps
     df_b, _ = comstock_hourly
     meter, temperature = _meter_temp(df_b)
 
-    cls = BillingBaselineData(pd.concat([meter, temperature], axis=1), is_electricity_data=True)
+    cls = BillingBaselineData(pd.concat([meter, temperature], axis=1, sort=True), is_electricity_data=True)
 
     assert cls.df is not None
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
@@ -330,7 +330,7 @@ def test_billing_baseline_data_with_specific_daily_input(comstock_daily, comstoc
     meter = sub_daily[["observed"]]
     _, temperature = _meter_temp(df_hourly)
 
-    cls = BillingBaselineData(pd.concat([meter, temperature], axis=1), is_electricity_data=True)
+    cls = BillingBaselineData(pd.concat([meter, temperature], axis=1, sort=True), is_electricity_data=True)
 
     assert cls.df is not None
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
@@ -349,7 +349,7 @@ def test_billing_baseline_data_with_specific_missing_daily_input(comstock_daily,
     meter.loc[meter.index.month == 4] = np.nan
     _, temperature = _meter_temp(df_hourly)
 
-    cls = BillingBaselineData(pd.concat([meter, temperature], axis=1), is_electricity_data=True)
+    cls = BillingBaselineData(pd.concat([meter, temperature], axis=1, sort=True), is_electricity_data=True)
 
     assert cls.df is not None
     assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
@@ -365,7 +365,7 @@ def test_billing_baseline_data_with_specific_monthly_input(comstock_monthly, com
     meter = sub_monthly[["observed"]].dropna()
     _, temperature = _meter_temp(df_hourly)
 
-    cls = BillingBaselineData(pd.concat([meter, temperature], axis=1), is_electricity_data=True)
+    cls = BillingBaselineData(pd.concat([meter, temperature], axis=1, sort=True), is_electricity_data=True)
 
     assert cls.df is not None
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
