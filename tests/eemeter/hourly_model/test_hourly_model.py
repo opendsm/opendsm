@@ -316,6 +316,48 @@ def test_hourly_dict_settings():
     assert m.settings.train_features == None
 
 
+def _nonstandard_settings_warnings(hm):
+    return [w for w in hm.warnings if w.qualified_name == "eemeter.settings.nonstandard"]
+
+
+def test_default_settings_fit_carries_no_nonstandard_settings_warning(baseline):
+    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
+    hm = HourlyModel().fit(baseline_data)
+
+    assert _nonstandard_settings_warnings(hm) == []
+
+
+def test_nonstandard_developer_setting_fit_carries_one_warning(baseline):
+    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
+    hm = HourlyModel(settings={"cvrmse_threshold": 1.2}).fit(baseline_data)
+
+    warnings = _nonstandard_settings_warnings(hm)
+    assert len(warnings) == 1
+    deviations = warnings[0].data["deviations"]
+    assert deviations["cvrmse_threshold"]["value"] == 1.2
+    assert deviations["cvrmse_threshold"]["default"] == 1.4
+
+
+def test_nonstandard_developer_setting_warning_survives_dict_round_trip(baseline):
+    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
+    hm = HourlyModel(settings={"cvrmse_threshold": 1.2}).fit(baseline_data)
+
+    rebuilt = HourlyModel.from_dict(hm.to_dict())
+
+    warnings = _nonstandard_settings_warnings(rebuilt)
+    assert len(warnings) == 1
+    deviations = warnings[0].data["deviations"]
+    assert deviations["cvrmse_threshold"]["value"] == 1.2
+    assert deviations["cvrmse_threshold"]["default"] == 1.4
+
+
+def test_solar_default_settings_fit_carries_no_nonstandard_settings_warning(baseline):
+    baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
+    hm = HourlyModel(settings=HourlySolarSettings()).fit(baseline_data)
+
+    assert _nonstandard_settings_warnings(hm) == []
+
+
 class TestFitExpGrowthDecay:
     """The edge-bin rate estimator: k for data with exponential curvature, a
     deterministic no-evidence result (k = inf) otherwise, and never an exception."""

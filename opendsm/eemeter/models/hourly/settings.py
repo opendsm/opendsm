@@ -24,7 +24,7 @@ from typing import Optional, Literal, Union, TypeVar, Dict
 
 import pywt
 
-from opendsm.common.base_settings import BaseSettings
+from opendsm.common.base_settings import BaseSettings, CustomField
 from opendsm.common.clustering.settings import ClusteringSettings
 from opendsm.common.metrics import BaselineMetrics
 from opendsm.common.const import CAlgoChoice
@@ -320,7 +320,7 @@ class Criterion(str, Enum):
 class BaseHourlySettings(BaseSettings):
     """train features used within the model"""
 
-    train_features: Optional[list[str]] = None
+    train_features: Optional[list[str]] = CustomField(default=None, developer=False)
 
     """CVRMSE threshold for model disqualification"""
     cvrmse_threshold: float = pydantic.Field(
@@ -398,13 +398,15 @@ class BaseHourlySettings(BaseSettings):
     )
 
     """supplemental time series column names"""
-    supplemental_time_series_columns: Optional[list] = pydantic.Field(
+    supplemental_time_series_columns: Optional[list] = CustomField(
         default=None,
+        developer=False,
     )
 
     """supplemental categorical column names"""
-    supplemental_categorical_columns: Optional[list] = pydantic.Field(
+    supplemental_categorical_columns: Optional[list] = CustomField(
         default=None,
+        developer=False,
     )
 
     """base model type"""
@@ -433,11 +435,12 @@ class BaseHourlySettings(BaseSettings):
     )
 
     """Significance level used for uncertainty calculations"""
-    uncertainty_alpha: float = pydantic.Field(
+    uncertainty_alpha: float = CustomField(
         default=0.1,
         ge=0,
         le=1,
         description="Significance level used for uncertainty calculations",
+        developer=False,
     )
 
     """Multiplicative scale factor for per-point uncertainty"""
@@ -453,9 +456,10 @@ class BaseHourlySettings(BaseSettings):
     )
 
     """seed for any random state assignment (ElasticNet, Clustering)"""
-    seed: Optional[int] = pydantic.Field(
+    seed: Optional[int] = CustomField(
         default=None,
         ge=0,
+        developer=False,
     )
 
     @pydantic.model_validator(mode="after")
@@ -500,8 +504,9 @@ class BaseHourlySettings(BaseSettings):
 class HourlySolarSettings(BaseHourlySettings):
     """train features used within the model"""
 
-    train_features: list[str] = pydantic.Field(
+    train_features: list[str] = CustomField(
         default=["temperature", "ghi"],
+        developer=False,
     )
 
     @pydantic.field_validator("train_features", mode="after")
@@ -520,8 +525,9 @@ class HourlyNonSolarSettings(BaseHourlySettings):
     #     default=10,
     #     ge=1,
     # )
-    train_features: list[str] = pydantic.Field(
+    train_features: list[str] = CustomField(
         default=["temperature"],
+        developer=False,
     )
 
     @pydantic.field_validator("train_features", mode="after")

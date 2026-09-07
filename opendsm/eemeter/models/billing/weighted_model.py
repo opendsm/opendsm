@@ -26,8 +26,9 @@ from opendsm.eemeter.models.billing.data import (
     BillingBaselineData,
     BillingReportingData,
 )
-from opendsm.eemeter.models.billing.settings import BillingSettings
 from opendsm.eemeter.models.daily.model import DailyModel
+from opendsm.eemeter.models.daily.utilities.settings import DailySettings
+
 
 
 class BillingWeightedModel(DailyModel):
@@ -56,30 +57,21 @@ class BillingWeightedModel(DailyModel):
     _baseline_data_type = BillingBaselineData
     _reporting_data_type = BillingReportingData
     _data_df_name = "billing_df"
+    _default_overrides = {"segment_minimum_count": 3}
 
     # TODO: lot of duplicated code between this and daily model, refactor later
     def __init__(
         self,
-        settings: dict | None = None,
+        settings: dict | DailySettings | None = None,
         verbose: bool = False,
     ):
-        super().__init__(model="legacy", settings=settings, verbose=verbose)
+        if not isinstance(settings, DailySettings):
+            settings = {"preset": "legacy", **self._default_overrides, **(settings or {})}
 
-        print("The weighted billing model is under development and is not ready for public use.")
+        super().__init__(settings=settings, verbose=verbose)
 
-    def _initialize_settings(
-        self,
-        model: str = "current",
-        settings: dict | None = None
-    ) -> None:
-
-        # Note: Model designates the base settings, it can be 'current' or 'legacy'
-        #       Settings is to be a dictionary of settings to be changed
-
-        if settings is None:
-            settings = {}
-
-        self.settings = BillingSettings(**settings)
+    def _reference_settings(self) -> DailySettings:
+        return DailySettings(preset="legacy", **self._default_overrides)
 
     def fit(
         self, 
@@ -196,6 +188,5 @@ class BillingWeightedModel(DailyModel):
             Model parameters.
         """
         model_dict = super().to_dict()
-        model_dict["settings"]["developer_mode"] = True
 
         return model_dict

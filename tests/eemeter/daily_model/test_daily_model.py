@@ -175,6 +175,86 @@ def test_to_dict_tags_model_type_daily(comstock_daily):
     assert rebuilt.to_dict()["model_type"] == "daily"
 
 
+def test_daily_model_rejects_legacy_model_kwarg():
+    with pytest.raises(TypeError):
+        DailyModel(model="legacy")
+
+
+@pytest.fixture(scope="module")
+def default_fitted_daily_model(comstock_daily):
+    df_b, _ = comstock_daily
+    baseline_data = DailyBaselineData(df=df_b.reset_index(), is_electricity_data=True)
+
+    return DailyModel().fit(baseline_data, ignore_disqualification=True)
+
+
+def _has_nonstandard_settings_warning(warnings):
+    return any(w.qualified_name == "eemeter.settings.nonstandard" for w in warnings)
+
+
+def test_default_settings_fit_has_no_nonstandard_settings_warning(default_fitted_daily_model):
+    assert not _has_nonstandard_settings_warning(default_fitted_daily_model.warnings)
+
+
+def test_nonstandard_setting_fit_carries_deviation_warning(comstock_daily, caplog):
+    df_b, _ = comstock_daily
+    baseline_data = DailyBaselineData(df=df_b.reset_index(), is_electricity_data=True)
+    with caplog.at_level("WARNING"):
+        baseline_model = DailyModel(settings={"segment_minimum_count": 8}).fit(
+            baseline_data, ignore_disqualification=True
+        )
+    assert "segment_minimum_count" in caplog.text
+
+    matching = [
+        w
+        for w in baseline_model.warnings
+        if w.qualified_name == "eemeter.settings.nonstandard"
+    ]
+    assert len(matching) == 1
+
+    deviation = matching[0].data["deviations"]["segment_minimum_count"]
+    assert deviation["value"] == 8
+    assert deviation["default"] == 6
+
+
+def test_legacy_preset_fit_has_no_nonstandard_settings_warning(comstock_daily):
+    df_b, _ = comstock_daily
+    baseline_data = DailyBaselineData(df=df_b.reset_index(), is_electricity_data=True)
+    baseline_model = DailyModel(settings={"preset": "legacy"}).fit(
+        baseline_data, ignore_disqualification=True
+    )
+
+    assert not _has_nonstandard_settings_warning(baseline_model.warnings)
+
+
+def test_nonstandard_settings_warning_survives_to_dict_round_trip(comstock_daily):
+    df_b, _ = comstock_daily
+    baseline_data = DailyBaselineData(df=df_b.reset_index(), is_electricity_data=True)
+    baseline_model = DailyModel(settings={"segment_minimum_count": 8}).fit(
+        baseline_data, ignore_disqualification=True
+    )
+
+    rebuilt = DailyModel.from_dict(baseline_model.to_dict())
+
+    assert _has_nonstandard_settings_warning(rebuilt.warnings)
+
+    matching = [
+        w
+        for w in rebuilt.warnings
+        if w.qualified_name == "eemeter.settings.nonstandard"
+    ]
+    deviation = matching[0].data["deviations"]["segment_minimum_count"]
+    assert deviation == {"value": 8, "default": 6}
+
+
+def test_from_dict_accepts_developer_mode_settings_without_preset(default_fitted_daily_model):
+    model_dict = default_fitted_daily_model.to_dict()
+    model_dict["settings"]["developer_mode"] = True
+    del model_dict["settings"]["preset"]
+
+    DailyModel.from_dict(model_dict)
+
+
 def test_legacy_deserialization_daily(comstock_daily, snapshot):
     legacy_model_dict = {
         "model_type": "hdd_only",

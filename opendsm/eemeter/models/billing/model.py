@@ -27,6 +27,8 @@ from opendsm.eemeter.models.billing.data import (
     BillingReportingData,
 )
 from opendsm.eemeter.models.daily.model import DailyModel
+from opendsm.eemeter.models.daily.utilities.settings import DailySettings
+
 
 
 class BillingModel(DailyModel):
@@ -55,8 +57,18 @@ class BillingModel(DailyModel):
     _reporting_data_type = BillingReportingData
     _data_df_name = "df"
 
-    def __init__(self, settings=None, verbose: bool = False,):
-        super().__init__(model="legacy", settings=settings, verbose=verbose)
+    def __init__(
+        self,
+        settings: dict | DailySettings | None = None,
+        verbose: bool = False,
+    ):
+        if not isinstance(settings, DailySettings):
+            settings = {"preset": "legacy", **(settings or {})}
+
+        super().__init__(settings=settings, verbose=verbose)
+
+    def _reference_settings(self) -> DailySettings:
+        return DailySettings(preset="legacy")
 
     def fit(
         self, 
@@ -173,7 +185,6 @@ class BillingModel(DailyModel):
             Model parameters.
         """
         model_dict = super().to_dict()
-        model_dict["settings"]["developer_mode"] = True
         model_dict["model_type"] = "billing"
 
         return model_dict
