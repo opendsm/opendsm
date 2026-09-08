@@ -36,10 +36,13 @@ from opendsm.eemeter.models.hourly.data import (
 from opendsm.eemeter.models.hourly.model import HourlyModel
 from opendsm.eemeter.common.data_settings import HourlyDataSettings
 
-from .helpers import (
-    create_hourly_dataframe,
+from eemeter.perturbations import (
     create_repeated_values,
     create_extreme_values,
+)
+
+from .helpers import (
+    create_hourly_dataframe,
     assert_has_disqualification,
     assert_has_infeasible,
     assert_has_warning,

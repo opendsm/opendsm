@@ -18,7 +18,6 @@ import numpy as np
 import pandas as pd
 
 
-
 def create_hourly_dataframe(
     start="2019-01-01",
     end="2019-12-31",
@@ -60,32 +59,6 @@ def create_hourly_dataframe(
         seasonal_ghi = 300 + 200 * np.sin(2 * np.pi * (day_of_year - 172) / 365)
         ghi = np.where(is_daytime, seasonal_ghi * sun_angle, 0)
         df["ghi"] = ghi
-
-    return df
-
-
-def create_repeated_values(df, repeat_pct):
-    """Copy of ``df`` whose first ``repeat_pct`` fraction of rows (0.75 for 75%) take the first
-    ``observed`` value."""
-    df = df.copy()
-    n_repeat = int(len(df) * repeat_pct)
-    repeated_value = df["observed"].iloc[0]
-    df.loc[df.index[:n_repeat], "observed"] = repeated_value
-
-    return df
-
-
-def create_extreme_values(df, n_extreme, column="observed", seed=0):
-    """Copy of ``df`` with ``n_extreme`` rows of ``column``, chosen by ``seed``, overwritten with
-    twice the Q3 + 3*IQR fence."""
-    df = df.copy()
-    q1 = df[column].quantile(0.25)
-    q3 = df[column].quantile(0.75)
-    iqr = q3 - q1
-    upper_bound = q3 + 3 * iqr
-
-    extreme_indices = np.random.default_rng(seed).choice(len(df), n_extreme, replace=False)
-    df.loc[df.index[extreme_indices], column] = upper_bound * 2
 
     return df
 

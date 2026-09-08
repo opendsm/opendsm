@@ -90,7 +90,7 @@ def comstock_monthly(_comstock_monthly_all):
     return _meter_subset(df_b, COMSTOCK_DEFAULT_METER_ID), _meter_subset(df_r, COMSTOCK_DEFAULT_METER_ID)
 
 
-@pytest.fixture(params=COMSTOCK_METER_IDS, ids=[str(i) for i in COMSTOCK_METER_IDS])
+@pytest.fixture(scope="session", params=COMSTOCK_METER_IDS, ids=[str(i) for i in COMSTOCK_METER_IDS])
 def comstock_hourly_diverse(request, _comstock_hourly_all):
     """Parametrized: yields each of the 5 diverse meters' hourly baseline+reporting with freq='h'."""
     df_b, df_r = _comstock_hourly_all
@@ -100,14 +100,14 @@ def comstock_hourly_diverse(request, _comstock_hourly_all):
     )
 
 
-@pytest.fixture(params=COMSTOCK_METER_IDS, ids=[str(i) for i in COMSTOCK_METER_IDS])
+@pytest.fixture(scope="session", params=COMSTOCK_METER_IDS, ids=[str(i) for i in COMSTOCK_METER_IDS])
 def comstock_daily_diverse(request, _comstock_daily_all):
     """Parametrized: yields each of the 5 diverse meters' daily baseline+reporting."""
     df_b, df_r = _comstock_daily_all
     return _meter_subset(df_b, request.param), _meter_subset(df_r, request.param)
 
 
-@pytest.fixture(params=COMSTOCK_METER_IDS, ids=[str(i) for i in COMSTOCK_METER_IDS])
+@pytest.fixture(scope="session", params=COMSTOCK_METER_IDS, ids=[str(i) for i in COMSTOCK_METER_IDS])
 def comstock_monthly_diverse(request, _comstock_monthly_all):
     """Parametrized: yields each of the 5 diverse meters' monthly baseline+reporting."""
     df_b, df_r = _comstock_monthly_all

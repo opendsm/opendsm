@@ -1767,3 +1767,64 @@ def test_unusable_observed_raises_infeasible_regardless_of_enforced(
         entry.qualified_name == "eemeter.sufficiency_criteria.no_data"
         for entry in exc_info.value.entries
     )
+
+
+# ===== Supplemental features and DST-spanning prediction =====
+
+
+@pytest.mark.slow
+@pytest.mark.hourly_model
+@pytest.mark.filterwarnings("ignore:Objective did not converge.")
+def test_supplemental_features_fit_and_predict(baseline_with_supplemental_features, reporting):
+    """A custom time-series column and a custom categorical column, declared
+    through the hourly settings' supplemental_time_series_columns and
+    supplemental_categorical_columns, are picked up as features and the fitted
+    model predicts on reporting data that carries the same columns.
+
+    The drop-a-fit-feature-from-reporting -> ValueError case is already pinned
+    by test_predict_missing_fit_features for the same code path (ghi as the
+    dropped feature), so it is not duplicated here.
+    """
+    rng = np.random.default_rng(42)
+    reporting = reporting.copy()
+    reporting["custom_ts_feature"] = rng.standard_normal(len(reporting))
+    # categorical columns are one-hot encoded numerically; string labels reach
+    # the design matrix as-is and fail to cast, so the codes are supplied here
+    reporting["custom_cat_feature"] = rng.integers(0, 3, len(reporting))
+
+    hm = HourlyModel(
+        settings={
+            "supplemental_time_series_columns": ["custom_ts_feature"],
+            "supplemental_categorical_columns": ["custom_cat_feature"],
+        }
+    ).fit(baseline_with_supplemental_features, is_electricity_data=True)
+
+    # both fields are non-developer-tier, so declaring them carries no settings deviation
+    assert hm.settings_deviations == {}
+
+    prediction = hm.predict(reporting)
+    assert "predicted" in prediction.columns
+
+
+@pytest.mark.slow
+@pytest.mark.hourly_model
+def test_predict_spans_dst_transitions_with_no_nan_and_full_coverage(
+    dst_transition_baseline, dst_transition_reporting
+):
+    """Predicting across both DST transitions covers every input hour and leaves
+    no NaN prediction on either transition day.
+
+    Predict returns the built frame, which is padded out to whole local days, so
+    it covers the input rather than matching it row for row.
+    """
+    hm = HourlyModel().fit(dst_transition_baseline, is_electricity_data=True)
+
+    prediction = hm.predict(dst_transition_reporting)
+
+    missing = dst_transition_reporting.index.difference(prediction.index)
+    assert missing.empty, f"prediction dropped {len(missing)} input hours"
+
+    spring_forward = prediction.loc["2020-03-08"]
+    fall_back = prediction.loc["2020-11-01"]
+    assert not spring_forward["predicted"].isna().any()
+    assert not fall_back["predicted"].isna().any()
