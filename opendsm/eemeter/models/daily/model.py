@@ -199,7 +199,7 @@ class DailyModel:
         df: pd.DataFrame,
         *,
         is_electricity_data: bool,
-        ignore_disqualification: bool = False,
+        enforce_compliance: bool = True,
     ) -> DailyModel:
         """Fit the model on a baseline dataframe.
 
@@ -207,7 +207,7 @@ class DailyModel:
             df: Baseline data indexed by a tz-aware DatetimeIndex, or containing a tz-aware
                 'datetime' column, with 'observed' and 'temperature' columns.
             is_electricity_data: Whether the observed values are electricity usage.
-            ignore_disqualification: Whether to ignore disqualification errors / warnings.
+            enforce_compliance: Whether to enforce data-sufficiency compliance. Defaults to True.
 
         Returns:
             The fitted model.
@@ -238,7 +238,7 @@ class DailyModel:
             self.warnings.append(trim_warning)
             trim_warning.warn()
 
-        if self.disqualification and not ignore_disqualification:
+        if self.disqualification and enforce_compliance:
             raise DataSufficiencyError(
                 "Can't fit model on disqualified baseline data",
                 disqualification=self.disqualification,
@@ -279,15 +279,15 @@ class DailyModel:
         self.is_fitted = True
         return self
 
-    def _check_predictable(self, data, ignore_disqualification: bool) -> None:
+    def _check_predictable(self, data, enforce_compliance: bool) -> None:
         """Raise unless this fitted model may predict on the built data object."""
 
         if not self.is_fitted:
             raise RuntimeError("Model must be fit before predictions can be made.")
 
-        if self.disqualification and not ignore_disqualification:
+        if self.disqualification and enforce_compliance:
             raise DisqualifiedModelError(
-                "Attempting to predict using disqualified model without setting ignore_disqualification=True"
+                "Attempting to predict using disqualified model without setting enforce_compliance=False"
             )
 
         if self._check_timezone and str(self.baseline_timezone) != str(data.tz):
@@ -299,10 +299,10 @@ class DailyModel:
                 "Reporting data must use the same timezone that the model was initially fit on."
             )
 
-    def _predict_data(self, data, ignore_disqualification: bool = False) -> pd.DataFrame:
+    def _predict_data(self, data, enforce_compliance: bool = True) -> pd.DataFrame:
         """Predict on an already built reporting or baseline data object."""
 
-        self._check_predictable(data, ignore_disqualification)
+        self._check_predictable(data, enforce_compliance)
         df = getattr(data, self._data_df_name)
         df_res = self._predict(df)
 
@@ -312,7 +312,7 @@ class DailyModel:
         self,
         df: pd.DataFrame,
         *,
-        ignore_disqualification: bool = False,
+        enforce_compliance: bool = True,
     ) -> pd.DataFrame:
         """Predicts the energy consumption using the fitted model.
 
@@ -320,14 +320,14 @@ class DailyModel:
             df: Reporting data indexed by a tz-aware DatetimeIndex, or containing a tz-aware
                 'datetime' column, with a 'temperature' column. An 'observed' column is
                 optional and is passed through to the output.
-            ignore_disqualification: Whether to ignore model disqualification. Defaults to False.
+            enforce_compliance: Whether to enforce model disqualification. Defaults to True.
 
         Returns:
             Dataframe with input data along with predicted energy consumption.
 
         Raises:
             RuntimeError: If the model is not fitted.
-            DisqualifiedModelError: If the model is disqualified and ignore_disqualification is False.
+            DisqualifiedModelError: If the model is disqualified and enforce_compliance is True.
             ValueError: If the reporting data has a different timezone than the model.
             TypeError: If df is not a dataframe.
         """
@@ -335,7 +335,7 @@ class DailyModel:
         if not self.is_fitted:
             raise RuntimeError("Model must be fit before predictions can be made.")
 
-        df_res = self._predict_data(self._reporting_data(df), ignore_disqualification)
+        df_res = self._predict_data(self._reporting_data(df), enforce_compliance)
 
         return df_res
 
@@ -625,7 +625,7 @@ class DailyModel:
         except ImportError:  # pragma: no cover
             raise ImportError("matplotlib is required for plotting.")
 
-        predicted = self._predict_data(self._reporting_data(df), ignore_disqualification=True)
+        predicted = self._predict_data(self._reporting_data(df), enforce_compliance=False)
 
         return plot(self, predicted, ax=ax, **kwargs)
 

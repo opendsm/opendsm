@@ -36,7 +36,7 @@ def baseline_df(comstock_monthly):
 @pytest.fixture(scope="session")
 def fitted_model(baseline_df):
     model = BillingModel().fit(
-        baseline_df, is_electricity_data=True, ignore_disqualification=True
+        baseline_df, is_electricity_data=True, enforce_compliance=False
     )
 
     return model
@@ -45,7 +45,7 @@ def fitted_model(baseline_df):
 @pytest.fixture(scope="session")
 def fitted_weighted_model(baseline_df):
     model = BillingWeightedModel().fit(
-        baseline_df, is_electricity_data=True, ignore_disqualification=True
+        baseline_df, is_electricity_data=True, enforce_compliance=False
     )
 
     return model
@@ -89,7 +89,7 @@ def test_settings_dump_keeps_billing_sufficiency_settings(model_class):
 def test_nonstandard_setting_fit_carries_deviation_warning(baseline_df):
     """A caller-supplied deviation from BillingModel's defaults warns exactly once."""
     baseline_model = BillingModel(settings={"segment_minimum_count": 4}).fit(
-        baseline_df, is_electricity_data=True, ignore_disqualification=True
+        baseline_df, is_electricity_data=True, enforce_compliance=False
     )
 
     matching = [
@@ -175,6 +175,29 @@ def test_predict_bad_aggregation_raises(fitted_model, baseline_df):
         fitted_model.predict(baseline_df, aggregation="weekly")
 
 
+@pytest.mark.parametrize("model_fixture", ["fitted_model", "fitted_weighted_model"])
+def test_predict_enforce_compliance_never_binds_to_aggregation(
+    model_fixture, baseline_df, request
+):
+    """Both billing models forward enforce_compliance past their aggregation parameter.
+
+    Billing is the only family whose predict takes `aggregation` between the frame and
+    `enforce_compliance`. The flag must travel by keyword; bound positionally it lands
+    in `aggregation` and predict raises.
+    """
+    model = request.getfixturevalue(model_fixture)
+
+    native = model.predict(baseline_df)
+    relaxed = model.predict(baseline_df, enforce_compliance=False)
+
+    assert len(relaxed) == len(native), (
+        f"enforce_compliance changed the row count: {len(relaxed)} vs {len(native)}"
+    )
+    assert relaxed["predicted"].sum() == pytest.approx(
+        native["predicted"].sum(), rel=1e-12
+    )
+
+
 def test_fit_rejects_positional_is_electricity_data(baseline_df):
     """is_electricity_data must be passed as a keyword; a positional call is rejected."""
     with pytest.raises(TypeError):
@@ -184,7 +207,7 @@ def test_fit_rejects_positional_is_electricity_data(baseline_df):
 def test_fit_with_keyword_is_electricity_data_succeeds(baseline_df):
     """Passing is_electricity_data as a keyword fits the model."""
     model = BillingModel().fit(
-        baseline_df, is_electricity_data=True, ignore_disqualification=True
+        baseline_df, is_electricity_data=True, enforce_compliance=False
     )
 
     assert model.is_fitted
@@ -227,7 +250,7 @@ def test_padded_baseline_trims_to_the_same_fit(comstock_monthly):
     df = df_b.reset_index()
 
     unpadded_model = BillingModel().fit(
-        df, is_electricity_data=True, ignore_disqualification=True
+        df, is_electricity_data=True, enforce_compliance=False
     )
 
     leading_row = df.iloc[[0]].copy()
@@ -237,7 +260,7 @@ def test_padded_baseline_trims_to_the_same_fit(comstock_monthly):
     padded_df = pd.concat([leading_row, df], ignore_index=True)
 
     padded_model = BillingModel().fit(
-        padded_df, is_electricity_data=True, ignore_disqualification=True
+        padded_df, is_electricity_data=True, enforce_compliance=False
     )
 
     trim_warnings = [
@@ -263,7 +286,7 @@ def test_trailing_period_closing_row_survives_trimming(comstock_monthly):
     padded_df = pd.concat([df, closing_row], ignore_index=True)
 
     model = BillingModel().fit(
-        padded_df, is_electricity_data=True, ignore_disqualification=True
+        padded_df, is_electricity_data=True, enforce_compliance=False
     )
 
     trim_warnings = [
@@ -347,7 +370,7 @@ def test_predict_aggregation_keyword_reproduces_native_totals(fitted_model, base
 def test_json_billing(comstock_monthly):
     df_b, df_r = comstock_monthly
     baseline_model = BillingModel().fit(
-        df_b.reset_index(), is_electricity_data=True, ignore_disqualification=True
+        df_b.reset_index(), is_electricity_data=True, enforce_compliance=False
     )
 
     reporting_df = df_r.reset_index()

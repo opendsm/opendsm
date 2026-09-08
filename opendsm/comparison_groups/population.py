@@ -321,7 +321,7 @@ class MeterPopulation:
         *,
         is_electricity_data,
         settings=None,
-        ignore_disqualification=False,
+        enforce_compliance=True,
         features=None,
         **kwargs,
     ):
@@ -354,7 +354,7 @@ class MeterPopulation:
                 model.fit(
                     df,
                     is_electricity_data=is_electricity_data,
-                    ignore_disqualification=ignore_disqualification,
+                    enforce_compliance=enforce_compliance,
                 )
             except DataSufficiencyError as exc:
                 detail = exclusions.format_warnings(exc.disqualification) or str(exc)

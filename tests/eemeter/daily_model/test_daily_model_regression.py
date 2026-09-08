@@ -47,7 +47,7 @@ def daily_reporting_data(comstock_daily):
 @pytest.fixture(scope="session")
 def daily_model_fit(daily_baseline_data):
     model = DailyModel().fit(
-        daily_baseline_data, is_electricity_data=True, ignore_disqualification=True
+        daily_baseline_data, is_electricity_data=True, enforce_compliance=False
     )
 
     return model

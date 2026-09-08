@@ -503,7 +503,7 @@ class HourlyModel:
         *,
         is_electricity_data: bool,
         pv_start: date | str | None = None,
-        ignore_disqualification: bool = False,
+        enforce_compliance: bool = True,
     ) -> HourlyModel:
         """Fit the model using baseline meter data.
 
@@ -514,7 +514,7 @@ class HourlyModel:
                 are used as additional features.
             is_electricity_data: Whether the meter data is electricity data.
             pv_start: Date solar generation began, if any.
-            ignore_disqualification: Whether to ignore disqualification errors / warnings.
+            enforce_compliance: Whether to enforce data-sufficiency compliance. Defaults to True.
 
         Returns:
             The fitted model.
@@ -549,7 +549,7 @@ class HourlyModel:
             trim_warning.warn()
             self.warnings.append(trim_warning)
 
-        if self.disqualification and not ignore_disqualification:
+        if self.disqualification and enforce_compliance:
             raise DataSufficiencyError(
                 "Can't fit model on disqualified baseline data",
                 disqualification=self.disqualification,
@@ -604,7 +604,7 @@ class HourlyModel:
         self,
         df: pd.DataFrame,
         *,
-        ignore_disqualification: bool = False,
+        enforce_compliance: bool = True,
     ) -> pd.DataFrame:
         """Predicts the energy consumption using the fitted model.
 
@@ -614,14 +614,14 @@ class HourlyModel:
                 required when the model was fit with the solar feature set. Any
                 supplemental columns named in the hourly settings are used as additional
                 features.
-            ignore_disqualification: Whether to ignore model disqualification. Defaults to False.
+            enforce_compliance: Whether to enforce model disqualification. Defaults to True.
 
         Returns:
             Dataframe with input data along with predicted energy consumption.
 
         Raises:
             RuntimeError: If the model is not fitted.
-            DisqualifiedModelError: If the model is disqualified and ignore_disqualification is False.
+            DisqualifiedModelError: If the model is disqualified and enforce_compliance is True.
             TypeError: If df is a data object rather than a dataframe.
         """
         if isinstance(df, (HourlyBaselineData, HourlyReportingData)):
@@ -632,12 +632,12 @@ class HourlyModel:
 
         reporting_data = self._reporting_data(df)
         df_predicted = self._predict_data(
-            reporting_data, ignore_disqualification=ignore_disqualification
+            reporting_data, enforce_compliance=enforce_compliance
         )
 
         return df_predicted
 
-    def _predict_data(self, data, ignore_disqualification=False) -> pd.DataFrame:
+    def _predict_data(self, data, enforce_compliance=True) -> pd.DataFrame:
         """Predict on an already built baseline or reporting data object."""
         if not self._is_fit:
             raise RuntimeError("Model must be fit before predictions can be made.")
@@ -659,9 +659,9 @@ class HourlyModel:
                 "Reporting data must use the same timezone that the model was initially fit on."
             )
 
-        if self.disqualification and not ignore_disqualification:
+        if self.disqualification and enforce_compliance:
             raise DisqualifiedModelError(
-                "Attempting to predict using disqualified model without setting ignore_disqualification=True"
+                "Attempting to predict using disqualified model without setting enforce_compliance=False"
             )
 
         return self._predict(data)

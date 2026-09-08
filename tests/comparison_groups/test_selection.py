@@ -582,7 +582,7 @@ def daily_model():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         model = DailyModel().fit(
-            _daily_baseline(seed=0), is_electricity_data=True, ignore_disqualification=True
+            _daily_baseline(seed=0), is_electricity_data=True, enforce_compliance=False
         )
 
     return model
