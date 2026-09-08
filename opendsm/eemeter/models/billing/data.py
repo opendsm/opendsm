@@ -56,7 +56,7 @@ class _BillingData(_DailyData):
     def _compute_meter_value_df(self, df: pd.DataFrame):
         """
         Computes the meter value DataFrame by cleaning and processing the observed meter data.
-        1. The data frequency is computed from the non null rows. If the billing cycle is mixed between monthly and bimonthly, then the data frequency is bimonthly
+        1. The data frequency is computed from the non null rows, by the median gap between reads. A cycle that mixes monthly and bimonthly reads therefore resolves to monthly whenever monthly reads are the majority, and the longer reads are disqualified downstream as off-cycle.
         2. The meter data is cleaned and downsampled/upsampled into the correct frequency using clean_billing_daily_data()
         3. Add missing days as NaN by merging with a full year daily index.
 

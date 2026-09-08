@@ -524,3 +524,23 @@ def test_dst_handling():
     df = DataFrame({"observed": [1] * 3, "temperature": [50] * 3}, index=idx)
     baseline = BillingBaselineData(df, is_electricity_data=True)
     assert (baseline.df.index.hour == 1).all()
+
+
+def test_mixed_monthly_and_bimonthly_reads_infer_monthly(comstock_monthly):
+    """A read schedule mixing monthly and bimonthly periods resolves to monthly.
+
+    Data frequency comes from the median gap between reads, so a majority-monthly
+    schedule is treated as monthly and the longer reads are disqualified as
+    off-cycle rather than the whole series being read as bimonthly.
+    """
+    df_b, _ = comstock_monthly
+    df = df_b.copy()
+    observed = df["observed"].dropna()
+    merged_reads = observed.index[7::2][:3]
+    df.loc[merged_reads, "observed"] = np.nan
+
+    data = BillingBaselineData(df.reset_index(), is_electricity_data=True)
+
+    names = {entry.qualified_name for entry in data.compliance.disqualification}
+    assert "eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data" in names
+    assert "eemeter.sufficiency_criteria.offcycle_reads_in_billing_bimonthly_data" not in names

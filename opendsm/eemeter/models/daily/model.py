@@ -181,9 +181,9 @@ class DailyModel:
         return self._baseline_df.copy()
 
     def _reject_data_object(self, df) -> None:
-        """Raise if a data class instance is passed where a dataframe is expected."""
+        """Raise unless a dataframe was passed where a dataframe is expected."""
 
-        if isinstance(df, (self._baseline_data_type, self._reporting_data_type)):
+        if not isinstance(df, pd.DataFrame):
             raise TypeError(
                 f"Expected a pandas DataFrame, got a {type(df).__name__}. Models take "
                 "a dataframe with a tz-aware DatetimeIndex or a tz-aware 'datetime' column."

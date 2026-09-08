@@ -586,3 +586,39 @@ def test_nonstandard_settings_enforced_raises(baseline_df):
         BillingModel(settings={"segment_minimum_count": 4}).fit(
             baseline_df, is_electricity_data=True
         )
+
+
+# ---------------------------------------------------------------------------
+# edge cases in predict
+# ---------------------------------------------------------------------------
+
+def test_predict_non_frame_raises_type_error(fitted_model):
+    """A non-dataframe argument is rejected by type, not by an attribute error
+    raised deeper in the prediction path."""
+    with pytest.raises(TypeError, match="Expected a pandas DataFrame"):
+        fitted_model.predict("not a frame")
+
+
+@pytest.mark.parametrize("aggregation", ["monthly", "bimonthly"])
+def test_predict_aggregation_on_temperature_only_frame(
+    fitted_model, baseline_df, aggregation
+):
+    """Aggregating a temperature-only prediction keeps the observed column.
+
+    A reporting frame with no observed values yields a prediction without that
+    column, so the aggregate supplies an all-NaN one and the output carries the
+    same columns whichever way the caller supplies the frame.
+    """
+    temperature_only = baseline_df.drop(columns=["observed"])
+
+    result = fitted_model.predict(
+        temperature_only, aggregation=aggregation, enforce_compliance=False
+    )
+
+    with_observed = fitted_model.predict(
+        baseline_df, aggregation=aggregation, enforce_compliance=False
+    )
+
+    assert list(result.columns) == list(with_observed.columns)
+    assert result["observed"].isna().all()
+    assert result["predicted"].notna().any()

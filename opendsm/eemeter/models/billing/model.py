@@ -105,7 +105,12 @@ class BillingModel(DailyModel):
 
             season = df_res["season"].resample(agg).first()
             temperature = df_res["temperature"].resample(agg).mean()
-            observed = df_res["observed"].resample(agg).sum()
+            # a temperature-only reporting frame carries no observed column, so the
+            # aggregate holds an all-NaN one and the output shape stays the same
+            if "observed" in df_res.columns:
+                observed = df_res["observed"].resample(agg).sum()
+            else:
+                observed = pd.Series(np.nan, index=season.index, name="observed")
             predicted = df_res["predicted"].resample(agg).sum()
             predicted_unc = df_res["predicted_unc"].resample(agg).apply(sum_quad)
             heating_load = df_res["heating_load"].resample(agg).sum()
