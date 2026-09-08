@@ -291,6 +291,7 @@ class ModelMetrics(object):
                 EEMeterWarning(
                     qualified_name="eemeter.metrics.input_series_are_of_different_lengths",
                     description="Input series are of different lengths.",
+                    severity="advisory",
                     data={
                         "observed_input_length": len(observed_input),
                         "predicted_input_length": len(predicted_input),

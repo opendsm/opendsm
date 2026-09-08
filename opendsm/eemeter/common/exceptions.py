@@ -12,64 +12,92 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+from typing import Optional
+
+from opendsm.common.exceptions import OpenDSMError
+from opendsm.common.warnings import OpenDSMWarning
+
+
+
 __all__ = (
     "EEMeterError",
+    "ComplianceError",
+    "DataSufficiencyError",
+    "InfeasibleDataError",
+    "DisqualifiedModelError",
+    "NonstandardSettingsError",
+    "ModelFitError",
+    "ModelLoadError",
     "NoBaselineDataError",
     "NoReportingDataError",
-    "MissingModelParameterError",
-    "UnrecognizedModelTypeError",
-    "DataSufficiencyError",
-    "DisqualifiedModelError",
 )
 
 
-class EEMeterError(Exception):
+class EEMeterError(OpenDSMError):
     """Base class for EEmeter library errors."""
 
-    pass
+
+class ComplianceError(EEMeterError):
+    """Base class for errors raised because compliance enforcement refused a fit or a
+    prediction.
+
+    Args:
+        message: Why the fit or prediction was refused.
+        entries: The compliance records that caused the refusal.
+
+    Attributes:
+        entries: Those records, as a list; empty when none were given. A caller looping
+            over meters reads them to report why this one was refused and move on.
+    """
+
+    def __init__(self, message: str = "", entries: Optional[list] = None):
+        super().__init__(message)
+        self.entries: list[OpenDSMWarning] = list(entries or [])
+
+
+class DataSufficiencyError(ComplianceError):
+    """Error indicating insufficient data to fit model on."""
+
+
+class InfeasibleDataError(DataSufficiencyError):
+    """Error indicating data on which no model can be fit at all."""
+
+
+class DisqualifiedModelError(ComplianceError):
+    """Error indicating attempt to predict with disqualified or poorly fit model."""
+
+
+class NonstandardSettingsError(ComplianceError):
+    """Error indicating settings that depart from the compliant reference."""
+
+
+class ModelFitError(EEMeterError):
+    """Error indicating that a model could not be fit.
+
+    Args:
+        message: Why the fit failed.
+        component: The part of the model that failed, kept as ``component``.
+        segment: The portion of the data it was being fit on, kept as ``segment``.
+    """
+
+    def __init__(
+        self,
+        message: str = "",
+        component: Optional[str] = None,
+        segment: Optional[str] = None,
+    ):
+        super().__init__(message)
+        self.component = component
+        self.segment = segment
+
+
+class ModelLoadError(EEMeterError):
+    """Error indicating that a serialized model could not be rebuilt."""
 
 
 class NoBaselineDataError(EEMeterError):
     """Error indicating lack of baseline data."""
 
-    pass
-
 
 class NoReportingDataError(EEMeterError):
     """Error indicating lack of reporting data."""
-
-    pass
-
-
-class MissingModelParameterError(EEMeterError):
-    """Error indicating missing model parameter."""
-
-    pass
-
-
-class UnrecognizedModelTypeError(EEMeterError):
-    """Error indicating unrecognized model type."""
-
-    pass
-
-
-class DataSufficiencyError(EEMeterError):
-    """Error indicating insufficient data to fit model on.
-
-    Args:
-        message: Why the fit was refused.
-        disqualification: The disqualification warnings that caused the refusal.
-
-    Attributes:
-        disqualification: Those warnings, as a list; empty when none were given.
-    """
-
-    def __init__(self, message="", disqualification=None):
-        super().__init__(message)
-        self.disqualification: list["EEMeterWarning"] = list(disqualification or [])
-
-
-class DisqualifiedModelError(EEMeterError):
-    """Error indicating attempt to predict with disqualified or poorly fit model."""
-
-    pass

@@ -11,9 +11,16 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
+import nlopt
 import numpy as np
 import pytest
-from opendsm.eemeter.models.daily.optimize import obj_fcn_dec, Optimizer
+from opendsm.eemeter.common.exceptions import ModelFitError
+from opendsm.eemeter.models.daily.optimize import (
+    obj_fcn_dec,
+    NLoptOptimizer,
+    Optimizer,
+    SciPyOptimizer,
+)
 
 from opendsm.eemeter.models.daily.objective_function import obj_fcn_decorator
 
@@ -130,3 +137,45 @@ def test_optimizer_run(get_x0, get_bnds):
     optimizer = Optimizer(obj_fcn, x0, bnds, coef_id, settings, opt_settings)
     res = optimizer.run()
     assert np.allclose(res.x, np.array([20.13393]), rtol=1e-5, atol=1e-5)
+
+
+def test_nlopt_optimizer_run_wraps_nlopt_failure(get_x0, get_bnds, monkeypatch):
+    x0 = get_x0
+    bnds = get_bnds
+    settings = Settings(algorithm_choice="nlopt_sbplx")
+    opt_settings = _get_opt_settings(settings)
+    obj_fcn = get_obj_fcn(settings)
+
+    def raise_invalid_argument(self, x0):
+        raise nlopt.invalid_argument("bad optimizer arguments")
+
+    monkeypatch.setattr(nlopt.opt, "optimize", raise_invalid_argument)
+
+    optimizer = NLoptOptimizer(obj_fcn, x0, bnds, opt_settings)
+    with pytest.raises(ModelFitError) as exc_info:
+        optimizer.run()
+
+    assert exc_info.value.component == "optimizer"
+    assert isinstance(exc_info.value.__cause__, nlopt.invalid_argument)
+
+
+def test_scipy_optimizer_run_wraps_linalg_error(get_x0, get_bnds, monkeypatch):
+    x0 = get_x0
+    bnds = get_bnds
+    settings = Settings(algorithm_choice="scipy_Nelder-Mead")
+    opt_settings = _get_opt_settings(settings)
+    obj_fcn = get_obj_fcn(settings)
+
+    def raise_linalg_error(*args, **kwargs):
+        raise np.linalg.LinAlgError("singular matrix")
+
+    monkeypatch.setattr(
+        "opendsm.eemeter.models.daily.optimize.scipy_minimize", raise_linalg_error
+    )
+
+    optimizer = SciPyOptimizer(obj_fcn, x0, bnds, opt_settings)
+    with pytest.raises(ModelFitError) as exc_info:
+        optimizer.run()
+
+    assert exc_info.value.component == "optimizer"
+    assert isinstance(exc_info.value.__cause__, np.linalg.LinAlgError)

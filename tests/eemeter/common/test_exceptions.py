@@ -12,15 +12,20 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+from opendsm.common.exceptions import OpenDSMError
+from opendsm.common.warnings import OpenDSMWarning
 from opendsm.eemeter.common import exceptions
 from opendsm.eemeter.common.exceptions import (
-    EEMeterError,
-    NoBaselineDataError,
-    NoReportingDataError,
-    MissingModelParameterError,
-    UnrecognizedModelTypeError,
+    ComplianceError,
     DataSufficiencyError,
     DisqualifiedModelError,
+    EEMeterError,
+    InfeasibleDataError,
+    ModelFitError,
+    ModelLoadError,
+    NoBaselineDataError,
+    NoReportingDataError,
+    NonstandardSettingsError,
 )
 
 import pytest
@@ -28,20 +33,37 @@ import pytest
 
 
 SUBCLASSES = [
+    ComplianceError,
+    DataSufficiencyError,
+    InfeasibleDataError,
+    DisqualifiedModelError,
+    NonstandardSettingsError,
+    ModelFitError,
+    ModelLoadError,
     NoBaselineDataError,
     NoReportingDataError,
-    MissingModelParameterError,
-    UnrecognizedModelTypeError,
+]
+
+COMPLIANCE_LEAVES = [
     DataSufficiencyError,
+    InfeasibleDataError,
     DisqualifiedModelError,
+    NonstandardSettingsError,
 ]
 
 
-def test_eemeter_error_is_catchable_as_exception():
-    """A catch-all ``except Exception`` handler sees eemeter errors, so the base class must not
-    derive from ``BaseException`` alone."""
-    with pytest.raises(Exception):
-        raise EEMeterError
+def _record(qualified_name="eemeter.test.record"):
+    record = OpenDSMWarning(
+        qualified_name=qualified_name,
+        description="a record",
+        severity="advisory",
+    )
+
+    return record
+
+
+def test_eemeter_error_is_an_opendsm_error():
+    assert issubclass(EEMeterError, OpenDSMError)
 
 
 def test_every_exported_error_is_covered():
@@ -55,3 +77,65 @@ def test_every_exported_error_is_covered():
 def test_subclass_is_catchable_as_eemeter_error(error_cls):
     with pytest.raises(EEMeterError):
         raise error_cls
+
+
+@pytest.mark.parametrize("error_cls", COMPLIANCE_LEAVES, ids=lambda cls: cls.__name__)
+def test_compliance_leaf_is_catchable_as_compliance_error(error_cls):
+    with pytest.raises(ComplianceError):
+        raise error_cls("rejected", entries=[_record()])
+
+
+def test_infeasible_data_error_occupies_the_full_lattice():
+    error = InfeasibleDataError("no fit is possible")
+
+    assert isinstance(error, DataSufficiencyError)
+    assert isinstance(error, ComplianceError)
+    assert isinstance(error, EEMeterError)
+    assert isinstance(error, OpenDSMError)
+
+
+def test_model_fit_error_is_not_a_compliance_error():
+    assert not issubclass(ModelFitError, ComplianceError)
+
+
+@pytest.mark.parametrize("error_cls", COMPLIANCE_LEAVES, ids=lambda cls: cls.__name__)
+def test_compliance_entries_default_to_an_empty_list(error_cls):
+    error = error_cls("rejected")
+
+    assert error.entries == []
+
+
+def test_compliance_entries_round_trip_the_records_given():
+    first = _record("eemeter.test.first")
+    second = _record("eemeter.test.second")
+
+    error = DataSufficiencyError("rejected", entries=[first, second])
+
+    assert error.entries == [first, second]
+
+
+def test_compliance_entries_copy_the_list_given():
+    records = [_record()]
+    error = DataSufficiencyError("rejected", entries=records)
+    records.append(_record("eemeter.test.later"))
+
+    assert len(error.entries) == 1
+
+
+def test_compliance_error_carries_its_message():
+    with pytest.raises(ComplianceError, match="rejected by compliance"):
+        raise ComplianceError("rejected by compliance")
+
+
+def test_model_fit_error_carries_component_and_segment():
+    error = ModelFitError("fit failed", component="tempc", segment="summer")
+
+    assert error.component == "tempc"
+    assert error.segment == "summer"
+
+
+def test_model_fit_error_component_and_segment_default_to_none():
+    error = ModelFitError("fit failed")
+
+    assert error.component is None
+    assert error.segment is None

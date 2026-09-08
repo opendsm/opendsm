@@ -71,6 +71,33 @@ $ pip install "opendsm[tutorial]"
 - Model serialization
 - First-class warnings reporting
 
+### Silencing warnings
+
+OpenDSM reports data-quality and settings issues as `OpenDSMWarning` instances through
+Python's `warnings` module, and every model and data object exposes them on a `compliance`
+attribute. Silence all of them with the standard `warnings` filter:
+
+```python
+import warnings
+import opendsm
+
+warnings.filterwarnings("ignore", category=opendsm.OpenDSMWarning)
+```
+
+Narrow the filter to one category, such as clustering warnings:
+
+```python
+from opendsm.common.warnings import ClusteringWarning
+
+warnings.filterwarnings("ignore", category=ClusteringWarning)
+```
+
+Or narrow it by severity, since `str(warning)` is `[severity] qualified_name: description`:
+
+```python
+warnings.filterwarnings("ignore", message=r"^\[advisory\]")
+```
+
 ## [Documentation](https://opendsm.energy/)
 
 Documenation for this library can be found [here](https://opendsm.energy/).

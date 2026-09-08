@@ -91,12 +91,12 @@ def create_extreme_values(df, n_extreme, column="observed", seed=0):
 
 
 def assert_has_disqualification(data, qualified_name):
-    names = {dq.qualified_name for dq in data.disqualification}
+    names = {dq.qualified_name for dq in data.compliance.disqualification}
     assert qualified_name in names, f"{qualified_name} not in {names}"
 
 
 def assert_has_warning(data, qualified_name):
-    names = {w.qualified_name for w in data.warnings}
+    names = {w.qualified_name for w in data.compliance.warnings}
     assert qualified_name in names, f"{qualified_name} not in {names}"
 
 

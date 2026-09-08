@@ -249,7 +249,13 @@ def obj_fcn_decorator(
             T_stdev = stdev(T_sorted, weights=weight_sorted)
             obs_stdev = stdev(obs_sorted, weights=weight_sorted)
 
-        X_enet[idx_beta] *= T_stdev / obs_stdev
+        # Zero observed variance (a constant observed segment) is treated as the
+        # same "not enough evidence for a slope" case as too few points below,
+        # penalizing the slope coefficient heavily.
+        with np.errstate(divide="ignore", invalid="ignore"):
+            slope_ratio = T_stdev / obs_stdev
+        slope_ratio = np.where(obs_stdev == 0, 1e30, slope_ratio)
+        X_enet[idx_beta] *= slope_ratio
 
         # add penalty to slope for not having enough datapoints
         X_enet[idx_beta] = np.where(

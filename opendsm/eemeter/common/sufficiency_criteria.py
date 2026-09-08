@@ -25,6 +25,7 @@ import pydantic
 from opendsm.common.base_settings import BaseSettings
 from opendsm.common.pydantic_utils import computed_field_cached_property
 
+from opendsm.eemeter.common.compliance import Compliance
 from opendsm.eemeter.common.data_settings import BaseSufficiencySettings
 
 from opendsm.eemeter.common.warnings import EEMeterWarning
@@ -92,8 +93,7 @@ class SufficiencyCriteria(BaseSettings):
     # rows are days unless a subclass says otherwise; used only when one row leaves no spacing to read
     _single_row_step = _DAY
 
-    disqualification: list[EEMeterWarning] = pydantic.Field(default_factory=list)
-    warnings: list[EEMeterWarning] = pydantic.Field(default_factory=list)
+    compliance: Compliance = pydantic.Field(default_factory=Compliance)
 
     def _should_skip_col(self, col: str) -> bool:
         """Check if a column-based check should be skipped."""
@@ -165,7 +165,7 @@ class SufficiencyCriteria(BaseSettings):
 
         valid_rows = valid_temperature_rows
 
-        if not self.is_reporting_data or self._has_observed_values:
+        if "observed" in self.data.columns and (not self.is_reporting_data or self._has_observed_values):
             valid_observed_rows = self.data.observed.notnull()
             valid_rows = valid_rows & valid_observed_rows
             self._n_valid_observed_days = _valid_days(valid_observed_rows, step)
@@ -197,15 +197,34 @@ class SufficiencyCriteria(BaseSettings):
         return self._n_valid_days
 
     def _check_no_data(self):
-        if self.data.dropna().empty:
-            self.disqualification.append(
+        """Record the infeasible entry when the frame cannot support a fit at all.
+
+        A baseline needs at least two periods carrying both a temperature and an
+        observed value; a reporting period needs at least one temperature.
+        """
+
+        if self.is_reporting_data:
+            min_usable = 1
+            usable = self.data.temperature.notna()
+        elif "observed" in self.data.columns:
+            min_usable = 2
+            usable = self.data.temperature.notna() & self.data.observed.notna()
+        else:
+            min_usable = 2
+            usable = pd.Series(False, index=self.data.index)
+
+        if int(usable.sum()) < min_usable:
+            self.compliance.record(
                 EEMeterWarning(
                     qualified_name="eemeter.sufficiency_criteria.no_data",
                     description="No data available.",
+                    severity="infeasible",
                     data={},
                 )
             )
+
             return False
+
         return True
 
     def _check_n_days_boundary_gap(self, gap_type: Literal["start", "end"]):
@@ -228,13 +247,15 @@ class SufficiencyCriteria(BaseSettings):
         if gap < 0:
             # CalTRACK 2.2.4
             err = "before" if gap_type == "start" else "after"
-            self.disqualification.append(
+            self.compliance.record(
                 EEMeterWarning(
                     qualified_name=(
                         "eemeter.sufficiency_criteria"
                         f".extra_data_{err}_requested_{gap_type}_date"
                     ),
                     description=f"Extra data found {err} requested {gap_type} date.",
+                    severity="disqualified",
+                    member="data",
                     data={
                         f"requested_{gap_type}": user_boundary.isoformat(),
                         f"data_{gap_type}": data_boundary.isoformat(),
@@ -250,12 +271,14 @@ class SufficiencyCriteria(BaseSettings):
         max_length = self.settings.max_baseline_length
 
         if self.n_days_total < min_length or self.n_days_total > max_length:
-            self.disqualification.append(
+            self.compliance.record(
                 EEMeterWarning(
                     qualified_name="eemeter.sufficiency_criteria.incorrect_number_of_total_days",
                     description=(
                         f"Baseline length is not within the expected range of {min_length}-{max_length} days."
                     ),
+                    severity="disqualified",
+                    member="data",
                     data={"n_days_total": self.n_days_total},
                 )
             )
@@ -268,10 +291,12 @@ class SufficiencyCriteria(BaseSettings):
         n_negative = int((self.data.observed < 0).sum())
         if n_negative > 0:
             # CalTrack 2.3.5
-            self.disqualification.append(
+            self.compliance.record(
                 EEMeterWarning(
                     qualified_name="eemeter.sufficiency_criteria.negative_observed_values",
                     description="Found negative Observed values",
+                    severity="disqualified",
+                    member="data",
                     data={"n_negative_observed_values": n_negative},
                 )
             )
@@ -299,13 +324,15 @@ class SufficiencyCriteria(BaseSettings):
 
         if unique_percentage < min_pct_unique:
             name = self._col_display_name(col)
-            self.disqualification.append(
+            self.compliance.record(
                 EEMeterWarning(
                     qualified_name=f"eemeter.sufficiency_criteria.insufficient_unique_{col}_values",
                     description=(
                         f"Less than {min_pct_unique*100:.0f}% of {name} values are unique. "
                         f"Data contains too many repeated values."
                     ),
+                    severity="disqualified",
+                    member="data",
                     data={
                         "n_unique_values": n_unique,
                         "n_total_values": n_total,
@@ -335,13 +362,15 @@ class SufficiencyCriteria(BaseSettings):
         valid_pct = valid_days / n_days_total if n_days_total > 0 else 0
 
         if valid_pct < min_pct:
-            self.disqualification.append(
+            self.compliance.record(
                 EEMeterWarning(
                     qualified_name=(
                         "eemeter.sufficiency_criteria"
                         f".too_many_days_with_missing_{col}_data"
                     ),
                     description=f"Too many days in data have missing {name} data.",
+                    severity="disqualified",
+                    member="data",
                     data={
                         f"n_valid_{col}_data_days": valid_days,
                         "n_days_total": n_days_total,
@@ -366,12 +395,14 @@ class SufficiencyCriteria(BaseSettings):
         )
 
         if (non_null_pct_per_month < min_pct).any():
-            self.disqualification.append(
+            self.compliance.record(
                 EEMeterWarning(
                     qualified_name=f"eemeter.sufficiency_criteria.missing_monthly_{col}_data",
                     description=(
                         f"More than {(1-min_pct)*100:.0f}% of the monthly {name} data is missing."
                     ),
+                    severity="disqualified",
+                    member="data",
                     data={
                         "lowest_monthly_coverage": _round_sig(non_null_pct_per_month.min()),
                     },
@@ -395,10 +426,11 @@ class SufficiencyCriteria(BaseSettings):
 
         if n_extreme_values > 0:
             # Inspired by CalTRACK 2.3.6
-            self.warnings.append(
+            self.compliance.record(
                 EEMeterWarning(
                     qualified_name="eemeter.sufficiency_criteria.extreme_values_detected",
                     description="Extreme values (outside 3x IQR) must be flagged for manual review.",
+                    severity="advisory",
                     data={
                         "n_extreme_values": n_extreme_values,
                         "median": _round_sig(observed.median()),
@@ -416,12 +448,13 @@ class SufficiencyCriteria(BaseSettings):
         min_pct = self.settings.observed.min_pct_hourly_coverage
         low_coverage = self.data[self.data.coverage <= min_pct]
         if not low_coverage.empty:
-            self.warnings.append(
+            self.compliance.record(
                 EEMeterWarning(
                     qualified_name="eemeter.sufficiency_criteria.missing_high_frequency_observed_data",
                     description=(
                         f"More than {(1-min_pct)*100:.0f}% of the high frequency Observed data is missing."
                     ),
+                    severity="advisory",
                     data=low_coverage.index.to_list(),
                 )
             )
@@ -435,6 +468,9 @@ class SufficiencyCriteria(BaseSettings):
 
     def check_sufficiency_baseline(self):
         self._check_no_data()
+        if self.data.empty:
+            return
+
         self._check_baseline_day_length()
         self._check_negative_observed_values()
 
@@ -447,6 +483,9 @@ class SufficiencyCriteria(BaseSettings):
 
     def check_sufficiency_reporting(self):
         self._check_no_data()
+        if self.data.empty:
+            return
+
         self._check_negative_observed_values()
 
         self._check_valid_days_percentage(col="temperature")
@@ -479,12 +518,14 @@ class HourlySufficiencyCriteria(SufficiencyCriteria):
         max_consecutive_nans = grouped.sum().max()
         allowed_consecutive_nans = self.settings.temperature.max_consecutive_hours_missing
         if max_consecutive_nans > allowed_consecutive_nans:
-            self.disqualification.append(
+            self.compliance.record(
                 EEMeterWarning(
                     qualified_name="eemeter.sufficiency_criteria.too_many_consecutive_hours_temperature_data_missing",
                     description=(
                         f"More than {allowed_consecutive_nans} hours of consecutive hourly Temperature data is missing."
                     ),
+                    severity="disqualified",
+                    member="data",
                     data={"Max_consecutive_hours_missing": int(max_consecutive_nans)},
                 )
             )
@@ -529,6 +570,7 @@ class DailySufficiencyCriteria(SufficiencyCriteria):
     def check_sufficiency_baseline(self):
         super().check_sufficiency_baseline()
 
+        self._check_unique_values(col="temperature")
         self._check_unique_values(col="observed")
 
         # self._check_valid_monthly_coverage(col="ghi")
@@ -568,13 +610,15 @@ class BillingSufficiencyCriteria(SufficiencyCriteria):
 
         invalid_mask = (filter_ < min_days) | (filter_ > max_days)
         if invalid_mask.any():
-            self.disqualification.append(
+            self.compliance.record(
                 EEMeterWarning(
                     qualified_name=f"eemeter.sufficiency_criteria.offcycle_reads_in_billing_{period_type}_data",
                     description=(
                         f"Off-cycle reads found in billing {period_type} data having a duration "
                         f"less than {min_days} days or greater than {max_days} days"
                     ),
+                    severity="disqualified",
+                    member="data",
                     data=self.data[invalid_mask].index.to_list(),
                 )
             )
@@ -645,6 +689,8 @@ class BillingSufficiencyCriteria(SufficiencyCriteria):
 
     def check_sufficiency_baseline(self):
         super().check_sufficiency_baseline()
+
+        self._check_unique_values(col="temperature")
 
         self._check_estimated_observed_values()
 

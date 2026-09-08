@@ -107,12 +107,12 @@ def test_daily_baseline_data_with_datetime_column(get_datetime_index):
     assert cls.df is not None
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
-    assert len(cls.warnings) == 1
+    assert len(cls.compliance.warnings) == 1
     assert (
-        cls.warnings[0].qualified_name
+        cls.compliance.warnings[0].qualified_name
         == "eemeter.sufficiency_criteria.unable_to_confirm_daily_temperature_sufficiency"
     )
-    assert len(cls.disqualification) == 0
+    assert len(cls.compliance.disqualification) == 0
 
 
 @pytest.mark.parametrize("get_datetime_index", [["D", True]], indirect=True)
@@ -137,12 +137,12 @@ def test_daily_baseline_data_with_same_daily_frequencies(get_datetime_index):
     assert cls.df is not None
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
-    assert len(cls.warnings) == 1
+    assert len(cls.compliance.warnings) == 1
     assert (
-        cls.warnings[0].qualified_name
+        cls.compliance.warnings[0].qualified_name
         == "eemeter.sufficiency_criteria.unable_to_confirm_daily_temperature_sufficiency"
     )
-    assert len(cls.disqualification) == 0
+    assert len(cls.compliance.disqualification) == 0
 
 
 @pytest.mark.parametrize(
@@ -170,8 +170,8 @@ def test_daily_baseline_data_with_same_hourly_frequencies(get_datetime_index):
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     # TODO: Because of the weird behaviour of as_freq() on the last hour for downsampling, so we can't add it
     assert round(cls.df.observed.sum(), 2) == round(df.observed[:-1].sum(), 2)
-    assert len(cls.warnings) == 0
-    assert len(cls.disqualification) == 0
+    assert len(cls.compliance.warnings) == 0
+    assert len(cls.compliance.disqualification) == 0
 
 
 def test_daily_baseline_data_with_daily_and_half_hourly_frequencies(
@@ -191,8 +191,8 @@ def test_daily_baseline_data_with_daily_and_half_hourly_frequencies(
     assert cls.df is not None
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
-    assert len(cls.warnings) == 0
-    assert len(cls.disqualification) == 0
+    assert len(cls.compliance.warnings) == 0
+    assert len(cls.compliance.disqualification) == 0
 
 
 def test_daily_baseline_data_with_daily_and_hourly_frequencies(
@@ -211,8 +211,8 @@ def test_daily_baseline_data_with_daily_and_hourly_frequencies(
     assert cls.df is not None
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
-    assert len(cls.warnings) == 0
-    assert len(cls.disqualification) == 0
+    assert len(cls.compliance.warnings) == 0
+    assert len(cls.compliance.disqualification) == 0
 
 
 def test_daily_baseline_data_with_extreme_values_in_daily_and_hourly_frequencies(
@@ -232,12 +232,12 @@ def test_daily_baseline_data_with_extreme_values_in_daily_and_hourly_frequencies
     assert cls.df is not None
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
-    assert len(cls.warnings) == 1
+    assert len(cls.compliance.warnings) == 1
     assert (
-        cls.warnings[0].qualified_name
+        cls.compliance.warnings[0].qualified_name
         == "eemeter.sufficiency_criteria.extreme_values_detected"
     )
-    assert len(cls.disqualification) == 0
+    assert len(cls.compliance.disqualification) == 0
 
 
 def test_daily_baseline_data_with_extreme_and_negative_values_in_daily_and_hourly_frequencies(
@@ -257,14 +257,14 @@ def test_daily_baseline_data_with_extreme_and_negative_values_in_daily_and_hourl
     assert cls.df is not None
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
-    assert len(cls.warnings) == 1
+    assert len(cls.compliance.warnings) == 1
     assert (
-        cls.warnings[0].qualified_name
+        cls.compliance.warnings[0].qualified_name
         == "eemeter.sufficiency_criteria.extreme_values_detected"
     )
-    assert len(cls.disqualification) == 1
+    assert len(cls.compliance.disqualification) == 1
     assert (
-        cls.disqualification[0].qualified_name
+        cls.compliance.disqualification[0].qualified_name
         == "eemeter.sufficiency_criteria.negative_observed_values"
     )
 
@@ -288,8 +288,8 @@ def test_daily_baseline_data_with_specific_hourly_input(comstock_hourly, snapsho
     assert cls.df is not None
     assert int(len(cls.df)) == snapshot(name="df_length")
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
-    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
-    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
+    assert sorted({w.qualified_name for w in cls.compliance.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.compliance.disqualification}) == snapshot(name="disqualification")
 
 
 def test_daily_baseline_data_with_specific_daily_input(comstock_daily, comstock_hourly, snapshot):
@@ -306,8 +306,8 @@ def test_daily_baseline_data_with_specific_daily_input(comstock_daily, comstock_
     assert cls.df is not None
     assert int(len(cls.df)) == snapshot(name="df_length")
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
-    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
-    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
+    assert sorted({w.qualified_name for w in cls.compliance.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.compliance.disqualification}) == snapshot(name="disqualification")
 
 
 def test_daily_baseline_data_with_missing_specific_daily_input(comstock_daily, comstock_hourly, snapshot):
@@ -326,8 +326,8 @@ def test_daily_baseline_data_with_missing_specific_daily_input(comstock_daily, c
     assert cls.df is not None
     assert int(len(cls.df)) == snapshot(name="df_length")
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
-    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
-    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
+    assert sorted({w.qualified_name for w in cls.compliance.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.compliance.disqualification}) == snapshot(name="disqualification")
 
 
 def test_daily_baseline_data_with_missing_hourly_temperature_data(
@@ -352,12 +352,12 @@ def test_daily_baseline_data_with_missing_hourly_temperature_data(
     assert cls.df is not None
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
-    assert len(cls.warnings) == 1
+    assert len(cls.compliance.warnings) == 1
     assert (
-        cls.warnings[0].qualified_name
+        cls.compliance.warnings[0].qualified_name
         == "eemeter.sufficiency_criteria.missing_high_frequency_temperature_data"
     )
-    assert len(cls.disqualification) == 3
+    assert len(cls.compliance.disqualification) == 3
     expected_disqualifications = [
         "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
         "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data",
@@ -365,7 +365,7 @@ def test_daily_baseline_data_with_missing_hourly_temperature_data(
     ]
     assert all(
         disqualification.qualified_name in expected_disqualifications
-        for disqualification in cls.disqualification
+        for disqualification in cls.compliance.disqualification
     )
 
 
@@ -392,12 +392,12 @@ def test_daily_baseline_data_with_missing_half_hourly_temperature_data(
     assert cls.df is not None
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
-    assert len(cls.warnings) == 1
+    assert len(cls.compliance.warnings) == 1
     assert (
-        cls.warnings[0].qualified_name
+        cls.compliance.warnings[0].qualified_name
         == "eemeter.sufficiency_criteria.missing_high_frequency_temperature_data"
     )
-    assert len(cls.disqualification) == 3
+    assert len(cls.compliance.disqualification) == 3
     expected_disqualifications = [
         "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
         "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data",
@@ -405,7 +405,7 @@ def test_daily_baseline_data_with_missing_half_hourly_temperature_data(
     ]
     assert all(
         disqualification.qualified_name in expected_disqualifications
-        for disqualification in cls.disqualification
+        for disqualification in cls.compliance.disqualification
     )
 
 
@@ -429,12 +429,12 @@ def test_daily_baseline_data_with_missing_daily_temperature_data(
     assert cls.df is not None
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
-    assert len(cls.warnings) == 1
+    assert len(cls.compliance.warnings) == 1
     assert (
-        cls.warnings[0].qualified_name
+        cls.compliance.warnings[0].qualified_name
         == "eemeter.sufficiency_criteria.unable_to_confirm_daily_temperature_sufficiency"
     )
-    assert len(cls.disqualification) == 3
+    assert len(cls.compliance.disqualification) == 3
     expected_disqualifications = [
         "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
         "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data",
@@ -442,7 +442,7 @@ def test_daily_baseline_data_with_missing_daily_temperature_data(
     ]
     assert all(
         disqualification.qualified_name in expected_disqualifications
-        for disqualification in cls.disqualification
+        for disqualification in cls.compliance.disqualification
     )
 
 
@@ -465,16 +465,16 @@ def test_daily_baseline_data_with_missing_meter_data(
     assert cls.df is not None
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
-    assert len(cls.warnings) == 0
-    # assert all(warning.qualified_name in expected_warnings for warning in cls.warnings)
-    assert len(cls.disqualification) == 2
+    assert len(cls.compliance.warnings) == 0
+    # assert all(warning.qualified_name in expected_warnings for warning in cls.compliance.warnings)
+    assert len(cls.compliance.disqualification) == 2
     expected_disqualifications = [
         "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
         "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data",
     ]
     assert all(
         disqualification.qualified_name in expected_disqualifications
-        for disqualification in cls.disqualification
+        for disqualification in cls.compliance.disqualification
     )
 
 
@@ -497,16 +497,16 @@ def test_daily_baseline_data_with_missing_meter_data_37_days(
     assert cls.df is not None
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
-    assert len(cls.warnings) == 0
-    # assert all(warning.qualified_name in expected_warnings for warning in cls.warnings)
-    assert len(cls.disqualification) == 2
+    assert len(cls.compliance.warnings) == 0
+    # assert all(warning.qualified_name in expected_warnings for warning in cls.compliance.warnings)
+    assert len(cls.compliance.disqualification) == 2
     expected_disqualifications = [
         "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
         "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data",
     ]
     assert all(
         disqualification.qualified_name in expected_disqualifications
-        for disqualification in cls.disqualification
+        for disqualification in cls.compliance.disqualification
     )
 
 
@@ -551,8 +551,8 @@ def test_daily_reporting_data_with_half_hourly_and_hourly_frequencies(
 
     assert cls.df is not None
     assert len(cls.df) == NUM_DAYS_IN_YEAR
-    assert len(cls.warnings) == 0
-    assert len(cls.disqualification) == 0
+    assert len(cls.compliance.warnings) == 0
+    assert len(cls.compliance.disqualification) == 0
 
 
 @pytest.mark.parametrize(
@@ -587,9 +587,9 @@ def test_daily_reporting_data_with_missing_half_hourly_and_hourly_frequencies(
     elif datetime_index.freq == "h":
         assert len(cls.df.temperature.dropna()) == 270
 
-    assert len(cls.warnings) == 1
+    assert len(cls.compliance.warnings) == 1
     assert (
-        cls.warnings[0].qualified_name
+        cls.compliance.warnings[0].qualified_name
         == "eemeter.sufficiency_criteria.missing_high_frequency_temperature_data"
     )
     expected_disqualifications = [
@@ -599,7 +599,7 @@ def test_daily_reporting_data_with_missing_half_hourly_and_hourly_frequencies(
     ]
     assert all(
         disqualification.qualified_name in expected_disqualifications
-        for disqualification in cls.disqualification
+        for disqualification in cls.compliance.disqualification
     )
 
 
@@ -620,13 +620,13 @@ def test_daily_reporting_data_high_frequency_temperature_warning_gives_proper_re
 
     cls = DailyReportingData(df, is_electricity_data=True)
 
-    assert len(cls.warnings) == 1
+    assert len(cls.compliance.warnings) == 1
     assert (
-        cls.warnings[0].qualified_name
+        cls.compliance.warnings[0].qualified_name
         == "eemeter.sufficiency_criteria.missing_high_frequency_temperature_data"
     )
     # Should return just the day that has too many nulls.
-    assert len(cls.warnings[0].data) == 1
+    assert len(cls.compliance.warnings[0].data) == 1
 
 
 @pytest.mark.parametrize("get_datetime_index", [["D", True]], indirect=True)
@@ -652,9 +652,9 @@ def test_daily_reporting_data_with_missing_daily_frequencies(get_datetime_index)
     assert cls.df is not None
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert len(cls.df.temperature.dropna()) == len(df.temperature.dropna())
-    assert len(cls.warnings) == 1
+    assert len(cls.compliance.warnings) == 1
     assert (
-        cls.warnings[0].qualified_name
+        cls.compliance.warnings[0].qualified_name
         == "eemeter.sufficiency_criteria.unable_to_confirm_daily_temperature_sufficiency"
     )
     expected_disqualifications = [
@@ -664,7 +664,7 @@ def test_daily_reporting_data_with_missing_daily_frequencies(get_datetime_index)
     ]
     assert all(
         disqualification.qualified_name in expected_disqualifications
-        for disqualification in cls.disqualification
+        for disqualification in cls.compliance.disqualification
     )
 
 
@@ -775,7 +775,7 @@ def test_daily_baseline_insufficient_unique_observed_disqualifies():
     baseline = DailyBaselineData(_daily_df(observed), is_electricity_data=True)
 
     insufficient = [
-        d for d in baseline.disqualification
+        d for d in baseline.compliance.disqualification
         if "insufficient_unique_observed_values" in d.qualified_name
     ]
     assert len(insufficient) == 1
@@ -791,7 +791,7 @@ def test_daily_baseline_sufficient_unique_observed_passes():
     baseline = DailyBaselineData(_daily_df(observed), is_electricity_data=True)
 
     insufficient = [
-        d for d in baseline.disqualification
+        d for d in baseline.compliance.disqualification
         if "insufficient_unique_observed_values" in d.qualified_name
     ]
     assert len(insufficient) == 0
@@ -804,7 +804,7 @@ def test_daily_reporting_flags_unique_values_when_observed_present():
     reporting = DailyReportingData(_daily_df(observed), is_electricity_data=True)
 
     insufficient = [
-        d for d in reporting.disqualification
+        d for d in reporting.compliance.disqualification
         if "insufficient_unique_observed_values" in d.qualified_name
     ]
     assert len(insufficient) == 1

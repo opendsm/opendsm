@@ -52,6 +52,11 @@ from opendsm.eemeter.models.hourly.regressors import (
 )
 from opendsm.common.base_settings import settings_deviation_report
 from opendsm.common.base_settings import lowercase_keys
+from opendsm.eemeter.common.compliance import (
+    Compliance,
+    _prior_format_entries,
+    normalize_enforce_compliance,
+)
 from opendsm.eemeter.common.data_processor_utilities import (
     require_dataframe,
     resolve_is_electricity_data,
@@ -60,8 +65,13 @@ from opendsm.eemeter.common.data_processor_utilities import (
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
     DisqualifiedModelError,
+    InfeasibleDataError,
+    ModelFitError,
+    ModelLoadError,
+    NonstandardSettingsError,
 )
 from opendsm.eemeter.common.warnings import EEMeterWarning, nonstandard_settings_warning
+from opendsm.common.warnings import OpenDSMWarning
 from opendsm.common.clustering.cluster import cluster_features
 from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict, ReportingMetrics
 from opendsm import __version__
@@ -348,8 +358,7 @@ class HourlyModel:
         self.baseline_metrics = None
         self.baseline_hour_metrics = None
 
-        self.warnings = []
-        self.disqualification = []
+        self.compliance = Compliance()
 
         self._is_electricity_data = None
         self._pv_start = None
@@ -357,14 +366,15 @@ class HourlyModel:
         self.baseline_timezone = None
         self.version = __version__
 
-    def _warn_model_mismatch(self, description):
+    def _model_mismatch_warning(self, description):
         warning = self._model_warning(
             qualified_name="eemeter.potential_model_mismatch",
             description=description,
+            severity="advisory",
             data={},
         )
-        warning.warn()
-        self.warnings.append(warning)
+
+        return warning
 
     def _set_scalers(self):
         # set scalers
@@ -424,34 +434,97 @@ class HourlyModel:
     def _reference_settings(self):
         return type(self.settings)()
 
-    def _model_prefit_check(self, baseline_data):
+    def _model_prefit_check(self, baseline_data, compliance: Compliance):
         if "ghi" in self._ts_features and "ghi" not in baseline_data.df.columns:
             raise ValueError(
                 "Model was explicitly set to use GHI, but baseline data does not contain GHI."
             )
 
         if np.allclose(baseline_data.df["observed"].values, 0):
-            model_fit_warning = self._model_warning(
-                qualified_name="eemeter.model_fit",
-                description="Model cannot be fit: Observed column contains all zeros.",
-            )
-            model_fit_warning.warn()
-            self.disqualification.append(model_fit_warning)
-            raise DataSufficiencyError(
+            self._record_infeasible(
+                compliance,
+                "Model cannot be fit: Observed column contains all zeros.",
                 "Cannot fit model: Baseline data contains all zeros in observed values",
-                disqualification=self.disqualification,
             )
 
         if baseline_data.df["observed"].isnull().all():
-            model_fit_warning = self._model_warning(
-                qualified_name="eemeter.model_fit",
-                description="Model cannot be fit: Observed column contains no finite values.",
-            )
-            model_fit_warning.warn()
-            self.disqualification.append(model_fit_warning)
-            raise DataSufficiencyError(
+            self._record_infeasible(
+                compliance,
+                "Model cannot be fit: Observed column contains no finite values.",
                 "Cannot fit model: Baseline data contains no finite observed values",
-                disqualification=self.disqualification,
+            )
+
+        fit_days = self._daily_fitting_sufficiency(baseline_data.df.copy())
+        fit_dates = pd.Series(fit_days.index.date, index=fit_days.index)
+        missing_dates = self._days_missing_supplemental(fit_days, fit_dates)
+        if not fit_days["include_date"].any():
+            if len(missing_dates) > 0:
+                self._record_infeasible(
+                    compliance,
+                    "Model cannot be fit: every day with enough measured hours is missing a "
+                    "supplemental value.",
+                    "Cannot fit model: every day with enough measured hours is missing a "
+                    "supplemental value",
+                )
+
+            min_hours = self.settings.min_daily_training_hours
+            self._record_infeasible(
+                compliance,
+                f"Model cannot be fit: No day has at least {min_hours} measured hours.",
+                f"Cannot fit model: no day has at least {min_hours} measured hours",
+            )
+
+        if len(missing_dates) > 0:
+            warning = self._model_warning(
+                qualified_name="eemeter.data_quality.supplemental_days_excluded",
+                description=(
+                    "Days missing a supplemental value were left out of the fit, and the hours "
+                    "missing one were left out of the baseline metrics."
+                ),
+                severity="advisory",
+                data={"days": len(missing_dates)},
+            )
+            warning.warn()
+            compliance.record(warning)
+
+    def _record_infeasible(
+        self, compliance: Compliance, description: str, message: str
+    ) -> None:
+        """Record an infeasible entry, emit it, and raise carrying the recorded entries."""
+
+        entry = self._model_warning(
+            qualified_name="eemeter.model_fit",
+            description=description,
+            severity="infeasible",
+        )
+        compliance.record(entry)
+        entry.warn()
+
+        self._raise_if_infeasible(compliance)
+
+    def _raise_if_infeasible(self, compliance: Compliance) -> None:
+        """Raise when a record says no model can be fit on this data at all."""
+
+        entries = [
+            entry for entry in compliance.all if entry.severity == "infeasible"
+        ]
+        if entries:
+            raise InfeasibleDataError(
+                "Can't fit any model on this baseline data", entries=entries
+            )
+
+    def _check_model_compliance(self, enforced) -> None:
+        """Raise when an enforced member is disqualified on this model."""
+
+        blocking = [
+            entry
+            for entry in self.compliance.disqualification
+            if entry.member in enforced
+        ]
+        if blocking:
+            raise DisqualifiedModelError(
+                "Attempting to predict using disqualified model without relaxing enforce_compliance",
+                entries=blocking,
             )
 
     @property
@@ -503,9 +576,11 @@ class HourlyModel:
 
     def _warn_ignored_ghi(self, baseline_data):
         if "ghi" in baseline_data.df.columns and "ghi" not in self._ts_features:
-            self._warn_model_mismatch(
+            mismatch = self._model_mismatch_warning(
                 "Model was explicitly set to ignore GHI, but baseline period contained a GHI column."
             )
+            self.compliance.record(mismatch)
+            mismatch.warn()
 
     @property
     def settings_deviations(self) -> dict:
@@ -535,18 +610,21 @@ class HourlyModel:
                 are used as additional features.
             is_electricity_data: Whether the meter data is electricity data.
             pv_start: Date solar generation began, if any.
-            enforce_compliance: Whether to enforce data-sufficiency compliance.
+            enforce_compliance: Which compliance members to enforce. True enforces all of
+                'data', 'model' and 'settings', False enforces none, and a list or tuple
+                names the members to enforce.
 
         Returns:
             The fitted model.
 
         Raises:
             TypeError: If df is not a pandas DataFrame.
-            DataSufficiencyError: If `enforce_compliance` is True and the baseline data is
-                disqualified, raised before any state changes. Also raised mid-fit by the
-                prefit check or for too few measured hours per day; the model then carries the
-                new call's fuel flag, PV start, warnings and disqualification, and in the second
-                case is unfitted.
+            NonstandardSettingsError: If settings compliance is enforced and the settings
+                deviate from the OpenDSM reference; the model is left unchanged.
+            InfeasibleDataError: If no model can be fit on the baseline data at all; the
+                model is left unchanged.
+            DataSufficiencyError: If data compliance is enforced and the baseline data is
+                disqualified; the model is left unchanged.
         """
         require_dataframe(df, "df")
 
@@ -575,41 +653,54 @@ class HourlyModel:
         """Fit on a built baseline data object, as `fit` does with the one it builds; a
         comparison-group population calls it with the object it keeps, so the data is built
         once and the model holds no copy."""
-        baseline_data.log_warnings()
+        enforced = normalize_enforce_compliance(enforce_compliance)
+        compliance = Compliance()
 
-        warnings = list(baseline_data.warnings)
-        disqualification = list(baseline_data.disqualification)
+        settings_warning = nonstandard_settings_warning(self.settings_deviations)
+        if settings_warning is not None and "settings" in enforced:
+            raise NonstandardSettingsError(
+                "Can't fit a compliant model with nonstandard settings",
+                entries=[settings_warning],
+            )
+
+        for entry in baseline_data.compliance.all:
+            compliance.record(entry)
 
         if n_leading or n_trailing:
             trim_warning = self._model_warning(
                 qualified_name="eemeter.data_quality.edge_rows_trimmed",
                 description="Rows missing observed or temperature were trimmed from the baseline edges.",
+                severity="advisory",
                 data={"leading": n_leading, "trailing": n_trailing},
             )
             trim_warning.warn()
-            warnings.append(trim_warning)
+            compliance.record(trim_warning)
 
-        if disqualification and enforce_compliance:
-            raise DataSufficiencyError(
-                "Can't fit model on disqualified baseline data",
-                disqualification=disqualification,
-            )
+        self._raise_if_infeasible(compliance)
+        self._model_prefit_check(baseline_data, compliance)
+
+        if "data" in enforced:
+            insufficient = [
+                entry
+                for entry in compliance.disqualification
+                if entry.member == "data"
+            ]
+            if insufficient:
+                raise DataSufficiencyError(
+                    "Can't fit model on disqualified baseline data",
+                    entries=insufficient,
+                )
 
         self._is_electricity_data = is_electricity_data
         self._pv_start = pv_start
-        self.warnings = warnings
-        self.disqualification = disqualification
+        self.compliance = compliance
 
         if not self._ts_features:
             self.settings = self.settings.add_default_features(baseline_data.df.columns)
             self._ts_features = self.settings.train_features.copy()
 
-        self._model_prefit_check(baseline_data)
-
-        settings_warning = nonstandard_settings_warning(self.settings_deviations)
         if settings_warning is not None:
-            self.warnings.append(settings_warning)
-            settings_warning.warn()
+            self.compliance.record(settings_warning)
 
         self._warn_ignored_ghi(baseline_data)
 
@@ -633,7 +724,14 @@ class HourlyModel:
             y_fit = y[fit_mask]
 
             # fit the model
-            self._model.fit(X_fit, y_fit)
+            try:
+                self._model.fit(X_fit, y_fit)
+            except (np.linalg.LinAlgError, FloatingPointError) as exc:
+                raise ModelFitError(
+                    f"Hourly regressor fit failed: {exc}",
+                    component="regressor",
+                    segment="fit",
+                ) from exc
             self._is_fit = True
 
             # get model prediction of baseline
@@ -657,14 +755,18 @@ class HourlyModel:
                 required when the model was fit with the solar feature set. Any
                 supplemental columns named in the hourly settings are used as additional
                 features.
-            enforce_compliance: Whether to enforce model disqualification.
+            enforce_compliance: Which compliance members to enforce. True enforces all of
+                'data', 'model' and 'settings', False enforces none, and a list or tuple
+                names the members to enforce.
 
         Returns:
             Dataframe with input data along with predicted energy consumption.
 
         Raises:
             RuntimeError: If the model is not fitted.
-            DisqualifiedModelError: If the model is disqualified and enforce_compliance is True.
+            DisqualifiedModelError: If an enforced member is disqualified on the model.
+            DataSufficiencyError: If data compliance is enforced and the reporting data
+                is disqualified.
             ValueError: If the reporting data lacks a feature the model was fit with, or has a
                 different timezone than the model.
             TypeError: If df is not a pandas DataFrame.
@@ -674,12 +776,37 @@ class HourlyModel:
         if not self._is_fit:
             raise RuntimeError("Model must be fit before predictions can be made.")
 
+        enforced = normalize_enforce_compliance(enforce_compliance)
+        self._check_model_compliance(enforced)
+
         reporting_data = self._reporting_data(df)
-        df_predicted = self._predict_data(
-            reporting_data, enforce_compliance=enforce_compliance
-        )
+        infeasible = [
+            entry for entry in reporting_data.compliance.all if entry.severity == "infeasible"
+        ]
+        if "data" in enforced and (reporting_data.compliance.disqualification or infeasible):
+            raise DataSufficiencyError(
+                "Can't predict on disqualified reporting data",
+                entries=reporting_data.compliance.disqualification + infeasible,
+            )
+
+        if infeasible:
+            for entry in infeasible:
+                entry.warn()
+
+            return self._infeasible_prediction_frame(reporting_data.df)
+
+        df_predicted = self._predict_data(reporting_data, enforce_compliance=False)
 
         return df_predicted
+
+    def _infeasible_prediction_frame(self, df: pd.DataFrame) -> pd.DataFrame:
+        """One row per input row with NaN predictions, for infeasible reporting content."""
+
+        df_res = df.copy()
+        df_res["predicted"] = np.nan
+        df_res["predicted_unc"] = np.nan
+
+        return df_res
 
     def _predict_data(self, data, enforce_compliance=True) -> pd.DataFrame:
         """Predict on an already built baseline or reporting data object. Called by `predict`
@@ -695,19 +822,16 @@ class HourlyModel:
             )
 
         if "ghi" in data.df.columns and "ghi" not in self._ts_features:
-            self._warn_model_mismatch(
+            self._model_mismatch_warning(
                 "Reporting data contains GHI, but model was fit without GHI."
-            )
+            ).warn()
 
         if str(self.baseline_timezone) != str(data.tz):
             raise ValueError(
                 "Reporting data must use the same timezone that the model was initially fit on."
             )
 
-        if self.disqualification and enforce_compliance:
-            raise DisqualifiedModelError(
-                "Attempting to predict using disqualified model without setting enforce_compliance=False"
-            )
+        self._check_model_compliance(normalize_enforce_compliance(enforce_compliance))
 
         return self._predict(data)
 
@@ -775,11 +899,18 @@ class HourlyModel:
         self._processed_meter_data = self._processed_meter_data_full[selected_features]
 
         # get feature matrices
-        X, y, fit_mask = self._get_feature_matrices(meter_data, dst_indices)
-        X = self._fill_missing_supplemental(X.astype(float), fit_mask)
+        try:
+            X, y, fit_mask = self._get_feature_matrices(meter_data, dst_indices)
+            X = self._fill_missing_supplemental(X.astype(float), fit_mask)
 
-        # Convert to sparse matrix
-        X = csr_matrix(X)
+            # Convert to sparse matrix
+            X = csr_matrix(X)
+        except (np.linalg.LinAlgError, FloatingPointError) as exc:
+            raise ModelFitError(
+                f"Hourly design matrix assembly failed: {exc}",
+                component="regressor",
+                segment="design_matrix",
+            ) from exc
 
         return X, y, fit_mask
 
@@ -1099,35 +1230,12 @@ class HourlyModel:
             # set "include_day" column to True if day has sufficient hours
             df["include_date"] = dates.isin(sufficient_days)
 
-            if not self._is_fit and not df["include_date"].any():
-                raise DataSufficiencyError(
-                    f"Cannot fit model: no day has at least {min_hours} measured hours"
-                )
-
         else:
             df["include_date"] = True
 
         # the model does not impute supplemental inputs, so a day missing one stays out of the fit
         missing_dates = self._days_missing_supplemental(df, dates)
         df["include_date"] &= ~dates.isin(missing_dates)
-
-        if not self._is_fit and len(missing_dates) > 0:
-            if not df["include_date"].any():
-                raise DataSufficiencyError(
-                    "Cannot fit model: every day with enough measured hours is missing a "
-                    "supplemental value"
-                )
-
-            warning = self._model_warning(
-                qualified_name="eemeter.data_quality.supplemental_days_excluded",
-                description=(
-                    "Days missing a supplemental value were left out of the fit, and the hours "
-                    "missing one were left out of the baseline metrics."
-                ),
-                data={"days": len(missing_dates)},
-            )
-            warning.warn()
-            self.warnings.append(warning)
 
         return df
 
@@ -1462,10 +1570,11 @@ class HourlyModel:
                     "Missing supplemental values were set to their typical baseline values for "
                     "prediction."
                 ),
+                severity="advisory",
                 data={"days": int(filled_days.sum()), "values": n_filled},
             )
             warning.warn()
-            self.warnings.append(warning)
+            self.compliance.record(warning)
 
         return X_filled
 
@@ -1586,6 +1695,8 @@ class HourlyModel:
             model_fit_warning = self._model_warning(
                 qualified_name="eemeter.model_fit_metrics",
                 description="Model disqualified due to poor fit.",
+                severity="disqualified",
+                member="model",
                 data={
                     "cvrmse_threshold": cvrmse_threshold,
                     "cvrmse_adj": cvrmse,
@@ -1594,7 +1705,7 @@ class HourlyModel:
                 },
             )
             model_fit_warning.warn()
-            self.disqualification.append(model_fit_warning)
+            self.compliance.record(model_fit_warning)
 
     def _calculate_predicted_uncertianty(self, df_eval):
         df_eval["predicted_unc"] = np.nan
@@ -1684,6 +1795,9 @@ class HourlyModel:
     def to_dict(self) -> dict:
         """Returns a dictionary of model parameters.
 
+        The compliance records are read from the model at call time, so a payload
+        always carries the records the model holds when it is written.
+
         Returns:
             Model parameters.
         """
@@ -1729,9 +1843,6 @@ class HourlyModel:
             baseline_metrics=self.baseline_metrics,
             baseline_hour_metrics=baseline_hour_metrics,
             info=self._base_settings.ModelInfo(
-                disqualification=self.disqualification,
-                warnings=self.warnings,
-
                 baseline_timezone=str(self.baseline_timezone),
                 version=self.version,
                 is_electricity_data=bool(self._is_electricity_data),
@@ -1739,7 +1850,11 @@ class HourlyModel:
             ),
         )
 
-        return params.model_dump()
+        model_dict = params.model_dump()
+        model_dict["schema_version"] = self._base_settings.SCHEMA_VERSION
+        model_dict["compliance"] = [entry.json() for entry in self.compliance.all]
+
+        return model_dict
 
     def to_json(self) -> str:
         """Returns a JSON string of model parameters.
@@ -1764,11 +1879,27 @@ class HourlyModel:
         Raises:
             ValueError: If is_electricity_data is supplied alongside a serialized value,
                 or omitted when the serialized model lacks one.
+            ModelLoadError: If the payload is malformed, or was written by a schema
+                version this package cannot read.
         """
-        info_data = dict(data.get("info"))
+        info_data = dict(data.get("info") or {})
         info_data["is_electricity_data"], prior_format_warning = resolve_is_electricity_data(
             info_data.get("is_electricity_data"), is_electricity_data
         )
+
+        payload = {**data, "info": info_data}
+        try:
+            if payload.get("schema_version") is None:
+                info = cls._base_settings.ModelInfo(**info_data)
+                entries = _prior_format_entries(info_data)
+            else:
+                validated = cls._base_settings.SerializedHourlyModel(**payload)
+                info = validated.info
+                entries = [
+                    OpenDSMWarning.from_json(entry) for entry in validated.compliance
+                ]
+        except (ValueError, KeyError) as exc:
+            raise ModelLoadError("Serialized hourly model could not be read") from exc
 
         # get settings
         settings_dict = lowercase_keys(data.get("settings"))
@@ -1837,9 +1968,9 @@ class HourlyModel:
                 for k, v in raw_hour_metrics.items()
             }
 
-        info = model_cls._base_settings.ModelInfo(**info_data)
-        model_cls.warnings = list(info.warnings)
-        model_cls.disqualification = info.disqualification
+        for entry in entries:
+            model_cls.compliance.record(entry)
+
         model_cls.baseline_timezone = info.baseline_timezone
         model_cls.version = info.version
         model_cls._is_electricity_data = info.is_electricity_data
@@ -1849,7 +1980,7 @@ class HourlyModel:
             model_cls._pv_start = date.fromisoformat(info.pv_start)
 
         if prior_format_warning is not None:
-            model_cls.warnings.append(prior_format_warning)
+            model_cls.compliance.record(prior_format_warning)
 
         return model_cls
 
