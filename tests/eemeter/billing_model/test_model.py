@@ -159,6 +159,37 @@ def test_billing_weighted_model_construction_prints_nothing(capsys):
     assert capsys.readouterr().out == ""
 
 
+def test_weighted_model_predicts_per_read_period_not_per_day(
+    fitted_model, fitted_weighted_model, baseline_df
+):
+    """The two billing models predict at different cadences on the same input.
+
+    BillingModel spreads its prediction to one row per day, while
+    BillingWeightedModel fits and predicts on the read periods themselves, so it
+    returns one row per billing period. Both index into the same span.
+    """
+    unweighted_prediction = fitted_model.predict(baseline_df)
+    weighted_prediction = fitted_weighted_model.predict(baseline_df)
+
+    assert len(weighted_prediction) < len(unweighted_prediction)
+    assert weighted_prediction.index.isin(unweighted_prediction.index).all(), (
+        "weighted read-period timestamps fall outside the daily prediction index"
+    )
+
+
+def test_weighted_model_from_dict_round_trip_predicts_identically(
+    fitted_weighted_model, baseline_df
+):
+    """A BillingWeightedModel round-tripped through to_dict/from_dict predicts the
+    same values as the original model."""
+    original_prediction = fitted_weighted_model.predict(baseline_df)
+
+    rebuilt = BillingWeightedModel.from_dict(fitted_weighted_model.to_dict())
+    rebuilt_prediction = rebuilt.predict(baseline_df)
+
+    pd.testing.assert_frame_equal(rebuilt_prediction, original_prediction, rtol=1e-12)
+
+
 # ---------------------------------------------------------------------------
 # failure paths (no fit required for the unfitted case)
 # ---------------------------------------------------------------------------

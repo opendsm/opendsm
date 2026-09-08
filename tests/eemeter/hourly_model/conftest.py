@@ -92,74 +92,6 @@ def create_hourly_dataframe(
     return df
 
 
-def create_gaps(df, gap_pattern, seed=0):
-    """Add strategic gaps to dataframe
-
-    Args:
-        df: DataFrame with hourly data
-        gap_pattern: str - 'single_hour', 'multi_hour', 'full_day', 'month'
-    """
-    df = df.copy()
-
-    if gap_pattern == "single_hour":
-        # Random single hour gaps
-        mask = np.random.default_rng(seed).random(len(df)) > 0.95
-        df.loc[mask, ["observed", "temperature"]] = np.nan
-
-    elif gap_pattern == "multi_hour":
-        # 6-hour consecutive gaps
-        start_idx = len(df) // 4
-        df.iloc[start_idx : start_idx + 6, df.columns.get_indexer(["observed", "temperature"])] = np.nan
-
-    elif gap_pattern == "full_day":
-        # Full 24-hour gap
-        start_idx = len(df) // 3
-        df.iloc[start_idx : start_idx + 24, df.columns.get_indexer(["observed", "temperature"])] = np.nan
-
-    elif gap_pattern == "month":
-        # February missing
-        feb_mask = df.index.month == 2
-        df.loc[feb_mask, ["observed", "temperature"]] = np.nan
-
-    return df
-
-
-def create_repeated_values(df, repeat_pct):
-    """Reduce uniqueness by repeating values
-
-    Args:
-        df: DataFrame with hourly data
-        repeat_pct: float - percentage of values to repeat (e.g., 0.75 for 75%)
-    """
-    df = df.copy()
-    n_repeat = int(len(df) * repeat_pct)
-    repeated_value = df["observed"].iloc[0]
-    df.loc[df.index[:n_repeat], "observed"] = repeated_value
-
-    return df
-
-
-def create_extreme_values(df, n_extreme, column="observed", seed=0):
-    """Add outliers beyond 3x IQR
-
-    Args:
-        df: DataFrame with hourly data
-        n_extreme: int - number of extreme values to add
-        column: str - column to add extremes to
-    """
-    df = df.copy()
-    q1 = df[column].quantile(0.25)
-    q3 = df[column].quantile(0.75)
-    iqr = q3 - q1
-    upper_bound = q3 + 3 * iqr
-
-    # Add values beyond upper bound
-    extreme_indices = np.random.default_rng(seed).choice(len(df), n_extreme, replace=False)
-    df.loc[df.index[extreme_indices], column] = upper_bound * 2
-
-    return df
-
-
 @pytest.fixture
 def synthetic_hourly_data():
     """Clean 365 days of hourly data, America/New_York timezone"""
@@ -167,45 +99,9 @@ def synthetic_hourly_data():
 
 
 @pytest.fixture
-def synthetic_hourly_with_gaps():
-    """Data with single-hour gaps for testing interpolation"""
-    df = create_hourly_dataframe()
-    return create_gaps(df, "single_hour")
-
-
-@pytest.fixture
 def synthetic_hourly_with_ghi():
     """Data including GHI column"""
     return create_hourly_dataframe(include_ghi=True)
-
-
-@pytest.fixture
-def synthetic_hourly_low_coverage():
-    """Data with month missing (below 90% coverage)"""
-    df = create_hourly_dataframe()
-    return create_gaps(df, "month")
-
-
-@pytest.fixture
-def synthetic_hourly_low_uniqueness():
-    """Data with <25% unique values (75% repeated)"""
-    df = create_hourly_dataframe()
-    return create_repeated_values(df, 0.76)
-
-
-@pytest.fixture
-def synthetic_hourly_with_extremes():
-    """Data with outliers beyond 3x IQR"""
-    df = create_hourly_dataframe()
-    return create_extreme_values(df, 10)
-
-
-@pytest.fixture
-def dst_transition_data():
-    """Data spanning DST transitions (spring forward, fall back)"""
-    # March 10, 2019: spring forward (2am doesn't exist)
-    # November 3, 2019: fall back (1am repeats)
-    return create_hourly_dataframe(start="2019-03-01", end="2019-11-30")
 
 
 # ===== Helper Assertion Functions =====
@@ -277,16 +173,6 @@ def baseline_with_supplemental_features(baseline):
     baseline["custom_cat_feature"] = rng.integers(0, 3, len(baseline))
 
     return baseline
-
-
-@pytest.fixture
-def baseline_extreme_temperatures(baseline):
-    """Baseline data with extreme temperature values for edge bin testing"""
-    baseline_wide = baseline.copy()
-    baseline_wide.loc[baseline_wide.index[:100], 'temperature'] = -20
-    baseline_wide.loc[baseline_wide.index[-100:], 'temperature'] = 110
-
-    return baseline_wide
 
 
 @pytest.fixture
