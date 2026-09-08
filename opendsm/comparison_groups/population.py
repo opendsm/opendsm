@@ -129,7 +129,7 @@ def default_data_settings(model_frequency):
 
 
 def _fit_meters(
-    baseline, model_frequency, is_electricity_data, settings, ignore_disqualification, reporting
+    baseline, model_frequency, is_electricity_data, settings, enforce_compliance, reporting
 ):
     """Fit one model per meter, serially. Returns ``(records, ledger)``: a record
     per meter that fits, carrying its ``reporting`` entry, and a population-stage
@@ -158,7 +158,7 @@ def _fit_meters(
             model.fit(
                 df,
                 is_electricity_data=is_electricity_data,
-                ignore_disqualification=ignore_disqualification,
+                enforce_compliance=enforce_compliance,
             )
         except DataSufficiencyError as exc:
             detail = exclusions.format_warnings(exc.disqualification) or str(exc)
@@ -386,7 +386,7 @@ class MeterPopulation:
         *,
         is_electricity_data,
         settings=None,
-        ignore_disqualification=False,
+        enforce_compliance=True,
         features=None,
         reporting=None,
     ):
@@ -413,7 +413,7 @@ class MeterPopulation:
             model_frequency,
             is_electricity_data,
             settings,
-            ignore_disqualification,
+            enforce_compliance,
             reporting,
         )
         population = cls(records, model_frequency, features=features, ledger=ledger)
@@ -1054,7 +1054,7 @@ class ComparisonPool(MeterPopulation):
         *,
         is_electricity_data,
         settings=None,
-        ignore_disqualification=False,
+        enforce_compliance=True,
         features=None,
         reporting=None,
         max_pool_size=_MAX_POOL_SIZE,
@@ -1079,7 +1079,7 @@ class ComparisonPool(MeterPopulation):
             model_frequency,
             is_electricity_data,
             settings,
-            ignore_disqualification,
+            enforce_compliance,
             kept_reporting,
         )
         ledger = _record_pool_trim(ledger, trimmed)

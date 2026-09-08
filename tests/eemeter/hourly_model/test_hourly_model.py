@@ -168,10 +168,10 @@ def test_invalid_baseline_lengths(baseline):
 
     with pytest.raises(DataSufficiencyError):
         HourlyModel().fit(short_df, is_electricity_data=True)
-    HourlyModel().fit(short_df, is_electricity_data=True, ignore_disqualification=True)
+    HourlyModel().fit(short_df, is_electricity_data=True, enforce_compliance=False)
     with pytest.raises(DataSufficiencyError):
         HourlyModel().fit(long_df, is_electricity_data=True)
-    HourlyModel().fit(long_df, is_electricity_data=True, ignore_disqualification=True)
+    HourlyModel().fit(long_df, is_electricity_data=True, enforce_compliance=False)
 
 
 def test_low_freq_temp(baseline):
@@ -389,7 +389,7 @@ def test_nonstandard_settings_warning_is_not_recorded_when_the_prefit_check_rais
 
     with caplog.at_level("WARNING", logger="eemeter"):
         with pytest.raises(DataSufficiencyError, match="no finite observed values"):
-            model.fit(df, is_electricity_data=True, ignore_disqualification=True)
+            model.fit(df, is_electricity_data=True, enforce_compliance=False)
 
     assert nonstandard_settings_warnings(model.warnings) == []
     assert "eemeter.settings.nonstandard" not in caplog.text
@@ -402,7 +402,7 @@ def test_nonstandard_settings_warning_precedes_the_ghi_mismatch_warning(
     """`model.warnings` lists the nonstandard-settings warning before the GHI-mismatch warning."""
     model = HourlyModel(settings={"train_features": ["temperature"], "cvrmse_threshold": 1.2})
 
-    model.fit(synthetic_hourly_with_ghi, is_electricity_data=True, ignore_disqualification=True)
+    model.fit(synthetic_hourly_with_ghi, is_electricity_data=True, enforce_compliance=False)
 
     names = [w.qualified_name for w in model.warnings]
     assert "eemeter.settings.nonstandard" in names and "eemeter.potential_model_mismatch" in names, names
@@ -583,7 +583,7 @@ def flagged_hourly():
 def _fit_flagged(df, **settings):
     model = HourlyModel(settings=HourlyNonSolarSettings(seed=42, **settings))
 
-    return model.fit(df, is_electricity_data=True, ignore_disqualification=True)
+    return model.fit(df, is_electricity_data=True, enforce_compliance=False)
 
 
 def _changed_fields(model_a, model_b):
@@ -750,7 +750,7 @@ class TestFitStatisticsFromIncludedDays:
         def sunday_label(window):
             # each window predicts from its own copy of the fitted model
             fresh = HourlyModel.from_dict(model.to_dict())
-            fresh.predict(measured.loc[window], ignore_disqualification=True)
+            fresh.predict(measured.loc[window], enforce_compliance=False)
             features = fresh._processed_meter_data_full
             labels = set(features.loc[features["day_of_week"] == 6, "temporal_cluster"])
             assert len(labels) == 1, f"the window's one Sunday got labels {labels}"
@@ -1111,7 +1111,7 @@ def test_predict_labels_unseen_combinations_for_that_prediction_only(baseline, r
     """A fit through November has no December clusters; a prediction reaching into
     December labels those combinations for itself and leaves the fitted table as fitted."""
     through_november = baseline[baseline.index.month != 12]
-    hm = HourlyModel().fit(through_november, is_electricity_data=True, ignore_disqualification=True)
+    hm = HourlyModel().fit(through_november, is_electricity_data=True, enforce_compliance=False)
     fitted = hm._df_temporal_clusters.copy()
     assert 12 not in fitted.index.get_level_values("month")
 

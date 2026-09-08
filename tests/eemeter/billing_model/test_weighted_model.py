@@ -23,14 +23,14 @@ from opendsm.eemeter.models.billing import BillingWeightedModel
 @pytest.fixture(scope="module")
 def weighted_model(baseline_data_billing):
     model = BillingWeightedModel().fit(
-        baseline_data_billing, is_electricity_data=True, ignore_disqualification=True
+        baseline_data_billing, is_electricity_data=True, enforce_compliance=False
     )
 
     return model
 
 
 def _predict(model, df, **kwargs):
-    return model.predict(df, ignore_disqualification=True, **kwargs)
+    return model.predict(df, enforce_compliance=False, **kwargs)
 
 
 def test_predict_returns_finite_predictions_with_the_load_columns(

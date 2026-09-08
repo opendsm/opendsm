@@ -43,7 +43,7 @@ def hourly_nonsolar_fit(hourly_baseline_data):
     settings = HourlyNonSolarSettings(seed=42)
 
     return HourlyModel(settings=settings).fit(
-        hourly_baseline_data, is_electricity_data=True, ignore_disqualification=True
+        hourly_baseline_data, is_electricity_data=True, enforce_compliance=False
     )
 
 
@@ -52,7 +52,7 @@ def hourly_solar_fit(hourly_baseline_data):
     settings = HourlySolarSettings(seed=42)
 
     return HourlyModel(settings=settings).fit(
-        hourly_baseline_data, is_electricity_data=True, ignore_disqualification=True
+        hourly_baseline_data, is_electricity_data=True, enforce_compliance=False
     )
 
 
@@ -77,6 +77,6 @@ def test_hourly_predict_regression(fit_fixture_name, data_fixture_name, request,
     fit = request.getfixturevalue(fit_fixture_name)
     data = request.getfixturevalue(data_fixture_name)
 
-    result = fit.predict(data, ignore_disqualification=True)
+    result = fit.predict(data, enforce_compliance=False)
 
     assert regression_block(result, freq="hourly") == snapshot(name="regression")

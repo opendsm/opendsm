@@ -155,7 +155,7 @@ def baseline_model_daily(baseline_data_daily):
     """The daily model fit once on the ComStock baseline meter; tests read it and never
     mutate it."""
     model = DailyModel().fit(
-        baseline_data_daily, is_electricity_data=True, ignore_disqualification=True
+        baseline_data_daily, is_electricity_data=True, enforce_compliance=False
     )
 
     return model
@@ -181,7 +181,7 @@ def baseline_model_billing(baseline_data_billing):
     """The billing model fit once on the ComStock baseline meter; tests read it and never
     mutate it."""
     model = BillingModel().fit(
-        baseline_data_billing, is_electricity_data=True, ignore_disqualification=True
+        baseline_data_billing, is_electricity_data=True, enforce_compliance=False
     )
 
     return model

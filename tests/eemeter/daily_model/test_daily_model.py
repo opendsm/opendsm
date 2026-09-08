@@ -80,18 +80,18 @@ def test_disqualified_data_error(missing_daily_data, bad_daily_data):
     with pytest.raises(DataSufficiencyError):
         DailyModel().fit(missing_daily_data, is_electricity_data=True)
     model = DailyModel().fit(
-        missing_daily_data, is_electricity_data=True, ignore_disqualification=True
+        missing_daily_data, is_electricity_data=True, enforce_compliance=False
     )
     with pytest.raises(DisqualifiedModelError):
         model.predict(bad_daily_data)
-    model.predict(missing_daily_data, ignore_disqualification=True)
+    model.predict(missing_daily_data, enforce_compliance=False)
 
 
 def test_model_cvrmse_error(bad_daily_data):
     model = DailyModel().fit(bad_daily_data, is_electricity_data=True)
     with pytest.raises(DisqualifiedModelError):
         model.predict(bad_daily_data)
-    model.predict(bad_daily_data, ignore_disqualification=True)
+    model.predict(bad_daily_data, enforce_compliance=False)
 
 
 def test_timezone_behavior(daily_series):
@@ -287,7 +287,7 @@ def test_daily_model_rejects_settings_of_another_type():
 def default_fitted_daily_model(comstock_daily):
     df_b, _ = comstock_daily
     model = DailyModel().fit(
-        df_b.reset_index(), is_electricity_data=True, ignore_disqualification=True
+        df_b.reset_index(), is_electricity_data=True, enforce_compliance=False
     )
 
     return model
@@ -303,7 +303,7 @@ def nonstandard_daily_fit(comstock_daily):
     logger.addHandler(handler)
     try:
         model = DailyModel(settings={"segment_minimum_count": 8}).fit(
-            df_b.reset_index(), is_electricity_data=True, ignore_disqualification=True
+            df_b.reset_index(), is_electricity_data=True, enforce_compliance=False
         )
     finally:
         logger.removeHandler(handler)
@@ -341,7 +341,7 @@ def test_nonstandard_setting_fit_carries_deviation_warning(nonstandard_daily_fit
 def test_legacy_preset_fit_has_no_nonstandard_settings_warning(comstock_daily):
     df_b, _ = comstock_daily
     baseline_model = DailyModel(settings={"preset": "legacy"}).fit(
-        df_b.reset_index(), is_electricity_data=True, ignore_disqualification=True
+        df_b.reset_index(), is_electricity_data=True, enforce_compliance=False
     )
 
     assert nonstandard_settings_warnings(baseline_model.warnings) == []
@@ -526,7 +526,7 @@ def test_data_mapping_on_settings_instance_builds_daily_data_settings():
 def test_sufficiency_settings_survive_to_dict_round_trip(comstock_daily):
     df_b, _ = comstock_daily
     model = DailyModel(settings={"data": {"sufficiency": {"min_baseline_length": 100}}}).fit(
-        df_b.reset_index(), is_electricity_data=True, ignore_disqualification=True
+        df_b.reset_index(), is_electricity_data=True, enforce_compliance=False
     )
 
     rebuilt = DailyModel.from_dict(model.to_dict())
@@ -537,7 +537,7 @@ def test_sufficiency_settings_survive_to_dict_round_trip(comstock_daily):
 def test_changed_min_baseline_length_fires_nonstandard_settings_warning(comstock_daily):
     df_b, _ = comstock_daily
     model = DailyModel(settings={"data": {"sufficiency": {"min_baseline_length": 100}}}).fit(
-        df_b.reset_index(), is_electricity_data=True, ignore_disqualification=True
+        df_b.reset_index(), is_electricity_data=True, enforce_compliance=False
     )
 
     assert nonstandard_settings_warnings(model.warnings) != []
@@ -547,7 +547,7 @@ def test_changed_requested_start_does_not_fire_nonstandard_settings_warning(coms
     df_b, _ = comstock_daily
     model = DailyModel(
         settings={"data": {"sufficiency": {"requested_start": df_b.index.min()}}}
-    ).fit(df_b.reset_index(), is_electricity_data=True, ignore_disqualification=True)
+    ).fit(df_b.reset_index(), is_electricity_data=True, enforce_compliance=False)
 
     assert nonstandard_settings_warnings(model.warnings) == []
 
