@@ -17,10 +17,14 @@ from typing import Union
 import pydantic
 
 from opendsm.common.warnings import MEMBERS, OpenDSMWarning
+from opendsm.eemeter.common.warnings import EEMeterWarning
 
 
 
-__all__ = ("Compliance", "normalize_enforce_compliance")
+__all__ = ("Compliance", "normalize_enforce_compliance", "record_timezone_mismatch")
+
+
+TIMEZONE_MISMATCH = "eemeter.data_quality.timezone_mismatch"
 
 
 _PRIOR_FORMAT_MEMBER_BY_QUALIFIED_NAME = {
@@ -123,3 +127,36 @@ def normalize_enforce_compliance(enforce_compliance: Union[bool, list, tuple]) -
     raise TypeError(
         f"enforce_compliance must be a bool, list, or tuple, got {type(enforce_compliance)!r}"
     )
+
+
+def record_timezone_mismatch(compliance, baseline_timezone, reporting_timezone) -> bool:
+    """Record a disqualified entry when reporting data is not in the model's timezone.
+
+    Recording is idempotent, so a prediction path that passes through more than one
+    check does not stack duplicates. Timezones are compared as strings to accommodate
+    mixed tzinfo implementations.
+    """
+
+    if str(baseline_timezone) == str(reporting_timezone):
+        return False
+
+    if any(entry.qualified_name == TIMEZONE_MISMATCH for entry in compliance.all):
+        return True
+
+    entry = EEMeterWarning(
+        qualified_name=TIMEZONE_MISMATCH,
+        description=(
+            "Reporting data is in a different timezone than the model was fit on, so its "
+            "period boundaries do not line up with the baseline."
+        ),
+        severity="disqualified",
+        member="data",
+        data={
+            "baseline_timezone": str(baseline_timezone),
+            "reporting_timezone": str(reporting_timezone),
+        },
+    )
+    compliance.record(entry)
+    entry.warn()
+
+    return True

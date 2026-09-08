@@ -62,7 +62,6 @@ class BillingWeightedModel(DailyModel):
     _reporting_data_type = BillingReportingData
     _data_df_name = "billing_df"
     _trim_trailing_columns = ()
-    _check_timezone = False
     _default_overrides = {"segment_minimum_count": 3}
     _settings_class = BillingSettings
 

@@ -52,6 +52,7 @@ from opendsm.eemeter.models.hourly.regressors import (
 )
 from opendsm.common.base_settings import settings_deviation_report
 from opendsm.eemeter.common.compliance import (
+    record_timezone_mismatch,
     Compliance,
     _prior_format_entries,
     normalize_enforce_compliance,
@@ -744,6 +745,9 @@ class HourlyModel:
         self._check_model_compliance(enforced)
 
         reporting_data = self._reporting_data(df)
+        record_timezone_mismatch(
+            reporting_data.compliance, self.baseline_timezone, reporting_data.tz
+        )
         infeasible = [
             entry for entry in reporting_data.compliance.all if entry.severity == "infeasible"
         ]
@@ -789,12 +793,15 @@ class HourlyModel:
                 "Reporting data contains GHI, but model was fit without GHI."
             ).warn()
 
-        if str(self.baseline_timezone) != str(data.tz):
-            raise ValueError(
-                "Reporting data must use the same timezone that the model was initially fit on."
-            )
+        enforced = normalize_enforce_compliance(enforce_compliance)
+        self._check_model_compliance(enforced)
 
-        self._check_model_compliance(normalize_enforce_compliance(enforce_compliance))
+        if record_timezone_mismatch(data.compliance, self.baseline_timezone, data.tz):
+            if "data" in enforced:
+                raise DataSufficiencyError(
+                    "Can't predict on disqualified reporting data",
+                    entries=data.compliance.disqualification,
+                )
 
         return self._predict(data)
 

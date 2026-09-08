@@ -105,11 +105,18 @@ def test_timezone_behavior(daily_series):
     baseline_df = _daily_frame(meter, temp)
     model = DailyModel().fit(baseline_df, is_electricity_data=True)
 
-    # fail when attempting to predict on data with different timezone from baseline
+    # a timezone other than the one fitted on is a data disqualification, so the
+    # default refuses and a caller who drops "data" predicts anyway
     reporting_no_meter_utc = pd.DataFrame({"temperature": temp})
     assert str(model.baseline_timezone) != str(reporting_no_meter_utc.index.tz)
-    with pytest.raises(ValueError):
-        model.predict(reporting_no_meter_utc, enforce_compliance=["model", "settings"])
+    with pytest.raises(DataSufficiencyError) as exc_info:
+        model.predict(reporting_no_meter_utc)
+
+    assert any(
+        entry.qualified_name == "eemeter.data_quality.timezone_mismatch"
+        for entry in exc_info.value.entries
+    )
+    model.predict(reporting_no_meter_utc, enforce_compliance=["model", "settings"])
 
     reporting_df = _daily_frame(meter, temp)
     res1 = model.predict(reporting_df)

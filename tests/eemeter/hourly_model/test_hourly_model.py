@@ -135,13 +135,22 @@ def test_tz_naive(baseline):
 
 
 def test_tz_mismatch(baseline):
-    # might allow automatic adjustment from the model in the future, but hard requirement for now
+    """Reporting data in another timezone is a data disqualification, so the default
+    refuses and dropping "data" from the enforced set predicts anyway."""
     baseline.index = baseline.index.tz_convert("America/Los_Angeles")
     reporting = baseline.copy()
     reporting.index = reporting.index.tz_convert("America/New_York")
     hm = HourlyModel().fit(baseline, is_electricity_data=True)
-    with pytest.raises(ValueError):
+
+    with pytest.raises(DataSufficiencyError) as exc_info:
         hm.predict(reporting)
+
+    assert any(
+        entry.qualified_name == "eemeter.data_quality.timezone_mismatch"
+        for entry in exc_info.value.entries
+    )
+
+    hm.predict(reporting, enforce_compliance=["model", "settings"])
 
 
 def test_predict_missing_fit_features(baseline, reporting):
