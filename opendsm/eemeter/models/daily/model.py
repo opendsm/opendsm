@@ -25,6 +25,7 @@ from opendsm.eemeter.common.compliance import (
     Compliance,
     _prior_format_entries,
     normalize_enforce_compliance,
+    record_timezone_mismatch,
 )
 from opendsm.eemeter.common.data_processor_utilities import (
     require_dataframe,
@@ -97,7 +98,6 @@ class DailyModel:
     _settings_class = DailySettings
     _data_df_name = "df"
     _trim_trailing_columns = ("observed", "temperature")
-    _check_timezone = True
 
     def __init__(
         self,
@@ -365,16 +365,15 @@ class DailyModel:
         if not self.is_fitted:
             raise RuntimeError("Model must be fit before predictions can be made.")
 
-        self._check_model_compliance(normalize_enforce_compliance(enforce_compliance))
+        enforced = normalize_enforce_compliance(enforce_compliance)
+        self._check_model_compliance(enforced)
 
-        if self._check_timezone and str(self.baseline_timezone) != str(data.tz):
-            """would be preferable to directly compare, but
-            * using str() helps accomodate mixed tzinfo implementations,
-            * the likelihood of sub-hour offset inconsistencies being relevant to the daily model is low
-            """
-            raise ValueError(
-                "Reporting data must use the same timezone that the model was initially fit on."
-            )
+        if record_timezone_mismatch(data.compliance, self.baseline_timezone, data.tz):
+            if "data" in enforced:
+                raise DataSufficiencyError(
+                    "Can't predict on disqualified reporting data",
+                    entries=data.compliance.disqualification,
+                )
 
     def _predict_data(self, data, enforce_compliance: bool = True) -> pd.DataFrame:
         """Predict on an already built reporting or baseline data object. Called by `predict`
@@ -410,7 +409,6 @@ class DailyModel:
             DisqualifiedModelError: If an enforced member is disqualified on the model.
             DataSufficiencyError: If data compliance is enforced and the reporting data
                 is disqualified.
-            ValueError: If the reporting data has a different timezone than the model.
             TypeError: If df is not a pandas DataFrame.
         """
         require_dataframe(df, "df")
@@ -422,6 +420,7 @@ class DailyModel:
         self._check_model_compliance(enforced)
 
         reporting = self._reporting_data(df)
+        record_timezone_mismatch(reporting.compliance, self.baseline_timezone, reporting.tz)
         self._check_reporting_compliance(reporting, enforced)
 
         df_res = self._predict_data(reporting, enforce_compliance=False)

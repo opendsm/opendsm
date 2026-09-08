@@ -17,7 +17,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from opendsm.eemeter.common.compliance import normalize_enforce_compliance
+from opendsm.eemeter.common.compliance import (
+    normalize_enforce_compliance,
+    record_timezone_mismatch,
+)
 from opendsm.eemeter.common.data_processor_utilities import require_dataframe
 from opendsm.eemeter.models.billing.data import (
     BillingBaselineData,
@@ -60,7 +63,6 @@ class BillingModel(DailyModel):
     _reporting_data_type = BillingReportingData
     _data_df_name = "df"
     _trim_trailing_columns = ()
-    _check_timezone = False
     _settings_class = BillingSettings
 
     def _reference_settings(self) -> BillingSettings:
@@ -173,6 +175,7 @@ class BillingModel(DailyModel):
         self._check_model_compliance(enforced)
 
         reporting = self._reporting_data(df)
+        record_timezone_mismatch(reporting.compliance, self.baseline_timezone, reporting.tz)
         self._check_reporting_compliance(reporting, enforced)
 
         df_res = self._predict_data(
