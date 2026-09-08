@@ -12,11 +12,19 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from opendsm.eemeter.common.data_settings import BillingDataSettings
+from opendsm.eemeter.common.exceptions import (
+    DataSufficiencyError,
+    DisqualifiedModelError,
+    InfeasibleDataError,
+    NonstandardSettingsError,
+)
 from opendsm.eemeter.common.warnings import nonstandard_settings_warning
 from opendsm.eemeter.models.billing.data import BillingBaselineData
 from opendsm.eemeter.models.billing.model import BillingModel
@@ -57,14 +65,14 @@ def _has_nonstandard_settings_warning(warnings):
 
 def test_default_settings_fit_has_no_nonstandard_settings_warning(fitted_model):
     """BillingModel's own defaults never trigger a nonstandard settings warning."""
-    assert not _has_nonstandard_settings_warning(fitted_model.warnings)
+    assert not _has_nonstandard_settings_warning(fitted_model.compliance.warnings)
 
 
 def test_default_settings_fit_has_no_nonstandard_settings_warning_weighted(
     fitted_weighted_model,
 ):
     """BillingWeightedModel's own defaults never trigger a nonstandard settings warning."""
-    assert not _has_nonstandard_settings_warning(fitted_weighted_model.warnings)
+    assert not _has_nonstandard_settings_warning(fitted_weighted_model.compliance.warnings)
 
 
 @pytest.mark.parametrize("model_class", [BillingModel, BillingWeightedModel])
@@ -94,7 +102,7 @@ def test_nonstandard_setting_fit_carries_deviation_warning(baseline_df):
 
     matching = [
         w
-        for w in baseline_model.warnings
+        for w in baseline_model.compliance.disqualification
         if w.qualified_name == "eemeter.settings.nonstandard"
     ]
     assert len(matching) == 1
@@ -265,7 +273,7 @@ def test_padded_baseline_trims_to_the_same_fit(comstock_monthly):
 
     trim_warnings = [
         w
-        for w in padded_model.warnings
+        for w in padded_model.compliance.warnings
         if w.qualified_name == "eemeter.data_quality.edge_rows_trimmed"
     ]
     assert len(trim_warnings) == 1
@@ -291,7 +299,7 @@ def test_trailing_period_closing_row_survives_trimming(comstock_monthly):
 
     trim_warnings = [
         w
-        for w in model.warnings
+        for w in model.compliance.warnings
         if w.qualified_name == "eemeter.data_quality.edge_rows_trimmed"
     ]
     assert trim_warnings == []
@@ -379,3 +387,202 @@ def test_one_settings_object_is_judged_against_each_billing_model_reference():
     assert BillingModel(settings=settings).settings_deviations == {
         "segment_minimum_count": {"value": 3, "default": 10}
     }
+
+
+# ---------------------------------------------------------------------------
+# compliance
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def disqualified_billing_df(baseline_df):
+    """The baseline period truncated well below min_baseline_length, but with enough
+    days remaining to still fit a model."""
+    return baseline_df.iloc[:-90].copy()
+
+
+@pytest.fixture(scope="module")
+def poor_fit_billing_model(baseline_df):
+    """A fitted model whose fit metrics disqualify it on the model member."""
+    df = baseline_df.copy()
+    df.loc[:5, "observed"] += df["observed"].median() * 50
+    model = BillingModel().fit(df, is_electricity_data=True, enforce_compliance=False)
+
+    return model
+
+
+@pytest.fixture
+def compliant_billing_df():
+    """A full year of daily temperature with monthly billing reads: within the
+    baseline length bounds, positive observed values that vary with a varying
+    temperature, and no gaps in the required daily temperature coverage."""
+    daily_idx = pd.date_range(
+        "2021-01-01", "2022-01-01", freq="D", tz="America/Los_Angeles"
+    )
+    day_of_year = (daily_idx - daily_idx[0]).days.to_numpy(dtype=float)
+    daily_temperature = 55 + 25 * np.sin(2 * np.pi * day_of_year / 365)
+
+    period_idx = pd.date_range("2021-01-01", periods=13, freq="MS", tz="America/Los_Angeles")
+    period_temperature = daily_temperature[np.searchsorted(daily_idx, period_idx)]
+    rng = np.random.default_rng(0)
+    observed = np.full(len(daily_idx), np.nan)
+    period_positions = np.searchsorted(daily_idx, period_idx)
+    observed[period_positions] = (
+        500 + 0.8 * (period_temperature - 55) ** 2 + rng.normal(0, 5, len(period_idx))
+    )
+    observed[period_positions[-1]] = np.nan  # closing row
+
+    return pd.DataFrame(
+        {"observed": observed, "temperature": daily_temperature}, index=daily_idx
+    )
+
+
+@pytest.mark.slow
+def test_fit_prioritizes_nonstandard_settings_error_over_data_sufficiency_error(
+    disqualified_billing_df,
+):
+    """Settings compliance is checked before the baseline object is built, so nonstandard
+    settings win the race against a data sufficiency failure on the same fit."""
+    with pytest.raises(NonstandardSettingsError):
+        BillingModel(settings={"segment_minimum_count": 4}).fit(
+            disqualified_billing_df, is_electricity_data=True
+        )
+
+
+@pytest.mark.slow
+def test_fit_raises_data_sufficiency_error_when_settings_excluded_from_enforced_list(
+    disqualified_billing_df,
+):
+    """With settings excluded from the enforced list, the same fit falls through to the
+    data sufficiency check instead."""
+    with pytest.raises(DataSufficiencyError):
+        BillingModel(settings={"segment_minimum_count": 4}).fit(
+            disqualified_billing_df, is_electricity_data=True, enforce_compliance=["data"]
+        )
+
+
+@pytest.mark.parametrize(
+    "enforce_compliance", [True, False, ["data"], ["model"], ["settings"]]
+)
+def test_fit_raises_infeasible_data_error_regardless_of_enforce_compliance(
+    enforce_compliance,
+):
+    """No member of the enforced list bypasses an infeasibility raise."""
+    idx = pd.date_range("2020-01-01", periods=1, freq="D", tz="America/Los_Angeles")
+    df = pd.DataFrame({"observed": [10.0], "temperature": [50.0]}, index=idx)
+
+    with pytest.raises(InfeasibleDataError):
+        BillingModel().fit(df, is_electricity_data=True, enforce_compliance=enforce_compliance)
+
+
+def test_predict_raises_disqualified_model_error_when_model_member_enforced(
+    poor_fit_billing_model, baseline_df
+):
+    with pytest.raises(DisqualifiedModelError):
+        poor_fit_billing_model.predict(baseline_df, enforce_compliance=["model"])
+
+
+def test_predict_succeeds_when_disqualified_member_excluded_from_enforced_list(
+    poor_fit_billing_model, baseline_df
+):
+    result = poor_fit_billing_model.predict(
+        baseline_df, enforce_compliance=["data", "settings"]
+    )
+
+    assert "predicted" in result.columns
+
+
+def test_predict_raises_data_sufficiency_error_for_disqualified_reporting_data(
+    fitted_model, comstock_monthly
+):
+    """A reporting frame with no temperature is disqualified on the data member, and with
+    data enforced, predict refuses on it."""
+    _, df_r = comstock_monthly
+    no_temperature = df_r.copy()
+    no_temperature["temperature"] = np.nan
+
+    with pytest.raises(DataSufficiencyError):
+        fitted_model.predict(no_temperature.reset_index())
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "enforce_compliance,should_raise",
+    [
+        (True, True),
+        (False, False),
+        (["data"], True),
+        (["model"], False),
+        (["settings"], False),
+    ],
+)
+def test_fit_data_disqualification_respects_enforce_compliance_list(
+    disqualified_billing_df, enforce_compliance, should_raise
+):
+    if should_raise:
+        with pytest.raises(DataSufficiencyError):
+            BillingModel().fit(
+                disqualified_billing_df,
+                is_electricity_data=True,
+                enforce_compliance=enforce_compliance,
+            )
+    else:
+        model = BillingModel().fit(
+            disqualified_billing_df,
+            is_electricity_data=True,
+            enforce_compliance=enforce_compliance,
+        )
+        assert model.is_fitted
+
+
+def test_fit_rejects_unknown_enforce_compliance_member_name(baseline_df):
+    with pytest.raises(ValueError, match="bogus"):
+        BillingModel().fit(baseline_df, is_electricity_data=True, enforce_compliance=["bogus"])
+
+
+def test_clean_fit_is_qualified_with_no_disqualification(baseline_df):
+    """A standard billing baseline carries no disqualification under the default
+    enforcement."""
+    model = BillingModel().fit(baseline_df, is_electricity_data=True)
+
+    assert model.compliance.disqualification == []
+    assert model.compliance.qualified is True
+
+
+def test_enforce_compliance_true_and_false_yield_identical_parameters(compliant_billing_df):
+    """Relaxing enforce_compliance changes only whether a refusal is raised, never the
+    numbers a successful fit produces."""
+    model_true = BillingModel().fit(
+        compliant_billing_df, is_electricity_data=True, enforce_compliance=True
+    )
+    model_false = BillingModel().fit(
+        compliant_billing_df, is_electricity_data=True, enforce_compliance=False
+    )
+
+    assert model_true.params.submodels.keys() == model_false.params.submodels.keys()
+    for key, submodel in model_true.params.submodels.items():
+        expected = submodel.coefficients.to_np_array()
+        actual = model_false.params.submodels[key].coefficients.to_np_array()
+        np.testing.assert_allclose(actual, expected, atol=1e-9)
+
+
+def test_nonstandard_settings_deviation_is_recorded_without_emitting(baseline_df):
+    """The settings-deviation entry lands in compliance.status, but is never emitted on
+    the warnings channel."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        model = BillingModel(settings={"segment_minimum_count": 4}).fit(
+            baseline_df, is_electricity_data=True, enforce_compliance=False
+        )
+
+    assert not any(
+        getattr(w.message, "qualified_name", None) == "eemeter.settings.nonstandard"
+        for w in caught
+    )
+    assert "settings" in model.compliance.status
+
+
+def test_nonstandard_settings_enforced_raises(baseline_df):
+    with pytest.raises(NonstandardSettingsError):
+        BillingModel(settings={"segment_minimum_count": 4}).fit(
+            baseline_df, is_electricity_data=True
+        )

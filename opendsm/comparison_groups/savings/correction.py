@@ -381,9 +381,9 @@ def _reporting_coverage_exclusions(population, ids, ledger, window, min_window_c
             continue
 
         observed_dq = [
-            warning
-            for warning in rec.reporting_data.disqualification
-            if "observed" in warning.qualified_name or "joint" in warning.qualified_name
+            entry
+            for entry in rec.reporting_data.compliance.disqualification
+            if "observed" in entry.qualified_name or "joint" in entry.qualified_name
         ]
         if observed_dq:
             ledger = exclusions.append(

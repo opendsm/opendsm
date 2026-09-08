@@ -21,6 +21,7 @@ import numpy as np
 from sklearn.decomposition import PCA
 
 from opendsm.common.clustering import settings as _settings
+from opendsm.common.clustering.exceptions import ClusteringError
 
 from opendsm.common.clustering.exceptions import ClusteringError
 from opendsm.common.clustering.transform.normalize import normalize

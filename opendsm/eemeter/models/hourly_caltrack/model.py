@@ -539,6 +539,7 @@ def fit_caltrack_hourly_model_segment(segment_name, segment_data):
             EEMeterWarning(
                 qualified_name="eemeter.fit_caltrack_hourly_model_segment.no_nonnull_data",
                 description="The segment contains either an empty dataset or all NaNs.",
+                severity="advisory",
                 data={
                     "n_rows": segment_data.shape[0],
                     "n_rows_after_dropna": segment_data.dropna().shape[0],

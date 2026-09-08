@@ -17,6 +17,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from opendsm.eemeter.common.compliance import normalize_enforce_compliance
 from opendsm.eemeter.models.billing.data import (
     BillingBaselineData,
     BillingReportingData,
@@ -142,14 +143,18 @@ class BillingModel(DailyModel):
             df: Reporting data indexed by a tz-aware DatetimeIndex, or containing a tz-aware
                 'datetime' column, with a 'temperature' column. Rows are period starts.
             aggregation: The aggregation level for the prediction. One of [None, 'none', 'monthly', 'bimonthly'].
-            enforce_compliance: Whether to enforce model disqualification. Defaults to True.
+            enforce_compliance: Which compliance members to enforce. True enforces all of
+                'data', 'model' and 'settings', False enforces none, and a list or tuple
+                names the members to enforce.
 
         Returns:
             Dataframe with input data along with predicted energy consumption.
 
         Raises:
             RuntimeError: If the model is not fitted.
-            DisqualifiedModelError: If the model is disqualified and enforce_compliance is True.
+            DisqualifiedModelError: If an enforced member is disqualified on the model.
+            DataSufficiencyError: If data compliance is enforced and the reporting data
+                is disqualified.
             TypeError: If df is not a dataframe.
             ValueError: If the aggregation is not one of [None, 'none', 'monthly', 'bimonthly'].
         """
@@ -157,10 +162,16 @@ class BillingModel(DailyModel):
         if not self.is_fitted:
             raise RuntimeError("Model must be fit before predictions can be made.")
 
+        enforced = normalize_enforce_compliance(enforce_compliance)
+        self._check_model_compliance(enforced)
+
+        reporting = self._reporting_data(df)
+        self._check_reporting_compliance(reporting, enforced)
+
         df_res = self._predict_data(
-            self._reporting_data(df),
+            reporting,
             aggregation=aggregation,
-            enforce_compliance=enforce_compliance,
+            enforce_compliance=False,
         )
 
         return df_res

@@ -42,6 +42,7 @@ from opendsm.comparison_groups.savings.settings import (
     CGCorrectionSettings,
     WeightClusterAggChoice,
 )
+from opendsm.eemeter.common.compliance import Compliance
 from opendsm.eemeter.common.warnings import EEMeterWarning
 from .equivalence_env import (
     VARIANT_NAMES,
@@ -125,15 +126,22 @@ def _population_meters(comstock, population, reporting=True):
 
 def _disqualified_copy(model):
     """A copy of a fitted model carrying a constructed disqualification, so its
-    prediction fails."""
+    prediction fails. Uses the ``settings`` member rather than ``model``: a
+    population's own predictions never enforce ``model`` (a fit-disqualified
+    meter stays admitted and predictable), so only a still-enforced member
+    reproduces a genuine prediction failure here."""
     disqualified = copy.deepcopy(model)
-    disqualified.disqualification = [
-        EEMeterWarning(
-            qualified_name="eemeter.model_fit_metrics",
-            description="constructed disqualification",
-            data=None,
-        )
-    ]
+    disqualified.compliance = Compliance(
+        all=[
+            EEMeterWarning(
+                qualified_name="eemeter.settings.nonstandard",
+                description="constructed disqualification",
+                severity="disqualified",
+                member="settings",
+                data=None,
+            )
+        ]
+    )
 
     return disqualified
 

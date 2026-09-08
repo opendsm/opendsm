@@ -216,7 +216,7 @@ def assert_disqualification(data, expected_qualified_names):
     if isinstance(expected_qualified_names, str):
         expected_qualified_names = [expected_qualified_names]
 
-    actual = {dq.qualified_name for dq in data.disqualification}
+    actual = {dq.qualified_name for dq in data.compliance.disqualification}
     expected = set(expected_qualified_names)
 
     assert actual == expected, f"Expected {expected}, got {actual}"
@@ -227,7 +227,7 @@ def assert_warning(data, expected_qualified_names):
     if isinstance(expected_qualified_names, str):
         expected_qualified_names = [expected_qualified_names]
 
-    actual = {w.qualified_name for w in data.warnings}
+    actual = {w.qualified_name for w in data.compliance.warnings}
     expected = set(expected_qualified_names)
 
     assert actual == expected, f"Expected {expected}, got {actual}"
@@ -235,19 +235,19 @@ def assert_warning(data, expected_qualified_names):
 
 def assert_has_disqualification(data, qualified_name):
     """Assert data has at least this disqualification"""
-    names = {dq.qualified_name for dq in data.disqualification}
+    names = {dq.qualified_name for dq in data.compliance.disqualification}
     assert qualified_name in names, f"{qualified_name} not in {names}"
 
 
 def assert_has_warning(data, qualified_name):
     """Assert data has at least this warning"""
-    names = {w.qualified_name for w in data.warnings}
+    names = {w.qualified_name for w in data.compliance.warnings}
     assert qualified_name in names, f"{qualified_name} not in {names}"
 
 
 def assert_no_disqualifications(data):
     """Assert data passes all checks"""
-    actual = [dq.qualified_name for dq in data.disqualification]
+    actual = [dq.qualified_name for dq in data.compliance.disqualification]
     assert len(actual) == 0, f"Expected no disqualifications, got {actual}"
 
 

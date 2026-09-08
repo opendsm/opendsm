@@ -12,10 +12,12 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+from opendsm.common.exceptions import OpenDSMError
+
 
 
 __all__ = ("ClusteringError",)
 
 
-class ClusteringError(ValueError):
+class ClusteringError(OpenDSMError, ValueError):
     """Base class for errors raised by the clustering utilities."""

@@ -123,7 +123,7 @@ def test_metered_savings_cdd_hdd_daily(
     snapshot,
 ):
     reporting_data = _reporting_df(reporting_meter_data_daily, reporting_temperature_data)
-    results = baseline_model_daily.predict(reporting_data)
+    results = baseline_model_daily.predict(reporting_data, enforce_compliance=False)
 
     assert regression_block(results, freq="daily") == snapshot(
         name=f"regression{SNAP_SUFFIX}"
@@ -162,7 +162,7 @@ def test_metered_savings_cdd_hdd_billing(
     snapshot,
 ):
     reporting_data = _reporting_df(reporting_meter_data_billing, reporting_temperature_data.iloc[:-1])
-    results = baseline_model_billing.predict(reporting_data)
+    results = baseline_model_billing.predict(reporting_data, enforce_compliance=False)
 
     assert regression_block(results, freq="daily") == snapshot(name="regression")
 
@@ -176,7 +176,7 @@ def test_metered_savings_cdd_hdd_billing_no_reporting_data(
 ):
     # TODO test makes less sense without the use of derivatives functions. can just be merged with other predict() tests
     results = baseline_model_billing.predict(
-        _reporting_df(None, reporting_temperature_data)
+        _reporting_df(None, reporting_temperature_data), enforce_compliance=False
     )
     assert list(results.columns) == [
         "season",
@@ -250,8 +250,8 @@ def test_modeled_savings_cdd_hdd_daily(
     snapshot,
 ):
     reporting_data = _reporting_df(reporting_meter_data_daily, reporting_temperature_data)
-    baseline_model_result = baseline_model_daily.predict(reporting_data)
-    reporting_model_result = reporting_model_daily.predict(reporting_data)
+    baseline_model_result = baseline_model_daily.predict(reporting_data, enforce_compliance=False)
+    reporting_model_result = reporting_model_daily.predict(reporting_data, enforce_compliance=False)
     modeled_savings_df = pd.DataFrame(
         {
             "predicted": baseline_model_result["predicted"] - reporting_model_result["predicted"],

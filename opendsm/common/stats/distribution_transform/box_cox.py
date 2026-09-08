@@ -18,8 +18,6 @@ Class-based API for per-dimension Box-Cox transforms with full
 invertibility, serialisation, and graceful handling of edge cases.
 """
 
-import warnings
-
 import numpy as np
 import numba
 
@@ -38,6 +36,8 @@ from opendsm.common.stats.distribution_transform._bc_yj_shared import (
     _bisquare_weights,
     _fit_lambda,
 )
+from opendsm.common.warnings import StatsWarning
+
 
 
 # ---------------------------------------------------------------------------
@@ -295,10 +295,12 @@ class BoxCox(PowerTransformMixin, TransformBase):
     def _fit_dim(self, d, col_f, fm, X, return_transformed, out):
         # Box-Cox requires strictly positive data
         if np.any(col_f <= 0):
-            warnings.warn(
-                f"BoxCox: dim {d} has non-positive values; skipping.",
-                RuntimeWarning, stacklevel=5,
-            )
+            StatsWarning(
+                qualified_name="opendsm.stats.distribution_transform.box_cox_non_positive",
+                description=f"BoxCox: dim {d} has non-positive values; skipping.",
+                severity="advisory",
+                data={"dim": d},
+            ).warn()
             self.skip_dims_[d] = True
             return
 

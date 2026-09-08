@@ -23,6 +23,7 @@ from opendsm.eemeter.common.data_processor_utilities import (
     remove_duplicates,
 )
 from opendsm.common.hourly_interpolation import interpolate
+from opendsm.eemeter.common.compliance import Compliance
 from opendsm.eemeter.common.data_settings import HourlyDataSettings
 from opendsm.eemeter.common.sufficiency_criteria import HourlySufficiencyCriteria
 
@@ -49,8 +50,7 @@ class _HourlyData:
         self.is_electricity_data = is_electricity_data
         self.tz = None
 
-        self.warnings = []
-        self.disqualification = []
+        self.compliance = Compliance()
 
         # TODO copied from HourlyData
         self._to_be_interpolated_columns = []
@@ -74,11 +74,9 @@ class _HourlyData:
             )
 
         self._df = self._set_data(df)
-        disqualification, warnings = self._check_data_sufficiency()
 
-        self.disqualification += disqualification
-        self.warnings += warnings
-        self.log_warnings()
+        for entry in self._check_data_sufficiency():
+            self._record(entry)
 
     @property
     def df(self):
@@ -93,12 +91,15 @@ class _HourlyData:
         """Get the settings. This is read-only after initialization."""
         return self._settings
 
-    def log_warnings(self):
+    def _record(self, entry: EEMeterWarning) -> None:
+        """Store a compliance record and emit it on the warnings channel.
+
+        This is the only point at which a record is emitted; readers of the stored
+        record, such as the model that was fit on this data, never re-emit it.
         """
-        Logs the warnings and disqualifications associated with the data.
-        """
-        for warning in self.warnings + self.disqualification:
-            warning.warn()
+
+        self.compliance.record(entry)
+        entry.warn()
 
     def _get_contiguous_datetime(self, df):
         # get earliest datetime and latest datetime
@@ -191,12 +192,13 @@ class _HourlyData:
         elif df.index.tz is None:
             raise ValueError("Datatime is missing timezone information")
         elif str(df.index.tz) == "UTC":
-            self.warnings.append(
+            self._record(
                 EEMeterWarning(
                     qualified_name="eemeter.data_quality.utc_index",
                     description=(
                         "Datetime index is in UTC. Use tz_localize() with the local timezone to ensure correct aggregations"
                     ),
+                    severity="advisory",
                     data={},
                 )
             )
@@ -242,8 +244,10 @@ class HourlyBaselineData(_HourlyData):
 
     Attributes:
         df (DataFrame): Immutable dataframe that contains the meter and temperature values for the baseline data period.
-        disqualification (list[EEMeterWarning]): A list of serious issues with the data that can degrade the quality of the model. If you want to go ahead with building the model while ignoring them, set the enforce_compliance = False flag in the model. By default disqualifications are enforced.
-        warnings (list[EEMeterWarning]): A list of issues with the data, but none that will severely reduce the quality of the model built.
+        compliance (Compliance): The records produced while checking this data. Its
+            `disqualification` records are serious issues that can degrade the quality of
+            the model; to build a model in spite of them, relax `enforce_compliance` on the
+            model. Its `warnings` records are issues that will not severely reduce quality.
         pv_start (datetime.date): Solar install date. If left unset, assumed to be at beginning of data.
 
     """
@@ -257,10 +261,8 @@ class HourlyBaselineData(_HourlyData):
             settings=self._settings.sufficiency,
         )
         hsc.check_sufficiency_baseline()
-        disqualification = hsc.disqualification
-        warnings = hsc.warnings
 
-        return disqualification, warnings
+        return hsc.compliance.all
 
 
 class HourlyReportingData(_HourlyData):
@@ -281,8 +283,10 @@ class HourlyReportingData(_HourlyData):
 
     Attributes:
         df (DataFrame): Immutable dataframe that contains the meter and temperature values for the baseline data period.
-        disqualification (list[EEMeterWarning]): A list of serious issues with the data that can degrade the quality of the model. If you want to go ahead with building the model while ignoring them, set the enforce_compliance = False flag in the model. By default disqualifications are enforced.
-        warnings (list[EEMeterWarning]): A list of issues with the data, but none that will severely reduce the quality of the model built.
+        compliance (Compliance): The records produced while checking this data. Its
+            `disqualification` records are serious issues that can degrade the quality of
+            the model; to build a model in spite of them, relax `enforce_compliance` on the
+            model. Its `warnings` records are issues that will not severely reduce quality.
         pv_start (datetime.date): Solar install date. If left unset, assumed to be at beginning of data.
     """
 
@@ -308,10 +312,8 @@ class HourlyReportingData(_HourlyData):
             settings=self._settings.sufficiency,
         )
         hsc.check_sufficiency_reporting()
-        disqualification = hsc.disqualification
-        warnings = hsc.warnings
 
-        return disqualification, warnings
+        return hsc.compliance.all
 
 
 def _create_sufficiency_df(df: pd.DataFrame):

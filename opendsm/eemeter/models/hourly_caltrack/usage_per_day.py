@@ -144,6 +144,7 @@ def caltrack_sufficiency_criteria(
                 EEMeterWarning(
                     qualified_name="eemeter.caltrack_sufficiency_criteria.no_data",
                     description=("No data available."),
+                    severity="advisory",
                     data={},
                 )
             ],
@@ -178,6 +179,7 @@ def caltrack_sufficiency_criteria(
                     ".extra_data_after_requested_end_date"
                 ),
                 description=("Extra data found after requested end date."),
+                severity="advisory",
                 data={
                     "requested_end": requested_end.isoformat(),
                     "data_end": data_end.isoformat(),
@@ -195,6 +197,7 @@ def caltrack_sufficiency_criteria(
                     ".extra_data_before_requested_start_date"
                 ),
                 description=("Extra data found before requested start date."),
+                severity="advisory",
                 data={
                     "requested_start": requested_start.isoformat(),
                     "data_start": data_start.isoformat(),
@@ -220,6 +223,7 @@ def caltrack_sufficiency_criteria(
                     "Found negative meter data values, which may indicate presence"
                     " of solar net metering."
                 ),
+                severity="advisory",
                 data={"n_negative_meter_values": n_negative_meter_values},
             )
         )
@@ -270,6 +274,7 @@ def caltrack_sufficiency_criteria(
                     ".incorrect_number_of_total_days"
                 ),
                 description=("Total data span does not match the required value."),
+                severity="advisory",
                 data={"num_days": num_days, "n_days_total": n_days_total},
             )
         )
@@ -285,6 +290,7 @@ def caltrack_sufficiency_criteria(
                     "Too many days in data have missing meter data or"
                     " temperature data."
                 ),
+                severity="advisory",
                 data={"n_valid_days": n_valid_days, "n_days_total": n_days_total},
             )
         )
@@ -297,6 +303,7 @@ def caltrack_sufficiency_criteria(
                     ".too_many_days_with_missing_meter_data"
                 ),
                 description=("Too many days in data have missing meter data."),
+                severity="advisory",
                 data={
                     "n_valid_meter_data_days": n_valid_meter_value_days,
                     "n_days_total": n_days_total,
@@ -312,6 +319,7 @@ def caltrack_sufficiency_criteria(
                     ".too_many_days_with_missing_temperature_data"
                 ),
                 description=("Too many days in data have missing temperature data."),
+                severity="advisory",
                 data={
                     "n_valid_temperature_data_days": n_valid_temperature_days,
                     "n_days_total": n_days_total,
@@ -336,6 +344,7 @@ def caltrack_sufficiency_criteria(
                     "Extreme values (greater than (median + (3 * IQR)),"
                     " must be flagged for manual review."
                 ),
+                severity="advisory",
                 data={
                     "n_extreme_values": n_extreme_values,
                     "median": median,

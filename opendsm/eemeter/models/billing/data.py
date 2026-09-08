@@ -93,12 +93,13 @@ class _BillingData(_DailyData):
             meter_series = meter_series.resample("MS").sum(min_count=1)
             # normalize to midnight since we're picking an arbitrary day to represent period start anyway
             end_date = end_date.normalize()
-            self.warnings.append(
+            self._record(
                 EEMeterWarning(
                     qualified_name="eemeter.sufficiency_criteria.inferior_model_usage",
                     description=(
                         "Daily data is provided but the model used is monthly. Are you sure this is the intended model?"
                     ),
+                    severity="advisory",
                     data={},
                 )
             )
@@ -108,9 +109,13 @@ class _BillingData(_DailyData):
         meter_series[end_date + pd.Timedelta(days=1)] = np.nan
 
         # This checks for offcycle reads. That is a disqualification if the billing cycle is less than 25 days
+        offcycle_entries = []
         meter_value_df = clean_billing_daily_data(
-            meter_series.to_frame("value"), data_frequency, self.disqualification
+            meter_series.to_frame("value"), data_frequency, offcycle_entries
         )
+
+        for entry in offcycle_entries:
+            self._record(entry)
 
         # Spread billing data to daily
         meter_value_df = as_freq(meter_value_df["value"], "D").to_frame("value")
@@ -167,12 +172,13 @@ class _BillingData(_DailyData):
                 or frequency_duration(temp_series.index.freq) > pd.Timedelta(hours=1)
             ):
                 # Add warning for frequencies longer than 1 hour
-                self.warnings.append(
+                self._record(
                     EEMeterWarning(
                         qualified_name="eemeter.sufficiency_criteria.unable_to_confirm_daily_temperature_sufficiency",
                         description=(
                             "Cannot confirm that pre-aggregated temperature data had sufficient hours kept"
                         ),
+                        severity="advisory",
                         data={},
                     )
                 )
@@ -184,12 +190,13 @@ class _BillingData(_DailyData):
                 )
                 # If high frequency data check for 50% data coverage in rollup
                 if len(temperature_features[temperature_features.coverage <= 0.5]) > 0:
-                    self.warnings.append(
+                    self._record(
                         EEMeterWarning(
                             qualified_name="eemeter.sufficiency_criteria.missing_high_frequency_temperature_data",
                             description=(
                                 "More than 50% of the high frequency Temperature data is missing."
                             ),
+                            severity="advisory",
                             data={
                                 "high_frequency_data_missing_count": len(
                                     temperature_features[
@@ -259,12 +266,13 @@ class _BillingData(_DailyData):
                 )
 
                 if invalid_temperature_rows.any():
-                    self.warnings.append(
+                    self._record(
                         EEMeterWarning(
                             qualified_name="eemeter.sufficiency_criteria.missing_high_frequency_temperature_data",
                             description=(
                                 "More than 50% of the high frequency temperature data is missing."
                             ),
+                            severity="advisory",
                             data=[
                                 timestamp.isoformat()
                                 for timestamp in invalid_temperature_rows.index
@@ -353,8 +361,10 @@ class BillingBaselineData(_BillingData):
 
     Attributes:
         df (DataFrame): Immutable dataframe that contains the meter and temperature values for the baseline data period.
-        disqualification (list[EEMeterWarning]): A list of serious issues with the data that can degrade the quality of the model. If you want to go ahead with building the model while ignoring them, set the enforce_compliance = False flag in the model. By default disqualifications are enforced.
-        warnings (list[EEMeterWarning]): A list of ssues with the data, but none that will severely reduce the quality of the model built.
+        compliance (Compliance): The records produced while checking this data. Its
+            `disqualification` records are serious issues that can degrade the quality of
+            the model; to build a model in spite of them, relax `enforce_compliance` on the
+            model. Its `warnings` records are issues that will not severely reduce quality.
     """
 
     def _check_data_sufficiency(self, sufficiency_df):
@@ -367,8 +377,7 @@ class BillingBaselineData(_BillingData):
             temperature_not_null: number of temperature non null periods in each aggregation step
 
         Returns:
-            disqualification (List): List of disqualifications
-            warnings (list): List of warnings
+            The compliance records produced by the sufficiency checks.
 
         """
         bsc = BillingSufficiencyCriteria(
@@ -378,15 +387,8 @@ class BillingBaselineData(_BillingData):
             settings=self.settings.sufficiency,
         )
         bsc.check_sufficiency_baseline()
-        disqualification = bsc.disqualification
-        warnings = bsc.warnings
 
-        # _, disqualification, warnings = sufficiency_criteria_baseline(
-        #     sufficiency_df,
-        #     is_reporting_data=False,
-        #     is_electricity_data=self.is_electricity_data,
-        # )
-        return disqualification, warnings
+        return bsc.compliance.all
 
 
 class BillingReportingData(_BillingData):
@@ -406,8 +408,10 @@ class BillingReportingData(_BillingData):
 
     Attributes:
         df (DataFrame): Immutable dataframe that contains the meter and temperature values for the baseline data period.
-        disqualification (list[EEMeterWarning]): A list of serious issues with the data that can degrade the quality of the model. If you want to go ahead with building the model while ignoring them, set the enforce_compliance = False flag in the model. By default disqualifications are enforced.
-        warnings (list[EEMeterWarning]): A list of ssues with the data, but none that will severely reduce the quality of the model built.
+        compliance (Compliance): The records produced while checking this data. Its
+            `disqualification` records are serious issues that can degrade the quality of
+            the model; to build a model in spite of them, relax `enforce_compliance` on the
+            model. Its `warnings` records are issues that will not severely reduce quality.
     """
 
     def __init__(
@@ -434,8 +438,7 @@ class BillingReportingData(_BillingData):
 
         Returns
         -------
-            disqualification (List): List of disqualifications
-            warnings (list): List of warnings
+            The compliance records produced by the sufficiency checks.
 
         """
         bsc = BillingSufficiencyCriteria(
@@ -445,12 +448,5 @@ class BillingReportingData(_BillingData):
             settings=self.settings.sufficiency,
         )
         bsc.check_sufficiency_reporting()
-        disqualification = bsc.disqualification
-        warnings = bsc.warnings
 
-        # _, disqualification, warnings = sufficiency_criteria_baseline(
-        #     sufficiency_df,
-        #     is_reporting_data=True,
-        #     is_electricity_data=self.is_electricity_data,
-        # )
-        return disqualification, warnings
+        return bsc.compliance.all

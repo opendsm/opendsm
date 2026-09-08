@@ -28,6 +28,11 @@ from opendsm.common.clustering.algorithms.settings import (
     SpectralSettings,
 )
 from opendsm.common.clustering.transform.normalize_settings import NormalizeSettings
+from opendsm.common.clustering.transform.settings import (
+    FeatureMagnitudeSettings,
+    FeatureTransformSettings,
+)
+from opendsm.common.warnings import ClusteringWarning
 
 
 
@@ -206,6 +211,36 @@ class TestNormalizeSettings:
         """scope maps to the private normalization axis."""
         ns = NormalizeSettings(scope=scope)
         assert ns._axis == expected_axis
+
+
+class TestFeatureTransformSettings:
+    """Cross-field warning between magnitude_features and normalize."""
+
+    def test_customized_magnitude_without_normalization_warns(self):
+        """A non-default magnitude_features with normalization disabled emits ClusteringWarning."""
+        with pytest.warns(ClusteringWarning) as record:
+            FeatureTransformSettings(
+                normalize=NormalizeSettings(enabled=False),
+                magnitude_features=FeatureMagnitudeSettings(weight=2.0),
+            )
+
+        assert len(record) == 1
+        assert (
+            record[0].message.qualified_name
+            == "opendsm.clustering.transform.magnitude_without_normalization"
+        )
+
+    def test_default_magnitude_features_no_warning(self, recwarn):
+        """Default magnitude_features with normalization disabled emits nothing."""
+        FeatureTransformSettings(normalize=NormalizeSettings(enabled=False))
+
+        assert not any(issubclass(w.category, ClusteringWarning) for w in recwarn.list)
+
+    def test_customized_magnitude_with_normalization_no_warning(self, recwarn):
+        """A customized magnitude_features is silent when normalization is enabled."""
+        FeatureTransformSettings(magnitude_features=FeatureMagnitudeSettings(weight=2.0))
+
+        assert not any(issubclass(w.category, ClusteringWarning) for w in recwarn.list)
 
 
 if __name__ == "__main__":
