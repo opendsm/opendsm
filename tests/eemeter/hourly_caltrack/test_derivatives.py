@@ -61,7 +61,7 @@ def baseline_data_daily(comstock_daily):
 @pytest.fixture(scope="session")
 def baseline_model_daily(baseline_data_daily):
     return DailyModel().fit(
-        baseline_data_daily, is_electricity_data=True, ignore_disqualification=True
+        baseline_data_daily, is_electricity_data=True, enforce_compliance=False
     )
 
 
@@ -78,7 +78,7 @@ def reporting_model_daily(comstock_daily):
     # use DailyBaselineData here because DailyReportingData has no observed values to fit on.
     _, df_r = comstock_daily
     model = DailyModel().fit(
-        df_r.reset_index().copy(), is_electricity_data=True, ignore_disqualification=True
+        df_r.reset_index().copy(), is_electricity_data=True, enforce_compliance=False
     )
 
     return model
@@ -134,7 +134,7 @@ def test_metered_savings_cdd_hdd_daily(
 def baseline_model_billing(comstock_monthly):
     df_b, _ = comstock_monthly
     return BillingModel().fit(
-        df_b.reset_index().copy(), is_electricity_data=True, ignore_disqualification=True
+        df_b.reset_index().copy(), is_electricity_data=True, enforce_compliance=False
     )
 
 
@@ -144,7 +144,7 @@ def reporting_model_billing(comstock_monthly):
     df_shifted = df_b.copy()
     df_shifted["observed"] = df_shifted["observed"] - 50
     return BillingModel().fit(
-        df_shifted.reset_index(), is_electricity_data=True, ignore_disqualification=True
+        df_shifted.reset_index(), is_electricity_data=True, enforce_compliance=False
     )
 
 
@@ -208,7 +208,7 @@ def baseline_model_billing_single_record_baseline_data(comstock_monthly, comstoc
     ).rename(columns={"meter_value": "observed", "temperature_mean": "temperature"})
     baseline_data = baseline_data[:60]
     model = BillingModel().fit(
-        baseline_data, is_electricity_data=True, ignore_disqualification=True
+        baseline_data, is_electricity_data=True, enforce_compliance=False
     )
 
     return model
@@ -223,7 +223,7 @@ def test_metered_savings_cdd_hdd_billing_single_record_baseline_data(
 ):
     results = baseline_model_billing_single_record_baseline_data.predict(
         _reporting_df(reporting_meter_data_billing, reporting_temperature_data.iloc[:-1]),
-        ignore_disqualification=True,
+        enforce_compliance=False,
     )
     assert list(results.columns) == [
         "season",
@@ -446,7 +446,7 @@ def baseline_model_billing_single_record(comstock_monthly, comstock_hourly):
         baseline_meter_data, temperature_data
     ).rename(columns={"meter_value": "observed", "temperature_mean": "temperature"})
     model = BillingModel().fit(
-        baseline_data, is_electricity_data=True, ignore_disqualification=True
+        baseline_data, is_electricity_data=True, enforce_compliance=False
     )
 
     return model
@@ -461,7 +461,7 @@ def test_metered_savings_model_single_record(
 ):
     results = baseline_model_billing_single_record.predict(
         _reporting_df(reporting_meter_data_billing, reporting_temperature_data.iloc[:-1]),
-        ignore_disqualification=True,
+        enforce_compliance=False,
     )
     assert list(results.columns) == [
         "season",

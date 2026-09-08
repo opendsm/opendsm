@@ -84,7 +84,7 @@ class BillingWeightedModel(DailyModel):
         self,
         data,
         aggregation: str | None = None,
-        ignore_disqualification: bool = False,
+        enforce_compliance: bool = True,
     ) -> pd.DataFrame:
         """Predict on an already built reporting or baseline data object.
 
@@ -98,7 +98,7 @@ class BillingWeightedModel(DailyModel):
         Raises:
             ValueError: If the aggregation is not one of [None, 'none', 'monthly', 'bimonthly'].
         """
-        self._check_predictable(data, ignore_disqualification)
+        self._check_predictable(data, enforce_compliance)
         df = getattr(data, self._data_df_name)
         df_res = self._predict(df)
 
@@ -150,7 +150,7 @@ class BillingWeightedModel(DailyModel):
         df: pd.DataFrame,
         *,
         aggregation: str | None = None,
-        ignore_disqualification: bool = False,
+        enforce_compliance: bool = True,
     ) -> pd.DataFrame:
         """Predicts the energy consumption using the fitted model.
 
@@ -158,14 +158,14 @@ class BillingWeightedModel(DailyModel):
             df: Reporting data indexed by a tz-aware DatetimeIndex, or containing a tz-aware
                 'datetime' column, with a 'temperature' column. Rows are period starts.
             aggregation: The aggregation level for the prediction. One of [None, 'none', 'monthly', 'bimonthly'].
-            ignore_disqualification: Whether to ignore model disqualification. Defaults to False.
+            enforce_compliance: Whether to enforce model disqualification. Defaults to True.
 
         Returns:
             Dataframe with input data along with predicted energy consumption.
 
         Raises:
             RuntimeError: If the model is not fitted.
-            DisqualifiedModelError: If the model is disqualified and ignore_disqualification is False.
+            DisqualifiedModelError: If the model is disqualified and enforce_compliance is True.
             TypeError: If df is not a dataframe.
             ValueError: If the aggregation is not one of [None, 'none', 'monthly', 'bimonthly'].
         """
@@ -176,7 +176,7 @@ class BillingWeightedModel(DailyModel):
         df_res = self._predict_data(
             self._reporting_data(df),
             aggregation=aggregation,
-            ignore_disqualification=ignore_disqualification,
+            enforce_compliance=enforce_compliance,
         )
 
         return df_res

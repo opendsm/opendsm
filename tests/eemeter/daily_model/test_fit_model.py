@@ -40,7 +40,7 @@ class TestFitModel:
     def test_fit_model(self):
         # Create a DailyModel instance
         fm = DailyModel().fit(
-            self.meter_data, is_electricity_data=True, ignore_disqualification=True
+            self.meter_data, is_electricity_data=True, enforce_compliance=False
         )
 
         # Test that the combinations attribute is a list

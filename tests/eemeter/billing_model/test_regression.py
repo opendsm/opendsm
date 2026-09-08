@@ -38,7 +38,7 @@ def billing_reporting_df(comstock_monthly):
 @pytest.fixture(scope="session")
 def billing_model_fit(billing_baseline_df):
     model = BillingModel().fit(
-        billing_baseline_df, is_electricity_data=True, ignore_disqualification=True
+        billing_baseline_df, is_electricity_data=True, enforce_compliance=False
     )
 
     return model

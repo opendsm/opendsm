@@ -353,7 +353,7 @@ class BillingBaselineData(_BillingData):
 
     Attributes:
         df (DataFrame): Immutable dataframe that contains the meter and temperature values for the baseline data period.
-        disqualification (list[EEMeterWarning]): A list of serious issues with the data that can degrade the quality of the model. If you want to go ahead with building the model while ignoring them, set the ignore_disqualification = True flag in the model. By default disqualifications are not ignored.
+        disqualification (list[EEMeterWarning]): A list of serious issues with the data that can degrade the quality of the model. If you want to go ahead with building the model while ignoring them, set the enforce_compliance = False flag in the model. By default disqualifications are enforced.
         warnings (list[EEMeterWarning]): A list of ssues with the data, but none that will severely reduce the quality of the model built.
     """
 
@@ -406,7 +406,7 @@ class BillingReportingData(_BillingData):
 
     Attributes:
         df (DataFrame): Immutable dataframe that contains the meter and temperature values for the baseline data period.
-        disqualification (list[EEMeterWarning]): A list of serious issues with the data that can degrade the quality of the model. If you want to go ahead with building the model while ignoring them, set the ignore_disqualification = True flag in the model. By default disqualifications are not ignored.
+        disqualification (list[EEMeterWarning]): A list of serious issues with the data that can degrade the quality of the model. If you want to go ahead with building the model while ignoring them, set the enforce_compliance = False flag in the model. By default disqualifications are enforced.
         warnings (list[EEMeterWarning]): A list of ssues with the data, but none that will severely reduce the quality of the model built.
     """
 

@@ -55,7 +55,7 @@ def heating_baseline(temperature):
     daily_temp = temperature.resample("D").mean().reindex(days)
     meter = pd.Series(_heating_load(daily_temp, seed=2), index=days)
     df = _daily_frame(meter, temperature)
-    model = DailyModel().fit(df, is_electricity_data=True, ignore_disqualification=True)
+    model = DailyModel().fit(df, is_electricity_data=True, enforce_compliance=False)
 
     return model, df
 
@@ -73,7 +73,7 @@ def test_flat_load_does_not_fabricate_temperature_response(temperature):
     meter = pd.Series(40.0 + rng.normal(0, 1.0, 365), index=days)
     df = _daily_frame(meter, temperature)
 
-    model = DailyModel().fit(df, is_electricity_data=True, ignore_disqualification=True)
+    model = DailyModel().fit(df, is_electricity_data=True, enforce_compliance=False)
 
     for submodel in model.params.submodels.values():
         coef = submodel.coefficients

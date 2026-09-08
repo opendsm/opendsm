@@ -84,8 +84,8 @@ def _model_reporting_totals(model_cls, df_b, df_r, meter_id):
     try:
         b = df_b.xs(meter_id, level="id").reset_index()
         r = df_r.xs(meter_id, level="id").reset_index()
-        model = model_cls().fit(b, is_electricity_data=True, ignore_disqualification=True)
-        pred = model.predict(r, ignore_disqualification=True)
+        model = model_cls().fit(b, is_electricity_data=True, enforce_compliance=False)
+        pred = model.predict(r, enforce_compliance=False)
     except Exception:
         return None
 
