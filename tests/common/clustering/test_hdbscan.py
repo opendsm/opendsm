@@ -68,7 +68,7 @@ def clustered_data_with_outliers():
 
 
 @pytest.fixture
-def default_settings():
+def default_hdbscan_settings():
     """Create default clustering settings."""
     settings_dict = get_default_settings_dict()
     return ClusteringSettings(**settings_dict)
@@ -77,10 +77,10 @@ def default_settings():
 class TestBasicFunctionality:
     """Tests for basic HDBSCAN functionality."""
 
-    def test_simple_clustering_produces_expected_clusters(self, simple_clustered_data, default_settings):
+    def test_simple_clustering_produces_expected_clusters(self, simple_clustered_data, default_hdbscan_settings):
         """Test basic clustering finds expected number of clusters."""
         # simple_clustered_data has 3 well-separated clusters (150 samples, 3 centers)
-        labels = hdbscan(simple_clustered_data, default_settings).labels
+        labels = hdbscan(simple_clustered_data, default_hdbscan_settings).labels
 
         # Check output format
         assert isinstance(labels, np.ndarray)
@@ -97,9 +97,9 @@ class TestBasicFunctionality:
             cluster_size = np.sum(labels == label)
             assert 20 <= cluster_size <= 80  # Each cluster should have reasonable size
 
-    def test_output_format(self, simple_clustered_data, default_settings):
+    def test_output_format(self, simple_clustered_data, default_hdbscan_settings):
         """Test that output has correct format."""
-        labels = hdbscan(simple_clustered_data, default_settings).labels
+        labels = hdbscan(simple_clustered_data, default_hdbscan_settings).labels
 
         assert isinstance(labels, np.ndarray)
         assert labels.shape == (150,)
@@ -433,147 +433,59 @@ class TestNearestNeighborsAlgorithm:
         assert len(np.unique(labels)) > 0
 
 
+def assert_valid_label_structure(labels, n_samples):
+    """Assert labels have the shape and structure hdbscan output must satisfy."""
+    assert isinstance(labels, np.ndarray)
+    assert labels.ndim == 1
+    assert len(labels) == n_samples
+    assert np.issubdtype(labels.dtype, np.integer)
+
+    unique_labels = set(labels.tolist())
+    negative_labels = {label for label in unique_labels if label < 0}
+    cluster_labels = unique_labels - negative_labels
+
+    assert negative_labels in (set(), {-1})
+    assert cluster_labels == set(range(len(cluster_labels)))
+
+
 class TestDataShapes:
     """Tests for different data shapes and sizes."""
 
-    def test_very_small_dataset(self):
-        """Test clustering on very small dataset."""
+    @pytest.mark.parametrize(
+        "n_samples, n_features, centers, cluster_std, min_samples_override",
+        [
+            pytest.param(5, 5, 2, 0.5, 1, id="very_small"),
+            pytest.param(50, 5, 2, 1.0, None, id="small"),
+            pytest.param(500, 10, 3, 1.0, None, id="medium"),
+            pytest.param(5000, 20, 5, 2.0, 10, id="large"),
+            pytest.param(100, 1, 3, 0.5, None, id="single_feature"),
+            pytest.param(100, 2, 3, 1.0, None, id="low_dim"),
+            pytest.param(100, 20, 3, 1.5, None, id="medium_dim"),
+            pytest.param(100, 50, 2, 2.0, 5, id="high_dim"),
+            pytest.param(100, 200, 2, 3.0, 5, id="very_high_dim"),
+        ],
+    )
+    def test_data_shapes(
+        self, n_samples, n_features, centers, cluster_std, min_samples_override
+    ):
+        """Test clustering across a range of dataset sizes and dimensionalities."""
         data, _ = make_blobs(
-            n_samples=5,
-            n_features=5,
-            centers=2,
-            cluster_std=0.5,
+            n_samples=n_samples,
+            n_features=n_features,
+            centers=centers,
+            cluster_std=cluster_std,
             random_state=42
         )
 
         settings_dict = get_default_settings_dict()
-        settings_dict["hdbscan"] = {"min_samples": 1}
+
+        if min_samples_override is not None:
+            settings_dict["hdbscan"] = {"min_samples": min_samples_override}
+
         settings = ClusteringSettings(**settings_dict)
 
         labels = hdbscan(data, settings).labels
-        assert len(labels) == 5
-
-    def test_small_dataset(self):
-        """Test clustering on small dataset."""
-        data, _ = make_blobs(
-            n_samples=50,
-            n_features=5,
-            centers=2,
-            cluster_std=1.0,
-            random_state=42
-        )
-
-        settings = ClusteringSettings(**get_default_settings_dict())
-        labels = hdbscan(data, settings).labels
-        assert len(labels) == 50
-
-    def test_medium_dataset(self):
-        """Test clustering on medium dataset."""
-        data, _ = make_blobs(
-            n_samples=500,
-            n_features=10,
-            centers=3,
-            cluster_std=1.0,
-            random_state=42
-        )
-
-        settings = ClusteringSettings(**get_default_settings_dict())
-        labels = hdbscan(data, settings).labels
-        assert len(labels) == 500
-
-    def test_large_dataset(self):
-        """Test clustering on large dataset."""
-        data, _ = make_blobs(
-            n_samples=5000,
-            n_features=20,
-            centers=5,
-            cluster_std=2.0,
-            random_state=42
-        )
-
-        settings_dict = get_default_settings_dict()
-        settings_dict["hdbscan"] = {"min_samples": 10}
-        settings = ClusteringSettings(**settings_dict)
-
-        labels = hdbscan(data, settings).labels
-        assert len(labels) == 5000
-
-    def test_single_feature_data(self):
-        """Test clustering on 1D data."""
-        data, _ = make_blobs(
-            n_samples=100,
-            n_features=1,
-            centers=3,
-            cluster_std=0.5,
-            random_state=42
-        )
-
-        settings = ClusteringSettings(**get_default_settings_dict())
-        labels = hdbscan(data, settings).labels
-        assert len(labels) == 100
-
-    def test_low_dimensional_data(self):
-        """Test clustering on 2D and 3D data."""
-        for n_features in [2, 3]:
-            data, _ = make_blobs(
-                n_samples=100,
-                n_features=n_features,
-                centers=3,
-                cluster_std=1.0,
-                random_state=42
-            )
-
-            settings = ClusteringSettings(**get_default_settings_dict())
-            labels = hdbscan(data, settings).labels
-            assert len(labels) == 100
-
-    def test_medium_dimensional_data(self):
-        """Test clustering on medium-dimensional data."""
-        data, _ = make_blobs(
-            n_samples=100,
-            n_features=20,
-            centers=3,
-            cluster_std=1.5,
-            random_state=42
-        )
-
-        settings = ClusteringSettings(**get_default_settings_dict())
-        labels = hdbscan(data, settings).labels
-        assert len(labels) == 100
-
-    def test_high_dimensional_data(self):
-        """Test clustering on high-dimensional data."""
-        data, _ = make_blobs(
-            n_samples=100,
-            n_features=50,
-            centers=2,
-            cluster_std=2.0,
-            random_state=42
-        )
-
-        settings_dict = get_default_settings_dict()
-        settings_dict["hdbscan"] = {"min_samples": 5}
-        settings = ClusteringSettings(**settings_dict)
-
-        labels = hdbscan(data, settings).labels
-        assert len(labels) == 100
-
-    def test_very_high_dimensional_data(self):
-        """Test clustering on very high-dimensional data (curse of dimensionality)."""
-        data, _ = make_blobs(
-            n_samples=100,
-            n_features=200,
-            centers=2,
-            cluster_std=3.0,
-            random_state=42
-        )
-
-        settings_dict = get_default_settings_dict()
-        settings_dict["hdbscan"] = {"min_samples": 5}
-        settings = ClusteringSettings(**settings_dict)
-
-        labels = hdbscan(data, settings).labels
-        assert len(labels) == 100
+        assert_valid_label_structure(labels, n_samples)
 
 
 class TestEdgeCases:
@@ -971,11 +883,6 @@ class TestClusterQuality:
         settings = ClusteringSettings(**settings_dict)
 
         labels = hdbscan(data, settings).labels
-
-        # Check if outliers are marked differently
-        # (either as -1 or in separate small clusters)
-        outlier_labels = labels[-3:]
-        cluster_labels = labels[:-3]
 
         assert len(labels) == 93
 
