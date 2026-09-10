@@ -16,18 +16,42 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from opendsm.eemeter.common.data_processor_utilities import DataReport
 from opendsm.eemeter.common.data_settings import (
     BillingDataSufficiencySettings,
     DailyDataSufficiencySettings,
     HourlyDataSufficiencySettings,
 )
-from opendsm.eemeter.common.sufficiency_criteria import (
-    BillingSufficiencyCriteria,
-    DailySufficiencyCriteria,
-    HourlySufficiencyCriteria,
-    SufficiencyCriteria,
+from opendsm.eemeter.common.sufficiency_criteria import SufficiencyCriteria
+from opendsm.eemeter.common.sufficiency_registry import rule_spec
+from opendsm.eemeter.common.sufficiency_rules import (
+    _DATA_REPORT_RULES,
+    _applicable_rules,
+    baseline_day_length,
+    boundary_gap,
+    consecutive_missing_temperature_hours,
+    daily_coverage,
+    estimated_reads,
+    extreme_values,
+    high_frequency_meter_coverage,
+    high_frequency_observed_coverage,
+    monthly_coverage,
+    negative_observed_values,
+    no_data,
+    offcycle_reads,
+    run_sufficiency,
+    unique_values,
 )
 
+
+
+_SETTINGS_BY_FAMILY = {
+    "daily": DailyDataSufficiencySettings,
+    "hourly": HourlyDataSufficiencySettings,
+    "billing": BillingDataSufficiencySettings,
+}
+
+_FAMILIES = list(_SETTINGS_BY_FAMILY)
 
 
 def _daily_frame(n_days=365, start="2020-01-01", tz="UTC"):
@@ -52,17 +76,35 @@ def _daily_frame(n_days=365, start="2020-01-01", tz="UTC"):
     return df
 
 
-def _criteria(df, is_electricity_data=True, is_reporting_data=False, settings=None):
+def _criteria(
+    df,
+    is_electricity_data=True,
+    is_reporting_data=False,
+    family="daily",
+    settings=None,
+    data_report=None,
+):
     if settings is None:
-        settings = DailyDataSufficiencySettings()
+        settings = _SETTINGS_BY_FAMILY[family]()
+
+    kwargs = {}
+    if data_report is not None:
+        kwargs["data_report"] = data_report
+
     sc = SufficiencyCriteria(
         data=df,
         is_electricity_data=is_electricity_data,
         is_reporting_data=is_reporting_data,
+        family=family,
         settings=settings,
+        **kwargs,
     )
 
     return sc
+
+
+def _names(entries):
+    return {entry.qualified_name for entry in entries}
 
 
 def _dq_names(sc):
@@ -88,9 +130,9 @@ def test_no_data_disqualifies_when_all_nan():
     df["temperature"] = np.nan
     sc = _criteria(df)
 
-    sc._check_no_data()
+    entries = no_data(sc)
 
-    record = _find(sc.compliance.all, "eemeter.sufficiency_criteria.no_data")
+    record = _find(entries, "eemeter.sufficiency_criteria.no_data")
     assert record.severity == "infeasible"
     assert record.member is None
 
@@ -99,9 +141,7 @@ def test_no_data_passes_on_clean_frame():
     """A populated frame raises no no_data disqualification."""
     sc = _criteria(_daily_frame())
 
-    sc._check_no_data()
-
-    assert sc.compliance.disqualification == []
+    assert no_data(sc) == []
 
 
 def test_no_data_passes_when_only_auxiliary_column_is_nan():
@@ -110,10 +150,22 @@ def test_no_data_passes_when_only_auxiliary_column_is_nan():
     df["temperature_not_null"] = np.nan
     sc = _criteria(df)
 
-    sc._check_no_data()
+    entries = no_data(sc)
 
-    names = {r.qualified_name for r in sc.compliance.all}
-    assert "eemeter.sufficiency_criteria.no_data" not in names
+    assert "eemeter.sufficiency_criteria.no_data" not in _names(entries)
+
+
+def test_rules_record_nothing_on_the_context():
+    """A rule function is pure: it returns its entries and records none of them."""
+    df = _daily_frame()
+    df["observed"] = np.nan
+    df["temperature"] = np.nan
+    sc = _criteria(df)
+
+    entries = no_data(sc)
+
+    assert len(entries) == 1
+    assert sc.compliance.all == []
 
 
 # ---------------------------------------------------------------------------
@@ -125,12 +177,12 @@ def test_baseline_day_length_disqualifies_out_of_range(n_days):
     """Below the 329-day floor or above the 366-day ceiling disqualifies."""
     sc = _criteria(_daily_frame(n_days=n_days))
 
-    sc._check_baseline_day_length()
+    entries = baseline_day_length(sc)
 
-    assert "eemeter.sufficiency_criteria.incorrect_number_of_total_days" in _dq_names(sc)
-    record = _find(sc.compliance.disqualification, "eemeter.sufficiency_criteria.incorrect_number_of_total_days")
+    record = _find(entries, "eemeter.sufficiency_criteria.incorrect_number_of_total_days")
     assert record.severity == "disqualified"
     assert record.member == "data"
+    assert record.data == {"n_days_total": n_days}
 
 
 @pytest.mark.parametrize("n_days", [329, 365, 366])
@@ -138,18 +190,13 @@ def test_baseline_day_length_passes_in_range(n_days):
     """Lengths within [329, 366] pass; 329 is the exact lower boundary."""
     sc = _criteria(_daily_frame(n_days=n_days))
 
-    sc._check_baseline_day_length()
-
-    assert sc.compliance.disqualification == []
+    assert baseline_day_length(sc) == []
 
 
-def test_baseline_day_length_skipped_for_reporting_data():
-    """Reporting data is exempt from the baseline-length rule."""
-    sc = _criteria(_daily_frame(n_days=10), is_reporting_data=True)
+def test_baseline_day_length_never_runs_in_the_reporting_phase():
+    """Reporting data is exempt from the baseline-length rule, by its declared phases."""
 
-    sc._check_baseline_day_length()
-
-    assert sc.compliance.disqualification == []
+    assert rule_spec("baseline_day_length").phases == ("baseline",)
 
 
 # ---------------------------------------------------------------------------
@@ -162,12 +209,12 @@ def test_negative_observed_disqualifies_gas():
     df.iloc[5, df.columns.get_loc("observed")] = -1.0
     sc = _criteria(df, is_electricity_data=False)
 
-    sc._check_negative_observed_values()
+    entries = negative_observed_values(sc)
 
-    assert "eemeter.sufficiency_criteria.negative_observed_values" in _dq_names(sc)
-    record = _find(sc.compliance.disqualification, "eemeter.sufficiency_criteria.negative_observed_values")
+    record = _find(entries, "eemeter.sufficiency_criteria.negative_observed_values")
     assert record.severity == "disqualified"
     assert record.member == "data"
+    assert record.data == {"n_negative_observed_values": 1}
 
 
 def test_negative_observed_allowed_for_electricity():
@@ -176,18 +223,14 @@ def test_negative_observed_allowed_for_electricity():
     df.iloc[5, df.columns.get_loc("observed")] = -1.0
     sc = _criteria(df, is_electricity_data=True)
 
-    sc._check_negative_observed_values()
-
-    assert sc.compliance.disqualification == []
+    assert negative_observed_values(sc) == []
 
 
 def test_negative_observed_passes_clean_gas():
     """Non-negative gas observed raises no disqualification."""
     sc = _criteria(_daily_frame().abs(), is_electricity_data=False)
 
-    sc._check_negative_observed_values()
-
-    assert sc.compliance.disqualification == []
+    assert negative_observed_values(sc) == []
 
 
 # ---------------------------------------------------------------------------
@@ -200,11 +243,10 @@ def test_unique_values_disqualifies_repeated_observed():
     df["observed"] = 5.0
     sc = _criteria(df)
 
-    sc._check_unique_values(col="observed")
+    entries = unique_values(sc, "observed")
 
     name = "eemeter.sufficiency_criteria.insufficient_unique_observed_values"
-    assert name in _dq_names(sc)
-    record = _find(sc.compliance.disqualification, name)
+    record = _find(entries, name)
     assert record.severity == "disqualified"
     assert record.member == "data"
     payload = record.data
@@ -218,16 +260,14 @@ def test_unique_values_passes_varied_observed():
     """A varied observed series clears the unique-values floor."""
     sc = _criteria(_daily_frame())
 
-    sc._check_unique_values(col="observed")
-
-    assert sc.compliance.disqualification == []
+    assert unique_values(sc, "observed") == []
 
 
 # ---------------------------------------------------------------------------
-# valid_days_percentage  (>= 90% daily coverage)
+# daily_coverage  (>= 90% daily coverage)
 # ---------------------------------------------------------------------------
 
-def test_valid_days_percentage_disqualifies_low_temperature_coverage():
+def test_daily_coverage_disqualifies_low_temperature_coverage():
     """Too many days below the per-period temperature coverage fail the rule."""
     df = _daily_frame()
     # zero out temperature coverage on 20% of days (well below the 90% floor)
@@ -235,16 +275,16 @@ def test_valid_days_percentage_disqualifies_low_temperature_coverage():
     df.iloc[:80, df.columns.get_loc("temperature_null")] = 24.0
     sc = _criteria(df)
 
-    sc._check_valid_days_percentage(col="temperature")
+    entries = daily_coverage(sc, "temperature")
 
     name = "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data"
-    assert name in _dq_names(sc)
-    record = _find(sc.compliance.disqualification, name)
+    record = _find(entries, name)
     assert record.severity == "disqualified"
     assert record.member == "data"
+    assert record.data["n_valid_temperature_data_days"] == 285
 
 
-def test_valid_days_percentage_disqualifies_low_observed_coverage():
+def test_daily_coverage_disqualifies_low_observed_coverage():
     """Too many null observed days fail the observed coverage rule.
 
     The nulls are interior (endpoints kept) so the requested window — and thus
@@ -254,23 +294,21 @@ def test_valid_days_percentage_disqualifies_low_observed_coverage():
     df.iloc[50:110, df.columns.get_loc("observed")] = np.nan
     sc = _criteria(df)
 
-    sc._check_valid_days_percentage(col="observed")
+    entries = daily_coverage(sc, "observed")
 
     name = "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data"
-    assert name in _dq_names(sc)
-    record = _find(sc.compliance.disqualification, name)
+    record = _find(entries, name)
     assert record.severity == "disqualified"
     assert record.member == "data"
+    assert record.data["n_valid_observed_data_days"] == 305
 
 
 @pytest.mark.parametrize("col", ["temperature", "observed"])
-def test_valid_days_percentage_passes_full_coverage(col):
+def test_daily_coverage_passes_full_coverage(col):
     """Full coverage passes the daily-coverage rule for each column."""
     sc = _criteria(_daily_frame())
 
-    sc._check_valid_days_percentage(col=col)
-
-    assert sc.compliance.disqualification == []
+    assert daily_coverage(sc, col) == []
 
 
 @pytest.mark.parametrize("n_days", [1, 7, 9])
@@ -279,14 +317,14 @@ def test_valid_days_count_every_day_of_a_short_window(n_days):
     included, so a short reporting window passes the 90% daily-coverage rule."""
     sc = _criteria(_daily_frame(n_days), is_reporting_data=True)
 
-    sc._check_valid_days_percentage(col="joint")
+    entries = daily_coverage(sc, "joint")
 
     assert sc.n_valid_days == n_days
     assert sc.n_days_total == n_days
-    assert sc.compliance.disqualification == []
+    assert entries == []
 
 
-def _hourly_frame(n_days, start="2020-03-05", tz="America/Chicago"):
+def _hourly_local_days_frame(n_days, start="2020-03-05", tz="America/Chicago"):
     """A clean hourly frame over whole local calendar days; the window may cross a DST change."""
     end = pd.Timestamp(start) + pd.Timedelta(days=n_days)
     index = pd.date_range(start, end, freq="h", tz=tz, inclusive="left")
@@ -308,7 +346,7 @@ def test_hourly_rows_count_by_their_share_of_a_day_across_a_dst_change():
     """Each hour counts for one twenty-fourth of a day and the span is read off the wall
     clock: the spring-forward week spans seven days, its 167 hours count as 167/24 valid
     days, and a missing hour costs one share."""
-    df = _hourly_frame(7)
+    df = _hourly_local_days_frame(7)
     df.iloc[30, df.columns.get_loc("observed")] = np.nan
     sc = _criteria(df)
 
@@ -320,7 +358,7 @@ def test_hourly_rows_count_by_their_share_of_a_day_across_a_dst_change():
 def test_off_midnight_hourly_window_spans_its_elapsed_days():
     """A year of hours from 06:00 touches 366 calendar days but spans 365 and holds 365
     valid days, so a start inside a day does not lengthen the window."""
-    sc = _criteria(_hourly_frame(365, start="2021-01-01 06:00", tz="UTC"))
+    sc = _criteria(_hourly_local_days_frame(365, start="2021-01-01 06:00", tz="UTC"))
 
     assert sc.n_days_total == 365
     assert sc.n_valid_days == 365
@@ -349,32 +387,30 @@ def test_n_days_total_counts_calendar_days_across_a_dst_change(start, n_days):
 
 
 # ---------------------------------------------------------------------------
-# valid_monthly_coverage  (>= 90% of each month present)
+# monthly_coverage  (>= 90% of each month present)
 # ---------------------------------------------------------------------------
 
-def test_valid_monthly_coverage_disqualifies_sparse_month():
+def test_monthly_coverage_disqualifies_sparse_month():
     """A month with mostly-missing temperature fails the monthly-coverage rule."""
     df = _daily_frame()
     january = df.index.month == 1
     df.loc[january, "temperature"] = np.nan
     sc = _criteria(df)
 
-    sc._check_valid_monthly_coverage(col="temperature")
+    entries = monthly_coverage(sc, "temperature")
 
     name = "eemeter.sufficiency_criteria.missing_monthly_temperature_data"
-    assert name in _dq_names(sc)
-    record = _find(sc.compliance.disqualification, name)
+    record = _find(entries, name)
     assert record.severity == "disqualified"
     assert record.member == "data"
+    assert record.data == {"lowest_monthly_coverage": 0.0}
 
 
-def test_valid_monthly_coverage_passes_full_year():
+def test_monthly_coverage_passes_full_year():
     """Every month fully present raises no monthly-coverage disqualification."""
     sc = _criteria(_daily_frame())
 
-    sc._check_valid_monthly_coverage(col="temperature")
-
-    assert sc.compliance.disqualification == []
+    assert monthly_coverage(sc, "temperature") == []
 
 
 # ---------------------------------------------------------------------------
@@ -387,11 +423,10 @@ def test_extreme_values_warns_on_outlier():
     df.iloc[10, df.columns.get_loc("observed")] = 1e6
     sc = _criteria(df)
 
-    sc._check_extreme_values()
+    entries = extreme_values(sc)
 
     name = "eemeter.sufficiency_criteria.extreme_values_detected"
-    assert name in _warning_names(sc)
-    record = _find(sc.compliance.warnings, name)
+    record = _find(entries, name)
     assert record.severity == "advisory"
     assert record.member is None
     assert record.data["n_extreme_values"] == 1
@@ -401,13 +436,17 @@ def test_extreme_values_quiet_on_clean_data():
     """A tight observed distribution raises no extreme-values warning."""
     sc = _criteria(_daily_frame())
 
-    sc._check_extreme_values()
+    assert extreme_values(sc) == []
 
-    assert sc.compliance.warnings == []
+
+def test_extreme_values_never_runs_in_the_reporting_phase():
+    """Reporting data is exempt from the extreme-values rule, by its declared phases."""
+
+    assert rule_spec("extreme_values").phases == ("baseline",)
 
 
 # ---------------------------------------------------------------------------
-# n_days_boundary_gap  (extra data beyond the requested window)
+# boundary_gap  (extra data beyond the requested window)
 # ---------------------------------------------------------------------------
 
 def test_boundary_gap_disqualifies_extra_data_before_start():
@@ -417,13 +456,29 @@ def test_boundary_gap_disqualifies_extra_data_before_start():
     settings = DailyDataSufficiencySettings(requested_start=requested_start)
     sc = _criteria(df, settings=settings)
 
-    sc._check_n_days_boundary_gap("start")
+    entries = boundary_gap(sc)
 
     name = "eemeter.sufficiency_criteria.extra_data_before_requested_start_date"
-    assert name in _dq_names(sc)
-    record = _find(sc.compliance.disqualification, name)
+    record = _find(entries, name)
     assert record.severity == "disqualified"
     assert record.member == "data"
+
+
+def test_boundary_gap_flags_both_boundaries_in_one_run():
+    """One call covers the start and the end of the requested window."""
+    df = _daily_frame()
+    settings = DailyDataSufficiencySettings(
+        requested_start=df.index.min() + pd.Timedelta(days=10),
+        requested_end=df.index.max() - pd.Timedelta(days=10),
+    )
+    sc = _criteria(df, settings=settings)
+
+    entries = boundary_gap(sc)
+
+    assert _names(entries) == {
+        "eemeter.sufficiency_criteria.extra_data_before_requested_start_date",
+        "eemeter.sufficiency_criteria.extra_data_after_requested_end_date",
+    }
 
 
 def test_boundary_gap_passes_when_aligned():
@@ -432,119 +487,309 @@ def test_boundary_gap_passes_when_aligned():
     settings = DailyDataSufficiencySettings(requested_start=df.index.min())
     sc = _criteria(df, settings=settings)
 
-    sc._check_n_days_boundary_gap("start")
-
-    assert sc.compliance.disqualification == []
+    assert boundary_gap(sc) == []
 
 
 # ---------------------------------------------------------------------------
-# billing off-cycle reads  (period must be within [min_days, max_days])
+# consecutive_missing_temperature_hours  (hourly baseline, disabled by default)
 # ---------------------------------------------------------------------------
 
-def _billing_criteria(df):
-    sc = BillingSufficiencyCriteria(
-        data=df,
-        is_electricity_data=True,
-        is_reporting_data=False,
-        settings=BillingDataSufficiencySettings(),
+def _hourly_frame(n_hours=48, start="2020-01-01"):
+    """An hourly frame with full temperature coverage."""
+    index = pd.date_range(start, periods=n_hours, freq="h", tz="UTC")
+    rng = np.random.default_rng(0)
+    df = pd.DataFrame(
+        {
+            "temperature": rng.normal(60.0, 15.0, n_hours),
+            "temperature_not_null": np.ones(n_hours),
+            "temperature_null": np.zeros(n_hours),
+            "observed": rng.normal(30.0, 5.0, n_hours),
+        },
+        index=index,
     )
 
-    return sc
+    return df
 
 
-def test_billing_offcycle_read_disqualifies():
-    """A short off-cycle period (below the 25-day floor) is flagged."""
-    index = pd.to_datetime(
-        ["2020-01-01", "2020-02-01", "2020-03-01", "2020-03-10", "2020-04-10"]
-    ).tz_localize("UTC")
-    df = pd.DataFrame({"value": [10.0, 12.0, 11.0, 3.0, 9.0]}, index=index)
-    sc = _billing_criteria(df)
+def test_consecutive_missing_temperature_hours_disqualifies_a_run_over_the_allowance():
+    """A temperature gap longer than the allowance is disqualified and reports its length."""
+    df = _hourly_frame()
+    df.iloc[10:18, df.columns.get_loc("temperature")] = np.nan
+    sc = _criteria(df, family="hourly")
 
-    sc._check_observed_data_billing_monthly()
+    entries = consecutive_missing_temperature_hours(sc)
 
-    name = "eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data"
-    assert name in _dq_names(sc)
-    record = _find(sc.compliance.disqualification, name)
+    name = (
+        "eemeter.sufficiency_criteria"
+        ".too_many_consecutive_hours_temperature_data_missing"
+    )
+    record = _find(entries, name)
     assert record.severity == "disqualified"
     assert record.member == "data"
+    assert record.data == {"Max_consecutive_hours_missing": 8}
 
 
-def test_billing_regular_monthly_cadence_passes():
-    """A regular monthly cadence has no off-cycle reads."""
-    index = pd.date_range("2020-01-01", periods=12, freq="MS", tz="UTC")
-    df = pd.DataFrame({"value": np.arange(12.0)}, index=index)
-    sc = _billing_criteria(df)
+def test_consecutive_missing_temperature_hours_passes_within_the_allowance():
+    """A temperature gap within the allowance raises no disqualification."""
+    df = _hourly_frame()
+    df.iloc[10:13, df.columns.get_loc("temperature")] = np.nan
+    sc = _criteria(df, family="hourly")
 
-    sc._check_observed_data_billing_monthly()
+    assert consecutive_missing_temperature_hours(sc) == []
 
-    assert sc.compliance.disqualification == []
+
+def test_consecutive_missing_temperature_hours_is_disabled_by_default():
+    """The rule is registered for the baseline phase but switched off by default."""
+
+    assert rule_spec("consecutive_missing_temperature_hours").toggleable
+
+    settings = HourlyDataSufficiencySettings()
+    toggle = settings.rules.consecutive_missing_temperature_hours
+    assert toggle.baseline is False
+    assert toggle.reporting is False
 
 
 # ---------------------------------------------------------------------------
-# baseline orchestration  (the public gate must invoke each wired rule)
+# offcycle_reads  (billing periods outside the settings-declared duration bounds)
 # ---------------------------------------------------------------------------
 
-def _frame_all_nan():
-    df = _daily_frame()
-    df["observed"] = np.nan
-    df["temperature"] = np.nan
+def test_offcycle_reads_disqualifies_monthly_data_frequency():
+    """A monthly-frequency report names the monthly qualified name and the off-cycle days."""
+    start = pd.Timestamp("2020-02-01", tz="UTC")
+    data_report = DataReport(
+        data_frequency="billing_monthly",
+        offcycle_periods={start: 10.0},
+    )
+    sc = _criteria(_daily_frame(), family="billing", data_report=data_report)
 
-    return df
+    entries = offcycle_reads(sc)
 
-
-def _frame_low_temperature_coverage():
-    df = _daily_frame()
-    df.iloc[:80, df.columns.get_loc("temperature_not_null")] = 0.0
-    df.iloc[:80, df.columns.get_loc("temperature_null")] = 24.0
-
-    return df
-
-
-def _frame_sparse_january():
-    df = _daily_frame()
-    df.loc[df.index.month == 1, "temperature"] = np.nan
-
-    return df
+    name = "eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data"
+    record = _find(entries, name)
+    assert record.severity == "disqualified"
+    assert record.member == "data"
+    assert record.data == [start.isoformat()]
 
 
-def _frame_single_extreme_observed():
-    df = _daily_frame()
-    df.iloc[10, df.columns.get_loc("observed")] = 1e6
+def test_offcycle_reads_disqualifies_bimonthly_data_frequency():
+    """A bimonthly-frequency report names the bimonthly qualified name, not the monthly one."""
+    start = pd.Timestamp("2020-02-01", tz="UTC")
+    data_report = DataReport(
+        data_frequency="billing_bimonthly",
+        offcycle_periods={start: 10.0},
+    )
+    sc = _criteria(_daily_frame(), family="billing", data_report=data_report)
 
-    return df
+    entries = offcycle_reads(sc)
+
+    names = _names(entries)
+    assert "eemeter.sufficiency_criteria.offcycle_reads_in_billing_bimonthly_data" in names
+    assert "eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data" not in names
+
+
+def test_offcycle_reads_passes_on_an_empty_report():
+    """No off-cycle periods in the data report raises no disqualification."""
+    sc = _criteria(_daily_frame(), family="billing", data_report=DataReport())
+
+    assert offcycle_reads(sc) == []
+
+
+# ---------------------------------------------------------------------------
+# high_frequency_meter_coverage  (daily/billing, advisory)
+# ---------------------------------------------------------------------------
+
+def test_high_frequency_meter_coverage_warns_on_low_coverage_days():
+    """Days the data report names as dropped for low meter coverage raise the advisory."""
+    day = pd.Timestamp("2020-03-01", tz="UTC")
+    data_report = DataReport(low_coverage_days={day: 0.25})
+    sc = _criteria(_daily_frame(), data_report=data_report)
+
+    entries = high_frequency_meter_coverage(sc)
+
+    name = "eemeter.sufficiency_criteria.missing_high_frequency_meter_data"
+    record = _find(entries, name)
+    assert record.severity == "advisory"
+    assert record.member is None
+    assert record.data == [day.isoformat()]
+    assert record.description == "More than 50% of the high frequency Meter data is missing."
+
+
+def test_high_frequency_meter_coverage_passes_on_an_empty_report():
+    """No low-coverage days in the data report raises no advisory."""
+    sc = _criteria(_daily_frame(), data_report=DataReport())
+
+    assert high_frequency_meter_coverage(sc) == []
+
+
+# ---------------------------------------------------------------------------
+# estimated_reads  (billing, advisory, new estimated_reads_merged qualified name)
+# ---------------------------------------------------------------------------
+
+def test_estimated_reads_warns_on_merged_reads():
+    """A merged estimated read raises the advisory naming the read and its merged value."""
+    read = pd.Timestamp("2020-04-01", tz="UTC")
+    data_report = DataReport(estimated_merges={read: 123.456})
+    sc = _criteria(_daily_frame(), family="billing", data_report=data_report)
+
+    entries = estimated_reads(sc)
+
+    name = "eemeter.sufficiency_criteria.estimated_reads_merged"
+    record = _find(entries, name)
+    assert record.severity == "advisory"
+    assert record.member is None
+    assert record.data == {read.isoformat(): 123.5}
+
+
+def test_estimated_reads_passes_when_nothing_was_merged():
+    """No estimated merges in the data report raises no advisory."""
+    sc = _criteria(_daily_frame(), family="billing", data_report=DataReport())
+
+    assert estimated_reads(sc) == []
+
+
+# ---------------------------------------------------------------------------
+# high_frequency_observed_coverage  (hourly baseline, advisory, disabled by default)
+# ---------------------------------------------------------------------------
+
+def test_high_frequency_observed_coverage_warns_on_low_coverage_days():
+    """Days the data report names as dropped for low observed coverage raise the advisory."""
+    hour = pd.Timestamp("2020-05-01T03:00:00", tz="UTC")
+    data_report = DataReport(low_coverage_days={hour: 0.1})
+    sc = _criteria(_daily_frame(), family="hourly", data_report=data_report)
+
+    entries = high_frequency_observed_coverage(sc)
+
+    name = "eemeter.sufficiency_criteria.missing_high_frequency_observed_data"
+    record = _find(entries, name)
+    assert record.severity == "advisory"
+    assert record.member is None
+    assert record.data == [hour.isoformat()]
+    assert record.description == "More than 50% of the high frequency Observed data is missing."
+
+
+def test_high_frequency_observed_coverage_passes_on_an_empty_report():
+    """No low-coverage rows in the data report raises no advisory."""
+    sc = _criteria(_daily_frame(), family="hourly", data_report=DataReport())
+
+    assert high_frequency_observed_coverage(sc) == []
+
+
+def test_high_frequency_observed_coverage_is_disabled_by_default():
+    """The rule is registered but switched off for both phases by default."""
+
+    assert rule_spec("high_frequency_observed_coverage").toggleable
+
+    settings = HourlyDataSufficiencySettings()
+    toggle = settings.rules.high_frequency_observed_coverage
+    assert toggle.baseline is False
+    assert toggle.reporting is False
+
+
+# ---------------------------------------------------------------------------
+# the orchestrator
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("family", _FAMILIES)
+def test_applicable_rules_put_every_infeasible_rule_first(family):
+    """run_sufficiency stops at the first non-infeasible rule on an empty frame."""
+    severities = [spec.severity for _, spec, _ in _applicable_rules(family, "baseline")]
+
+    leading = [i for i, severity in enumerate(severities) if severity == "infeasible"]
+
+    assert leading == list(range(len(leading))), (
+        f"{family} baseline order has a non-infeasible rule ahead of an infeasible one: "
+        f"{severities}"
+    )
 
 
 @pytest.mark.parametrize(
-    "build_frame, expected_suffix",
+    "family, expected",
     [
-        (_frame_all_nan, "no_data"),
-        (lambda: _daily_frame(n_days=328), "incorrect_number_of_total_days"),
-        (_frame_low_temperature_coverage, "too_many_days_with_missing_temperature_data"),
-        (_frame_sparse_january, "missing_monthly_temperature_data"),
-        (_frame_single_extreme_observed, "extreme_values_detected"),
+        ("billing", ["offcycle_reads", "high_frequency_meter_coverage", "estimated_reads"]),
+        ("hourly", ["high_frequency_observed_coverage"]),
     ],
 )
-def test_baseline_orchestration_wires_each_rule(build_frame, expected_suffix):
-    """check_sufficiency_baseline (the public gate) invokes each wired rule.
+def test_applicable_rules_keep_the_report_fed_rules_in_declared_order(family, expected):
+    """The report-fed rules run in _DATA_REPORT_RULES order, ahead of the frame rules."""
+    names = [name for name, _, _ in _applicable_rules(family, "baseline")]
 
-    Guards against a rule being silently dropped from the orchestration.
-    """
-    sc = _criteria(build_frame())
+    report_fed = [name for name in names if name in _DATA_REPORT_RULES]
 
-    sc.check_sufficiency_baseline()
-
-    expected = f"eemeter.sufficiency_criteria.{expected_suffix}"
-    all_names = {entry.qualified_name for entry in sc.compliance.all}
-    assert expected in all_names
+    assert report_fed == expected, f"{family} baseline order: {names}"
+    assert names.index(report_fed[-1]) < names.index("baseline_day_length"), (
+        f"a report-fed rule runs after a frame rule: {names}"
+    )
 
 
-def test_clean_frame_passes_full_baseline():
-    """A clean frame raises no disqualification through the public baseline gate."""
+def test_run_sufficiency_runs_column_rules_only_where_they_are_enabled():
+    """The daily baseline run covers the enabled columns and skips the disabled ones."""
     sc = _criteria(_daily_frame())
 
-    sc.check_sufficiency_baseline()
+    report = run_sufficiency(sc, "baseline")
 
-    assert sc.compliance.disqualification == []
+    assert ("baseline_day_length", None) in report
+    assert ("unique_values", "temperature") in report
+    assert ("unique_values", "observed") in report
+    # joint carries no unique-value threshold, and daily has no ghi block at all
+    assert ("unique_values", "joint") not in report
+    assert ("monthly_coverage", "ghi") not in report
+    # daily never judges observed monthly coverage
+    assert ("monthly_coverage", "observed") not in report
+
+
+def test_run_sufficiency_reports_zero_entries_for_a_clean_frame():
+    """A clean frame runs the rules and every one of them reports nothing."""
+    sc = _criteria(_daily_frame())
+
+    report = run_sufficiency(sc, "baseline")
+
+    assert set(report.values()) == {0}
+    assert sc.compliance.all == []
+
+
+def test_run_sufficiency_records_what_the_rules_return():
+    """Entries returned by a rule land on the context's compliance object."""
+    df = _daily_frame(n_days=328)
+    sc = _criteria(df)
+
+    report = run_sufficiency(sc, "baseline")
+
+    assert report[("baseline_day_length", None)] == 1
+    assert "eemeter.sufficiency_criteria.incorrect_number_of_total_days" in _dq_names(sc)
+
+
+def test_run_sufficiency_stops_after_no_data_on_an_empty_frame():
+    """An empty frame reports no_data and nothing else."""
+    sc = _criteria(_daily_frame(n_days=0))
+
+    report = run_sufficiency(sc, "baseline")
+
+    assert report == {("no_data", None): 1}
+
+
+def test_run_sufficiency_skips_a_rule_toggled_off():
+    """A rule switched off for the phase neither runs nor records."""
+    df = _daily_frame()
+    df.iloc[10, df.columns.get_loc("observed")] = 1e6
+    settings = DailyDataSufficiencySettings(rules={"extreme_values": {"baseline": False}})
+    sc = _criteria(df, settings=settings)
+
+    report = run_sufficiency(sc, "baseline")
+
+    assert ("extreme_values", None) not in report
+    assert sc.compliance.warnings == []
+
+
+def test_run_sufficiency_runs_a_rule_toggled_on():
+    """The same frame with the rule left on records the advisory."""
+    df = _daily_frame()
+    df.iloc[10, df.columns.get_loc("observed")] = 1e6
+    sc = _criteria(df)
+
+    report = run_sufficiency(sc, "baseline")
+
+    assert report[("extreme_values", None)] == 1
+    assert "eemeter.sufficiency_criteria.extreme_values_detected" in _warning_names(sc)
 
 
 def test_fresh_instances_have_independent_result_lists():
@@ -559,54 +804,50 @@ def test_fresh_instances_have_independent_result_lists():
 
 
 # ---------------------------------------------------------------------------
-# reporting path: observed checks run when observed is present
+# reporting path: observed rules run when observed is present
 # ---------------------------------------------------------------------------
 
-_DATA_FREQUENCY_CLASSES = [
-    (SufficiencyCriteria, DailyDataSufficiencySettings),
-    (DailySufficiencyCriteria, DailyDataSufficiencySettings),
-    (HourlySufficiencyCriteria, HourlyDataSufficiencySettings),
-    (BillingSufficiencyCriteria, BillingDataSufficiencySettings),
-]
+def _reporting_context(df, family):
+    sc = _criteria(df, is_reporting_data=True, family=family)
 
-_UNIQUE_VALUES_CLASSES = [
-    (DailySufficiencyCriteria, DailyDataSufficiencySettings),
-    (HourlySufficiencyCriteria, HourlyDataSufficiencySettings),
-]
+    return sc
 
 
-@pytest.mark.parametrize("cls, settings_cls", _DATA_FREQUENCY_CLASSES)
-def test_reporting_flags_observed_valid_days_when_coverage_insufficient(cls, settings_cls):
+@pytest.mark.parametrize("family", _FAMILIES)
+def test_reporting_flags_observed_daily_coverage_when_insufficient(family):
     """Reporting observed below the daily-coverage floor is disqualified once observed is present."""
     df = _daily_frame()
     df.iloc[50:110, df.columns.get_loc("observed")] = np.nan
-    sc = cls(data=df, is_electricity_data=True, is_reporting_data=True, settings=settings_cls())
+    sc = _reporting_context(df, family)
 
-    sc.check_sufficiency_reporting()
+    run_sufficiency(sc, "reporting")
 
     assert "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data" in _dq_names(sc)
 
 
-@pytest.mark.parametrize("cls, settings_cls", _UNIQUE_VALUES_CLASSES)
-def test_reporting_flags_unique_values_when_observed_flat(cls, settings_cls):
+@pytest.mark.parametrize("family", ["daily", "hourly"])
+def test_reporting_flags_unique_values_when_observed_flat(family):
     """A constant reporting observed series fails the unique-values floor once observed is present."""
     df = _daily_frame()
     df["observed"] = 5.0
-    sc = cls(data=df, is_electricity_data=True, is_reporting_data=True, settings=settings_cls())
+    sc = _reporting_context(df, family)
 
-    sc.check_sufficiency_reporting()
+    run_sufficiency(sc, "reporting")
 
     assert "eemeter.sufficiency_criteria.insufficient_unique_observed_values" in _dq_names(sc)
 
 
-@pytest.mark.parametrize("cls, settings_cls", _DATA_FREQUENCY_CLASSES)
-def test_reporting_skips_observed_checks_for_all_nan_observed(cls, settings_cls):
-    """An all-NaN (prediction-only) reporting observed column triggers neither observed check."""
+@pytest.mark.parametrize("family", _FAMILIES)
+def test_reporting_skips_observed_rules_for_all_nan_observed(family):
+    """An all-NaN (prediction-only) reporting observed column triggers neither observed rule."""
     df = _daily_frame()
     df["observed"] = np.nan
-    sc = cls(data=df, is_electricity_data=True, is_reporting_data=True, settings=settings_cls())
+    sc = _reporting_context(df, family)
 
-    sc.check_sufficiency_reporting()
+    report = run_sufficiency(sc, "reporting")
+
+    assert ("daily_coverage", "observed") not in report
+    assert ("unique_values", "observed") not in report
 
     dq_names = _dq_names(sc)
     assert "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data" not in dq_names
@@ -620,33 +861,23 @@ def _frame_long_with_extreme_observed(n_days=400):
     return df
 
 
-@pytest.mark.parametrize("cls, settings_cls", _DATA_FREQUENCY_CLASSES)
-def test_baseline_still_runs_day_length_and_extreme_values(cls, settings_cls):
+@pytest.mark.parametrize("family", _FAMILIES)
+def test_baseline_still_runs_day_length_and_extreme_values(family):
     """Control: the reporting-path frame fails baseline day-length and extreme-values."""
-    sc = cls(
-        data=_frame_long_with_extreme_observed(),
-        is_electricity_data=True,
-        is_reporting_data=False,
-        settings=settings_cls(),
-    )
+    sc = _criteria(_frame_long_with_extreme_observed(), family=family)
 
-    sc.check_sufficiency_baseline()
+    run_sufficiency(sc, "baseline")
 
     assert "eemeter.sufficiency_criteria.incorrect_number_of_total_days" in _dq_names(sc)
     assert "eemeter.sufficiency_criteria.extreme_values_detected" in _warning_names(sc)
 
 
-@pytest.mark.parametrize("cls, settings_cls", _DATA_FREQUENCY_CLASSES)
-def test_reporting_skips_day_length_and_extreme_values(cls, settings_cls):
+@pytest.mark.parametrize("family", _FAMILIES)
+def test_reporting_skips_day_length_and_extreme_values(family):
     """A large, extreme-valued reporting frame is not disqualified by baseline-only rules."""
-    sc = cls(
-        data=_frame_long_with_extreme_observed(),
-        is_electricity_data=True,
-        is_reporting_data=True,
-        settings=settings_cls(),
-    )
+    sc = _reporting_context(_frame_long_with_extreme_observed(), family)
 
-    sc.check_sufficiency_reporting()
+    run_sufficiency(sc, "reporting")
 
     assert "eemeter.sufficiency_criteria.incorrect_number_of_total_days" not in _dq_names(sc)
     assert "eemeter.sufficiency_criteria.extreme_values_detected" not in _warning_names(sc)

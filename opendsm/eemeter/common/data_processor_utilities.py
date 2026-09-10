@@ -17,10 +17,41 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+import pydantic
 from pandas.tseries.frequencies import to_offset
 from pandas.tseries.offsets import Day, MonthBegin, MonthEnd, Tick
 
-from opendsm.eemeter.common.warnings import EEMeterWarning
+
+
+class DataReport(pydantic.BaseModel):
+    """Judgments the data path made under the data rules, for the sufficiency rules to record
+    as compliance entries.
+
+    Each field carries only what the path that produced it can produce, so hourly and
+    daily frames leave the billing fields empty.
+    """
+
+    model_config = pydantic.ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    data_frequency: Optional[str] = pydantic.Field(
+        default=None,
+        description="Inferred source interval of a billing frame, None otherwise.",
+    )
+
+    offcycle_periods: dict[pd.Timestamp, float] = pydantic.Field(
+        default_factory=dict,
+        description="Start of each off-cycle period mapped to its length in days.",
+    )
+
+    estimated_merges: dict[pd.Timestamp, float] = pydantic.Field(
+        default_factory=dict,
+        description="Each read that absorbed a preceding estimate, mapped to its merged value.",
+    )
+
+    low_coverage_days: dict[pd.Timestamp, float] = pydantic.Field(
+        default_factory=dict,
+        description="Each dropped day mapped to the fraction of the day that was observed.",
+    )
 
 
 def remove_duplicates(df_or_series):
@@ -115,58 +146,43 @@ def trim_edge_rows(df, trailing_columns):
     return trimmed_df, n_leading, n_trailing
 
 
-def clean_billing_data(data, source_interval, warnings):
+def clean_billing_data(data, source_interval, settings):
+    """Drop off-cycle billing periods and fold estimated reads forward.
+
+    Returns the cleaned frame alongside a :any:`DataReport` of the judgments behind it; no
+    compliance entries are constructed here.
+    """
     # check for empty data
     if data["value"].dropna().empty:
-        return data[:0]
+        empty_frame = data[:0]
+        empty_report = DataReport()
+
+        return empty_frame, empty_report
+
+    data_frequency = None
+    offcycle_periods = {}
+    estimated_merges = {}
 
     if source_interval.startswith("billing"):
+        data_frequency = source_interval
         diff = list((data.index[1:] - data.index[:-1]).days)
         filter_ = pd.Series(diff + [np.nan], index=data.index)
 
+        min_days = settings.min_days_in_period
         # CalTRACK 2.2.3.4, 2.2.3.5
         if source_interval == "billing_monthly":
+            max_days = settings.max_days_in_monthly_period
+        elif source_interval == "billing_bimonthly":
+            max_days = settings.max_days_in_bimonthly_period
+        else:
+            max_days = None
+
+        if max_days is not None:
             data = data[
-                (filter_ <= 35) & (filter_ >= 25)  # keep these, inclusive
+                (filter_ <= max_days) & (filter_ >= min_days)  # keep these, inclusive
             ].reindex(data.index)
-
-            if len(data[(filter_ > 35) | (filter_ < 25)]) > 0:
-                warnings.append(
-                    EEMeterWarning(
-                        qualified_name="eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data",
-                        description=(
-                            "Off-cycle reads found in billing monthly data having a duration of less than 25 days"
-                        ),
-                        severity="disqualified",
-                        member="data",
-                        data=[
-                            timestamp.isoformat()
-                            for timestamp in data[(filter_ > 35) | (filter_ < 25)].index
-                        ],
-                    )
-                )
-
-        # CalTRACK 2.2.3.4, 2.2.3.5
-        if source_interval == "billing_bimonthly":
-            data = data[
-                (filter_ <= 70) & (filter_ >= 25)  # keep these, inclusive
-            ].reindex(data.index)
-
-            if len(data[(filter_ > 70) | (filter_ < 25)]) > 0:
-                warnings.append(
-                    EEMeterWarning(
-                        qualified_name="eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data",
-                        description=(
-                            "Off-cycle reads found in billing monthly data having a duration of less than 25 days"
-                        ),
-                        severity="disqualified",
-                        member="data",
-                        data=[
-                            timestamp.isoformat()
-                            for timestamp in data[(filter_ > 70) | (filter_ < 25)].index
-                        ],
-                    )
-                )
+            offcycle = filter_[(filter_ > max_days) | (filter_ < min_days)]
+            offcycle_periods = dict(offcycle.items())
 
         # CalTRACK 2.2.3.1
         """
@@ -195,7 +211,7 @@ def clean_billing_data(data, source_interval, warnings):
         """
         add_estimated = []
         remove_estimated_fixed_rows = []
-        orig_data = data.copy()
+        merged_into_rows = []
         if "estimated" in data.columns:
             data["unestimated_value"] = (
                 data[:-1].value[(data[:-1].estimated == False)].reindex(data.index)
@@ -213,6 +229,7 @@ def clean_billing_data(data, source_interval, warnings):
                         # added to the subsequent row meaning this row
                         # needs to be removed
                         remove_estimated_fixed_rows.append(prev_index)
+                        merged_into_rows.append(index)
                 else:
                     add_estimated.append(0)
                 prev_row = row
@@ -221,12 +238,25 @@ def clean_billing_data(data, source_interval, warnings):
             data["value"] = data["unestimated_value"] + add_estimated
             data = data[~data.index.isin(remove_estimated_fixed_rows)]
             data = data[["value"]]  # remove the estimated column
+            estimated_merges = {
+                index: data.loc[index, "value"] for index in merged_into_rows
+            }
+
+    report = DataReport(
+        data_frequency=data_frequency,
+        offcycle_periods=offcycle_periods,
+        estimated_merges=estimated_merges,
+    )
 
     # check again for empty data
     if data.dropna().empty:
-        return data[:0]
+        empty_frame = data[:0]
 
-    return data["value"].to_frame()
+        return empty_frame, report
+
+    cleaned = data["value"].to_frame()
+
+    return cleaned, report
 
 
 def frequency_duration(freq):
@@ -390,48 +420,53 @@ def as_freq(
         return resampled
 
 
-def downsample_and_clean_daily_data(dataset, warnings):
+def downsample_and_clean_daily_data(dataset, settings):
+    """Downsample a sub-daily series to days, dropping days that are too sparse.
+
+    Returns the daily frame alongside a :any:`DataReport` naming the dropped days and
+    their observed fractions; no compliance entries are constructed here.
+    """
     dataset = as_freq(dataset, "D", include_coverage=True)
 
-    if not dataset[dataset.coverage <= 0.5].empty:
-        warnings.append(
-            EEMeterWarning(
-                qualified_name="eemeter.sufficiency_criteria.missing_high_frequency_meter_data",
-                description=(
-                    "More than 50% of the high frequency Meter data is missing."
-                ),
-                severity="advisory",
-                data=[
-                    timestamp.isoformat()
-                    for timestamp in dataset[dataset.coverage <= 0.5].index
-                ],
-            )
-        )
+    min_pct = settings.observed.min_pct_hourly_coverage
+    sufficient = dataset.coverage > min_pct
+    low_coverage_days = dict(dataset.coverage[dataset.coverage <= min_pct].items())
 
     # CalTRACK 2.2.2.1 - interpolate with average of non-null values
-    dataset.loc[dataset.coverage > 0.5, "value"] = (
-        dataset[dataset.coverage > 0.5].value / dataset[dataset.coverage > 0.5].coverage
+    dataset.loc[sufficient, "value"] = (
+        dataset[sufficient].value / dataset[sufficient].coverage
     )
 
-    return dataset[dataset.coverage > 0.5].reindex(dataset.index)[["value"]]
+    cleaned = dataset[sufficient].reindex(dataset.index)[["value"]]
+    report = DataReport(low_coverage_days=low_coverage_days)
+
+    return cleaned, report
 
 
-def clean_billing_daily_data(data, source_interval, warnings):
+def clean_billing_daily_data(data, source_interval, settings):
     # billing data is cleaned but not resampled
     if source_interval.startswith("billing"):
         # CalTRACK 2.2.3.4, 2.2.3.5
-        return clean_billing_data(data, source_interval, warnings)
+        return clean_billing_data(data, source_interval, settings)
 
     # higher intervals like daily, hourly, 30min, 15min are
     # resampled (daily) or downsampled (hourly, 30min, 15min)
     elif source_interval == "daily":
-        return data.to_frame("value")
+        cleaned = data.to_frame("value")
+        report = DataReport()
+
+        return cleaned, report
     else:
-        return downsample_and_clean_daily_data(data, warnings)
+        return downsample_and_clean_daily_data(data, settings)
 
 
 # TODO : requires more testing
-def compute_data_frequency(index: pd.Series, default_data_frequency: Optional[str]):
+def compute_data_frequency(
+    index: pd.Series,
+    default_data_frequency: Optional[str],
+    max_days_in_monthly_period: int = 35,
+    max_days_in_bimonthly_period: int = 70,
+):
     if len(index) <= 1:
         return default_data_frequency
     # Inferred frequency returns None if frequency can't be autodetected
@@ -442,8 +477,10 @@ def compute_data_frequency(index: pd.Series, default_data_frequency: Optional[st
         data_frequency_dict = {
             median_difference < 1: "hourly",
             median_difference == 1: "daily",
-            1 < median_difference <= 35: "billing_monthly",
-            35 < median_difference <= 70: "billing_bimonthly",
+            1 < median_difference <= max_days_in_monthly_period: "billing_monthly",
+            max_days_in_monthly_period
+            < median_difference
+            <= max_days_in_bimonthly_period: "billing_bimonthly",
         }
         data_frequency = data_frequency_dict.get(True, default_data_frequency)
         return data_frequency

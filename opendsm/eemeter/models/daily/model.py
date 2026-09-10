@@ -27,6 +27,7 @@ from opendsm.eemeter.common.compliance import (
     normalize_enforce_compliance,
     record_timezone_mismatch,
 )
+from opendsm.eemeter.common.data_settings import strip_removed_sufficiency_keys
 from opendsm.eemeter.common.data_processor_utilities import trim_edge_rows
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
@@ -547,6 +548,8 @@ class DailyModel:
                 version this package cannot read.
         """
         settings = data.get("settings")
+        if settings is not None:
+            settings = strip_removed_sufficiency_keys(settings)
         daily_model = cls(settings=settings)
         info = dict(data.get("info") or {})
 

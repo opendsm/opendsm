@@ -25,7 +25,8 @@ from opendsm.eemeter.common.data_processor_utilities import (
 from opendsm.common.hourly_interpolation import interpolate
 from opendsm.eemeter.common.compliance import Compliance
 from opendsm.eemeter.common.data_settings import HourlyDataSettings
-from opendsm.eemeter.common.sufficiency_criteria import HourlySufficiencyCriteria
+from opendsm.eemeter.common.sufficiency_criteria import SufficiencyCriteria
+from opendsm.eemeter.common.sufficiency_rules import run_sufficiency
 
 from opendsm.eemeter.common.warnings import EEMeterWarning
 
@@ -254,15 +255,16 @@ class HourlyBaselineData(_HourlyData):
 
     def _check_data_sufficiency(self):
         data = _create_sufficiency_df(self.df)
-        hsc = HourlySufficiencyCriteria(
+        context = SufficiencyCriteria(
             data=data,
             is_electricity_data=self.is_electricity_data,
             is_reporting_data=False,
+            family="hourly",
             settings=self._settings.sufficiency,
         )
-        hsc.check_sufficiency_baseline()
+        run_sufficiency(context, "baseline")
 
-        return hsc.compliance.all
+        return context.compliance.all
 
 
 class HourlyReportingData(_HourlyData):
@@ -305,15 +307,16 @@ class HourlyReportingData(_HourlyData):
 
     def _check_data_sufficiency(self):
         data = _create_sufficiency_df(self.df)
-        hsc = HourlySufficiencyCriteria(
+        context = SufficiencyCriteria(
             data=data,
             is_electricity_data=self.is_electricity_data,
             is_reporting_data=True,
+            family="hourly",
             settings=self._settings.sufficiency,
         )
-        hsc.check_sufficiency_reporting()
+        run_sufficiency(context, "reporting")
 
-        return hsc.compliance.all
+        return context.compliance.all
 
 
 def _create_sufficiency_df(df: pd.DataFrame):
