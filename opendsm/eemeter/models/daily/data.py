@@ -19,6 +19,7 @@ import pandas as pd
 
 import opendsm.common.const as _const
 from opendsm.eemeter.common.data_processor_utilities import (
+    DataReport,
     as_freq,
     clean_billing_daily_data,
     compute_data_frequency,
@@ -29,7 +30,8 @@ from opendsm.eemeter.common.data_processor_utilities import (
 from opendsm.eemeter.common.compliance import Compliance
 from opendsm.eemeter.common.features import compute_temperature_features
 from opendsm.eemeter.common.data_settings import DailyDataSettings
-from opendsm.eemeter.common.sufficiency_criteria import DailySufficiencyCriteria
+from opendsm.eemeter.common.sufficiency_criteria import SufficiencyCriteria
+from opendsm.eemeter.common.sufficiency_rules import run_sufficiency
 
 from opendsm.eemeter.common.warnings import EEMeterWarning
 
@@ -59,6 +61,7 @@ class _DailyData:
         self.tz = None
 
         self.compliance = Compliance()
+        self._data_report = DataReport()
 
         # Initialize settings using the abstracted class
         if settings is None:
@@ -121,11 +124,9 @@ class _DailyData:
         if data_frequency.startswith("billing"):
             # TODO : make this a warning instead of an exception
             raise ValueError("Billing data is not allowed in the daily model")
-        meter_value_df, cleaning_entries = clean_billing_daily_data(
-            meter_series, data_frequency
+        meter_value_df, self._data_report = clean_billing_daily_data(
+            meter_series, data_frequency, self.settings.sufficiency
         )
-        for entry in cleaning_entries:
-            self.compliance.record_and_warn(entry)
 
         meter_value_df = meter_value_df.rename(columns={"value": "observed"})
 
@@ -446,16 +447,17 @@ class DailyBaselineData(_DailyData):
             The compliance records produced by the sufficiency checks.
 
         """
-        # 90% coverage per period only required for billing models
-        dsc = DailySufficiencyCriteria(
+        context = SufficiencyCriteria(
             data=sufficiency_df,
             is_electricity_data=self.is_electricity_data,
             is_reporting_data=False,
+            family="daily",
             settings=self.settings.sufficiency,
+            data_report=self._data_report,
         )
-        dsc.check_sufficiency_baseline()
+        run_sufficiency(context, "baseline")
 
-        return dsc.compliance.all
+        return context.compliance.all
 
 
 class DailyReportingData(_DailyData):
@@ -505,13 +507,14 @@ class DailyReportingData(_DailyData):
             The compliance records produced by the sufficiency checks.
 
         """
-        # 90% coverage per period only required for billing models
-        dsc = DailySufficiencyCriteria(
-            data=sufficiency_df, 
+        context = SufficiencyCriteria(
+            data=sufficiency_df,
             is_electricity_data=self.is_electricity_data,
             is_reporting_data=True,
+            family="daily",
             settings=self.settings.sufficiency,
+            data_report=self._data_report,
         )
-        dsc.check_sufficiency_reporting()
+        run_sufficiency(context, "reporting")
 
-        return dsc.compliance.all
+        return context.compliance.all

@@ -66,6 +66,7 @@ from opendsm.eemeter.common.data_processor_utilities import (
     resolve_is_electricity_data,
     trim_edge_rows,
 )
+from opendsm.eemeter.common.data_settings import strip_removed_sufficiency_keys
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
     InfeasibleDataError,
@@ -1861,7 +1862,7 @@ class HourlyModel:
                     OpenDSMWarning.from_json(entry) for entry in validated.compliance
                 ]
 
-            settings_dict = lowercase_keys(payload["settings"])
+            settings_dict = strip_removed_sufficiency_keys(lowercase_keys(payload["settings"]))
             if "ghi" in settings_dict.get("train_features"):
                 settings = _settings.HourlySolarSettings(**settings_dict)
             else:

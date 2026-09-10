@@ -36,6 +36,7 @@ from opendsm.eemeter.common.data_processor_utilities import (
     resolve_is_electricity_data,
     trim_edge_rows,
 )
+from opendsm.eemeter.common.data_settings import strip_removed_sufficiency_keys
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
     ModelFitError,
@@ -518,6 +519,8 @@ class DailyModel:
                 this package cannot read.
         """
         settings = data.get("settings")
+        if settings is not None:
+            settings = strip_removed_sufficiency_keys(settings)
         daily_model = cls(settings=settings)
         info = dict(data.get("info") or {})
         daily_model._is_electricity_data, prior_format = resolve_is_electricity_data(
