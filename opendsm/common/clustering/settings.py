@@ -147,13 +147,17 @@ class ClusteringSettings(BaseSettings):
             "Post-council outlier removal threshold in Gaussian sigma units. "
             "After the scoring council selects the best k, points whose "
             "deviation from their cluster median exceeds this many sigma "
-            "(estimated robustly via MAD × 1.4826) along any principal "
-            "component are flagged as outliers and handled according to "
-            "the algorithm's small_cluster_mode: KEEP preserves them in a "
-            "new cluster (renumbered), OUTLIER relabels as -1, ABSORB "
-            "reassigns to the nearest non-outlier cluster centroid. "
-            "Default 3.0σ (0.27% of a Gaussian tail). "
-            "5.0σ is more conservative (0.00006%). "
+            "(estimated robustly via MAD × 1.4826) along any of the "
+            "cluster's top 3 principal components are flagged as outliers "
+            "and handled according to the algorithm's small_cluster_mode: "
+            "KEEP preserves them in a new cluster (renumbered), OUTLIER "
+            "relabels as -1, ABSORB reassigns to the nearest non-outlier "
+            "cluster centroid. "
+            "On Gaussian data, the default 3.0σ flags about 0.8% of points "
+            "and 5.0σ about 0.0002%. These exceed the single-component "
+            "two-sided tails (0.27% and 0.00006%) because a point is "
+            "flagged when it crosses the threshold on any of the three "
+            "components. "
             "None disables outlier removal. "
             "Only applied to clusters with >= 5 members."
         ),
@@ -229,7 +233,7 @@ class ClusteringSettings(BaseSettings):
     @pydantic.model_validator(mode="after")
     def _init_outlier_threshold(self):
         if self.outlier_removal_sigma is not None:
-            self._outlier_mad_threshold = self.outlier_removal_sigma / MAD_k
+            self._outlier_mad_threshold = self.outlier_removal_sigma * MAD_k
         else:
             self._outlier_mad_threshold = None
         return self

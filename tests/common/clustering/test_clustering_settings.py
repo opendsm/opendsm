@@ -18,7 +18,6 @@ import pytest
 
 from pydantic import ValidationError
 
-from opendsm.common.stats.basic import MAD_k
 from opendsm.common.clustering.settings import ClusteringSettings
 from opendsm.common.clustering.metrics.settings import (
     ClusterRangeSettings,
@@ -82,9 +81,9 @@ class TestClusteringSettings:
         assert cs._outlier_mad_threshold is None
 
     def test_outlier_sigma_value_sets_threshold(self):
-        """A finite sigma is converted to a MAD threshold (sigma / MAD_k)."""
+        """A finite sigma is converted to a MAD threshold (sigma × MAD_k)."""
         cs = ClusteringSettings(outlier_removal_sigma=3.0)
-        assert cs._outlier_mad_threshold == pytest.approx(3.0 / MAD_k)
+        assert cs._outlier_mad_threshold == pytest.approx(4.4478, abs=1e-4)
 
     def test_explicit_seed_is_deterministic(self):
         """An explicit seed is copied verbatim into the private seed."""
