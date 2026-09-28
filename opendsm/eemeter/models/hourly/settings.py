@@ -351,6 +351,7 @@ class BaseHourlySettings(BaseSettings):
             # model is benchmarked against the new clustering defaults.
             min_cluster_size=2,
             small_cluster_mode="outlier",
+            outlier_removal_sigma=None,
             algorithm_selection="spectral",
             spectral={
                 "scoring": {

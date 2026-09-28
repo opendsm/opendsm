@@ -877,15 +877,17 @@ class TestPrepareLabelsModes:
 # Tests for remove_outliers_mad
 # =============================================================================
 
+from scipy.stats import norm
+
 from opendsm.common.clustering.metrics.label_ops import remove_outliers_mad
 from opendsm.common.stats.basic import MAD_k
 
 
 def _sigma_to_mad_threshold(sigma: float) -> float:
     """Convert a sigma-based threshold to the MAD-unit threshold expected by
-    ``remove_outliers_mad``.  Mirrors ``ClusteringSettings._init_outlier_threshold``.
+    ``remove_outliers_mad``, via ``ClusteringSettings``.
     """
-    return sigma / MAD_k
+    return ClusteringSettings(outlier_removal_sigma=sigma)._outlier_mad_threshold
 
 
 class TestOutlierRemovalMAD:
@@ -1047,7 +1049,7 @@ class TestOutlierRemovalMAD:
         )
 
         n_flagged = np.sum(result == -1)
-        # sigma=1.5 → mad_threshold≈1.01.  With the any-PC rule across
+        # sigma=1.5 → mad_threshold≈2.22.  With the any-PC rule across
         # multiple PCs, a substantial fraction of tail points are flagged.
         assert n_flagged > 10
 
@@ -1096,6 +1098,27 @@ class TestOutlierRemovalMAD:
 
         # Verify the constant itself: MAD_k ≈ 1.4826
         assert abs(MAD_k - 1.4826) < 0.001
+
+    def test_settings_threshold_flags_gaussian_tail(self):
+        """A 3σ setting flags the two-sided 3σ Gaussian tail along one component."""
+        rng = np.random.default_rng(42)
+        n = 100_000
+        data = rng.normal(loc=0.0, scale=1.0, size=(n, 1))
+        labels = np.zeros(n, dtype=int)
+        settings = ClusteringSettings(outlier_removal_sigma=3.0)
+
+        result = remove_outliers_mad(
+            data,
+            labels,
+            mad_threshold=settings._outlier_mad_threshold,
+            small_cluster_mode=SmallClusterMode.OUTLIER,
+            n_pcs=1,
+        )
+
+        flagged = np.mean(result == -1)
+        expected = 2 * norm.sf(3.0)
+        message = f"expected flagged fraction {expected:.4f} at 3σ, got {flagged:.4f}"
+        assert flagged == pytest.approx(expected, abs=7e-4), message
 
 
 # =============================================================================

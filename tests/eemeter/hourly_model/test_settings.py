@@ -17,6 +17,8 @@ import pytest
 
 from opendsm.eemeter.models.hourly.settings import (
     BinningChoice,
+    HourlyNonSolarSettings,
+    HourlySolarSettings,
     TemperatureBinSettings,
 )
 
@@ -60,3 +62,14 @@ def test_edge_bin_percent_upper_boundary_accepted():
     settings = TemperatureBinSettings(edge_bin_percent=0.45)
 
     assert settings.edge_bin_percent == 0.45
+
+
+@pytest.mark.parametrize("settings_cls", [HourlyNonSolarSettings, HourlySolarSettings])
+def test_temporal_cluster_disables_outlier_removal(settings_cls):
+    """Temporal clustering runs without post-clustering outlier removal."""
+    settings = settings_cls()
+
+    assert settings.temporal_cluster.outlier_removal_sigma is None, (
+        f"expected outlier_removal_sigma None, got "
+        f"{settings.temporal_cluster.outlier_removal_sigma}"
+    )
