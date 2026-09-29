@@ -123,7 +123,33 @@ class CGCorrectionSettings(BaseSettings):
 
     weight_cluster_aggregation: Optional[WeightClusterAggChoice] = pydantic.Field(
         default = None,
-        description="how to weight cluster aggregation"
+        description=(
+            "how to weight cluster aggregation. Model-magnitude weighting can "
+            "concentrate weight on a single meter in small or magnitude-skewed "
+            "clusters; `weight_cap` bounds this. With a cap above 0.5 the Kish "
+            "effective sample size can still drop below 2; there the point "
+            "correction stays weighted, but the cluster's uncertainty is "
+            "estimated with uniform weights over its finite meters, since an "
+            "effective sample size below 2 cannot support a weighted interval."
+        )
+    )
+
+    weight_cap: float = pydantic.Field(
+        default=0.5,
+        gt=0.0,
+        le=1.0,
+        description=(
+            "upper bound on any single meter's model-magnitude weight within a "
+            "cluster; applies only under model-magnitude "
+            "`weight_cluster_aggregation`. Weights above the cap are clipped to "
+            "it and the excess is redistributed proportionally over the uncapped "
+            "meters (equally if they all carry zero weight), iterating until no "
+            "weight exceeds the cap. Where the cap cannot be met (cap times the "
+            "number of meters is below 1) the weights are uniform. A cap of c "
+            "keeps the Kish effective sample size at or above the smaller of 1/c "
+            "and the number of meters, so 0.5 or below guarantees at least 2 for "
+            "clusters of 2 or more meters."
+        )
     )
 
     outlier_rejection: OutlierRejectionSettings = pydantic.Field(

@@ -209,7 +209,61 @@ def _effective_sample_size(weight):
     return n
 
 
-def _model_magnitude_weights(mCGr):
+def _water_fill_weights(weights, valid, cap):
+    """Cap weights above `cap`, redistributing the excess over uncapped
+    meters (proportionally to their current weight, or equally if every
+    uncapped meter carries zero weight), iterating until no weight exceeds
+    the cap. Operates along the last axis; terminates in at most
+    `weights.shape[-1]` passes. `weights` must already sum to 1 along the
+    last axis over `valid` entries; invalid entries are ignored and left 0.
+    When the cap is infeasible (`cap * n_valid < 1`, so no capped distribution
+    sums to 1) the row falls back to uniform weights over its valid meters.
+    """
+    w = np.where(valid, weights, 0.0)
+    capped = np.zeros_like(valid, dtype=bool)
+    n_valid = valid.sum(axis=-1, keepdims=True)
+    # A lone valid meter has nowhere to send its excess, so it keeps full weight
+    # regardless of the cap.
+    capable = n_valid > 1
+    # An infeasible cap (cap * n_valid < 1) cannot hold every weight at or below
+    # the cap while still summing to 1, so water-filling would return weights
+    # summing below 1; fall back to uniform weights over the valid meters (the
+    # least-concentrated valid distribution).
+    infeasible = capable & (cap * n_valid < 1.0)
+
+    for _ in range(w.shape[-1]):
+        over = valid & ~capped & (w > cap) & capable
+
+        if not over.any():
+            break
+
+        excess = np.sum(np.where(over, w - cap, 0.0), axis=-1, keepdims=True)
+        w = np.where(over, cap, w)
+        capped = capped | over
+
+        uncapped = valid & ~capped
+        uncapped_sum = np.sum(np.where(uncapped, w, 0.0), axis=-1, keepdims=True)
+        n_uncapped = np.sum(uncapped, axis=-1, keepdims=True)
+
+        with np.errstate(invalid="ignore", divide="ignore"):
+            proportional = np.divide(w, uncapped_sum, out=np.zeros_like(w), where=uncapped_sum > 0)
+            equal = np.divide(
+                np.ones_like(w), n_uncapped, out=np.zeros_like(w), where=n_uncapped > 0
+            )
+
+        share = np.where(uncapped_sum > 0, proportional, equal) * excess
+        w = w + np.where(uncapped, share, 0.0)
+
+    with np.errstate(invalid="ignore", divide="ignore"):
+        uniform = np.divide(
+            valid.astype(np.float64), n_valid, out=np.zeros_like(w), where=n_valid > 0
+        )
+    w = np.where(infeasible, uniform, w)
+
+    return w
+
+
+def _model_magnitude_weights(mCGr, weight_cap):
     # Normalized |model| weights; None when the magnitudes sum to zero (uniform fallback).
     abs_mCGr = np.abs(mCGr)
     total = np.sum(abs_mCGr)
@@ -218,6 +272,8 @@ def _model_magnitude_weights(mCGr):
         return None
 
     weights = abs_mCGr / total
+    valid = np.ones_like(weights, dtype=bool)
+    weights = _water_fill_weights(weights[np.newaxis, :], valid[np.newaxis, :], weight_cap)[0]
 
     return weights
 
@@ -258,7 +314,7 @@ def _cluster_correction(
     if settings.weight_cluster_aggregation is None:
         cluster_weight = None
     elif settings.weight_cluster_aggregation == _settings.WeightClusterAggChoice.MODEL:
-        cluster_weight = _model_magnitude_weights(mCGr)
+        cluster_weight = _model_magnitude_weights(mCGr, settings.weight_cap)
 
     # remove outliers
     if settings.outlier_rejection.enabled:
@@ -280,7 +336,7 @@ def _cluster_correction(
 
         # renormalize weights
         if cluster_weight is not None:
-            cluster_weight = _model_magnitude_weights(mCGr)
+            cluster_weight = _model_magnitude_weights(mCGr, settings.weight_cap)
 
     # apply caps
     # decision: should capped values have their uncertainty considered or excluded?
@@ -298,12 +354,24 @@ def _cluster_correction(
     # compute mean and unc
     cluster_mean = np.average(correct, weights=cluster_weight)
 
-    # check n to see if unc can be calculated
+    # select the sample size and weighting for the uncertainty estimate. The
+    # point correction stays weighted, but a Kish effective sample size below 2
+    # cannot support a weighted interval, so when the weights concentrate the
+    # spread is estimated with uniform weights over the finite meters.
+    unc_weights = cluster_weight
     if calculate_unc:
+        n_finite = len(correct)
+
         if cluster_weight is None:
-            n = len(correct)
+            n = n_finite
         else:
-            n = _effective_sample_size(cluster_weight)
+            n_eff = _effective_sample_size(cluster_weight)
+
+            if n_eff < 2:
+                n = n_finite
+                unc_weights = None
+            else:
+                n = n_eff
 
         if n < 2:
             calculate_unc = False
@@ -315,14 +383,14 @@ def _cluster_correction(
         correct_std = fast_std(
             correct,
             mean = cluster_mean,
-            weights = cluster_weight
+            weights = unc_weights
         )
         # uncertain if this should be a confidence interval or prediction interval, CI for now
         _unc_factor = unc_factor(n, interval="CI", alpha=settings.alpha)
         correct_agg_unc = correct_std * _unc_factor
 
         # model uncertainty
-        model_var = np.average(correct_unc**2, weights=cluster_weight)
+        model_var = np.average(correct_unc**2, weights=unc_weights)
 
         cluster_unc = np.sqrt(correct_agg_unc**2 + model_var)
 
