@@ -347,13 +347,17 @@ class BaseHourlySettings(BaseSettings):
     """settings for temporal clustering"""
     temporal_cluster: ClusteringSettings = pydantic.Field(
         default_factory=lambda: ClusteringSettings(
-            # Pin to original EE hourly defaults. Do not remove until hourly
-            # model is benchmarked against the new clustering defaults.
+            # Spectral clustering with a Calinski-Harabasz council, as the hourly
+            # model was tuned with. The RBF affinity and the row-median magnitude
+            # feature go together: RBF without the magnitude feature splits 24-hour
+            # profiles into near-singleton clusters, and the magnitude feature
+            # without RBF undersplits large meters.
             min_cluster_size=2,
             small_cluster_mode="outlier",
             outlier_removal_sigma=None,
             algorithm_selection="spectral",
             spectral={
+                "affinity": "rbf",
                 "scoring": {
                     "weights": {"calinski_harabasz_index": 1.0},
                     "k_penalty": {"enabled": False},
@@ -376,7 +380,7 @@ class BaseHourlySettings(BaseSettings):
                     "variance_weighted": False,
                 },
                 "fpca": {"enabled": False},
-                "magnitude_features": {"features": []},
+                "magnitude_features": {"features": ["median"]},
             },
         ),
     )
