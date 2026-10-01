@@ -136,12 +136,9 @@ class Data_Settings(BaseSettings):
     @pydantic.field_validator("min_data_pct_required")
     @classmethod
     def validate_min_data_pct_required(cls, value):
-        if value is None:
-            pass
+        if value is not None and not 0 < value <= 1:
+            raise ValueError(f"min_data_pct_required must be in (0, 1], got {value}")
 
-        elif value != min_data_pct:
-            raise ValueError(f"min_data_pct_required must be {min_data_pct}")
-        
         return value
 
     """season definition to be used for the loadshape"""
@@ -187,7 +184,9 @@ class Data_Settings(BaseSettings):
         self.model_config["frozen"] = False
 
         if self.interpolate_missing:
-            self.min_data_pct_required = min_data_pct
+            if self.min_data_pct_required is None:
+                self.min_data_pct_required = min_data_pct
+
         else:
             self.min_data_pct_required = None
 
