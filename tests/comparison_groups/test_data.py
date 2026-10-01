@@ -911,3 +911,27 @@ def test_fill_missing_without_season_is_flat():
 def test_fill_missing_rejects_unknown_method():
     with pytest.raises(ValueError, match="linear"):
         fill_missing(np.zeros((1, 4)), None, method="nearest")
+
+
+def test_error_basis_duplicate_reading_keeps_the_smallest_error():
+    """For the error basis computed from observed and modeled, two readings of the same
+    meter-hour are duplicates even when their observed values differ: the one with the
+    smaller |error| is kept rather than both being averaged into the cell."""
+    settings = Data_Settings(
+        agg_type=_const.AggType.MEAN,
+        loadshape_type=_const.LoadshapeType.ERROR,
+        time_period=_const.TimePeriod.HOUR,
+    )
+    frame = _hourly_frame("m", 24)
+    frame["observed"] = 1.0
+    frame["modeled"] = 2.0  # error = 1 - 1/2 = 0.5 in every hour
+    duplicate = frame.iloc[[5]].assign(observed=1.9)  # error = 0.05 for the same hour
+    time_series = pd.concat([frame, duplicate], ignore_index=True)
+
+    loadshape = Data(time_series_df=time_series, settings=settings).loadshape
+
+    assert loadshape.loc["m", 6] == pytest.approx(0.05), (
+        f"hour 5 should keep the smaller |error| 0.05, got {loadshape.loc['m', 6]} "
+        "(0.275 means both readings were averaged)"
+    )
+    assert loadshape.loc["m", 1] == pytest.approx(0.5)
