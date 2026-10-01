@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pydantic
 
 from typing import Optional,Union
@@ -192,6 +194,38 @@ class Data_Settings(BaseSettings):
         self.model_config["frozen"] = True
 
         return self
+
+    @property
+    def time_layout(self) -> list[tuple[str, int]]:
+        """Ordered (column, cardinality) pairs for the grouping columns of time_period."""
+        if self.time_period is None:
+            return []
+
+        cardinality = {
+            "season": len(self.season.options),
+            "month": 12,
+            "day_of_week": 7,
+            "day_of_year": 365,
+            "weekday_weekend": len(self.weekday_weekend.options),
+            "hour": 24,
+        }
+        layout = [
+            (period, cardinality[period])
+            for period in _const.unique_time_periods
+            if period in self.time_period
+        ]
+
+        return layout
+
+    @property
+    def n_times(self) -> Optional[int]:
+        """Number of loadshape times for time_period, or None when time_period is None."""
+        if self.time_period is None:
+            return None
+
+        n = math.prod(card for _, card in self.time_layout)
+
+        return n
     
 
 if __name__ == "__main__":
