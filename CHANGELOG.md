@@ -5,6 +5,7 @@ Development
 -----------
 
 * Bug fix (`comparison_groups/common/data`): on the error basis computed from observed and modeled, two readings of the same meter and hour were duplicates only when their observed values matched too, so differing readings were both kept and averaged into the cell; duplicates are now keyed by meter and hour alone, keeping the smallest |error| as on every other basis.
+* `tests/comparison_groups`: the clustering output snapshots pin the cluster count and sizes only; a treatment's weights are checked as a simplex row rather than pinned, because a treatment two clusters explain about equally well splits its weight differently between BLAS builds.
 * `comparison_groups/common/data`: faster loadshape aggregation.
 * `comparison_groups/common/data_settings`: `min_data_pct_required` accepts any value in (0, 1] instead of only 0.8, and a caller's value is kept when `interpolate_missing` is on.
 * Bug fix (`comparison_groups/common/data`): the sampling-interval check compared time-series rows out of time order, so its minimum interval was never positive and it never excluded meters sampled more coarsely than the time period; rows are now time-ordered per meter before the interval is measured.

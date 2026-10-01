@@ -1,14 +1,4 @@
 {
-  "dominant_weight_per_treatment": [
-    0.3912,
-    0.4372,
-    0.507,
-    0.5083,
-    0.5343,
-    0.7616,
-    1.0,
-    1.0
-  ],
   "n_clusters": 4,
   "sorted_cluster_sizes": [
     10,
