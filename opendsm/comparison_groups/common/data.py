@@ -32,6 +32,79 @@ def is_datetime(x: pd.Series) -> bool:
     return any(is_dt)
 
 
+# Subtracted from each grouping column so every time digit is 0-based
+_time_digit_offset = {"month": 1, "day_of_year": 1}
+
+
+def fill_missing(
+    matrix: np.ndarray,
+    layout: Optional[list[tuple[str, int]]],
+    method: str = "linear",
+) -> np.ndarray:
+    """Fill the NaN times of a meters x times loadshape matrix, returning a filled copy.
+
+    Linear interpolation along each row is the only method. When layout contains a
+    season column, season is the outermost block, so each row is interpolated
+    within each season block and never draws on another season's readings. Without a
+    season column, or with layout None, the whole row is one block. Times before the
+    first or after the last reading of a block take that reading; a block with no
+    readings stays NaN.
+
+    Args:
+        matrix: Meters x times loadshape values, NaN where a time is missing.
+        layout: The time layout as ``(column, count)`` pairs, outermost first, or None.
+        method: The fill method; only ``"linear"`` is supported.
+
+    Returns:
+        A filled copy of ``matrix``.
+
+    Raises:
+        ValueError: method is not "linear".
+    """
+    if method != "linear":
+        raise ValueError(f"Unknown fill method {method!r}; only 'linear' is supported.")
+
+    filled = np.array(matrix, dtype=float)
+    n_blocks = dict(layout or []).get("season", 1)
+    block_len = filled.shape[1] // n_blocks
+    positions = np.arange(block_len)
+
+    for start in range(0, filled.shape[1], block_len):
+        for row in filled[:, start:start + block_len]:
+            missing = np.isnan(row)
+            if missing.any() and not missing.all():
+                row[missing] = np.interp(positions[missing], positions[~missing], row[~missing])
+
+    return filled
+
+
+def _aggregate_cells(
+    key: np.ndarray, values: np.ndarray, n_cells: int, agg_type: _const.AggType
+) -> np.ndarray:
+    """Aggregate the values sharing each integer cell key in [0, n_cells).
+
+    values must hold no NaN. A cell without values is NaN.
+
+    Raises:
+        ValueError: agg_type is neither mean nor median.
+    """
+    aggregated = np.full(n_cells, np.nan)
+
+    if agg_type == _const.AggType.MEAN:
+        counts = np.bincount(key, minlength=n_cells)
+        sums = np.bincount(key, weights=values, minlength=n_cells)
+        np.divide(sums, counts, out=aggregated, where=counts > 0)
+
+    elif agg_type == _const.AggType.MEDIAN:
+        medians = pd.Series(values).groupby(key).median()
+        aggregated[medians.index.to_numpy()] = medians.to_numpy()
+
+    else:
+        raise ValueError(f"Unknown agg_type {agg_type!r}")
+
+    return aggregated
+
+
 class Data:
     def __init__(self, 
         loadshape_df: Optional[pd.DataFrame] = None, 
@@ -94,27 +167,6 @@ class Data:
                 raise TypeError("All elements in other must be instances of Data")
             
 
-    def _find_groupby_columns(self) -> list:
-        """
-        Create the list of columns to be grouped by based on the time_period selected in Settings.
-
-        Time_period : hour => group by (id, hour)
-        Time_period : month => group by (id, month)
-        Time_period : hourly_day_of_week => group by (id, day_of_week, hour)
-        Time_period : weekday_weekend => group by (id, weekday_weekend)
-        Time_period : season_day_of_week => group by (id, season, day_of_week)
-        Time_period : season_hourly_weekday_weekend => group by (id, season, weekday_weekend, hour)
-
-        """
-        cols = ["id"]
-
-        for period in _const.unique_time_periods:
-            if period in self._settings.time_period:
-                cols.append(period)
-
-        return cols
-
-
     def _add_index_columns_from_datetime(self, df: pd.DataFrame) -> pd.DataFrame:
         # Add hour column
         if "hour" in self._settings.time_period:
@@ -152,65 +204,49 @@ class Data:
         return df
 
 
-    def _create_values_for_interpolation(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Interpolate missing values in the dataframe based on the settings.
-        
-        - create a new dataframe with id's and correct time column
-        - join on new df and old
-        - interpolate nan values
-
-
-        """
+    def _time_matrix(self, matrix: pd.DataFrame, n_times: int) -> pd.DataFrame:
+        """Reindex an id-indexed matrix to times 1..n_times, exclude and record the meters
+        short of times, and fill the rest flat when interpolating."""
+        matrix = (
+            matrix.reindex(columns=range(1, int(n_times) + 1))
+            .rename_axis(None, axis=1)
+            .sort_index()
+            .astype(float)
+        )
 
         if self._settings.interpolate_missing:
-            unique_ids = df['id'].unique()
-            unique_time_counts = None
+            min_times = n_times * self._settings.min_data_pct_required
+        else:
+            min_times = n_times
 
-            if self._settings.time_period is None: # loadshape type dataframe
-                unique_time_counts = df["time"].max()
+        present_times_per_id = matrix.notna().sum(axis=1)
+        invalid_ids = present_times_per_id[present_times_per_id < min_times].index
+        excluded_ids = pd.DataFrame(
+            {
+                "id": invalid_ids,
+                "reason": "Unique time counts per id don't have the minimum time counts required",
+            }
+        )
+        self._excluded_ids = pd.concat([self._excluded_ids, excluded_ids], ignore_index=True)
+        matrix = matrix.drop(index=invalid_ids)
 
-            else: # timeseries type dataframe
-                unique_time_counts = _const.time_period_row_counts[self._settings.time_period]
+        if self._settings.interpolate_missing:
+            matrix = pd.DataFrame(
+                fill_missing(matrix.to_numpy(), layout=None),
+                index=matrix.index,
+                columns=matrix.columns,
+            )
 
-
-            time_values = range(1, unique_time_counts + 1)
-            # Create the expected dataframe having the correct number of timestamps for each id    
-            df_expected = pd.DataFrame({
-                'id': np.repeat(unique_ids, unique_time_counts),
-                'time': np.tile(time_values, len(unique_ids))
-            })
-
-            # Join the expected dataframe with the input dataframe
-            df = df_expected.merge(df, how='left', on=['id', 'time'])
-
-        return df
+        return matrix
 
 
     def _validate_unstacked_loadshape(self, df: pd.DataFrame) -> pd.DataFrame:
-        unstacked_cols = df.columns.drop('id')
-        unstacked_cols = sorted(map(int, unstacked_cols))
+        df = df.set_index("id")
+        df.columns = df.columns.astype(int)
 
-        # TODO : Add the ids that are missing values to the excluded_ids dataframe
-        # expected_cols = range(1, max(unstacked_cols) + 1)
+        matrix = self._time_matrix(df, df.columns.max())
 
-        # if unstacked_cols != expected_cols:
-        #     if not self._settings.INTERPOLATE_MISSING or unstacked_cols.count() < expected_cols.count() * self._settings.MIN_DATA_PCT_REQUIRED:
-        #             raise ValueError(f"Unique time counts per id don't have the minimum time counts required")
-            
-
-        # Find the missing columns and add them to df with NaN as the default value
-        expected_cols = df.columns.union(range(1, max(unstacked_cols) + 1))
-        df.reindex(columns= expected_cols, fill_value=np.nan)
-
-        if self._settings.interpolate_missing:
-            # Get non-id columns
-            non_id_cols = df.columns[df.columns != 'id']
-
-            # Perform interpolation on non-id columns and update the original DataFrame
-            df[non_id_cols] = df[non_id_cols].interpolate(method="linear", limit_direction="both", axis=1)
-
-        return df
+        return matrix
 
 
     def _validate_format_loadshape(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -237,108 +273,16 @@ class Data:
         # loadshape df has the "time" column, whereas timeseries df has the "datetime" column
         subset_columns = expected_columns[:-1]
 
-        # To eliminate duplicates, sort the values by loadshape and the keep the first (i.e. the lowest) value
-        df = df.sort_values(by='loadshape', key=abs).drop_duplicates(subset=subset_columns, keep="first")
-
-        # Check that the minimum time counts per id is consistent for the input loadshape_df
-        unique_time_counts = df["time"].max()
-        unique_time_counts_per_id = df.groupby("id")["time"].nunique()
-
-        if self._settings.interpolate_missing:
-            if self._settings.time_period is None:
-                # for loadshape type dataframe
-                # if I input a loadshape, I don't want to have to tell it the time_period I used
-                # The time column should directly be pivoted, and the error checking should ensure that the number of values is consistent per meter
-
-                invalid_ids = unique_time_counts_per_id[
-                    unique_time_counts_per_id
-                    < unique_time_counts * self._settings.min_data_pct_required
-                ].index.tolist()
-                excluded_ids = pd.DataFrame(
-                    {
-                        "id": invalid_ids,
-                        "reason": "Unique time counts per id don't have the minimum time counts required",
-                    }
-                )
-                self._excluded_ids = pd.concat(
-                    [self._excluded_ids, excluded_ids], ignore_index=True
-                )
-
-            else:
-                # Check that the number of missing values is less than the threshold
-                for id, group in df.groupby("id"):
-                    if (
-                        group.count().min()
-                        < self._settings.min_data_pct_required
-                        * _const.time_period_row_counts[self._settings.time_period]
-                    ):
-                        # throw out meters with missing values and record them, do not throw error
-
-                        excluded_ids = pd.DataFrame(
-                            {
-                                "id": [id],
-                                "reason": [
-                                    "missing minimum number of values in loadshape_df"
-                                ],
-                            }
-                        )
-
-                        self._excluded_ids = pd.concat(
-                            [self._excluded_ids, excluded_ids], ignore_index=True
-                        )
-
-            df = self._create_values_for_interpolation(df)
-
-            # Fill NaN values with interpolation
-            df['loadshape'] = (
-                df.groupby("id")['loadshape']
-                .apply(lambda x: x.interpolate(method="linear", limit_direction="both"))
-                .reset_index(drop=True)
-            )
-
-        else:
-            if self._settings.time_period is None:
-                # for loadshape type dataframe
-                invalid_ids = unique_time_counts_per_id[
-                    unique_time_counts_per_id < unique_time_counts
-                ].index.tolist()
-                invalid_ids_df = pd.DataFrame(
-                    {
-                        "id": invalid_ids,
-                        "reason": "Unique time counts per id don't have the minimum time counts required",
-                    }
-                )
-                self._excluded_ids = pd.concat(
-                    [self._excluded_ids, invalid_ids_df], ignore_index=True
-                )
-
-            else:
-                # throw out id with null values and record them, do not throw error
-
-                # get a list of any rows with missing values
-                excluded_ids = df[df.isnull().any(axis=1)]["id"].values
-                if excluded_ids.size > 0:
-                    excluded_ids = pd.DataFrame({"id": excluded_ids})
-                    excluded_ids["reason"] = "null values in features_df"
-                    self._excluded_ids = pd.concat([self._excluded_ids, excluded_ids])
-
-        df = df[ ~df["id"].isin(self._excluded_ids["id"])]
-
-        # pivot the loadshape_df to have the time as columns
-        df = df.pivot(index="id", columns=["time"], values="loadshape")
-
-        # Convert multi level index to single level
-        df = (
-            df.rename_axis(None, axis=1)
-            .reset_index()
-            .set_index("id")
-            .drop(columns="index", errors="ignore")
+        # To eliminate duplicates, keep the smallest |loadshape| per (id, time), NaN last
+        df = df.sort_values(by="loadshape", key=abs, kind="stable").drop_duplicates(
+            subset=subset_columns, keep="first"
         )
 
-        # Convert columns to int
-        df.columns = df.columns.astype(int)
+        # pivot the loadshape_df to have the time as columns, one column per time
+        matrix = df.pivot(index="id", columns="time", values="loadshape")
+        matrix = self._time_matrix(matrix, df["time"].max())
 
-        return df
+        return matrix
 
 
     def _validate_format_features(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -416,11 +360,25 @@ class Data:
         if df_type == "error" and ("error" not in base_df.columns):
             base_df["error"] = 1 - base_df["observed"] / base_df["modeled"]
 
-        # Remove duplicates
+        # Of each duplicated reading keep the smallest |value|, NaN last
         subset_columns = expected_columns[:-1]
+        duplicated = base_df.duplicated(subset=subset_columns, keep=False)
+        if duplicated.any():
+            kept = (
+                base_df[duplicated]
+                .sort_values(by=df_type, key=abs, kind="stable")
+                .drop_duplicates(subset=subset_columns, keep="first")
+            )
+            base_df = pd.concat([base_df[~duplicated], kept])
 
-        # To eliminate duplicates, sort the values by loadshape and the keep the first (i.e. the lowest) value
-        base_df = base_df.sort_values(by=df_type, key=abs).drop_duplicates(subset=subset_columns, keep="first")
+        # Order by (id, datetime), which the per-meter interval diff relies on
+        meter, ids = pd.factorize(base_df["id"], sort=True)
+        timestamp = pd.DatetimeIndex(base_df["datetime"]).asi8
+        meter_step = np.diff(meter)
+        if np.any((meter_step < 0) | ((meter_step == 0) & (np.diff(timestamp) < 0))):
+            order = np.lexsort((timestamp, meter))
+            base_df = base_df.iloc[order]
+            meter = meter[order]
 
         base_df = self._add_index_columns_from_datetime(base_df) # Add month / day_of_week / hour / etc columns
 
@@ -440,9 +398,6 @@ class Data:
             unique_month_counts_per_id = base_df.groupby('id')['month'].nunique()
             invalid_ids = unique_month_counts_per_id[unique_month_counts_per_id < 12].index.tolist()
 
-        # Remove the invalid ids from the base_df
-        base_df = base_df[~base_df["id"].isin(invalid_ids)]        
-
         # If there are any invalid ids, add them to the excluded_ids dataframe
         if invalid_ids:
             invalid_ids_df = pd.DataFrame(
@@ -455,25 +410,93 @@ class Data:
                 [self._excluded_ids, invalid_ids_df], ignore_index=True
             )
 
-        # Set the index to datetime
-        base_df = base_df.set_index("datetime")
+        # Readings that land in a time column: known id and datetime, id not invalid, not the leap day
+        has_time = (
+            (meter >= 0)
+            & base_df["datetime"].notna().to_numpy()
+            & ~base_df["id"].isin(invalid_ids).to_numpy()
+        )
+        if "day_of_year" in base_df.columns:
+            has_time &= base_df["day_of_year"].to_numpy() != 366
 
-        # Aggregate the input time_series based on time_period
+        # Key each reading to its cell: meter ordinal, then a mixed-radix time index over the
+        # grouping columns, season outermost
+        key = meter[has_time].astype(np.int64)
+        for column, cardinality in self._settings.time_layout:
+            digit = base_df[column].to_numpy()[has_time] - _time_digit_offset.get(column, 0)
+            key = key * cardinality + digit.astype(np.int64)
 
-        group_by_columns = self._find_groupby_columns()
+        values = base_df[df_type].to_numpy(dtype=float)[has_time]
+        observed = ~np.isnan(values)
+        n_meters = len(ids)
+        n_times = self._settings.n_times
+        readings = np.bincount(key, minlength=n_meters * n_times).reshape(n_meters, n_times)
+        loadshape = _aggregate_cells(
+            key[observed], values[observed], n_meters * n_times, self._settings.agg_type
+        ).reshape(n_meters, n_times)
 
-        base_df = base_df.groupby(group_by_columns)[self._settings.loadshape_type]
+        has_readings = readings.sum(axis=1) > 0
+        ids = pd.Index(ids[has_readings], name="id")
+        readings = readings[has_readings]
+        loadshape = loadshape[has_readings]
+        present_times_per_id = pd.Series((~np.isnan(loadshape)).sum(axis=1), index=ids)
 
-        base_df = base_df.agg(loadshape=self._settings.agg_type).reset_index()
+        if self._settings.interpolate_missing:
+            # Check that the number of missing values is less than the threshold
+            # throw out meters with missing values and record them, do not throw error
+            invalid_ids = present_times_per_id[
+                present_times_per_id < self._settings.min_data_pct_required * n_times
+            ].index.tolist()
+            excluded_ids = pd.DataFrame(
+                {
+                    "id": invalid_ids,
+                    "reason": "missing minimum number of values in loadshape_df",
+                }
+            )
+            self._excluded_ids = pd.concat(
+                [self._excluded_ids, excluded_ids], ignore_index=True
+            )
 
-        # Sort the values so that the ordering is maintained correctly
-        base_df = base_df.sort_values(by=group_by_columns)
+        else:
+            # throw out ids with a time whose readings are all null, one record per time
+            null_rows, _ = np.nonzero((readings > 0) & np.isnan(loadshape))
+            if null_rows.size > 0:
+                excluded_ids = pd.DataFrame({"id": ids[null_rows]})
+                excluded_ids["reason"] = "null values in features_df"
+                self._excluded_ids = pd.concat([self._excluded_ids, excluded_ids])
 
-        # Create the count of the index per ID
-        base_df["time"] = base_df.groupby("id").cumcount() + 1
+            # throw out ids missing any time, one record per id
+            incomplete_ids = present_times_per_id[present_times_per_id < n_times].index
+            incomplete_ids = incomplete_ids[~incomplete_ids.isin(self._excluded_ids["id"])]
+            incomplete_ids_df = pd.DataFrame(
+                {
+                    "id": incomplete_ids,
+                    "reason": "Unique time counts per id don't have the minimum time counts required",
+                }
+            )
+            self._excluded_ids = pd.concat(
+                [self._excluded_ids, incomplete_ids_df], ignore_index=True
+            )
 
-        # Validate that all the values are correct
-        loadshape_df = self._validate_format_loadshape(base_df)
+        kept = ~ids.isin(self._excluded_ids["id"])
+        ids = ids[kept]
+        loadshape = loadshape[kept]
+        if self._settings.interpolate_missing:
+            loadshape = fill_missing(loadshape, self._settings.time_layout)
+
+            # The fill leaves a season block with no readings NaN, which the minimum-data
+            # rule above does not always catch
+            empty_block = np.isnan(loadshape).any(axis=1)
+            excluded_ids = pd.DataFrame(
+                {"id": ids[empty_block], "reason": "a season block has no readings"}
+            )
+            self._excluded_ids = pd.concat(
+                [self._excluded_ids, excluded_ids], ignore_index=True
+            )
+            ids = ids[~empty_block]
+            loadshape = loadshape[~empty_block]
+
+        loadshape_df = pd.DataFrame(loadshape, index=ids, columns=range(1, n_times + 1))
 
         return loadshape_df
 
@@ -570,6 +593,9 @@ class Data:
                 ~loadshape_df.index.isin(self._excluded_ids["id"])
             ]
 
+            if loadshape_df.empty:
+                raise self._no_meters_error("loadshape")
+
         # Empty or absent dataframes become None, not an empty dataframe
         if features_df is not None and not features_df.empty:
             self._features = features_df
@@ -581,10 +607,18 @@ class Data:
         else:
             self._loadshape = None
 
+        if self._loadshape is None and self._features is None:
+            raise self._no_meters_error("features")
+
         # filter pool to max size
         self._trim_data()
 
         return self
+
+    def _no_meters_error(self, frame: str) -> ValueError:
+        reasons = "; ".join(self._excluded_ids["reason"].unique())
+
+        return ValueError(f"No meters remain in the {frame}. Exclusion reasons: {reasons}")
 
     @property
     def settings(self):

@@ -25,6 +25,7 @@ from opendsm.comparison_groups.population import ComparisonPool, TreatmentGroup
 from opendsm.comparison_groups.selection import (
     ComparisonGroupSelection,
     SelectionMethod,
+    _ALGORITHM,
     _build_data,
     table_fingerprint,
     _normalize_clusters,
@@ -403,6 +404,62 @@ def test_stage_exclusions_records_nan_weight_treatments_as_treatment_fit():
     assert row["stage"] == "selection"
     assert row["origin"] == "treatment_fit"
     assert row["reason"] == "treatment loadshape invalid (all-NaN cluster weights)"
+
+
+def _hourly_meters(lengths):
+    frames = [
+        pd.DataFrame(
+            {
+                "id": meter_id,
+                "datetime": pd.date_range("2024-01-01", periods=n_hours, freq="h"),
+                "observed": np.arange(n_hours, dtype=float) + i,
+            }
+        )
+        for i, (meter_id, n_hours) in enumerate(lengths.items())
+    ]
+
+    return pd.concat(frames, ignore_index=True)
+
+
+@pytest.mark.parametrize(
+    "treatment_lengths, pool_lengths, incomplete_id",
+    [
+        ({"t0": 48, "t1": 48}, {"p0": 48, "p1": 20, "p2": 48, "p3": 48}, "p1"),
+        ({"t0": 48, "t1": 20, "t2": 48}, {"p0": 48, "p1": 48, "p2": 48}, "t1"),
+    ],
+    ids=["pool_meter", "treatment_meter"],
+)
+def test_incomplete_meter_without_interpolation_is_ledgered_and_selection_proceeds(
+    treatment_lengths, pool_lengths, incomplete_id
+):
+    """With interpolation off, one incomplete meter in either population is excluded,
+    recorded once at the selection stage, and selection runs on the rest."""
+    settings = Data_Settings(
+        agg_type=_const.AggType.MEAN,
+        loadshape_type=_const.LoadshapeType.OBSERVED,
+        time_period=_const.TimePeriod.HOUR,
+        interpolate_missing=False,
+    )
+    treatment_data = Data(time_series_df=_hourly_meters(treatment_lengths), settings=settings)
+    pool_data = Data(time_series_df=_hourly_meters(pool_lengths), settings=settings)
+    algorithm = _ALGORITHM[SelectionMethod.RANDOM_SAMPLING](
+        RS_Settings(n_meters_total=2, n_meters_per_treatment=None, seed=0)
+    )
+
+    clusters, treatment_weights = algorithm.get_comparison_group(treatment_data, pool_data)
+    ledger = _stage_exclusions(treatment_data, pool_data, treatment_weights)
+
+    assert ledger[["id", "stage", "origin", "reason"]].to_dict("records") == [
+        {
+            "id": incomplete_id,
+            "stage": "selection",
+            "origin": "data_validation",
+            "reason": "Unique time counts per id don't have the minimum time counts required",
+        }
+    ]
+    assert incomplete_id not in set(clusters.index.astype(str))
+    assert incomplete_id not in set(treatment_weights.index.astype(str))
+    assert len(set(clusters.index.astype(str))) == 2
 
 
 # -- snapshot ----------------------------------------------------------------
