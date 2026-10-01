@@ -105,13 +105,19 @@ def _build_data(population, method, basis, data_settings):
             "population, but none were provided."
         )
 
-    loadshape = population.loadshape_data(basis, data_settings).loadshape
+    loadshape_data = population.loadshape_data(basis, data_settings)
+    loadshape = loadshape_data.loadshape
+    excluded_ids = loadshape_data.excluded_ids["id"].astype(str)
     features = population.features.rename_axis("id").reset_index()
+    features = features[~features["id"].astype(str).isin(excluded_ids)]
     settings = Data_Settings(agg_type=None, loadshape_type=None, time_period=None)
     data = Data(
         loadshape_df=loadshape.reset_index(),
         features_df=features,
         settings=settings,
+    )
+    data._excluded_ids = pd.concat(
+        [data._excluded_ids, loadshape_data.excluded_ids], ignore_index=True
     )
 
     return data
