@@ -360,8 +360,8 @@ class Data:
         if df_type == "error" and ("error" not in base_df.columns):
             base_df["error"] = 1 - base_df["observed"] / base_df["modeled"]
 
-        # Of each duplicated reading keep the smallest |value|, NaN last
-        subset_columns = expected_columns[:-1]
+        # Of each duplicated (id, datetime) reading keep the smallest |value|, NaN last
+        subset_columns = ["id", "datetime"]
         duplicated = base_df.duplicated(subset=subset_columns, keep=False)
         if duplicated.any():
             kept = (
