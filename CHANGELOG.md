@@ -5,6 +5,7 @@ Development
 -----------
 
 * `comparison_groups/common/data`: faster loadshape aggregation.
+* `comparison_groups/common/data_settings`: `min_data_pct_required` accepts any value in (0, 1] instead of only 0.8, and a caller's value is kept when `interpolate_missing` is on.
 * Bug fix (`comparison_groups/common/data`): the sampling-interval check compared time-series rows out of time order, so its minimum interval was never positive and it never excluded meters sampled more coarsely than the time period; rows are now time-ordered per meter before the interval is measured.
 * `comparison_groups/common/data`: with `interpolate_missing` off, a meter missing any loadshape time is excluded and recorded with one exclusion row, wide loadshape input included; with it on, wide input applies `min_data_pct_required` too, and a meter with no readings in a whole season is excluded and recorded. A `Data` left with no meters, features-only input included, raises `ValueError` listing the exclusion reasons.
 * Bug fix (`comparison_groups/common/data`): with more than one meter, interpolating missing loadshape times assigned each meter another meter's loadshape; this ran whenever `interpolate_missing` was on, even on complete data. A missing time also shifted every later time of that meter one position left. Each time is now keyed by its calendar position, interpolation runs per meter within each season, and the time count follows the configured season and weekday/weekend options. Wide loadshape input now gains its missing time columns before interpolation.

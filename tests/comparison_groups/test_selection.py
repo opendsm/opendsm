@@ -503,9 +503,10 @@ def test_selection_tables_summary_snapshot(treatment, pool, snapshot):
 _COVERAGE_TZ = "America/New_York"
 
 
-def _daily_baseline(seed=0, hole=None, span=365, start="2020-01-01"):
+def _daily_baseline(seed=0, hole=None, span=365, start="2020-01-01", nan_where=None):
     """A constructed DailyBaselineData with a smooth weather-driven load. ``hole``
-    is a ``(start, stop)`` positional slice of observed rows set to NaN; ``span``
+    is a ``(start, stop)`` positional slice of observed rows set to NaN, and
+    ``nan_where`` a predicate on the index selecting further NaN days; ``span``
     and ``start`` shift the meter's coverage relative to a group window."""
     index = pd.date_range(start, periods=span, freq="D", tz=_COVERAGE_TZ)
     rng = np.random.default_rng(seed)
@@ -516,6 +517,9 @@ def _daily_baseline(seed=0, hole=None, span=365, start="2020-01-01"):
     if hole is not None:
         lo, hi = hole
         frame.iloc[lo:hi, frame.columns.get_loc("observed")] = np.nan
+
+    if nan_where is not None:
+        frame.loc[nan_where(index), "observed"] = np.nan
 
     baseline = DailyBaselineData(
         frame.reset_index().rename(columns={"index": "datetime"}),
@@ -554,6 +558,49 @@ def _random_selection(treatment, pool):
     )
 
     return selection
+
+
+@pytest.mark.parametrize(
+    "interpolate_missing, expected_excluded",
+    [(True, []), (False, [("p-gap", "null values in features_df")])],
+    ids=["interpolate_on", "interpolate_off"],
+)
+def test_selection_data_settings_interpolate_missing_reaches_data(
+    daily_model, interpolate_missing, expected_excluded
+):
+    """A pool meter missing every summer Monday lacks one loadshape time: it is filled
+    with interpolation on and excluded at data validation with it off, so the caller's
+    flag reaches ``Data``."""
+    pool_specs = {
+        "p1": _daily_baseline(seed=1),
+        "p2": _daily_baseline(seed=2),
+        # 18 summer Mondays missing, 347/365 days clears baseline coverage
+        "p-gap": _daily_baseline(
+            seed=3,
+            nan_where=lambda index: (index.dayofweek == 0) & index.month.isin([6, 7, 8, 9]),
+        ),
+    }
+    treatment_specs = {"t0": _daily_baseline(seed=100), "t1": _daily_baseline(seed=101)}
+    treatment = _daily_population(TreatmentGroup, treatment_specs, daily_model)
+    pool = _daily_population(ComparisonPool, pool_specs, daily_model)
+    data_settings = Data_Settings(
+        time_period=_const.TimePeriod.SEASONAL_DAY_OF_WEEK,
+        interpolate_missing=interpolate_missing,
+    )
+
+    selection = select_comparison_group(
+        treatment,
+        pool,
+        method="random_sampling",
+        method_settings=RS_Settings(n_meters_total=2, n_meters_per_treatment=None, seed=0),
+        basis="observed",
+        data_settings=data_settings,
+    )
+
+    validation = selection.exclusions[selection.exclusions["origin"] == "data_validation"]
+    assert list(zip(validation["id"], validation["reason"])) == expected_excluded
+    assert len(selection.clusters.index.unique()) == 2
+    assert selection.data_settings["interpolate_missing"] is interpolate_missing
 
 
 def test_window_coverage_is_finite_fraction_over_window_length():

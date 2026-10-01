@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from opendsm.comparison_groups.common import Data_Settings
 from opendsm.comparison_groups.common import const as _const
 from opendsm.comparison_groups.population import (
     ComparisonPool,
@@ -482,6 +483,43 @@ def test_loadshape_default_time_period_daily(daily_meters):
     assert data.settings.time_period == _const.TimePeriod.SEASONAL_DAY_OF_WEEK
     assert data.settings.loadshape_type == _const.LoadshapeType.MODELED
     assert data.settings.max_pool_size == len(group.ids)
+
+
+def test_loadshape_data_carries_caller_data_settings(daily_meters):
+    """Interpolation, minimum data fraction, season and weekday/weekend reach ``Data``;
+    the loadshape type, pool size and seed stay the population's own."""
+    group = TreatmentGroup.from_fit_models(daily_meters)
+    caller = Data_Settings(
+        agg_type=_const.AggType.MEDIAN,
+        time_period=_const.TimePeriod.SEASONAL_DAY_OF_WEEK,
+        interpolate_missing=False,
+        season={"june": "shoulder", "september": "shoulder"},
+        weekday_weekend={"friday": "weekend"},
+        max_pool_size=1,
+        seed=123,
+    )
+
+    settings = group.loadshape_data("modeled", caller).settings
+
+    assert settings.agg_type == _const.AggType.MEDIAN
+    assert settings.interpolate_missing is False
+    assert settings.min_data_pct_required is None
+    assert settings.season.model_dump() == caller.season.model_dump()
+    assert settings.weekday_weekend.model_dump() == caller.weekday_weekend.model_dump()
+    assert settings.loadshape_type == _const.LoadshapeType.MODELED
+    assert settings.max_pool_size == len(group.ids)
+    assert settings.seed == 0
+
+
+def test_loadshape_data_carries_min_data_pct_required(daily_meters):
+    group = TreatmentGroup.from_fit_models(daily_meters)
+    caller = Data_Settings(
+        time_period=_const.TimePeriod.SEASONAL_DAY_OF_WEEK, min_data_pct_required=0.5
+    )
+
+    settings = group.loadshape_data("modeled", caller).settings
+
+    assert settings.min_data_pct_required == 0.5
 
 
 def test_loadshape_default_time_period_billing(billing_pair):

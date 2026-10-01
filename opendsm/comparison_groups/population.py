@@ -779,27 +779,48 @@ class MeterPopulation:
 
     def loadshape_data(self, basis, data_settings=None):
         """Build a ``common.Data`` from baseline predictions. Datetimes are made
-        tz-naive (local clock) so ``Data`` bins on local time. This population
-        owns no pool trim, so ``Data``'s own trim is disabled here."""
+        tz-naive (local clock) so ``Data`` bins on local time. ``data_settings``
+        supplies the aggregation, time period, interpolation, minimum data
+        fraction, season and weekday/weekend definitions; the loadshape type is
+        ``basis``. This population owns no pool trim, so ``Data``'s own trim is
+        disabled here.
+
+        Args:
+            basis: Loadshape type: ``"observed"``, ``"modeled"`` or ``"error"``.
+            data_settings: Optional ``Data_Settings`` supplying the fields above; the
+                defaults suit the population's granularity.
+
+        Returns:
+            The ``common.Data`` built from the baseline predictions.
+        """
         basis = _const.LoadshapeType(basis)
 
         if data_settings is None:
-            agg_type = _const.AggType.MEAN
-            time_period = _DEFAULT_TIME_PERIOD[self.granularity]
+            caller_settings = {
+                "agg_type": _const.AggType.MEAN,
+                "time_period": _DEFAULT_TIME_PERIOD[self.granularity],
+            }
         else:
-            agg_type = data_settings.agg_type
-            time_period = data_settings.time_period
+            caller_settings = data_settings.model_dump(
+                include={
+                    "agg_type",
+                    "time_period",
+                    "interpolate_missing",
+                    "min_data_pct_required",
+                    "season",
+                    "weekday_weekend",
+                }
+            )
 
-        if time_period == _const.TimePeriod.MONTH:
+        if caller_settings["time_period"] == _const.TimePeriod.MONTH:
             self._require_full_year_baseline()
 
         frames = self._loadshape_frames(basis)
         time_series = pd.concat(frames, ignore_index=True)
 
         settings = Data_Settings(
-            agg_type=agg_type,
+            **caller_settings,
             loadshape_type=basis,
-            time_period=time_period,
             max_pool_size=len(self._meters),
             seed=_LOADSHAPE_SEED,
         )

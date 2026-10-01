@@ -21,6 +21,7 @@ from opendsm.comparison_groups.common import const as _const
 from opendsm.comparison_groups.common.data import fill_missing
 
 
+
 _FOUR_SEASONS = {
     "january": "winter",
     "february": "winter",
@@ -394,6 +395,45 @@ def test_partial_loadshape_settings_raise():
 def test_interpolate_missing_controls_min_data_pct():
     assert Data_Settings(interpolate_missing=True).min_data_pct_required is not None
     assert Data_Settings(interpolate_missing=False).min_data_pct_required is None
+
+
+@pytest.mark.parametrize(
+    "interpolate_missing, given, expected",
+    [(True, None, 0.8), (True, 0.5, 0.5), (True, 1.0, 1.0), (False, 0.5, None)],
+)
+def test_min_data_pct_required_kept_when_interpolating(interpolate_missing, given, expected):
+    settings = Data_Settings(interpolate_missing=interpolate_missing, min_data_pct_required=given)
+
+    assert settings.min_data_pct_required == expected
+
+
+@pytest.mark.parametrize("value", [0, -0.1, 1.5])
+def test_min_data_pct_required_outside_unit_interval_raises(value):
+    with pytest.raises(ValueError, match="min_data_pct_required must be in"):
+        Data_Settings(min_data_pct_required=value)
+
+
+@pytest.mark.parametrize(
+    "min_data_pct_required, expected_ids", [(0.5, ["a", "sparse"]), (0.8, ["a"])]
+)
+def test_min_data_pct_required_sets_which_meters_survive(min_data_pct_required, expected_ids):
+    """A meter with 14 of 24 hours (58%) is filled at 0.5 and excluded at 0.8."""
+    time_series = pd.concat(
+        [_hourly_frame("a", 48), _hourly_frame("sparse", 14)], ignore_index=True
+    )
+    settings = Data_Settings(
+        agg_type=_const.AggType.MEAN,
+        loadshape_type=_const.LoadshapeType.OBSERVED,
+        time_period=_const.TimePeriod.HOUR,
+        min_data_pct_required=min_data_pct_required,
+    )
+
+    data = Data(time_series_df=time_series, settings=settings)
+
+    assert list(data.loadshape.index) == expected_ids
+    assert list(data.excluded_ids["id"]) == sorted({"a", "sparse"} - set(expected_ids))
+
+
 def test_season_dict_is_converted_to_definition():
     """The default season dict is coerced into a Season_Definition on validation."""
     assert not isinstance(Data_Settings().season, dict)
@@ -610,6 +650,25 @@ def test_meter_without_a_season_is_excluded():
     assert list(data.loadshape.index) == ["full"]
     ledger = data.excluded_ids.set_index("id")["reason"]
     assert ledger["gap"] == "missing minimum number of values in loadshape_df"
+
+
+def test_meter_without_a_season_is_excluded_below_minimum_data_rule():
+    """A meter missing a whole season clears a low min_data_pct_required, so the empty
+    season block left NaN by the fill is what excludes it."""
+    settings = _observed_settings(min_data_pct_required=0.5)
+    gap = _year_frame("gap", 1.0)
+    gap = gap[_season_ordinal(gap["datetime"], settings) != 1]
+    time_series = pd.concat([_year_frame("full", 2.0), gap], ignore_index=True)
+
+    data = Data(time_series_df=time_series, settings=settings)
+
+    assert list(data.loadshape.index) == ["full"]
+    assert not data.loadshape.isna().any().any()
+    assert data.excluded_ids.to_dict("records") == [
+        {"id": "gap", "reason": "a season block has no readings"}
+    ]
+
+
 def test_leap_day_stays_in_its_own_meter():
     """Leap-year day 366 has no time, so it never lands in the next meter's first time."""
     leap_year = pd.date_range("2024-01-01", "2024-12-31 23:00", freq="h")
