@@ -209,30 +209,39 @@ def _effective_sample_size(weight):
     return n
 
 
-def _water_fill_weights(weights, valid, cap):
-    """Cap weights above `cap`, redistributing the excess over uncapped
-    meters (proportionally to their current weight, or equally if every
-    uncapped meter carries zero weight), iterating until no weight exceeds
-    the cap. Operates along the last axis; terminates in at most
+def _water_fill_weights(weights, valid, cap, recipient=None):
+    """Cap weights above `cap`, redistributing the excess over the uncapped
+    recipient meters in proportion to their weight, iterating until no weight
+    exceeds the cap. Operates along the last axis; terminates in at most
     `weights.shape[-1]` passes. `weights` must already sum to 1 along the
     last axis over `valid` entries; invalid entries are ignored and left 0.
-    When the cap is infeasible (`cap * n_valid < 1`, so no capped distribution
-    sums to 1) the row falls back to uniform weights over its valid meters.
+
+    `recipient` marks the meters allowed to receive redistributed weight
+    (default: every valid meter with nonzero weight). A meter that is not a
+    recipient keeps its own weight, and a capped meter whose excess has no
+    uncapped recipient keeps its weight, so the cap is not enforced there.
+    The cap is infeasible over the eligible meters (the recipients and the
+    meters above the cap) when `cap * n_eligible` is below their combined
+    weight; those meters then share that weight uniformly.
     """
     w = np.where(valid, weights, 0.0)
+
+    if recipient is None:
+        recipient = w > 0
+
+    recipient = valid & recipient
     capped = np.zeros_like(valid, dtype=bool)
-    n_valid = valid.sum(axis=-1, keepdims=True)
-    # A lone valid meter has nowhere to send its excess, so it keeps full weight
-    # regardless of the cap.
-    capable = n_valid > 1
-    # An infeasible cap (cap * n_valid < 1) cannot hold every weight at or below
-    # the cap while still summing to 1, so water-filling would return weights
-    # summing below 1; fall back to uniform weights over the valid meters (the
-    # least-concentrated valid distribution).
-    infeasible = capable & (cap * n_valid < 1.0)
+
+    eligible = recipient | (w > cap)
+    n_eligible = eligible.sum(axis=-1, keepdims=True)
+    eligible_sum = np.sum(np.where(eligible, w, 0.0), axis=-1, keepdims=True)
+    infeasible = cap * n_eligible < eligible_sum
 
     for _ in range(w.shape[-1]):
-        over = valid & ~capped & (w > cap) & capable
+        over = valid & ~capped & (w > cap)
+        uncapped = recipient & ~capped & ~over
+        # a capped meter with no uncapped recipient keeps its weight
+        over = over & uncapped.any(axis=-1, keepdims=True)
 
         if not over.any():
             break
@@ -241,29 +250,27 @@ def _water_fill_weights(weights, valid, cap):
         w = np.where(over, cap, w)
         capped = capped | over
 
-        uncapped = valid & ~capped
         uncapped_sum = np.sum(np.where(uncapped, w, 0.0), axis=-1, keepdims=True)
-        n_uncapped = np.sum(uncapped, axis=-1, keepdims=True)
 
         with np.errstate(invalid="ignore", divide="ignore"):
-            proportional = np.divide(w, uncapped_sum, out=np.zeros_like(w), where=uncapped_sum > 0)
-            equal = np.divide(
-                np.ones_like(w), n_uncapped, out=np.zeros_like(w), where=n_uncapped > 0
-            )
+            share = np.divide(w, uncapped_sum, out=np.zeros_like(w), where=uncapped_sum > 0)
 
-        share = np.where(uncapped_sum > 0, proportional, equal) * excess
-        w = w + np.where(uncapped, share, 0.0)
+        w = w + np.where(uncapped, share * excess, 0.0)
 
     with np.errstate(invalid="ignore", divide="ignore"):
         uniform = np.divide(
-            valid.astype(np.float64), n_valid, out=np.zeros_like(w), where=n_valid > 0
+            np.where(eligible, eligible_sum, 0.0),
+            n_eligible,
+            out=np.zeros_like(w),
+            where=n_eligible > 0,
         )
-    w = np.where(infeasible, uniform, w)
+
+    w = np.where(infeasible & eligible, uniform, w)
 
     return w
 
 
-def _model_magnitude_weights(mCGr, weight_cap):
+def _model_magnitude_weights(mCGr, weight_cap, min_magnitude):
     # Normalized |model| weights; None when the magnitudes sum to zero (uniform fallback).
     abs_mCGr = np.abs(mCGr)
     total = np.sum(abs_mCGr)
@@ -273,7 +280,16 @@ def _model_magnitude_weights(mCGr, weight_cap):
 
     weights = abs_mCGr / total
     valid = np.ones_like(weights, dtype=bool)
-    weights = _water_fill_weights(weights[np.newaxis, :], valid[np.newaxis, :], weight_cap)[0]
+    # Only meters above the magnitude floor may receive weight the cap takes away;
+    # when no meter is, there is nothing to protect and the floor does not apply.
+    recipient = abs_mCGr > min_magnitude
+
+    if not recipient.any():
+        recipient = abs_mCGr > 0
+
+    weights = _water_fill_weights(
+        weights[np.newaxis, :], valid[np.newaxis, :], weight_cap, recipient[np.newaxis, :]
+    )[0]
 
     return weights
 
@@ -314,7 +330,9 @@ def _cluster_correction(
     if settings.weight_cluster_aggregation is None:
         cluster_weight = None
     elif settings.weight_cluster_aggregation == _settings.WeightClusterAggChoice.MODEL:
-        cluster_weight = _model_magnitude_weights(mCGr, settings.weight_cap)
+        cluster_weight = _model_magnitude_weights(
+            mCGr, settings.weight_cap, settings.weight_cap_min_magnitude
+        )
 
     # remove outliers
     if settings.outlier_rejection.enabled:
@@ -336,7 +354,9 @@ def _cluster_correction(
 
         # renormalize weights
         if cluster_weight is not None:
-            cluster_weight = _model_magnitude_weights(mCGr, settings.weight_cap)
+            cluster_weight = _model_magnitude_weights(
+                mCGr, settings.weight_cap, settings.weight_cap_min_magnitude
+            )
 
     # apply caps
     # decision: should capped values have their uncertainty considered or excluded?
