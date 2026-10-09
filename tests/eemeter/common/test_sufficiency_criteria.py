@@ -30,14 +30,14 @@ from opendsm.eemeter.common.sufficiency_criteria import (
 
 
 
-def _daily_frame(n_days=365, start="2020-01-01"):
+def _daily_frame(n_days=365, start="2020-01-01", tz="UTC"):
     """A clean daily aggregated frame that passes every sufficiency rule.
 
     Carries both the value columns (`temperature`, `observed`) and the
     per-period coverage counts (`temperature_not_null`/`temperature_null`) the
     criteria read; full temperature coverage and varied, non-negative observed.
     """
-    index = pd.date_range(start, periods=n_days, freq="D", tz="UTC")
+    index = pd.date_range(start, periods=n_days, freq="D", tz=tz)
     rng = np.random.default_rng(0)
     df = pd.DataFrame(
         {
@@ -236,6 +236,59 @@ def test_valid_days_percentage_passes_full_coverage(col):
     sc._check_valid_days_percentage(col=col)
 
     assert sc.disqualification == []
+
+
+@pytest.mark.parametrize("n_days", [1, 7, 9])
+def test_valid_days_count_every_day_of_a_short_window(n_days):
+    """A fully covered window of any length counts each of its days, the last one
+    included, so a short reporting window passes the 90% daily-coverage rule."""
+    sc = _criteria(_daily_frame(n_days), is_reporting_data=True)
+
+    sc._check_valid_days_percentage(col="joint")
+
+    assert sc.n_valid_days == n_days
+    assert sc.n_days_total == n_days
+    assert sc.disqualification == []
+
+
+def _hourly_frame(n_days, start="2020-03-05", tz="America/Chicago"):
+    """A clean hourly frame over whole local calendar days; the window may cross a DST change."""
+    end = pd.Timestamp(start) + pd.Timedelta(days=n_days)
+    index = pd.date_range(start, end, freq="h", tz=tz, inclusive="left")
+    rng = np.random.default_rng(0)
+    df = pd.DataFrame(
+        {
+            "temperature": rng.normal(60.0, 15.0, len(index)),
+            "temperature_not_null": np.ones(len(index)),
+            "temperature_null": np.zeros(len(index)),
+            "observed": rng.normal(30.0, 5.0, len(index)),
+        },
+        index=index,
+    )
+
+    return df
+
+
+def test_valid_days_count_hourly_rows_by_their_share_of_the_calendar_day():
+    """Each hour counts for its share of its own calendar day, so a day keeps its
+    full weight across a DST change and a missing hour costs one share of a day."""
+    df = _hourly_frame(7)
+    df.iloc[30, df.columns.get_loc("observed")] = np.nan
+    sc = _criteria(df, is_reporting_data=True)
+
+    assert sc.n_days_total == 7
+    assert sc.n_valid_temperature_days == 7
+    np.testing.assert_allclose(sc.n_valid_observed_days, 7 - 1 / 24)
+
+
+@pytest.mark.parametrize("start, n_days", [("2020-03-01", 31), ("2020-11-01", 7)])
+def test_n_days_total_counts_calendar_days_across_a_dst_change(start, n_days):
+    """The span is counted in calendar days of the data's clock, so a window
+    holding one DST change is neither a day short nor a day long."""
+    sc = _criteria(_daily_frame(n_days, start=start, tz="America/Chicago"))
+
+    assert sc.n_days_total == n_days
+    assert sc.n_valid_days == n_days
 
 
 # ---------------------------------------------------------------------------

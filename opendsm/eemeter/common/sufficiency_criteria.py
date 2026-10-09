@@ -26,7 +26,6 @@ import pydantic
 from opendsm.common.base_settings import BaseSettings
 from opendsm.common.pydantic_utils import computed_field_cached_property
 
-from opendsm.eemeter.common.data_processor_utilities import day_counts
 from opendsm.eemeter.common.data_settings import BaseSufficiencySettings
 
 from opendsm.eemeter.common.warnings import EEMeterWarning
@@ -39,6 +38,32 @@ def _round_sig(x, sig=4):
         return x
 
     return round(x, sig - 1 - int(math.floor(math.log10(abs(x)))))
+
+
+def _local_day(timestamp: pd.Timestamp) -> pd.Timestamp:
+    """The calendar day of a timestamp by its own clock, as a naive midnight; NaT stays NaT."""
+    if pd.isna(timestamp):
+        return timestamp
+
+    if timestamp.tzinfo is not None:
+        timestamp = timestamp.tz_localize(None)
+
+    return timestamp.normalize()
+
+
+def _valid_days(valid_rows: pd.Series) -> float:
+    """Days of valid data: each calendar day counts by the fraction of its rows that are valid.
+
+    Rows are the data's regular grid within calendar days (one or 24 per day), so a day of any
+    clock length counts as one day when every row is valid, and the last day counts like the rest.
+    """
+    index = valid_rows.index
+    if index.tz is not None:
+        index = index.tz_localize(None)
+
+    valid_days = valid_rows.groupby(index.normalize()).mean().sum()
+
+    return float(valid_days)
 
 
 # TODO implement as registered functions rather than needing to call everything manually
@@ -97,9 +122,7 @@ class SufficiencyCriteria(BaseSettings):
         non_null_data = self.data.dropna()
         data_start = non_null_data.index.min()
         data_end = non_null_data.index.max()
-        n_days_data = (
-            data_end - data_start
-        ).days + 1  # TODO confirm. no longer using last row nan
+        n_days_data = (_local_day(data_end) - _local_day(data_start)).days + 1
 
         n_days_start_gap = 0
         if requested_start is not None:
@@ -120,40 +143,34 @@ class SufficiencyCriteria(BaseSettings):
             / (self.data.temperature_not_null + self.data.temperature_null)
         ) > min_pct
 
-        # get number of days per period - for daily this should be a series of ones
-        row_day_counts = day_counts(self.data.index)
-
-        # get valid rows
         valid_rows = valid_temperature_rows
 
         if not self.is_reporting_data or self._has_observed_values:
             valid_observed_rows = self.data.observed.notnull()
             valid_rows = valid_rows & valid_observed_rows
-
-            n_valid_observed_days = (valid_observed_rows * row_day_counts).sum()
-            self._n_valid_observed_days = int(n_valid_observed_days)
+            self._n_valid_observed_days = _valid_days(valid_observed_rows)
         else:
             self._n_valid_observed_days = None
 
-        self._n_valid_temperature_days = int((valid_temperature_rows * row_day_counts).sum())
-        self._n_valid_days = int((valid_rows * row_day_counts).sum())
+        self._n_valid_temperature_days = _valid_days(valid_temperature_rows)
+        self._n_valid_days = _valid_days(valid_rows)
 
     @computed_field_cached_property()
-    def n_valid_temperature_days(self) -> int:
+    def n_valid_temperature_days(self) -> float:
         if self._n_valid_temperature_days is None:
             self._compute_valid_day_counts()
 
         return self._n_valid_temperature_days
 
     @computed_field_cached_property()
-    def n_valid_observed_days(self) -> int:
+    def n_valid_observed_days(self) -> float:
         if self._n_valid_observed_days is None:
             self._compute_valid_day_counts()
 
         return self._n_valid_observed_days
 
     @computed_field_cached_property()
-    def n_valid_days(self) -> int:
+    def n_valid_days(self) -> float:
         if self._n_valid_days is None:
             self._compute_valid_day_counts()
 
