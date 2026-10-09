@@ -15,7 +15,10 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
+from typing import (
+    Literal,
+    Optional,
+)
 
 import pydantic
 
@@ -107,6 +110,63 @@ class CorrectionAlgorithm(str, Enum):
     ODID = "ordinary_difference_in_differences"
     PCTDID = "percent_difference_in_differences"
     ABSPCTDID = "absolute_percent_difference_in_differences"
+    NDID = "normalized_difference_in_differences"
+
+
+class NDIDSettings(BaseSettings):
+    """Settings for the normalized difference-in-differences correction"""
+
+    state_bandwidth_factor: float = pydantic.Field(
+        default=1.0,
+        gt=0.0,
+        description=(
+            "multiplier on the cluster's state spread that sets the bandwidth of the "
+            "Cauchy state-match kernel (dimensionless); smaller values make the state "
+            "match more local"
+        )
+    )
+
+    size_bandwidth: Optional[float] = pydantic.Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "bandwidth of the Cauchy size-relevance kernel over the difference in log "
+            "annual scale between pool and treatment meters, in natural-log units of "
+            "annual scale; None turns size relevance off"
+        )
+    )
+
+    gamma: Optional[float] = pydantic.Field(
+        default=None,
+        ge=0.0,
+        le=0.5,
+        description=(
+            "size-law exponent: pool meters are weighted by (scale / reference scale) "
+            "raised to 2 * gamma (dimensionless). 0 weights meters equally, 0.5 weights "
+            "by magnitude; None uses the `sector` default (0.0 commercial, 0.25 residential)"
+        )
+    )
+
+    sector: Optional[Literal["commercial", "residential"]] = pydantic.Field(
+        default=None,
+        description="customer sector that selects the default `gamma`; required when `gamma` is None"
+    )
+
+    cluster_pseudo_count: float = pydantic.Field(
+        default=20.0,
+        ge=0.0,
+        description=(
+            "pseudo-count, in meters, shrinking each cluster's residual variance and state "
+            "spread toward the pooled population values; 0 uses the cluster's own values"
+        )
+    )
+
+    @pydantic.model_validator(mode="after")
+    def _check_sector(self):
+        if self.gamma is None and self.sector is None:
+            raise ValueError("'sector' must be specified if 'gamma' is None.")
+
+        return self
 
 
 class WeightClusterAggChoice(str, Enum):
@@ -179,3 +239,35 @@ class CGCorrectionSettings(BaseSettings):
             "correction ledger."
         )
     )
+
+    ndid: Optional[NDIDSettings] = pydantic.Field(
+        default=None,
+        description=(
+            "normalized difference-in-differences settings; required when `algorithm` "
+            "is NDID and rejected otherwise"
+        )
+    )
+
+    @pydantic.model_validator(mode="after")
+    def _check_ndid(self):
+        if self.algorithm == CorrectionAlgorithm.NDID:
+            if self.ndid is None:
+                raise ValueError("'ndid' must be specified if 'algorithm' is NDID.")
+
+            # a value equal to the field default is accepted, so a full dump reloads
+            fields = type(self).model_fields
+            for name in (
+                "weight_cluster_aggregation",
+                "weight_cap",
+                "outlier_rejection",
+                "correction_cap",
+            ):
+                if getattr(self, name) != fields[name].get_default(call_default_factory=True):
+                    raise ValueError(
+                        f"'{name}' does not apply when 'algorithm' is NDID; leave it at its default."
+                    )
+
+        elif self.ndid is not None:
+            raise ValueError("'ndid' should only be specified if 'algorithm' is NDID.")
+
+        return self
