@@ -19,7 +19,7 @@ from opendsm.eemeter import (
     HourlySolarSettings,
     HourlyNonSolarSettings,
 )
-from opendsm.eemeter.models.hourly.model import _fit_exp_growth_decay
+from opendsm.eemeter.models.hourly.model import _fit_exp_growth_decay, _hourly_profiles
 from opendsm.eemeter.models.hourly.settings import BaseHourlySettings
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
@@ -28,6 +28,7 @@ from opendsm.eemeter.common.exceptions import (
 import numpy as np
 import pandas as pd
 import pytest
+from datetime import date
 from math import ceil
 from threadpoolctl import threadpool_info
 
@@ -248,13 +249,11 @@ def test_hourly_fit_daily_threshold(baseline):
     m = HourlyModel()
     b1 = baseline.copy()
     b1.loc["2018-01-08":"2018-01-08 11", "temperature"] = np.nan
-    b1 = m._add_categorical_features(b1)
     b1 = m._daily_fitting_sufficiency(b1)
     assert b1.loc["2018-01-08", "include_date"].sum() == 24
 
     b2 = baseline.copy()
     b2.loc["2018-01-08":"2018-01-08 12", "temperature"] = np.nan
-    b2 = m._add_categorical_features(b2)
     b2 = m._daily_fitting_sufficiency(b2)
     assert b2.loc["2018-01-08", "include_date"].sum() == 0
     assert b2.loc["2018-01-09", "include_date"].sum() == 24
@@ -423,3 +422,259 @@ class TestBlasThreadLimit:
         HourlyModel().fit(baseline_data)
         after = [info["num_threads"] for info in threadpool_info()]
         assert before == after, f"thread limits leaked out of fit: {before} -> {after}"
+
+
+_UNMEASURED_FLAGS = ["interpolated_temperature", "interpolated_observed"]
+
+
+@pytest.fixture
+def flagged_hourly():
+    """A year of complete hourly data whose measured and imputed hours are given explicitly.
+
+    Supplying the ``interpolated_*`` flags lets a test mark hours unmeasured while choosing the
+    values they carry; without the flags the data class imputes missing hours from their
+    neighbors.
+    """
+    rng = np.random.default_rng(0)
+    index = pd.date_range(
+        "2019-01-01", "2020-01-01", freq="h", tz="America/New_York", inclusive="left"
+    )
+    day_of_year = index.dayofyear.to_numpy()
+    hour = index.hour.to_numpy()
+    temperature = (
+        55
+        + 25 * np.sin(2 * np.pi * (day_of_year - 110) / 365)
+        + 8 * np.sin(2 * np.pi * (hour - 9) / 24)
+        + rng.normal(0, 3, len(index))
+    )
+    occupied = (index.dayofweek < 5) & (hour >= 8) & (hour < 18)
+    observed = (
+        3
+        + 2 * occupied
+        + 0.15 * np.maximum(temperature - 72, 0)
+        + 0.05 * np.maximum(45 - temperature, 0)
+        + rng.normal(0, 0.3, len(index))
+    )
+    df = pd.DataFrame({"temperature": temperature, "observed": observed}, index=index)
+    for flag in _UNMEASURED_FLAGS:
+        df[flag] = False
+
+    return df
+
+
+def _fit_flagged(df, **settings):
+    data = HourlyBaselineData(df, is_electricity_data=True)
+    model = HourlyModel(settings=HourlyNonSolarSettings(seed=42, **settings))
+
+    return model.fit(data, ignore_disqualification=True)
+
+
+def _changed_fields(model_a, model_b):
+    dict_a = model_a.to_dict()
+    dict_b = model_b.to_dict()
+
+    return sorted(key for key in dict_a if dict_a[key] != dict_b[key])
+
+
+class TestFitStatisticsFromIncludedDays:
+    """A day with fewer than ``min_daily_training_hours`` measured hours is left out of the fit,
+    including every statistic the fit learns from the data: the temporal clusters, the
+    temperature bin edges, the edge-bin exponential fits, and the feature and load scalers."""
+
+    @pytest.mark.parametrize(
+        "temperature_bin",
+        [{}, {"method": "set_bin_width", "bin_width": 10, "edge_bin_percent": 0.02}],
+        ids=["default-bins", "set-width-bins"],
+    )
+    @pytest.mark.parametrize(
+        "excluded",
+        [
+            lambda index: index.date == date(2019, 7, 17),
+            lambda index: index.date == date(2019, 3, 10),
+            lambda index: index.date == date(2019, 11, 3),
+            lambda index: (index.month == 3) & (index.dayofweek == 0),
+        ],
+        ids=["ordinary-day", "23-hour-dst-day", "25-hour-dst-day", "every-march-monday"],
+    )
+    def test_unmeasured_days_values_leave_the_fitted_model_unchanged(
+        self, flagged_hourly, excluded, temperature_bin
+    ):
+        rows = excluded(flagged_hourly.index)
+        flagged_hourly.loc[rows, _UNMEASURED_FLAGS] = True
+        temperature = flagged_hourly["temperature"]
+        beyond_the_data = np.where(
+            np.arange(rows.sum()) % 2 == 0, temperature.max() + 30, temperature.min() - 30
+        )
+        perturbed = flagged_hourly.copy()
+        perturbed.loc[rows, "temperature"] = beyond_the_data
+        perturbed.loc[rows, "observed"] *= 5
+
+        original = _fit_flagged(flagged_hourly, temperature_bin=temperature_bin)
+        refit = _fit_flagged(perturbed, temperature_bin=temperature_bin)
+
+        changed = _changed_fields(original, refit)
+        assert not changed, f"unmeasured days' values changed these fitted fields: {changed}"
+
+    @pytest.mark.parametrize("measured_hours", [12, 24])
+    def test_day_with_enough_measured_hours_changes_the_model(
+        self, flagged_hourly, measured_hours
+    ):
+        day = flagged_hourly.index.date == date(2019, 7, 17)
+        unmeasured = day & (flagged_hourly.index.hour >= measured_hours)
+        flagged_hourly.loc[unmeasured, _UNMEASURED_FLAGS] = True
+        perturbed = flagged_hourly.copy()
+        perturbed.loc[day & ~unmeasured, "observed"] *= 5
+
+        original = _fit_flagged(flagged_hourly, min_daily_training_hours=12)
+        refit = _fit_flagged(perturbed, min_daily_training_hours=12)
+
+        changed = _changed_fields(original, refit)
+        assert "coefficients" in changed, (
+            f"a day with {measured_hours} measured hours, at a 12-hour minimum, left the "
+            f"coefficients unchanged; changed fields: {changed}"
+        )
+
+    def test_unmeasured_day_changes_the_model_when_no_minimum_is_set(self, flagged_hourly):
+        day = flagged_hourly.index.date == date(2019, 7, 17)
+        flagged_hourly.loc[day, _UNMEASURED_FLAGS] = True
+        perturbed = flagged_hourly.copy()
+        perturbed.loc[day, "observed"] *= 5
+
+        original = _fit_flagged(flagged_hourly, min_daily_training_hours=0)
+        refit = _fit_flagged(perturbed, min_daily_training_hours=0)
+
+        changed = _changed_fields(original, refit)
+        assert "coefficients" in changed, (
+            "with min_daily_training_hours=0 every day is fit, but an unmeasured day's load left "
+            f"the coefficients unchanged; changed fields: {changed}"
+        )
+
+    @pytest.mark.parametrize(
+        "day", [date(2019, 3, 10), date(2019, 11, 3)], ids=["23-hour", "25-hour"]
+    )
+    def test_complete_dst_day_counts_as_fully_measured(self, flagged_hourly, day):
+        model = HourlyModel(settings=HourlyNonSolarSettings(min_daily_training_hours=24))
+
+        df = model._daily_fitting_sufficiency(flagged_hourly)
+
+        on_day = df.index.date == day
+        assert df.loc[on_day, "include_date"].all(), (
+            f"a complete {on_day.sum()}-hour day was excluded at min_daily_training_hours=24"
+        )
+
+    def test_fitted_clusters_omit_a_month_and_weekday_with_no_included_day(
+        self, flagged_hourly
+    ):
+        index = flagged_hourly.index
+        flagged_hourly.loc[(index.month == 3) & (index.dayofweek == 0), _UNMEASURED_FLAGS] = True
+
+        model = _fit_flagged(flagged_hourly)
+
+        fitted = [tuple(row[:2]) for row in model.to_dict()["temporal_clusters"]]
+        assert (3, 0) not in fitted, "March Mondays have no included day but got a fitted cluster"
+
+    def test_rows_of_a_month_and_weekday_with_no_included_day_get_a_fitted_cluster(
+        self, flagged_hourly
+    ):
+        index = flagged_hourly.index
+        flagged_hourly.loc[(index.month == 3) & (index.dayofweek == 0), _UNMEASURED_FLAGS] = True
+
+        model = _fit_flagged(flagged_hourly)
+
+        fitted_labels = {row[2] for row in model.to_dict()["temporal_clusters"]}
+        features = model._processed_meter_data_full
+        march_mondays = features[(features["month"] == 3) & (features["day_of_week"] == 0)]
+        assigned = set(march_mondays["temporal_cluster"])
+        assert assigned <= fitted_labels, (
+            f"March Monday rows got cluster labels {assigned}, expected a subset of the fitted "
+            f"labels {fitted_labels}"
+        )
+
+    def test_fit_raises_when_no_day_has_enough_measured_hours(self, flagged_hourly):
+        for flag in _UNMEASURED_FLAGS:
+            flagged_hourly[flag] = True
+
+        with pytest.raises(DataSufficiencyError, match="no day has at least 12 measured hours"):
+            _fit_flagged(flagged_hourly, min_daily_training_hours=12)
+
+    def test_fit_clusters_a_month_and_weekday_seen_only_on_the_23_hour_day(
+        self, flagged_hourly
+    ):
+        """March 10, 2019 is the spring-forward day: its load profile has no hour 2, and it is
+        the only measured March Sunday, so the combination's profile is completed from the
+        neighbouring hours before clustering."""
+        index = flagged_hourly.index
+        other_march_sundays = (
+            (index.month == 3)
+            & (index.dayofweek == 6)
+            & (index.date != date(2019, 3, 10))
+        )
+        flagged_hourly.loc[other_march_sundays, _UNMEASURED_FLAGS] = True
+
+        model = _fit_flagged(flagged_hourly)
+
+        fitted = {tuple(row[:2]) for row in model.to_dict()["temporal_clusters"]}
+        message = "March Sundays, measured only on the 23-hour day, got no cluster"
+        assert (3, 6) in fitted, message
+
+    def test_predict_labels_a_month_and_weekday_seen_only_on_the_23_hour_day(
+        self, flagged_hourly
+    ):
+        """With every March Sunday unmeasured in the fit, a prediction window whose only Sunday
+        is the 23-hour day labels that Sunday from its completed profile: the same label the
+        following week's ordinary Sunday gets."""
+        index = flagged_hourly.index
+        flagged_hourly.loc[
+            (index.month == 3) & (index.dayofweek == 6), _UNMEASURED_FLAGS
+        ] = True
+        model = _fit_flagged(flagged_hourly)
+        measured = flagged_hourly.drop(columns=_UNMEASURED_FLAGS)
+
+        def sunday_label(window):
+            # each window predicts from its own copy of the fitted model
+            fresh = HourlyModel.from_dict(model.to_dict())
+            reporting = HourlyReportingData(
+                measured.loc[window], is_electricity_data=True
+            )
+            fresh.predict(reporting, ignore_disqualification=True)
+            features = fresh._processed_meter_data_full
+            labels = set(features.loc[features["day_of_week"] == 6, "temporal_cluster"])
+            assert len(labels) == 1, f"the window's one Sunday got labels {labels}"
+
+            return labels.pop()
+
+        dst_week = sunday_label(slice("2019-03-04", "2019-03-10"))
+        ordinary_week = sunday_label(slice("2019-03-11", "2019-03-17"))
+
+        assert dst_week == ordinary_week, (
+            f"the week whose Sunday is the 23-hour day labeled it {dst_week}, "
+            f"the following week labeled its Sunday {ordinary_week}"
+        )
+
+
+def test_hourly_profiles_fill_a_skipped_hour_from_its_neighbours():
+    """A combination missing one hour of the day gets the mean of the neighbouring hours there,
+    a combination missing an edge hour gets its one neighbour, and a complete combination is
+    unchanged."""
+    rows = []
+    for hour in range(24):
+        if hour != 2:
+            rows.append((3, 6, hour, 10.0 * hour))
+
+        if hour != 0:
+            rows.append((3, 0, hour, 100.0 + hour))
+
+        rows.append((4, 0, hour, float(hour)))
+
+    columns = ["month", "day_of_week", "hour_of_day", "observed"]
+    df = pd.DataFrame(rows, columns=columns)
+
+    profiles = _hourly_profiles(df, ["month", "day_of_week"], "mean")
+
+    assert profiles.shape == (3, 24), f"expected 3 by 24 hours, got {profiles.shape}"
+    assert not profiles.isna().any().any(), "a profile kept a missing hour"
+    hour_2 = profiles.loc[(3, 6), 2]
+    assert hour_2 == pytest.approx(20.0), "hour 2 is not the mean of hours 1 and 3"
+    hour_0 = profiles.loc[(3, 0), 0]
+    assert hour_0 == pytest.approx(101.0), "hour 0 did not take hour 1's value"
+    np.testing.assert_allclose(profiles.loc[(4, 0)].to_numpy(), np.arange(24.0))
