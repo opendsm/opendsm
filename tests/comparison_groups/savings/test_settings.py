@@ -71,3 +71,20 @@ def test_weight_cap_accepts_upper_bound():
     settings = CGCorrectionSettings(weight_cap=1.0)
 
     assert settings.weight_cap == 1.0
+
+
+def test_weight_cap_min_magnitude_defaults_to_five_hundredths():
+    settings = CGCorrectionSettings()
+
+    assert settings.weight_cap_min_magnitude == 0.05
+
+
+def test_weight_cap_min_magnitude_rejects_negative():
+    with pytest.raises(ValueError):
+        CGCorrectionSettings(weight_cap_min_magnitude=-0.01)
+
+
+def test_weight_cap_min_magnitude_accepts_zero():
+    settings = CGCorrectionSettings(weight_cap_min_magnitude=0.0)
+
+    assert settings.weight_cap_min_magnitude == 0.0
