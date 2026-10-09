@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from opendsm.common.const import default_season_def
 from opendsm.comparison_groups import exclusions
 from opendsm.comparison_groups.population import ComparisonPool, TreatmentGroup
 from opendsm.comparison_groups.savings.correction import CorrectionResult, correct_reporting
@@ -79,7 +80,9 @@ def _empty_corrected():
     return frame
 
 
-def _correction(corrected, tz=_TZ, granularity="hourly", correction_periods=None, meter_id="m1"):
+def _correction(
+    corrected, tz=_TZ, granularity="hourly", correction_periods=None, meter_id="m1", cg_acf=None
+):
     result = CorrectionResult(
         meter_id=meter_id,
         corrected=corrected,
@@ -91,6 +94,7 @@ def _correction(corrected, tz=_TZ, granularity="hourly", correction_periods=None
         granularity=granularity,
         fingerprint="test-fingerprint",
         correction_periods=correction_periods,
+        cg_acf=cg_acf,
     )
 
     return result
@@ -354,6 +358,14 @@ def test_seasonal_aggregation_uses_default_season_definition():
 
     assert _row(result.savings, "m1", "2019-winter")["savings"] == pytest.approx(40.0)
     assert _row(result.savings, "m1", "2019-summer")["savings"] == pytest.approx(20.0)
+
+
+def test_seasonal_aggregation_rejects_season_def_with_unmapped_month():
+    frame = _meter_frame("m1", _index(1), observed=0.0, corrected=1.0, corrected_unc=0.0)
+    season_def = {k: v for k, v in default_season_def.items() if k != "June"}
+
+    with pytest.raises(ValueError, match="June"):
+        compute_savings(_correction(frame), aggregation="seasonal", season_def=season_def)
 
 
 def test_annual_aggregation_groups_by_calendar_year():
@@ -628,6 +640,160 @@ def test_empty_correction_yields_empty_frames_without_error():
         "pct_savings",
         "coverage",
     ]
+
+
+# ── NDID long-run variance ────────────────────────────────────────────────────
+
+
+def _ndid_frame(index, corrected_unc, cg_var, observed_unc=0.0):
+    n = len(index)
+    corrected = np.linspace(10.0, 20.0, n)
+    frame = _meter_frame(
+        "m1",
+        index,
+        observed=corrected - 1.0,
+        corrected=corrected,
+        corrected_unc=corrected_unc,
+        observed_unc=observed_unc,
+    )
+    frame["cg_var"] = np.asarray(cg_var, dtype=np.float64) * np.ones(n)
+
+    return frame
+
+
+def _savings_unc(frame, aggregation="total", **kwargs):
+    result = compute_savings(_correction(frame, **kwargs), aggregation=aggregation)
+    unc = result.savings["savings_unc"].to_numpy(dtype=np.float64)
+
+    return unc
+
+
+@pytest.mark.parametrize("aggregation", ["native", "monthly", "seasonal", "total"])
+def test_ndid_zero_lag_acf_reproduces_quadrature_path(aggregation):
+    rng = np.random.default_rng(0)
+    index = _index(24 * 70)
+    corrected_unc = rng.uniform(1.0, 2.0, len(index))
+    cg_var = corrected_unc**2 * rng.uniform(0.1, 0.9, len(index))
+    frame = _ndid_frame(index, corrected_unc, cg_var, observed_unc=0.3)
+
+    ndid = _savings_unc(frame, aggregation, cg_acf=np.zeros(4))
+    legacy = _savings_unc(frame.drop(columns=["cg_var"]), aggregation)
+
+    np.testing.assert_allclose(ndid, legacy, rtol=1e-12, atol=0.0)
+
+
+def test_ndid_billing_empty_acf_reproduces_quadrature_path_with_read_expansion():
+    frame1, period1 = _billing_read("m1", "2019-01-20", "2019-02-08", 10.0, 15.0, 2.0)
+    frame2, period2 = _billing_read("m1", "2019-02-09", "2019-03-10", 20.0, 25.0, 3.0)
+    frame = pd.concat([frame1, frame2], ignore_index=True)
+    frame["cg_var"] = [1.0, 4.0]
+    periods = period1 + period2
+
+    ndid = compute_savings(
+        _correction(frame, granularity="billing", correction_periods=periods, cg_acf=np.array([])),
+        aggregation="monthly",
+    )
+    legacy = compute_savings(
+        _correction(
+            frame.drop(columns=["cg_var"]), granularity="billing", correction_periods=periods
+        ),
+        aggregation="monthly",
+    )
+
+    assert len(ndid.savings) == 3
+    pd.testing.assert_frame_equal(ndid.savings, legacy.savings)
+
+
+def test_ndid_constant_sigma_ar1_matches_truncated_closed_form():
+    n, k, phi = 50, 5, 0.6
+    model_unc, cg_unc, observed_unc = 1.5, 2.0, 0.5
+    corrected_unc = np.sqrt(model_unc**2 + cg_unc**2)
+    frame = _ndid_frame(_index(n), corrected_unc, cg_unc**2)
+    cg_acf = phi ** np.arange(1, k + 1)
+
+    result = compute_savings(
+        _correction(frame, cg_acf=cg_acf), observed_unc={"m1": observed_unc}, aggregation="total"
+    )
+
+    lags = np.arange(1, k + 1)
+    long_run = n + 2.0 * np.sum(phi**lags * (n - lags))
+    expected = np.sqrt(n * (model_unc**2 + observed_unc**2) + cg_unc**2 * long_run)
+
+    assert result.savings["savings_unc"].iloc[0] == pytest.approx(expected, rel=1e-9)
+
+
+def test_ndid_negative_lag_sum_falls_back_to_quadrature():
+    frame = _ndid_frame(_index(10), corrected_unc=2.0, cg_var=3.0)
+
+    ndid = _savings_unc(frame, cg_acf=np.array([-0.9, 0.1]))
+
+    assert ndid[0] == pytest.approx(np.sqrt(10 * 4.0), rel=1e-12)
+
+
+def test_ndid_lag_pairs_count_only_within_a_period_in_time_order():
+    """Jan 30, Jan 31, Feb 1, Feb 2 at sigma 1 and rho_1 = 0.5: each month holds
+    one adjacent pair (adding 2 * 0.5 * 1 * 1), the Jan 31 / Feb 1 pair spans
+    the boundary and enters neither, and row order in the frame is irrelevant."""
+    index = _index(4, start="2019-01-30", freq="D")
+    frame = _ndid_frame(index, corrected_unc=2.0, cg_var=1.0)
+    shuffled = frame.iloc[[2, 0, 3, 1]].reset_index(drop=True)
+
+    ndid = _savings_unc(shuffled, "monthly", cg_acf=np.array([0.5]))
+
+    np.testing.assert_allclose(ndid, np.sqrt([2 * 4.0 + 1.0, 2 * 4.0 + 1.0]), rtol=1e-12)
+
+
+def test_ndid_native_aggregation_equals_per_row_quadrature():
+    frame = _ndid_frame(_index(6), corrected_unc=np.arange(1.0, 7.0), cg_var=0.5, observed_unc=0.2)
+
+    ndid = _savings_unc(frame, "native", cg_acf=np.array([0.8, 0.4]))
+
+    np.testing.assert_allclose(ndid, np.sqrt(np.arange(1.0, 7.0) ** 2 + 0.04), rtol=1e-12)
+
+
+def test_ndid_nan_cg_var_row_contributes_zero_sigma():
+    """sigma = [1, 0, 1, 1] at rho_1 = 0.5: only the (2, 3) pair survives."""
+    frame = _ndid_frame(_index(4), corrected_unc=2.0, cg_var=np.array([1.0, np.nan, 1.0, 1.0]))
+
+    ndid = _savings_unc(frame, cg_acf=np.array([0.5]))
+
+    assert ndid[0] == pytest.approx(np.sqrt(4 * 4.0 + 1.0), rel=1e-12)
+
+
+def test_ndid_uncovered_row_contributes_zero_sigma():
+    """An uncovered row leaves the quadrature sum and breaks its lag pairs."""
+    frame = _ndid_frame(_index(4), corrected_unc=2.0, cg_var=1.0)
+    frame.loc[1, "observed"] = np.nan
+
+    result = compute_savings(_correction(frame, cg_acf=np.array([0.5])), aggregation="total")
+    row = result.savings.iloc[0]
+
+    assert row["coverage"] == pytest.approx(0.75)
+    assert row["savings_unc"] == pytest.approx(np.sqrt(3 * 4.0 + 1.0), rel=1e-12)
+
+
+@pytest.mark.parametrize("column", ["corrected_unc", "observed_unc"])
+def test_ndid_nan_unc_on_covered_row_makes_period_non_finite(column):
+    frame = _ndid_frame(_index(4), corrected_unc=2.0, cg_var=1.0)
+    frame.loc[2, column] = np.nan
+
+    result = compute_savings(_correction(frame, cg_acf=np.array([0.5])), aggregation="total")
+    row = result.savings.iloc[0]
+
+    assert row["coverage"] == pytest.approx(1.0)
+    assert np.isnan(row["savings_unc"])
+
+
+def test_result_without_cg_var_takes_quadrature_path_even_with_acf():
+    frame = _meter_frame(
+        "m1", _index(48), observed=1.0, corrected=np.linspace(2.0, 5.0, 48), corrected_unc=1.5
+    )
+
+    with_acf = compute_savings(_correction(frame, cg_acf=np.array([0.9])), aggregation="total")
+    legacy = compute_savings(_correction(frame), aggregation="total")
+
+    pd.testing.assert_frame_equal(with_acf.savings, legacy.savings)
+    assert with_acf.savings["savings_unc"].iloc[0] == pytest.approx(np.sqrt(48 * 1.5**2))
 
 
 # ── serialization ─────────────────────────────────────────────────────────────

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import calendar
 import json
 from enum import Enum
 from io import StringIO
@@ -54,6 +55,11 @@ def _period_labels(datetime, aggregation, season_def):
         return datetime.dt.strftime("%Y-%m")
 
     if aggregation == SavingsAggregation.SEASONAL:
+        unmapped = [m for m in calendar.month_name[1:] if m not in season_def]
+
+        if unmapped:
+            raise ValueError(f"season_def does not map months {unmapped}.")
+
         season = datetime.dt.month_name().map(season_def)
 
         return datetime.dt.year.astype(str) + "-" + season
@@ -136,16 +142,46 @@ def _read_period_end(periods, start):
     raise ValueError(f"no read period starts at {start}.")
 
 
-def _aggregate(native, keys):
+def _lag_variance(rows, keys, cg_acf):
+    """Per-group serial-covariance term of the comparison-group error,
+    ``2 * sum_j rho_j * sum_t sigma_t sigma_{t+j}``, aligned to the sorted groups
+    of ``rows.groupby(keys)``.
+
+    Lags count consecutive rows in time order, and a lag product enters a group
+    only when both rows belong to it, since a seasonal period is not contiguous.
+    A negative group sum, which a mean of moving-window autocorrelations does
+    not rule out, is set to 0 so that group falls back to quadrature.
+    """
+    ordered = rows.sort_values(["id", "datetime"], kind="stable")
+    codes = ordered.groupby(keys, sort=True).ngroup().to_numpy()
+    sigma = ordered["sigma"].to_numpy(dtype=np.float64)
+    n_groups = len(np.unique(codes))
+    lag = np.zeros(n_groups)
+
+    for j, rho in enumerate(cg_acf, start=1):
+        if j >= len(codes):
+            break
+
+        same = codes[:-j] == codes[j:]
+        products = sigma[:-j][same] * sigma[j:][same]
+        lag += rho * np.bincount(codes[:-j][same], weights=products, minlength=n_groups)
+
+    lag = np.maximum(2.0 * lag, 0.0)
+
+    return lag
+
+
+def _aggregate(native, keys, lag_var=None):
     """Roll native meter-timesteps up to ``keys``.
 
     ``observed``/``corrected``/``savings`` sum only over finite timesteps (those
     with a finite corrected AND observed value); ``coverage`` reports the finite
     fraction. ``savings_unc`` is the quadrature over those same finite timesteps,
-    so the band describes the covered fraction the point sums describe; a finite
-    timestep whose uncertainty is non-finite still propagates NaN to the
-    period's band. A period with zero coverage has no valid data and reports
-    NaN throughout rather than a misleading zero.
+    plus ``lag_var`` per group when supplied, so the band describes the covered
+    fraction the point sums describe; a finite timestep whose uncertainty is
+    non-finite still propagates NaN to the period's band. A period with zero
+    coverage has no valid data and reports NaN throughout rather than a
+    misleading zero.
     """
     grouped = native.groupby(keys, sort=True)
     agg = grouped.agg(
@@ -155,6 +191,9 @@ def _aggregate(native, keys):
         savings_var=("masked_savings_var", lambda s: np.sum(s.to_numpy(dtype=np.float64))),
         coverage=("finite", "mean"),
     ).reset_index()
+
+    if lag_var is not None:
+        agg["savings_var"] = agg["savings_var"].to_numpy(dtype=np.float64) + lag_var
 
     no_coverage = agg["coverage"].to_numpy(dtype=np.float64) == 0.0
     agg.loc[no_coverage, ["observed", "corrected", "savings", "savings_var"]] = np.nan
@@ -206,6 +245,21 @@ def compute_savings(correction, observed_unc=None, aggregation="native", season_
     exact reconstruction (unifying the two constructions is future work; see
     ``ROADMAP.md``).
 
+    An NDID result (rows carrying ``cg_var`` and a non-empty ``cg_acf``) adds
+    the serial correlation of its comparison-group error. With
+    ``sigma_t = sqrt(cg_var_t)`` (0 on uncovered rows and where ``cg_var`` is
+    NaN) and ``rho_j = cg_acf[j - 1]`` for lags ``j = 1..K``, a period's
+    variance is ``sum_t (corrected_unc_t^2 - cg_var_t + observed_unc_t^2) +
+    sum_t sigma_t^2 + 2 * sum_j rho_j * sum_t sigma_t sigma_{t+j}`` over its
+    covered rows: the treatment-model share stays in quadrature and the
+    comparison-group share takes its long-run variance. Lags count consecutive
+    native rows in time order, and a pair contributes only when both rows fall
+    in the period. A negative lag sum is set to 0, so that period falls back to
+    quadrature. With every ``rho_j = 0`` this is the quadrature path exactly.
+    Billing NDID results carry an empty ``cg_acf`` (read periods are treated as
+    serially independent) and, like the other algorithms, take the quadrature
+    path.
+
     Args:
         correction: ``CorrectionResult`` to compute savings from.
         observed_unc: optional explicit observed uncertainty for this meter —
@@ -229,9 +283,17 @@ def compute_savings(correction, observed_unc=None, aggregation="native", season_
     if season_def is None:
         season_def = default_season_def
 
-    native = correction.corrected[
-        ["id", "datetime", "observed", "corrected", "corrected_unc", "observed_unc"]
-    ].copy()
+    long_run = (
+        "cg_var" in correction.corrected.columns
+        and correction.cg_acf is not None
+        and len(correction.cg_acf) > 0
+    )
+    columns = ["id", "datetime", "observed", "corrected", "corrected_unc", "observed_unc"]
+
+    if long_run:
+        columns.append("cg_var")
+
+    native = correction.corrected[columns].copy()
     native["datetime"] = native["datetime"].dt.as_unit("ns")
 
     if observed_unc is not None:
@@ -245,7 +307,7 @@ def compute_savings(correction, observed_unc=None, aggregation="native", season_
 
     calendar_rollup = aggregation != SavingsAggregation.NATIVE
 
-    if correction.granularity == "billing" and calendar_rollup:
+    if correction.granularity == "billing" and calendar_rollup and not long_run:
         rows = _expand_read_periods(native, correction.correction_periods)
     else:
         rows = native
@@ -255,8 +317,20 @@ def compute_savings(correction, observed_unc=None, aggregation="native", season_
     rows["masked_savings"] = np.where(rows["finite"], rows["savings"], 0.0)
     rows["masked_savings_var"] = np.where(rows["finite"], rows["savings_var"], 0.0)
     rows["period"] = _period_labels(rows["datetime"], aggregation, season_def)
+    keys = ["id", "period"]
 
-    savings = _aggregate(rows, ["id", "period"])
+    if long_run:
+        # sum_t (corrected_unc^2 - cg_var + observed_unc^2) + sum_t sigma_t^2 is the
+        # quadrature sum already in masked_savings_var, since sigma_t^2 = cg_var_t
+        # wherever sigma_t is nonzero; only the lag term remains to add.
+        cg_var = rows["cg_var"].to_numpy(dtype=np.float64)
+        has_sigma = rows["finite"].to_numpy() & np.isfinite(cg_var)
+        rows["sigma"] = np.sqrt(np.where(has_sigma, cg_var, 0.0))
+        lag_var = _lag_variance(rows, keys, correction.cg_acf)
+    else:
+        lag_var = None
+
+    savings = _aggregate(rows, keys, lag_var)
 
     result = SavingsResult(
         meter_id=correction.meter_id,
