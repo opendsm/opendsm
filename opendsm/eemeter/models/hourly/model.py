@@ -58,6 +58,7 @@ from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict, Rep
 from opendsm import __version__
 
 
+
 def _get_interpolated_mask(df):
     cols = [col for col in df.columns if col.startswith("interpolated_")]
     return df[cols].any(axis=1)
@@ -829,7 +830,8 @@ class HourlyModel:
         df["day_of_week"] = df.index.dayofweek
         df["hour_of_day"] = df.index.hour
 
-        # assign temporal clusters
+        # assign temporal clusters; the fitted table is never replaced, so combinations unseen
+        # in the fit are labeled per prediction and a short window leaves later ones unchanged
         if not self._is_fit:
             self._df_temporal_clusters = set_initial_temporal_clusters(df[df["include_date"]])
             n_clusters = self._df_temporal_clusters["temporal_cluster"].nunique()
@@ -839,8 +841,7 @@ class HourlyModel:
             df_temporal_clusters = correct_missing_temporal_clusters(df)
 
         else:
-            self._df_temporal_clusters = correct_missing_temporal_clusters(df)
-            df_temporal_clusters = self._df_temporal_clusters
+            df_temporal_clusters = correct_missing_temporal_clusters(df)
 
             # Count unique temporal cluster base columns (e.g. temporal_cluster_0, temporal_cluster_1)
             n_clusters = sum(
