@@ -1,0 +1,26 @@
+# One grouped pull request per ecosystem per month, and nothing in a month without updates.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: monthly
+    # refresh uv.lock only; the ranges in pyproject.toml are maintained by hand
+    versioning-strategy: lockfile-only
+    groups:
+      python:
+        patterns: ["*"]
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      images:
+        patterns: ["*"]
