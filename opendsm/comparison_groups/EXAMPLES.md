@@ -177,3 +177,29 @@ neither enter nor leave the group, and checks the new result against the prior
 where the periods overlap, so an incremental run cannot silently move values that
 were already reported. The prior must belong to the same meter and the same
 selection.
+
+## Example 3: the NDID correction
+
+The normalized difference-in-differences algorithm is selected through the
+correction settings. It takes the populations and the selection from the
+sections above unchanged, so it can be compared directly with the default
+correction for the same meter. NDID requires its own settings block, and either
+a sector or an explicit size-law exponent.
+
+```python
+from opendsm.comparison_groups.savings import CGCorrectionSettings, NDIDSettings
+
+settings = CGCorrectionSettings(
+    algorithm="normalized_difference_in_differences",
+    ndid=NDIDSettings(sector="commercial"),
+)
+
+ndid_correction = correct_reporting(selection, treatment, pool, treatment.ids[0], settings=settings)
+ndid_savings = compute_savings(ndid_correction, aggregation="monthly")
+```
+
+Each meter's baseline profile, which NDID needs, is computed at fit time and
+carried with the model. The correction frame gains `cg_var`, the
+comparison-group variance per timestep, and `cg_effective_n`, the effective
+number of comparison meters behind it. The savings band sums that variance over
+each month with the baseline autocorrelation in `ndid_correction.cg_acf`.

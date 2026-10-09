@@ -115,6 +115,42 @@ derivation, the scale assumptions, the aggregation and weight-cap mathematics,
 the degradation semantics, and the uncertainty propagation are in
 [the correction](docs/correction.md).
 
+## NDID correction
+
+Normalized difference-in-differences (NDID) is a fourth correction algorithm,
+selectable beside the three scale forms. The absolute percent form divides by a
+comparison meter's instantaneous prediction, which diverges as that prediction
+approaches zero, as it does for net-metered solar at peak production. NDID
+removes the division. Each meter's reporting error is normalized by that meter's
+typical load for the timestep's calendar cell, learned from its own baseline,
+and the comparison meters are combined per timestep with weights that favor
+meters whose predicted operating state matches the treatment's:
+
+$$
+m_{cT}(t) = m_T(t) - s_T(t) \sum_k T_k(t) \, \frac{\sum_i w_i(t) \, e_i(t)}{\sum_i w_i(t)},
+\qquad e_i(t) = \frac{m_i(t) - o_i(t)}{s_i(t)},
+$$
+
+where $s_T$ and $s_i$ are typical loads and $T_k$ the treatment's cluster
+weights. The weights combine a Cauchy kernel on the difference in relative state
+$m / s$, an optional size relevance, a pooled size law, and a one-pass
+robustness weight on the Yeo-Johnson transformed cross-section. Each cluster's
+one-sigma variance blends the weighted cross-sectional standard error with a
+pooled baseline law, and the comparison-group variance enters the band in
+quadrature with the treatment model's own:
+
+$$
+\sigma_{cT}(t)^2 = \sigma_T(t)^2 + s_T(t)^2 \sum_k T_k(t)^2 \, \text{var}_k(t).
+$$
+
+The typical loads, spreads and residual autocorrelation come from a baseline
+profile computed at fit time and serialized with the model, or on demand from the
+baseline data for a model serialized before the profile existed. Savings sum the
+comparison-group variance over a period with its baseline autocorrelation rather
+than in quadrature. The full definitions, the profile, the weights, the band, the
+aggregation rule, the settings and the documented approximations are in
+[the NDID correction](docs/ndid.md).
+
 ## Uncertainty
 
 The uncertainty outputs are honest heuristic bands, not calibrated intervals, and

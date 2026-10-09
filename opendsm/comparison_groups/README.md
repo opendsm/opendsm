@@ -29,7 +29,8 @@ The module is a stream of stages, each consuming the previous stage's output.
   `ComparisonGroupSelection`.
 - **Correction** (`correct_reporting`) applies the difference-in-differences for
   one treatment meter at its received cadence and returns a `CorrectionResult`
-  of corrected reporting-period series.
+  of corrected reporting-period series. The normalized difference-in-differences
+  (NDID) algorithm is available beside the existing scale forms.
 - **Savings** (`compute_savings`) reduces that correction to avoided energy,
   summed at any calendar aggregation, and returns a `SavingsResult`.
 
@@ -61,4 +62,6 @@ suits an ongoing program that reports incrementally.
 - [Methodology](METHODOLOGY.md) explains the granularity rules, the selection
   methods, the correction mathematics, the uncertainty framing, and the
   disqualification ledger.
+- [The NDID correction](docs/ndid.md) states the normalized
+  difference-in-differences algorithm, its baseline profile, and its aggregation rule.
 - [Examples](EXAMPLES.md) walks through runnable code for both usage patterns.
