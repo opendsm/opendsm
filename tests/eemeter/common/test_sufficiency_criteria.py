@@ -27,14 +27,14 @@ from opendsm.eemeter.common.sufficiency_criteria import (
 
 
 
-def _daily_frame(n_days=365, start="2020-01-01"):
+def _daily_frame(n_days=365, start="2020-01-01", tz="UTC"):
     """A clean daily aggregated frame that passes every sufficiency rule.
 
     Carries both the value columns (`temperature`, `observed`) and the
     per-period coverage counts (`temperature_not_null`/`temperature_null`) the
     criteria read; full temperature coverage and varied, non-negative observed.
     """
-    index = pd.date_range(start, periods=n_days, freq="D", tz="UTC")
+    index = pd.date_range(start, periods=n_days, freq="D", tz=tz)
     rng = np.random.default_rng(0)
     df = pd.DataFrame(
         {
@@ -233,6 +233,81 @@ def test_valid_days_percentage_passes_full_coverage(col):
     sc._check_valid_days_percentage(col=col)
 
     assert sc.disqualification == []
+
+
+@pytest.mark.parametrize("n_days", [1, 7, 9])
+def test_valid_days_count_every_day_of_a_short_window(n_days):
+    """A fully covered window of any length counts each of its days, the last one
+    included, so a short reporting window passes the 90% daily-coverage rule."""
+    sc = _criteria(_daily_frame(n_days), is_reporting_data=True)
+
+    sc._check_valid_days_percentage(col="joint")
+
+    assert sc.n_valid_days == n_days
+    assert sc.n_days_total == n_days
+    assert sc.disqualification == []
+
+
+def _hourly_frame(n_days, start="2020-03-05", tz="America/Chicago"):
+    """A clean hourly frame over whole local calendar days; the window may cross a DST change."""
+    end = pd.Timestamp(start) + pd.Timedelta(days=n_days)
+    index = pd.date_range(start, end, freq="h", tz=tz, inclusive="left")
+    rng = np.random.default_rng(0)
+    df = pd.DataFrame(
+        {
+            "temperature": rng.normal(60.0, 15.0, len(index)),
+            "temperature_not_null": np.ones(len(index)),
+            "temperature_null": np.zeros(len(index)),
+            "observed": rng.normal(30.0, 5.0, len(index)),
+        },
+        index=index,
+    )
+
+    return df
+
+
+def test_hourly_rows_count_by_their_share_of_a_day_across_a_dst_change():
+    """Each hour counts for one twenty-fourth of a day and the span is read off the wall
+    clock: the spring-forward week spans seven days, its 167 hours count as 167/24 valid
+    days, and a missing hour costs one share."""
+    df = _hourly_frame(7)
+    df.iloc[30, df.columns.get_loc("observed")] = np.nan
+    sc = _criteria(df)
+
+    assert sc.n_days_total == 7
+    np.testing.assert_allclose(sc.n_valid_temperature_days, 167 / 24)
+    np.testing.assert_allclose(sc.n_valid_observed_days, 166 / 24)
+
+
+def test_off_midnight_hourly_window_spans_its_elapsed_days():
+    """A year of hours from 06:00 touches 366 calendar days but spans 365 and holds 365
+    valid days, so a start inside a day does not lengthen the window."""
+    sc = _criteria(_hourly_frame(365, start="2021-01-01 06:00", tz="UTC"))
+
+    assert sc.n_days_total == 365
+    assert sc.n_valid_days == 365
+
+
+def test_requested_window_gaps_count_calendar_days_across_a_dst_change():
+    """The gaps between the requested bounds and the data are read off the data's own
+    clock, so a DST change inside a gap does not lose a day."""
+    settings = DailyDataSufficiencySettings(
+        requested_start=pd.Timestamp("2020-03-05", tz="America/Chicago"),
+        requested_end=pd.Timestamp("2020-11-05", tz="America/Chicago"),
+    )
+    sc = _criteria(_daily_frame(20, start="2020-03-10", tz="America/Chicago"), settings=settings)
+
+    assert sc.n_days_total == (pd.Timestamp("2020-11-05") - pd.Timestamp("2020-03-05")).days + 1
+
+
+@pytest.mark.parametrize("start, n_days", [("2020-03-01", 31), ("2020-11-01", 7)])
+def test_n_days_total_counts_calendar_days_across_a_dst_change(start, n_days):
+    """The span is counted in calendar days of the data's clock, so a window
+    holding one DST change is neither a day short nor a day long."""
+    sc = _criteria(_daily_frame(n_days, start=start, tz="America/Chicago"))
+
+    assert sc.n_days_total == n_days
+    assert sc.n_valid_days == n_days
 
 
 # ---------------------------------------------------------------------------
