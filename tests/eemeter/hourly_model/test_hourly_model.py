@@ -19,7 +19,7 @@ from opendsm.eemeter import (
     HourlySolarSettings,
     HourlyNonSolarSettings,
 )
-from opendsm.eemeter.models.hourly.model import _fit_exp_growth_decay
+from opendsm.eemeter.models.hourly.model import _fit_exp_growth_decay, _hourly_profiles
 from opendsm.eemeter.models.hourly.settings import BaseHourlySettings
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
@@ -596,3 +596,85 @@ class TestFitStatisticsFromIncludedDays:
 
         with pytest.raises(DataSufficiencyError, match="no day has at least 12 measured hours"):
             _fit_flagged(flagged_hourly, min_daily_training_hours=12)
+
+    def test_fit_clusters_a_month_and_weekday_seen_only_on_the_23_hour_day(
+        self, flagged_hourly
+    ):
+        """March 10, 2019 is the spring-forward day: its load profile has no hour 2, and it is
+        the only measured March Sunday, so the combination's profile is completed from the
+        neighbouring hours before clustering."""
+        index = flagged_hourly.index
+        other_march_sundays = (
+            (index.month == 3)
+            & (index.dayofweek == 6)
+            & (index.date != date(2019, 3, 10))
+        )
+        flagged_hourly.loc[other_march_sundays, _UNMEASURED_FLAGS] = True
+
+        model = _fit_flagged(flagged_hourly)
+
+        fitted = {tuple(row[:2]) for row in model.to_dict()["temporal_clusters"]}
+        message = "March Sundays, measured only on the 23-hour day, got no cluster"
+        assert (3, 6) in fitted, message
+
+    def test_predict_labels_a_month_and_weekday_seen_only_on_the_23_hour_day(
+        self, flagged_hourly
+    ):
+        """With every March Sunday unmeasured in the fit, a prediction window whose only Sunday
+        is the 23-hour day labels that Sunday from its completed profile: the same label the
+        following week's ordinary Sunday gets."""
+        index = flagged_hourly.index
+        flagged_hourly.loc[
+            (index.month == 3) & (index.dayofweek == 6), _UNMEASURED_FLAGS
+        ] = True
+        model = _fit_flagged(flagged_hourly)
+        measured = flagged_hourly.drop(columns=_UNMEASURED_FLAGS)
+
+        def sunday_label(window):
+            # each window predicts from its own copy of the fitted model
+            fresh = HourlyModel.from_dict(model.to_dict())
+            reporting = HourlyReportingData(
+                measured.loc[window], is_electricity_data=True
+            )
+            fresh.predict(reporting, ignore_disqualification=True)
+            features = fresh._processed_meter_data_full
+            labels = set(features.loc[features["day_of_week"] == 6, "temporal_cluster"])
+            assert len(labels) == 1, f"the window's one Sunday got labels {labels}"
+
+            return labels.pop()
+
+        dst_week = sunday_label(slice("2019-03-04", "2019-03-10"))
+        ordinary_week = sunday_label(slice("2019-03-11", "2019-03-17"))
+
+        assert dst_week == ordinary_week, (
+            f"the week whose Sunday is the 23-hour day labeled it {dst_week}, "
+            f"the following week labeled its Sunday {ordinary_week}"
+        )
+
+
+def test_hourly_profiles_fill_a_skipped_hour_from_its_neighbours():
+    """A combination missing one hour of the day gets the mean of the neighbouring hours there,
+    a combination missing an edge hour gets its one neighbour, and a complete combination is
+    unchanged."""
+    rows = []
+    for hour in range(24):
+        if hour != 2:
+            rows.append((3, 6, hour, 10.0 * hour))
+
+        if hour != 0:
+            rows.append((3, 0, hour, 100.0 + hour))
+
+        rows.append((4, 0, hour, float(hour)))
+
+    columns = ["month", "day_of_week", "hour_of_day", "observed"]
+    df = pd.DataFrame(rows, columns=columns)
+
+    profiles = _hourly_profiles(df, ["month", "day_of_week"], "mean")
+
+    assert profiles.shape == (3, 24), f"expected 3 by 24 hours, got {profiles.shape}"
+    assert not profiles.isna().any().any(), "a profile kept a missing hour"
+    hour_2 = profiles.loc[(3, 6), 2]
+    assert hour_2 == pytest.approx(20.0), "hour 2 is not the mean of hours 1 and 3"
+    hour_0 = profiles.loc[(3, 0), 0]
+    assert hour_0 == pytest.approx(101.0), "hour 0 did not take hour 1's value"
+    np.testing.assert_allclose(profiles.loc[(4, 0)].to_numpy(), np.arange(24.0))

@@ -58,10 +58,29 @@ from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict, Rep
 from opendsm import __version__
 
 
-
 def _get_interpolated_mask(df):
     cols = [col for col in df.columns if col.startswith("interpolated_")]
     return df[cols].any(axis=1)
+
+
+def _hourly_profiles(df, group_cols, aggregation):
+    """Aggregate observed load by hour of day for each combination of `group_cols`, as a
+    (combination x 24) table.
+
+    A combination whose only days are 23-hour spring-forward days has no row for the skipped
+    hour. That hour takes the mean of its neighbours (an hour at either end of the day, its one
+    neighbour), the value the feature matrices insert for it, so clustering and nearest-profile
+    matching see complete profiles.
+    """
+    profiles = (
+        df.groupby(group_cols + ["hour_of_day"])["observed"]
+        .agg(aggregation)
+        .unstack("hour_of_day")
+        .reindex(columns=range(24))
+    )
+    profiles = profiles.interpolate(axis=1, limit_direction="both")
+
+    return profiles
 
 
 def _eliminate_empty_bins(bin_edges, temp):
@@ -313,7 +332,6 @@ class HourlyModel:
         self.baseline_timezone = None
         self.version = __version__
 
-    
     def _warn_model_mismatch(self, description):
         warning = self._model_warning(
             qualified_name="eemeter.potential_model_mismatch",
@@ -331,7 +349,6 @@ class HourlyModel:
         elif self.settings.scaling_method == _settings.ScalingChoice.ROBUST_SCALER:
             self._feature_scaler = SafeRobustScaler(unit_variance=True)
             self._y_scaler = SafeRobustScaler(unit_variance=True)
-
 
     def _set_model(self):
         # set base model
@@ -407,7 +424,6 @@ class HourlyModel:
             model_fit_warning.warn()
             self.disqualification.append(model_fit_warning)
             raise DataSufficiencyError("Cannot fit model: Baseline data contains no finite observed values")
-
 
     def fit(
         self, baseline_data: HourlyBaselineData, ignore_disqualification: bool = False
@@ -701,16 +717,10 @@ class HourlyModel:
 
     def _add_categorical_features(self, df):
         def set_initial_temporal_clusters(df):
-            fit_df_grouped = (
-                df.groupby(self._temporal_cluster_cols + ["hour_of_day"])["observed"]
-                .agg(self.settings.temporal_cluster_aggregation)
-                .reset_index()
-            )
-            # pivot table to get 2D array of observed values
-            fit_df_grouped = fit_df_grouped.pivot_table(
-                index=self._temporal_cluster_cols,
-                columns="hour_of_day",
-                values="observed",
+            fit_df_grouped = _hourly_profiles(
+                df,
+                self._temporal_cluster_cols,
+                self.settings.temporal_cluster_aggregation,
             )
 
             labels = cluster_features(
@@ -755,17 +765,10 @@ class HourlyModel:
                     # filter df to only include missing combinations
                     df_missing = df[is_missing]
 
-                    df_missing_grouped = (
-                        df_missing.groupby(
-                            self._temporal_cluster_cols + ["hour_of_day"]
-                        )["observed"]
-                        .agg(self.settings.temporal_cluster_aggregation)
-                        .reset_index()
-                    )
-                    df_missing_grouped = df_missing_grouped.pivot_table(
-                        index=self._temporal_cluster_cols,
-                        columns="hour_of_day",
-                        values="observed",
+                    df_missing_grouped = _hourly_profiles(
+                        df_missing,
+                        self._temporal_cluster_cols,
+                        self.settings.temporal_cluster_aggregation,
                     )
                     X = df_missing_grouped.values
 
@@ -781,17 +784,8 @@ class HourlyModel:
 
                     df_known = df[~is_missing]
 
-                    df_known_mean = (
-                        df_known.groupby(self._temporal_cluster_cols + ["hour_of_day"])[
-                            "observed"
-                        ]
-                        .mean()
-                        .reset_index()
-                    )
-                    df_known_mean = df_known_mean.pivot_table(
-                        index=self._temporal_cluster_cols,
-                        columns="hour_of_day",
-                        values="observed",
+                    df_known_mean = _hourly_profiles(
+                        df_known, self._temporal_cluster_cols, "mean"
                     )
                     X_known = df_known_mean.values
 
