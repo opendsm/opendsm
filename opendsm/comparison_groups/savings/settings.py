@@ -123,7 +123,51 @@ class CGCorrectionSettings(BaseSettings):
 
     weight_cluster_aggregation: Optional[WeightClusterAggChoice] = pydantic.Field(
         default = None,
-        description="how to weight cluster aggregation"
+        description=(
+            "how to weight cluster aggregation. Model-magnitude weighting can "
+            "concentrate weight on a single meter in small or magnitude-skewed "
+            "clusters; `weight_cap` bounds this unless no meter above "
+            "`weight_cap_min_magnitude` can take the excess. Where the Kish "
+            "effective sample size is below 2 (a cap above 0.5, or a capped "
+            "meter with no such recipient), the point correction stays weighted "
+            "but the cluster's uncertainty is estimated with uniform weights over "
+            "its finite meters, since a weighted interval needs an effective "
+            "sample size of at least 2."
+        )
+    )
+
+    weight_cap: float = pydantic.Field(
+        default=0.5,
+        gt=0.0,
+        le=1.0,
+        description=(
+            "upper bound on any single meter's model-magnitude weight within a "
+            "cluster; applies only under model-magnitude "
+            "`weight_cluster_aggregation`. Weights above the cap are clipped to "
+            "it and the excess is redistributed proportionally over the uncapped "
+            "meters above `weight_cap_min_magnitude`, iterating until no weight "
+            "exceeds the cap; a capped meter with no such recipient keeps its "
+            "weight. Where the cap cannot be met over the recipients and the "
+            "capped meters (cap times their number is below their combined "
+            "weight) they share that weight uniformly. A cap of c keeps the Kish "
+            "effective sample size at or above the smaller of 1/c and the number "
+            "of those meters, so 0.5 or below guarantees at least 2 for clusters "
+            "with 2 or more of them."
+        )
+    )
+
+    weight_cap_min_magnitude: float = pydantic.Field(
+        default=0.05,
+        ge=0.0,
+        description=(
+            "model magnitude (absolute value, in the data's units) a comparison "
+            "meter must exceed to receive weight that `weight_cap` takes away from "
+            "another meter; a meter at or below it keeps its own model-magnitude "
+            "weight but is never lifted, since a near-zero meter's correction is "
+            "unreliable and must not be handed a large share of a cluster. If no "
+            "meter in a cluster exceeds it, the floor does not apply there. The "
+            "default suits hourly kWh; 0 bars only exactly-zero magnitudes."
+        )
     )
 
     outlier_rejection: OutlierRejectionSettings = pydantic.Field(
