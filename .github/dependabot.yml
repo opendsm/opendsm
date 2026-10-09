@@ -1,4 +1,5 @@
 # One grouped pull request per ecosystem per month, and nothing in a month without updates.
+# A new major release of a Python dependency gets a pull request of its own.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -12,11 +13,13 @@ updates:
     directory: /
     schedule:
       interval: monthly
-    # refresh uv.lock only; the ranges in pyproject.toml are maintained by hand
-    versioning-strategy: lockfile-only
+    # floors stay as measured; a cap is raised only when a release falls outside it,
+    # so that pull request's CI shows whether the cap was still needed
+    versioning-strategy: widen
     groups:
       python:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
   - package-ecosystem: docker
     directory: /
     schedule:
