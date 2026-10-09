@@ -340,6 +340,31 @@ def write_models_fixture(daily, monthly, hourly):
     MODELS_PATH.write_bytes(gzip.compress(blob, compresslevel=9, mtime=0))
 
 
+def refresh_bank_profiles(comstock):
+    """Recompute every pinned model's baseline profile block from its baseline frame and
+    write it into the pinned payload in place. The model is not re-serialized, so nothing
+    else in the fixture moves. Generator only: run after ``compute_baseline_profile``
+    changes, through the guarded ``test_refresh_bank_profiles``."""
+    payload = json.loads(gzip.decompress(MODELS_PATH.read_bytes()))
+
+    for granularity, models in payload["bank"].items():
+        model_cls = _MODEL_CLASSES[granularity]
+
+        for mid, serialized in models.items():
+            model = model_cls.from_json(serialized, is_electricity_data=True)
+            profile = model.compute_baseline_profile(comstock.baseline(granularity, mid))
+            document = json.loads(serialized)
+            if granularity == "hourly":
+                document["baseline_profile"] = profile.model_dump()
+            else:
+                document["info"]["baseline_profile"] = profile.model_dump()
+            models[mid] = json.dumps(document)
+
+    payload["git_sha"] = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    blob = json.dumps(payload, allow_nan=False).encode("utf-8")
+    MODELS_PATH.write_bytes(gzip.compress(blob, compresslevel=9, mtime=0))
+
+
 # ── NDID runs on the pinned bank ─────────────────────────────────────────────
 
 

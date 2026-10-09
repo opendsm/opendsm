@@ -57,6 +57,7 @@ from .equivalence_env import (
     ndid_selection,
     ndid_settings,
     write_models_fixture,
+    refresh_bank_profiles,
     write_ndid_snapshot,
 )
 
@@ -2380,6 +2381,18 @@ def test_generate_ndid_snapshot(ndid_env):
     """
     results = {granularity: ndid_env(granularity)["result"] for granularity in _NDID_CADENCES}
     write_ndid_snapshot(results)
+
+
+@pytest.mark.skipif(
+    not os.environ.get("GENERATE_FIXTURES"),
+    reason="rewrites the pinned model bank's profile blocks; run manually",
+)
+def test_refresh_bank_profiles(comstock):
+    """Recompute the pinned models' profile blocks in place after a profile change.
+
+    GENERATE_FIXTURES=1 pytest -k refresh_bank_profiles
+    """
+    refresh_bank_profiles(comstock)
 
 
 @pytest.fixture(scope="module")
