@@ -12,10 +12,11 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+import re
 from collections import namedtuple
 
 import pandas as pd
-from patsy import dmatrix
+from patsy import EvalEnvironment, dmatrix
 
 __all__ = (
     "iterate_segmented_dataset",
@@ -28,6 +29,15 @@ __all__ = (
 
 HourlyModelPrediction = namedtuple("HourlyModelPrediction", ["result"])
 
+# patsy evaluates formula terms as Python, so the formula language a segment model
+# accepts is the trust boundary for serialized models: column names, the hour-of-week
+# categorical and the intercept, joined by + or -, and nothing that can call or index.
+_FORMULA_TERM = r"(?:C\(hour_of_week\)|1|[A-Za-z_][A-Za-z0-9_]*)"
+_FORMULA_PATTERN = re.compile(
+    rf"[ \t]*meter_value[ \t]*~[ \t]*{_FORMULA_TERM}"
+    rf"(?:[ \t]*[+-][ \t]*{_FORMULA_TERM})*[ \t]*"
+)
+
 
 class CalTRACKSegmentModel(object):
     """An object that captures the model fit for one segment.
@@ -39,7 +49,9 @@ class CalTRACKSegmentModel(object):
     model : :any:`object`
         The fitted model object.
     formula : :any:`str`
-        The formula of the model regression.
+        The formula of the model regression: ``meter_value ~`` followed by column
+        names, ``C(hour_of_week)`` or ``1`` joined by ``+`` or ``-``. Any other
+        formula raises :any:`ValueError`.
     model_param : :any:`dict`
         A dictionary of parameters
     warnings : :any:`list`
@@ -56,6 +68,31 @@ class CalTRACKSegmentModel(object):
             warnings = []
         self.warnings = warnings
 
+    @property
+    def formula(self):
+        """The regression formula, or None for a segment that had no data to fit."""
+        return self._formula
+
+    @formula.setter
+    def formula(self, formula):
+        if formula is not None and not (
+            isinstance(formula, str) and _FORMULA_PATTERN.fullmatch(formula)
+        ):
+            raise ValueError(
+                "CalTRACKSegmentModel formula must be 'meter_value ~' followed by column"
+                f" names, C(hour_of_week) or 1 joined by + or -, got {formula!r}"
+            )
+        self._formula = formula
+
+    def __setstate__(self, state):
+        # every unpickled formula goes through the setter; instances pickled before
+        # formula became a property carry it as a plain attribute
+        formula = state.pop("_formula", None)
+        if "formula" in state:
+            formula = state.pop("formula")
+        self.__dict__.update(state)
+        self.formula = formula
+
     def predict(self, data):
         """A function which takes input data and predicts for this segment model."""
         if self.formula is None:
@@ -63,7 +100,9 @@ class CalTRACKSegmentModel(object):
         else:
             var_str = self.formula.split("~", 1)[1]
 
-        design_matrix_granular = dmatrix(var_str, data, return_type="dataframe")
+        design_matrix_granular = dmatrix(
+            var_str, data, return_type="dataframe", eval_env=EvalEnvironment([])
+        )
         parameters = pd.Series(self.model_params)
 
         # Step 1, slice
