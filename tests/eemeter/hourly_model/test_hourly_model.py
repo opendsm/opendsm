@@ -707,7 +707,9 @@ def test_deserialized_model_needs_the_baseline_frame_for_its_profile(profile_fit
 
 
 def _first_month(reporting):
-    return reporting.loc[reporting.index < reporting.index.min() + pd.DateOffset(months=1)]
+    first_month = reporting.index < reporting.index.min() + pd.DateOffset(months=1)
+
+    return reporting.loc[first_month]
 
 
 def test_predict_leaves_the_fitted_temporal_clusters_unchanged(baseline, reporting):
@@ -721,6 +723,22 @@ def test_predict_leaves_the_fitted_temporal_clusters_unchanged(baseline, reporti
 
     pd.testing.assert_frame_equal(hm._df_temporal_clusters, fitted)
     assert hm.to_dict()["temporal_clusters"] == serialized
+
+
+def test_predict_labels_unseen_combinations_for_that_prediction_only(baseline, reporting):
+    """A fit through November has no December clusters; a prediction reaching into
+    December labels those combinations for itself and leaves the fitted table as fitted."""
+    through_november = baseline[baseline.index.month != 12]
+    hm = HourlyModel().fit(through_november, is_electricity_data=True, ignore_disqualification=True)
+    fitted = hm._df_temporal_clusters.copy()
+    assert 12 not in fitted.index.get_level_values("month")
+
+    days = reporting.index
+    window = reporting.loc[((days.month == 11) & (days.day >= 16)) | ((days.month == 12) & (days.day <= 15))]
+    predicted = hm.predict(window)
+
+    assert predicted.loc[predicted.index.month == 12, "predicted"].notna().all()
+    pd.testing.assert_frame_equal(hm._df_temporal_clusters, fitted)
 
 
 def test_baseline_profile_is_the_same_after_a_short_prediction(profile_fit, baseline, reporting):
