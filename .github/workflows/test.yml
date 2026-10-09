@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python: ["3.11", "3.12", "3.13", "3.14"]
         # nlopt publishes wheels only for linux-x86_64, macOS-arm64, and
         # win-amd64; one runner per OS covers exactly those architectures.
         # ARM-Linux and Intel-Mac are omitted because it ships no wheels
@@ -27,15 +27,24 @@ jobs:
         # images are fine and no second macOS-version runner is needed.
         os: [ubuntu-latest, windows-latest, macos-latest]
         pandas: [latest]
+        resolution: [highest]
         include:
           # pandas 2 remains a supported major (pandas<4); one extra job pins it
           # so that coverage does not depend on which Python still resolves it.
           # The differing `pandas` value makes this a new combination rather
-          # than an addition to the existing 3.12 / ubuntu job.
+          # than an addition to the existing 3.12 / ubuntu job. The same holds
+          # for the minimum job below: its differing `resolution` value makes it
+          # a new 3.11 / ubuntu combination, so it is covered by `build (all)`.
           - python: "3.12"
             os: ubuntu-latest
             pandas: "2"
             toxenv: 3.12-pandas2
+          # every direct dependency at its declared floor
+          - python: "3.11"
+            os: ubuntu-latest
+            pandas: latest
+            resolution: lowest
+            toxenv: minimum
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -45,7 +54,12 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install tox
-        run: pip install tox
+        run: pip install tox tox-uv
+      - name: Check uv.lock is current
+        if: matrix.resolution == 'lowest'
+        # before tox: its uv plugin leaves a `.venv` pointer file in the checkout that uv
+        # refuses as a project environment; uv is on PATH because tox-uv depends on it
+        run: uv lock --check
       - name: Run tox
         run: tox -e ${{ matrix.toxenv || matrix.python }}
 

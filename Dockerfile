@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM python:3.10-slim AS app
+FROM python:3.12-slim AS app
 
 # System deps for building native wheels
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -16,16 +16,15 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy \
 WORKDIR /app
 
 # ---- deps layer (cacheable) ----
-# Copy only metadata first to maximize Docker layer caching
-COPY pyproject.toml README.md /app/
-# If you keep a lockfile, copy it too for reproducible installs
-# (safe if missing)
-COPY uv.lock /app/uv.lock
+# Copy only metadata and the lockfile first to maximize Docker layer caching
+COPY pyproject.toml README.md uv.lock /app/
 
-# Resolve & install *only dependencies* into the system Python
-# Using uv pip compile -> requirements.txt for a stable, cacheable layer
+# Install *only the locked dependencies* into the system Python; the build
+# fails if uv.lock is out of date with pyproject.toml. The system interpreter,
+# not a venv, because the compose services bind-mount the repo over /app and
+# would hide a /app/.venv
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip compile pyproject.toml -o /tmp/requirements.txt && \
+    uv export --locked --no-emit-project --extra dev -o /tmp/requirements.txt && \
     uv pip install --system -r /tmp/requirements.txt
 
 # ---- project install ----
