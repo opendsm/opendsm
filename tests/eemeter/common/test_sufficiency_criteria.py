@@ -269,16 +269,38 @@ def _hourly_frame(n_days, start="2020-03-05", tz="America/Chicago"):
     return df
 
 
-def test_valid_days_count_hourly_rows_by_their_share_of_the_calendar_day():
-    """Each hour counts for its share of its own calendar day, so a day keeps its
-    full weight across a DST change and a missing hour costs one share of a day."""
+def test_hourly_rows_count_by_their_share_of_a_day_across_a_dst_change():
+    """Each hour counts for one twenty-fourth of a day and the span is read off the wall
+    clock: the spring-forward week spans seven days, its 167 hours count as 167/24 valid
+    days, and a missing hour costs one share."""
     df = _hourly_frame(7)
     df.iloc[30, df.columns.get_loc("observed")] = np.nan
     sc = _criteria(df, is_reporting_data=True)
 
     assert sc.n_days_total == 7
-    assert sc.n_valid_temperature_days == 7
-    np.testing.assert_allclose(sc.n_valid_observed_days, 7 - 1 / 24)
+    np.testing.assert_allclose(sc.n_valid_temperature_days, 167 / 24)
+    np.testing.assert_allclose(sc.n_valid_observed_days, 166 / 24)
+
+
+def test_off_midnight_hourly_window_spans_its_elapsed_days():
+    """A year of hours from 06:00 touches 366 calendar days but spans 365 and holds 365
+    valid days, so a start inside a day does not lengthen the window."""
+    sc = _criteria(_hourly_frame(365, start="2021-01-01 06:00", tz="UTC"))
+
+    assert sc.n_days_total == 365
+    assert sc.n_valid_days == 365
+
+
+def test_requested_window_gaps_count_calendar_days_across_a_dst_change():
+    """The gaps between the requested bounds and the data are read off the data's own
+    clock, so a DST change inside a gap does not lose a day."""
+    settings = DailyDataSufficiencySettings(
+        requested_start=pd.Timestamp("2020-03-05", tz="America/Chicago"),
+        requested_end=pd.Timestamp("2020-11-05", tz="America/Chicago"),
+    )
+    sc = _criteria(_daily_frame(20, start="2020-03-10", tz="America/Chicago"), settings=settings)
+
+    assert sc.n_days_total == (pd.Timestamp("2020-11-05") - pd.Timestamp("2020-03-05")).days + 1
 
 
 @pytest.mark.parametrize("start, n_days", [("2020-03-01", 31), ("2020-11-01", 7)])
