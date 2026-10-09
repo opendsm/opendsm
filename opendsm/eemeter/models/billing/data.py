@@ -71,6 +71,7 @@ class _BillingData(_DailyData):
         """
         meter_series_full = df["observed"]
         meter_series = meter_series_full.dropna()
+        self._read_period_edges = pd.DatetimeIndex([], tz=df.index.tz)
         if meter_series.empty:
             return meter_series_full.resample("D").first().to_frame()
 
@@ -111,6 +112,7 @@ class _BillingData(_DailyData):
         meter_value_df = clean_billing_daily_data(
             meter_series.to_frame("value"), min_granularity, self.disqualification
         )
+        self._read_period_edges = meter_value_df.index
 
         # Spread billing data to daily
         meter_value_df = as_freq(meter_value_df["value"], "D").to_frame("value")

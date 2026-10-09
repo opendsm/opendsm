@@ -21,6 +21,8 @@ from opendsm.eemeter.models.billing.data import (
     BillingBaselineData,
     BillingReportingData,
 )
+from opendsm.common.metrics import BaselineProfileMetrics
+from opendsm.eemeter.models.billing.model import _billing_baseline_profile
 from opendsm.eemeter.models.daily.model import DailyModel
 from opendsm.eemeter.models.billing.settings import BillingSettings
 
@@ -73,6 +75,12 @@ class BillingWeightedModel(DailyModel):
 
     def _reference_settings(self) -> BillingSettings:
         return BillingSettings(**self._default_overrides)
+
+    def _baseline_profile_from_data(self, data: BillingBaselineData) -> BaselineProfileMetrics:
+        """Billing-cadence profile block from per-day predictions on the daily substrate."""
+        profile = _billing_baseline_profile(self, data)
+
+        return profile
 
     def _predict_data(
         self,

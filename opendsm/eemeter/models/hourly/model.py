@@ -58,7 +58,14 @@ from opendsm.eemeter.common.exceptions import (
 )
 from opendsm.eemeter.common.warnings import EEMeterWarning, nonstandard_settings_warning
 from opendsm.common.clustering.cluster import cluster_features
-from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict, ReportingMetrics
+from opendsm.common.metrics import (
+    BaselineMetrics,
+    BaselineMetricsFromDict,
+    BaselineProfileMetrics,
+    BaselineProfileMetricsFromDict,
+    ReportingMetrics,
+    compute_baseline_profile,
+)
 from opendsm import __version__
 
 
@@ -310,13 +317,14 @@ class HourlyModel:
         self._is_fit = False
         self.baseline_metrics = None
         self.baseline_hour_metrics = None
+        self.baseline_profile = None
 
         self.warnings = []
         self.disqualification = []
 
         self._is_electricity_data = None
         self._pv_start = None
-        self._baseline_df = None
+        self._fit_data = None
         self._n_leading_trimmed = 0
         self._n_trailing_trimmed = 0
 
@@ -474,10 +482,10 @@ class HourlyModel:
     @property
     def baseline_df(self) -> pd.DataFrame | None:
         """Copy of the prepared baseline frame the model was fit on, None before fit."""
-        if self._baseline_df is None:
+        if self._fit_data is None:
             return None
 
-        return self._baseline_df.copy()
+        return self._fit_data.df
 
     def fit(
         self,
@@ -537,7 +545,7 @@ class HourlyModel:
                 disqualification=self.disqualification,
             )
 
-        self._baseline_df = baseline_data.df
+        self._fit_data = baseline_data
 
         if not self._ts_features:
             self.settings = self.settings.add_default_features(baseline_data.df.columns)
@@ -554,6 +562,59 @@ class HourlyModel:
         self._check_model_fit()
 
         return self
+
+    def compute_baseline_profile(self, df: pd.DataFrame | None = None) -> BaselineProfileMetrics:
+        """Compute the calendar-cell profile of this model's baseline fit.
+
+        Args:
+            df: Baseline frame in the form `fit` takes. None uses the data the model was fit on.
+
+        Returns:
+            The profile of the model's predictions against the observed baseline, excluding
+            interpolated rows. Disqualification is ignored.
+
+        Raises:
+            RuntimeError: If the model is not fitted, or df is None and the model holds no
+                fitted baseline data (as after deserialization).
+            ValueError: If df is in a different timezone than the model was fit on.
+        """
+        if df is None:
+            if self._fit_data is None:
+                raise RuntimeError(
+                    "Model holds no baseline data; pass the baseline frame to compute its profile."
+                )
+
+            data = self._fit_data
+        else:
+            data = self._baseline_data(df)
+
+        profile = self._baseline_profile_from_data(data)
+
+        return profile
+
+    def _baseline_profile_from_data(self, data: HourlyBaselineData) -> BaselineProfileMetrics:
+        """Profile block of the predictions on a baseline data object, interpolated rows dropped.
+
+        Predicts through `_predict` rather than `_predict_data` so that a GHI column the model
+        does not use adds no mismatch warning to the model.
+        """
+        if not self._is_fit:
+            raise RuntimeError("Model must be fit before its baseline profile can be computed.")
+
+        if str(self.baseline_timezone) != str(data.tz):
+            raise ValueError("Baseline data must use the timezone the model was fit on.")
+
+        profile = self._profile_of_prediction(self._predict(data))
+
+        return profile
+
+    def _profile_of_prediction(self, df_predicted: pd.DataFrame) -> BaselineProfileMetrics:
+        """Profile block of a baseline prediction frame, interpolated rows dropped."""
+        interpolated = _get_interpolated_mask(df_predicted)
+        df_profile = df_predicted.loc[~interpolated, ["observed", "predicted"]]
+        profile = compute_baseline_profile(df_profile, "hourly")
+
+        return profile
 
     def _fit(self, meter_data):
         self._is_fit = False
@@ -579,6 +640,7 @@ class HourlyModel:
             df_meter = self._predict(meter_data, X=X)
 
             self._set_baseline_metrics(df_meter, X_fit=X_fit)
+            self.baseline_profile = self._profile_of_prediction(df_meter)
 
         return self
 
@@ -1549,6 +1611,7 @@ class HourlyModel:
             y_scaler=y_scaler,
             baseline_metrics=self.baseline_metrics,
             baseline_hour_metrics=baseline_hour_metrics,
+            baseline_profile=self.baseline_profile,
             info=self._base_settings.ModelInfo(
                 disqualification=self.disqualification,
                 warnings=self.warnings,
@@ -1671,6 +1734,10 @@ class HourlyModel:
                 int(k): BaselineMetricsFromDict(v)
                 for k, v in raw_hour_metrics.items()
             }
+
+        raw_profile = data.get("baseline_profile")
+        if raw_profile is not None:
+            model_cls.baseline_profile = BaselineProfileMetricsFromDict(raw_profile)
 
         info = model_cls._base_settings.ModelInfo(**info_data)
         model_cls.warnings = list(info.warnings)

@@ -47,7 +47,13 @@ from opendsm.eemeter.models.daily.utilities.settings import (
 )
 from opendsm.eemeter.models.daily.utilities.ellipsoid_test import ellipsoid_split_filter
 from opendsm.eemeter.models.daily.utilities.selection_criteria import selection_criteria
-from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict
+from opendsm.common.metrics import (
+    BaselineMetrics,
+    BaselineMetricsFromDict,
+    BaselineProfileMetrics,
+    BaselineProfileMetricsFromDict,
+    compute_baseline_profile,
+)
 
 class DailyModel:
     """
@@ -116,7 +122,8 @@ class DailyModel:
         self.verbose = verbose
         self.is_fitted = False
         self._is_electricity_data = None
-        self._baseline_df = None
+        self.baseline_profile = None
+        self._fit_data = None
         self._edge_rows_trimmed = {"leading": 0, "trailing": 0}
 
     def _initialize_settings(
@@ -158,10 +165,10 @@ class DailyModel:
     def baseline_df(self) -> pd.DataFrame | None:
         """Copy of the prepared baseline frame the model was fit on, or None before fitting."""
 
-        if self._baseline_df is None:
+        if self._fit_data is None:
             return None
 
-        return self._baseline_df.copy()
+        return getattr(self._fit_data, self._data_df_name)
 
     def _reject_data_object(self, df) -> None:
         """Raise if a data class instance is passed where a dataframe is expected."""
@@ -251,9 +258,47 @@ class DailyModel:
 
         self._fit(getattr(baseline, self._data_df_name))
         self._check_model_fit()
-        self._baseline_df = getattr(baseline, self._data_df_name)
+        self._fit_data = baseline
+        self.baseline_profile = self.compute_baseline_profile()
+        self.params.info["baseline_profile"] = self.baseline_profile.model_dump()
 
         return self
+
+    def compute_baseline_profile(self, df: pd.DataFrame | None = None) -> BaselineProfileMetrics:
+        """Compute the calendar-cell profile of this model's baseline fit.
+
+        Args:
+            df: Baseline frame in the form `fit` takes. None uses the data the model was fit on.
+
+        Returns:
+            The profile of the model's predictions against the observed baseline.
+            Disqualification is ignored.
+
+        Raises:
+            RuntimeError: If the model is not fitted, or df is None and the model holds no
+                fitted baseline data (as after deserialization).
+        """
+        if df is None:
+            if self._fit_data is None:
+                raise RuntimeError(
+                    "Model holds no baseline data; pass the baseline frame to compute its profile."
+                )
+
+            data = self._fit_data
+        else:
+            self._reject_data_object(df)
+            data = self._baseline_data(df)
+
+        profile = self._baseline_profile_from_data(data)
+
+        return profile
+
+    def _baseline_profile_from_data(self, data) -> BaselineProfileMetrics:
+        """Profile block of the per-day predictions on a baseline data object."""
+        df_predicted = self._predict_data(data, ignore_disqualification=True)
+        profile = compute_baseline_profile(df_predicted[["observed", "predicted"]], "daily")
+
+        return profile
 
     def _fit(self, meter_data):
         # Initialize dataframe
@@ -529,6 +574,11 @@ class DailyModel:
             metrics_dict_lower["cvrmse_adj"] = metrics_dict_lower["cvrmse"]
             metrics_dict_lower["pnrmse_adj"] = metrics_dict_lower["pnrmse"]
             daily_model.baseline_metrics = BaselineMetricsFromDict(metrics_dict_lower)
+
+        if info.get("baseline_profile") is not None:
+            daily_model.baseline_profile = BaselineProfileMetricsFromDict(
+                info.get("baseline_profile")
+            )
 
         daily_model.is_fitted = True
 

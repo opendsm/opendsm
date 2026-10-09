@@ -375,3 +375,104 @@ def test_one_settings_object_is_judged_against_each_billing_model_reference():
     assert BillingModel(settings=settings).settings_deviations == {
         "segment_minimum_count": {"value": 3, "default": 10}
     }
+
+# ---------------------------------------------------------------------------
+# baseline profile block
+# ---------------------------------------------------------------------------
+
+_PROFILE_ARRAYS = ("n", "typical_load", "residual_rms", "state_spread", "residual_acf")
+_PROFILE_SCALARS = ("residual_cv", "annual_scale", "yj_lambda")
+
+
+def _assert_profiles_close(actual, expected):
+    assert (actual.cadence, actual.scheme, actual.settings) == (
+        expected.cadence,
+        expected.scheme,
+        expected.settings,
+    )
+    for field in _PROFILE_ARRAYS + _PROFILE_SCALARS:
+        np.testing.assert_allclose(
+            getattr(actual, field),
+            getattr(expected, field),
+            rtol=1e-12,
+            atol=1e-12,
+            err_msg=field,
+        )
+
+
+@pytest.fixture(params=["fitted_model", "fitted_weighted_model"])
+def fitted_billing(request):
+    return request.getfixturevalue(request.param)
+
+
+def _read_periods_per_month(baseline_df):
+    """Read periods per midpoint month, from the raw period-start rows: each row with an
+    observed value covers the span up to the next row."""
+    starts = pd.DatetimeIndex(baseline_df["datetime"]).sort_values()
+    observed = baseline_df.set_index("datetime").loc[starts, "observed"].to_numpy()
+    has_value = np.isfinite(observed[:-1])
+    start = starts[:-1][has_value]
+    end = starts[1:][has_value]
+    midpoint = start + (end - start) / 2
+    counts = np.bincount(midpoint.month - 1, minlength=12)
+
+    return counts
+
+
+def test_fit_stores_a_billing_baseline_profile(fitted_billing):
+    profile = fitted_billing.baseline_profile
+
+    assert (profile.cadence, profile.scheme) == ("billing", "month")
+    assert profile.residual_acf.shape == (0,)
+
+
+def test_profile_counts_one_row_per_read_period_in_its_midpoint_month(
+    fitted_billing, baseline_df
+):
+    expected = _read_periods_per_month(baseline_df)
+
+    np.testing.assert_array_equal(fitted_billing.baseline_profile.n, expected)
+
+
+def test_profile_keeps_adjacent_read_periods_with_equal_hourly_rates_apart(
+    fitted_billing, baseline_df
+):
+    df = baseline_df.sort_values("datetime").reset_index(drop=True)
+    reads = df.index[df["observed"].notna()]
+    hours = df.loc[reads, "datetime"].diff().shift(-1) / pd.Timedelta(hours=1)
+    df.loc[reads[4], "observed"] = df.loc[reads[3], "observed"] / hours[reads[3]] * hours[reads[4]]
+    expected = _read_periods_per_month(df)
+
+    profile = fitted_billing.compute_baseline_profile(df)
+
+    np.testing.assert_array_equal(profile.n, expected)
+
+
+def test_baseline_profile_survives_json_round_trip(fitted_billing):
+    serialized = fitted_billing.to_json()
+
+    rebuilt = type(fitted_billing).from_json(serialized)
+
+    assert rebuilt.to_json() == serialized
+    _assert_profiles_close(rebuilt.baseline_profile, fitted_billing.baseline_profile)
+
+
+def test_payload_without_profile_loads_with_none_and_no_warning(fitted_billing):
+    payload = fitted_billing.to_dict()
+    with_profile = type(fitted_billing).from_dict(payload)
+    del payload["info"]["baseline_profile"]
+
+    rebuilt = type(fitted_billing).from_dict(payload)
+
+    assert rebuilt.baseline_profile is None
+    assert [w.qualified_name for w in rebuilt.warnings] == [
+        w.qualified_name for w in with_profile.warnings
+    ]
+
+
+def test_on_demand_profile_reproduces_fit_time_block(fitted_billing, baseline_df):
+    _assert_profiles_close(fitted_billing.compute_baseline_profile(), fitted_billing.baseline_profile)
+    _assert_profiles_close(
+        fitted_billing.compute_baseline_profile(baseline_df), fitted_billing.baseline_profile
+    )
+

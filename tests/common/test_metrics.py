@@ -11,17 +11,24 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
+import json
+import warnings
+
 import numpy as np
 import pandas as pd
+import pydantic
 import pytest
 import statsmodels.api as sm
 
 from opendsm.common.metrics import (
     BaselineMetrics,
     BaselineMetricsFromDict,
+    BaselineProfileMetricsFromDict,
     ColumnMetrics,
+    ProfileSettings,
     ReportingMetrics,
     acf,
+    compute_baseline_profile,
 )
 from opendsm.common.stats.basic import t_stat
 
@@ -395,3 +402,251 @@ def test_reporting_metrics_fsu_and_per_point_definitions(realistic_baseline):
     assert rm.predicted_data_point_unc == pytest.approx(
         rm.total_savings_uncertainty / np.sqrt(rm.n)
     )
+
+
+# ---------------------------------------------------------------------------
+# compute_baseline_profile
+# ---------------------------------------------------------------------------
+
+_PROFILE_TZ = "America/Los_Angeles"
+_PROFILE_ARRAYS = ["n", "typical_load", "residual_rms", "state_spread", "residual_acf"]
+_PROFILE_SCALARS = ["residual_cv", "annual_scale", "yj_lambda"]
+
+
+def _profile_frame(cadence, periods=None, seed=0):
+    """Synthetic baseline with a daily shape, a weekend drop and noisy observations."""
+    if cadence == "hourly":
+        index = pd.date_range("2023-01-01", periods=periods or 8760, freq="h", tz=_PROFILE_TZ)
+    elif cadence == "daily":
+        index = pd.date_range("2023-01-01", periods=periods or 365, freq="D", tz=_PROFILE_TZ)
+    elif cadence == "billing":
+        starts = pd.date_range("2023-01-01", periods=13, freq="MS", tz=_PROFILE_TZ)
+        index = pd.DatetimeIndex(starts[:-1] + (starts[1:] - starts[:-1]) / 2)
+    else:
+        raise ValueError(cadence)
+
+    rng = np.random.default_rng(seed)
+    predicted = (
+        2.0
+        + np.sin(2 * np.pi * np.asarray(index.hour) / 24)
+        - 0.5 * (np.asarray(index.dayofweek) >= 5)
+        + 0.5 * np.cos(2 * np.pi * np.asarray(index.month) / 12)
+    )
+    observed = predicted + rng.normal(0.0, 0.3, len(index))
+    df = pd.DataFrame({"observed": observed, "predicted": predicted}, index=index)
+
+    return df
+
+
+@pytest.fixture(scope="module")
+def profiles():
+    cadences = ["hourly", "daily", "billing"]
+    profiles = {c: compute_baseline_profile(_profile_frame(c), c) for c in cadences}
+
+    return profiles
+
+
+def _assert_profiles_equal(a, b, atol=1e-12):
+    assert (a.cadence, a.scheme, a.settings) == (b.cadence, b.scheme, b.settings)
+
+    for name in _PROFILE_ARRAYS + _PROFILE_SCALARS:
+        close = np.allclose(getattr(a, name), getattr(b, name), rtol=0, atol=atol, equal_nan=True)
+        assert close, name
+
+
+def _assert_no_load_block(profile, n_cells, k_acf):
+    assert profile.typical_load.tolist() == [0.0] * n_cells
+    assert profile.residual_rms.tolist() == [0.0] * n_cells
+    assert profile.state_spread.tolist() == [0.0] * n_cells
+    assert profile.residual_acf.tolist() == [0.0] * k_acf
+    assert np.isnan(profile.residual_cv)
+    assert profile.annual_scale == 0.0
+    assert profile.yj_lambda == 1.0
+
+
+@pytest.mark.parametrize("cadence", ["hourly", "daily", "billing"])
+def test_baseline_profile_dict_roundtrip(profiles, cadence):
+    profile = profiles[cadence]
+
+    from_python = BaselineProfileMetricsFromDict(profile.model_dump())
+    from_json = BaselineProfileMetricsFromDict(json.loads(json.dumps(profile.model_dump())))
+
+    _assert_profiles_equal(from_python, profile)
+    _assert_profiles_equal(from_json, profile)
+
+
+@pytest.mark.parametrize("cadence", ["hourly", "daily", "billing"])
+def test_baseline_profile_is_rounded_to_eight_significant_digits(profiles, cadence):
+    """Every array is rounded relative to its largest magnitude and every scalar to
+    itself, so the block is its own JSON round trip byte for byte."""
+    profile = profiles[cadence]
+
+    for name in _PROFILE_ARRAYS:
+        values = getattr(profile, name)
+        if values.size == 0 or np.max(np.abs(values)) == 0:
+            continue
+        decimals = 7 - int(np.floor(np.log10(np.max(np.abs(values)))))
+        assert np.array_equal(np.round(values, decimals), values), name
+
+    for name in _PROFILE_SCALARS:
+        value = getattr(profile, name)
+        decimals = 7 - int(np.floor(np.log10(abs(value))))
+        assert round(value, decimals) == value, name
+
+    payload = json.dumps(profile.model_dump())
+    restored = BaselineProfileMetricsFromDict(json.loads(payload))
+
+    assert json.dumps(restored.model_dump()) == payload
+
+
+def test_baseline_profile_no_load_roundtrip_serializes_nan_cv_as_null():
+    profile = compute_baseline_profile(_profile_frame("daily").assign(predicted=0.0), "daily")
+
+    payload = json.dumps(profile.model_dump())
+    restored = BaselineProfileMetricsFromDict(json.loads(payload))
+
+    assert json.loads(payload)["residual_cv"] is None
+    assert profile.model_dump(mode="json")["residual_cv"] is None
+    assert np.isnan(restored.residual_cv)
+    _assert_profiles_equal(restored, profile)
+
+
+@pytest.mark.parametrize(
+    "cadence, scheme, n_cells, k_acf",
+    [
+        ("hourly", "hour_of_week_x_month", 2016, 168),
+        ("daily", "day_of_week_x_month", 84, 7),
+        ("billing", "month", 12, 0),
+    ],
+)
+def test_baseline_profile_shapes_per_cadence(profiles, cadence, scheme, n_cells, k_acf):
+    profile = profiles[cadence]
+
+    assert profile.scheme == scheme
+    assert profile.residual_acf.shape == (k_acf,)
+
+    for name in ["n", "typical_load", "residual_rms", "state_spread"]:
+        assert getattr(profile, name).shape == (n_cells,), name
+
+
+def test_baseline_profile_counts_rows_per_cell(profiles):
+    assert profiles["billing"].n.tolist() == [1] * 12
+    assert profiles["daily"].n.sum() == 365
+    assert profiles["hourly"].n.sum() == 8760
+
+
+def test_baseline_profile_per_cell_arrays_positive_and_finite(profiles):
+    for cadence, profile in profiles.items():
+        for name in ["typical_load", "residual_rms", "state_spread"]:
+            values = getattr(profile, name)
+            assert np.all(np.isfinite(values) & (values > 0)), f"{cadence} {name}"
+
+
+def test_baseline_profile_wide_bandwidth_reduces_to_global_statistics():
+    """With bandwidths at 1e6 every cell carries the global mean squares."""
+    df = _profile_frame("billing")
+    settings = ProfileSettings(
+        hour_bandwidth_h=1e6, day_of_week_bandwidth_d=1e6, calendar_bandwidth_d=1e6
+    )
+    residual = df["predicted"] - df["observed"]
+    rms_predicted = np.sqrt(np.mean(df["predicted"] ** 2))
+    rms_residual = np.sqrt(np.mean(residual**2))
+
+    profile = compute_baseline_profile(df, "billing", settings)
+
+    assert np.allclose(profile.typical_load, rms_predicted, rtol=1e-6, atol=0)
+    assert np.allclose(profile.residual_rms, rms_residual, rtol=1e-6, atol=0)
+    # scalars carry eight significant digits
+    assert profile.annual_scale == pytest.approx(rms_predicted, rel=1e-7)
+    assert profile.residual_cv == pytest.approx(
+        rms_residual / np.mean(np.abs(df["predicted"])), rel=1e-7
+    )
+
+
+def test_baseline_profile_state_spread_positive_when_predictions_vary(profiles):
+    assert np.all(profiles["hourly"].state_spread > 0)
+
+
+def test_baseline_profile_state_spread_zero_for_constant_predictions():
+    df = _profile_frame("hourly", periods=24 * 60).assign(predicted=3.0)
+
+    profile = compute_baseline_profile(df, "hourly")
+
+    assert np.allclose(profile.state_spread, 0.0, rtol=0, atol=1e-7)
+
+
+def test_baseline_profile_drops_non_finite_rows():
+    df = _profile_frame("daily")
+    df_gaps = df.copy()
+    df_gaps.iloc[[3, 50, 51], 0] = np.nan
+    df_gaps.iloc[[100], 1] = np.inf
+
+    with_gaps = compute_baseline_profile(df_gaps, "daily")
+    without = compute_baseline_profile(df.drop(df.index[[3, 50, 51, 100]]), "daily")
+
+    _assert_profiles_equal(with_gaps, without, atol=0)
+
+
+def test_baseline_profile_short_series_gives_zero_acf():
+    profile = compute_baseline_profile(_profile_frame("hourly", periods=169), "hourly")
+
+    assert profile.residual_acf.tolist() == [0.0] * 168
+
+
+def test_baseline_profile_yj_lambda_below_one_for_right_skewed_residual():
+    x = np.random.default_rng(0).lognormal(0, 1, 10000)
+    index = pd.date_range("2023-01-01", periods=len(x), freq="h", tz=_PROFILE_TZ)
+    df = pd.DataFrame({"observed": 1.0 - x, "predicted": 1.0}, index=index)
+
+    profile = compute_baseline_profile(df, "hourly")
+
+    assert np.isfinite(profile.yj_lambda)
+    assert profile.yj_lambda < 1, f"yj_lambda {profile.yj_lambda}"
+
+
+def test_baseline_profile_constant_residual_gives_identity_lambda():
+    df = _profile_frame("hourly", periods=24 * 30).assign(predicted=1.0, observed=0.5)
+
+    profile = compute_baseline_profile(df, "hourly")
+
+    assert profile.yj_lambda == 1.0
+
+
+@pytest.mark.parametrize(
+    "transform",
+    [
+        pytest.param(lambda df: df.assign(predicted=0.0), id="zero_predictions"),
+        pytest.param(lambda df: df.assign(observed=np.nan), id="no_finite_rows"),
+        pytest.param(lambda df: df.iloc[:0], id="empty_frame"),
+    ],
+)
+@pytest.mark.parametrize(
+    "cadence, n_cells, k_acf", [("hourly", 2016, 168), ("daily", 84, 7), ("billing", 12, 0)]
+)
+def test_baseline_profile_no_load_block(transform, cadence, n_cells, k_acf):
+    df = transform(_profile_frame(cadence, periods=24 * 14))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        profile = compute_baseline_profile(df, cadence)
+
+    _assert_no_load_block(profile, n_cells, k_acf)
+
+
+def test_baseline_profile_stores_settings():
+    settings = ProfileSettings(hour_bandwidth_h=3.0)
+
+    profile = compute_baseline_profile(_profile_frame("daily"), "daily", settings)
+
+    assert profile.settings == settings
+
+
+@pytest.mark.parametrize("value", [0.001, 2e6])
+def test_profile_settings_bandwidth_bounds(value):
+    with pytest.raises(pydantic.ValidationError):
+        ProfileSettings(calendar_bandwidth_d=value)
+
+
+def test_baseline_profile_unknown_cadence_raises():
+    with pytest.raises(ValueError, match="Unknown cadence"):
+        compute_baseline_profile(_profile_frame("daily"), "monthly")

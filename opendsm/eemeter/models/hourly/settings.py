@@ -26,7 +26,10 @@ import pywt
 
 from opendsm.common.base_settings import BaseSettings, CustomField
 from opendsm.common.clustering.settings import ClusteringSettings
-from opendsm.common.metrics import BaselineMetrics
+from opendsm.common.metrics import (
+    BaselineMetrics,
+    BaselineProfileMetrics,
+)
 from opendsm.common.const import CAlgoChoice
 
 from opendsm.eemeter.common.data_settings import HourlyDataSettings
@@ -83,13 +86,13 @@ class TemperatureBinSettings(BaseSettings):
 
     """temperature bin width in fahrenheit"""
     bin_width: Optional[float] = pydantic.Field(
-        default=25,
+        default=25.0,
         ge=1,
     )
 
     """specified fixed temperature bins in fahrenheit"""
     fixed_bins: Optional[list[float]] = pydantic.Field(
-        default=[10, 30, 50, 65, 75, 90, 105],
+        default=[10.0, 30.0, 50.0, 65.0, 75.0, 90.0, 105.0],
     )
 
     "minimum bin count"
@@ -569,4 +572,5 @@ class SerializeModel(BaseSettings):
     intercept: Optional[list[float]] = None
     baseline_metrics: Optional[BaselineMetrics] = None
     baseline_hour_metrics: Optional[Dict[str, BaselineMetrics]] = None
+    baseline_profile: Optional[BaselineProfileMetrics] = None
     info: ModelInfo

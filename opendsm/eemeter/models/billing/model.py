@@ -17,6 +17,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from opendsm.common.metrics import (
+    BaselineProfileMetrics,
+    compute_baseline_profile,
+)
 from opendsm.eemeter.models.billing.data import (
     BillingBaselineData,
     BillingReportingData,
@@ -24,6 +28,51 @@ from opendsm.eemeter.models.billing.data import (
 from opendsm.eemeter.models.daily.model import DailyModel
 from opendsm.eemeter.models.billing.settings import BillingSettings
 
+
+
+def _read_period_frame(
+    observed: pd.Series, predicted: pd.Series, edges: pd.DatetimeIndex
+) -> pd.DataFrame:
+    """One row per read period from per-day series on the daily billing substrate.
+
+    Read period k spans [edges[k], edges[k + 1]); each day belongs to the period whose span
+    contains it. A period's row is indexed at its midpoint and holds the mean per-day observed
+    value and the mean per-day prediction over its days with a finite observed value. Periods
+    with no such day are omitted.
+    """
+    finite = np.isfinite(observed.to_numpy(dtype=float))
+    days = observed.index[finite]
+    period = edges.searchsorted(days, side="right") - 1
+    in_span = (period >= 0) & (period < len(edges) - 1)
+    df_days = pd.DataFrame(
+        {
+            "observed": observed[finite].to_numpy()[in_span],
+            "predicted": predicted.reindex(observed.index)[finite].to_numpy()[in_span],
+        },
+        index=period[in_span],
+    )
+    df_periods = df_days.groupby(level=0).mean()
+    start = edges[df_periods.index]
+    end = edges[df_periods.index + 1]
+    midpoint = start + (end - start) / 2
+    df_periods = df_periods.set_index(pd.DatetimeIndex(midpoint))
+
+    return df_periods
+
+
+def _billing_baseline_profile(
+    model: DailyModel, data: BillingBaselineData
+) -> BaselineProfileMetrics:
+    """Billing-cadence profile block of a billing model's per-day predictions on its baseline."""
+    model._check_predictable(data, ignore_disqualification=True)
+    df_daily = data.df
+    df_predicted = model._predict(df_daily)
+    df_periods = _read_period_frame(
+        df_daily["observed"], df_predicted["predicted"], data._read_period_edges
+    )
+    profile = compute_baseline_profile(df_periods, "billing")
+
+    return profile
 
 
 class BillingModel(DailyModel):
@@ -60,6 +109,12 @@ class BillingModel(DailyModel):
 
     def _reference_settings(self) -> BillingSettings:
         return BillingSettings()
+
+    def _baseline_profile_from_data(self, data: BillingBaselineData) -> BaselineProfileMetrics:
+        """Billing-cadence profile block, one row per read period of the baseline."""
+        profile = _billing_baseline_profile(self, data)
+
+        return profile
 
     def _predict_data(
         self,

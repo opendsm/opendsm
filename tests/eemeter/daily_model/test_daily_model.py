@@ -523,3 +523,82 @@ def test_settings_deviations_property_is_available_before_fit():
     model = DailyModel(settings={"segment_minimum_count": 8})
 
     assert model.settings_deviations["segment_minimum_count"]["default"] == 6
+
+# ---------------------------------------------------------------------------
+# baseline profile block
+# ---------------------------------------------------------------------------
+
+_PROFILE_ARRAYS = ("n", "typical_load", "residual_rms", "state_spread", "residual_acf")
+_PROFILE_SCALARS = ("residual_cv", "annual_scale", "yj_lambda")
+
+
+def _assert_profiles_close(actual, expected):
+    assert (actual.cadence, actual.scheme, actual.settings) == (
+        expected.cadence,
+        expected.scheme,
+        expected.settings,
+    )
+    for field in _PROFILE_ARRAYS + _PROFILE_SCALARS:
+        np.testing.assert_allclose(
+            getattr(actual, field),
+            getattr(expected, field),
+            rtol=1e-12,
+            atol=1e-12,
+            err_msg=field,
+        )
+
+
+def test_fit_stores_a_daily_baseline_profile(default_fitted_daily_model):
+    profile = default_fitted_daily_model.baseline_profile
+
+    assert (profile.cadence, profile.scheme) == ("daily", "day_of_week_x_month")
+    assert profile.n.shape == (84,)
+    assert profile.residual_acf.shape == (7,)
+
+
+def test_baseline_profile_survives_json_round_trip(default_fitted_daily_model):
+    serialized = default_fitted_daily_model.to_json()
+
+    rebuilt = DailyModel.from_json(serialized)
+
+    assert rebuilt.to_json() == serialized
+    _assert_profiles_close(rebuilt.baseline_profile, default_fitted_daily_model.baseline_profile)
+
+
+def test_payload_without_profile_loads_with_none_and_no_warning(default_fitted_daily_model):
+    payload = default_fitted_daily_model.to_dict()
+    with_profile = DailyModel.from_dict(payload)
+    del payload["info"]["baseline_profile"]
+
+    rebuilt = DailyModel.from_dict(payload)
+
+    assert rebuilt.baseline_profile is None
+    assert [w.qualified_name for w in rebuilt.warnings] == [
+        w.qualified_name for w in with_profile.warnings
+    ]
+
+
+def test_on_demand_profile_reproduces_fit_time_block(default_fitted_daily_model, comstock_daily):
+    df_b, _ = comstock_daily
+    model = default_fitted_daily_model
+
+    _assert_profiles_close(model.compute_baseline_profile(), model.baseline_profile)
+    _assert_profiles_close(
+        model.compute_baseline_profile(df_b.reset_index()), model.baseline_profile
+    )
+
+
+def test_deserialized_model_needs_the_baseline_frame_for_its_profile(
+    default_fitted_daily_model, comstock_daily
+):
+    df_b, _ = comstock_daily
+    rebuilt = DailyModel.from_json(default_fitted_daily_model.to_json())
+
+    with pytest.raises(RuntimeError, match="no baseline data"):
+        rebuilt.compute_baseline_profile()
+
+    _assert_profiles_close(
+        rebuilt.compute_baseline_profile(df_b.reset_index()),
+        default_fitted_daily_model.baseline_profile,
+    )
+

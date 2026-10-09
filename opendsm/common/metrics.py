@@ -13,7 +13,7 @@
 #  limitations under the License.
 
 import pydantic
-from typing import Union, Optional
+from typing import Literal, Union, Optional
 from enum import Enum
 from functools import cached_property
 
@@ -25,6 +25,15 @@ from opendsm.common.utils import safe_divide
 from opendsm.common.stats.basic import (
     median_absolute_deviation,
     t_stat,
+)
+from opendsm.common.stats.distribution_transform.yeo_johnson import YeoJohnson
+from opendsm.common.stats.period_kernel import (
+    N_CELLS,
+    cauchy_kernel,
+    cell_index,
+    cell_means,
+    cell_scheme,
+    smooth,
 )
 from opendsm.common.pydantic_utils import (
     ArbitraryPydanticModel,
@@ -1581,3 +1590,250 @@ def acf(
         corr = corr[:len(lags)]
 
     return corr
+
+
+# ACF lags per cadence: one week at hourly and daily; billing read periods are treated as
+# serially independent.
+_PROFILE_ACF_LAGS = {"hourly": 168, "daily": 7, "billing": 0}
+
+# Float32-class precision keeps the serialized block a third smaller than full doubles while
+# perturbing the correction far below the kernel's smoothing; the block is rounded where it is
+# computed so an in-memory block and its JSON form carry the same numbers.
+_PROFILE_SIGNIFICANT_DIGITS = 8
+
+
+def _round_significant(values, digits: int = _PROFILE_SIGNIFICANT_DIGITS):
+    """Round to ``digits`` significant digits: an array relative to its largest magnitude, a
+    scalar to itself. Zero, non-finite and empty inputs are returned unchanged."""
+    values = np.asarray(values, dtype=float)
+    if values.size == 0:
+        return values
+
+    scale = np.max(np.abs(values))
+    if not np.isfinite(scale) or scale == 0:
+        return values
+
+    decimals = digits - 1 - int(np.floor(np.log10(scale)))
+    rounded = np.round(values, decimals)
+
+    return rounded
+
+# scales the median absolute deviation to the standard deviation of a normal distribution
+_MAD_TO_SIGMA = 1.4826
+
+
+class ProfileSettings(ArbitraryPydanticModel):
+    """Fit-time smoothing bandwidths of the baseline profile block."""
+    hour_bandwidth_h: float = pydantic.Field(
+        default=2.0,
+        ge=0.01,
+        le=1e6,
+        description="Cauchy bandwidth across hour-of-day on the 24-hour circle [hours]",
+    )
+    day_of_week_bandwidth_d: float = pydantic.Field(
+        default=1.0,
+        ge=0.01,
+        le=1e6,
+        description="Cauchy bandwidth across weekday on the 7-day circle [days]",
+    )
+    calendar_bandwidth_d: float = pydantic.Field(
+        default=28.0,
+        ge=0.01,
+        le=1e6,
+        description="Cauchy bandwidth across day-of-year on the 365-day circle [days]",
+    )
+
+
+class BaselineProfileMetrics(ArbitraryPydanticModel):
+    """Calendar-cell profile of a model's baseline fit.
+
+    Per-cell arrays are in cell order q of the cadence's scheme
+    (see `opendsm.common.stats.period_kernel`); arrays serialize as lists and a NaN
+    `residual_cv` serializes as null.
+    """
+    cadence: Literal["hourly", "daily", "billing"]
+    scheme: Literal["hour_of_week_x_month", "day_of_week_x_month", "month"]
+    settings: ProfileSettings
+    n: np.ndarray = pydantic.Field(description="Kept baseline rows per cell")
+    typical_load: np.ndarray = pydantic.Field(
+        description="Square root of the smoothed per-cell mean of predicted^2",
+    )
+    residual_rms: np.ndarray = pydantic.Field(
+        description="Square root of the smoothed per-cell mean of (predicted - observed)^2",
+    )
+    state_spread: np.ndarray = pydantic.Field(
+        description="Square root of the smoothed per-cell mean of (predicted / typical_load - 1)^2",
+    )
+    residual_acf: np.ndarray = pydantic.Field(
+        description="Autocorrelation of the normalized residual at lags 1..K",
+    )
+    residual_cv: float = pydantic.Field(
+        description="RMS residual over mean absolute prediction; NaN without baseline load",
+    )
+    annual_scale: float = pydantic.Field(description="RMS prediction over the kept rows")
+    yj_lambda: float = pydantic.Field(
+        description="Robust Yeo-Johnson lambda of the standardized normalized residual",
+    )
+
+    @pydantic.field_validator("n", mode="before")
+    @classmethod
+    def _to_int_array(cls, v):
+        return np.asarray(v, dtype=int)
+
+    @pydantic.field_validator(
+        "typical_load", "residual_rms", "state_spread", "residual_acf", mode="before"
+    )
+    @classmethod
+    def _to_float_array(cls, v):
+        return np.asarray(v, dtype=float)
+
+    @pydantic.field_validator("residual_cv", mode="before")
+    @classmethod
+    def _null_to_nan(cls, v):
+        if v is None:
+            return np.nan
+
+        return v
+
+    @pydantic.field_serializer(
+        "n", "typical_load", "residual_rms", "state_spread", "residual_acf"
+    )
+    def _array_to_list(self, v):
+        return v.tolist()
+
+    @pydantic.field_serializer("residual_cv")
+    def _nan_to_null(self, v):
+        if np.isnan(v):
+            return None
+
+        return v
+
+
+def BaselineProfileMetricsFromDict(input_dict: dict) -> BaselineProfileMetrics:
+    """Construct a BaselineProfileMetrics instance from its serialized dict."""
+    profile = BaselineProfileMetrics.model_validate(input_dict)
+
+    return profile
+
+
+def _profile_yj_lambda(e: np.ndarray) -> float:
+    """Robust Yeo-Johnson lambda of e after median/MAD standardization; 1 when undefined."""
+    med = np.median(e)
+    mad = _MAD_TO_SIGMA * np.median(np.abs(e - med))
+    if mad == 0:
+        return 1.0
+
+    u = ((e - med) / mad)[:, None]
+    yj = YeoJohnson(robust=True).fit(u)
+    lam = float(yj.lambdas_[0])
+    if yj.skip_dims_[0] or not np.isfinite(lam):
+        return 1.0
+
+    return lam
+
+
+def compute_baseline_profile(
+    df: pd.DataFrame,
+    cadence: str,
+    settings: ProfileSettings = ProfileSettings(),
+) -> BaselineProfileMetrics:
+    """Bin a baseline fit into calendar cells and smooth it into a profile block.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Tz-aware datetime index in the data's timezone with columns 'observed' and
+        'predicted'. Hourly and daily: one row per timestep in data units. Billing: one row
+        per read period indexed at its midpoint, with per-day values. Rows where either
+        column is not finite are dropped from every statistic.
+    cadence : str
+        "hourly", "daily" or "billing".
+    settings : ProfileSettings
+        Smoothing bandwidths, stored in the block.
+
+    Returns
+    -------
+    BaselineProfileMetrics
+        Arrays and scalars rounded to eight significant digits (arrays relative to their
+        largest magnitude), so the block reads back from JSON with the same numbers. When no
+        rows are kept or the kept predictions are all zero, the no-load block: zero per-cell
+        arrays, zero ACF, NaN residual_cv, annual_scale 0 and yj_lambda 1.
+
+    Raises
+    ------
+    ValueError
+        If the cadence is unknown.
+    """
+    scheme = cell_scheme(cadence)
+    n_cells = N_CELLS[scheme]
+    k_acf = _PROFILE_ACF_LAGS[cadence]
+
+    df = df.sort_index()
+    observed = df["observed"].to_numpy(dtype=float)
+    predicted = df["predicted"].to_numpy(dtype=float)
+    kept = np.isfinite(observed) & np.isfinite(predicted)
+    observed = observed[kept]
+    predicted = predicted[kept]
+    q = cell_index(df.index[kept], cadence)
+    n = np.bincount(q, minlength=n_cells)
+
+    annual_scale = 0.0
+    if len(predicted) > 0:
+        annual_scale = float(np.sqrt(np.mean(predicted**2)))
+
+    if annual_scale == 0:
+        zeros = np.zeros(n_cells)
+        profile = BaselineProfileMetrics(
+            cadence=cadence,
+            scheme=scheme,
+            settings=settings,
+            n=n,
+            typical_load=zeros,
+            residual_rms=zeros,
+            state_spread=zeros,
+            residual_acf=np.zeros(k_acf),
+            residual_cv=np.nan,
+            annual_scale=0.0,
+            yj_lambda=1.0,
+        )
+
+        return profile
+
+    residual = predicted - observed
+    G = cauchy_kernel(
+        cadence,
+        settings.hour_bandwidth_h,
+        settings.day_of_week_bandwidth_d,
+        settings.calendar_bandwidth_d,
+    )
+    typical_load = np.sqrt(smooth(cell_means(q, predicted**2, n_cells), n, G))
+    residual_rms = np.sqrt(smooth(cell_means(q, residual**2, n_cells), n, G))
+
+    s = typical_load[q]
+    state = predicted / s - 1
+    state_spread = np.sqrt(smooth(cell_means(q, state**2, n_cells), n, G))
+
+    e = residual / s
+    residual_acf = np.zeros(k_acf)
+    if k_acf > 0 and len(e) > k_acf + 1:
+        # a constant segment makes a lag's correlation NaN; it carries no correlation
+        residual_acf = acf(e, lag_n=k_acf, ac_type="moving_stats")[1:]
+        residual_acf = np.where(np.isfinite(residual_acf), residual_acf, 0.0)
+
+    residual_cv = float(np.sqrt(np.mean(residual**2)) / np.mean(np.abs(predicted)))
+
+    profile = BaselineProfileMetrics(
+        cadence=cadence,
+        scheme=scheme,
+        settings=settings,
+        n=n,
+        typical_load=_round_significant(typical_load),
+        residual_rms=_round_significant(residual_rms),
+        state_spread=_round_significant(state_spread),
+        residual_acf=_round_significant(residual_acf),
+        residual_cv=float(_round_significant(residual_cv)),
+        annual_scale=float(_round_significant(annual_scale)),
+        yj_lambda=float(_round_significant(_profile_yj_lambda(e))),
+    )
+
+    return profile

@@ -18,13 +18,18 @@ from opendsm.eemeter import (
     HourlyNonSolarSettings,
 )
 from opendsm.eemeter.models.hourly.data import HourlyBaselineData, HourlyReportingData
-from opendsm.eemeter.models.hourly.model import _fit_exp_growth_decay
+from opendsm.eemeter.models.hourly.model import (
+    _fit_exp_growth_decay,
+    _get_interpolated_mask,
+)
 from opendsm.eemeter.models.hourly.settings import BaseHourlySettings
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
     DisqualifiedModelError,
 )
 from opendsm.eemeter.common.warnings import EEMeterWarning
+from opendsm.common.metrics import compute_baseline_profile
+import json
 import numpy as np
 import pandas as pd
 import pytest
@@ -624,6 +629,83 @@ def test_settings_deviations_property_is_empty_for_default_hourly_settings(basel
     assert model.settings_deviations == {}
 
 
+# ---------------------------------------------------------------------------
+# baseline profile block
+# ---------------------------------------------------------------------------
+
+_PROFILE_ARRAYS = ("n", "typical_load", "residual_rms", "state_spread", "residual_acf")
+_PROFILE_SCALARS = ("residual_cv", "annual_scale", "yj_lambda")
+
+
+def _assert_profiles_close(actual, expected):
+    assert (actual.cadence, actual.scheme, actual.settings) == (
+        expected.cadence,
+        expected.scheme,
+        expected.settings,
+    )
+    for field in _PROFILE_ARRAYS + _PROFILE_SCALARS:
+        np.testing.assert_allclose(
+            getattr(actual, field),
+            getattr(expected, field),
+            rtol=1e-12,
+            atol=1e-12,
+            err_msg=field,
+        )
+
+
+@pytest.fixture
+def profile_fit(baseline):
+    hm = HourlyModel().fit(baseline, is_electricity_data=True)
+
+    return hm
+
+
+def test_fit_stores_an_hourly_baseline_profile(profile_fit):
+    profile = profile_fit.baseline_profile
+
+    assert (profile.cadence, profile.scheme) == ("hourly", "hour_of_week_x_month")
+    assert profile.n.shape == (2016,)
+    assert profile.residual_acf.shape == (168,)
+
+
+def test_baseline_profile_survives_json_round_trip(profile_fit):
+    serialized = profile_fit.to_json()
+
+    rebuilt = HourlyModel.from_json(serialized)
+
+    assert rebuilt.to_json() == serialized
+    _assert_profiles_close(rebuilt.baseline_profile, profile_fit.baseline_profile)
+
+
+def test_payload_without_profile_loads_with_none_and_no_warning(profile_fit):
+    payload = profile_fit.to_dict()
+    with_profile = HourlyModel.from_dict(payload)
+    del payload["baseline_profile"]
+
+    rebuilt = HourlyModel.from_dict(payload)
+
+    assert rebuilt.baseline_profile is None
+    assert [w.qualified_name for w in rebuilt.warnings] == [
+        w.qualified_name for w in with_profile.warnings
+    ]
+
+
+def test_on_demand_profile_reproduces_fit_time_block(profile_fit, baseline):
+    _assert_profiles_close(profile_fit.compute_baseline_profile(), profile_fit.baseline_profile)
+    _assert_profiles_close(
+        profile_fit.compute_baseline_profile(baseline), profile_fit.baseline_profile
+    )
+
+
+def test_deserialized_model_needs_the_baseline_frame_for_its_profile(profile_fit, baseline):
+    rebuilt = HourlyModel.from_json(profile_fit.to_json())
+
+    with pytest.raises(RuntimeError, match="no baseline data"):
+        rebuilt.compute_baseline_profile()
+
+    _assert_profiles_close(rebuilt.compute_baseline_profile(baseline), profile_fit.baseline_profile)
+
+
 def _first_month(reporting):
     return reporting.loc[reporting.index < reporting.index.min() + pd.DateOffset(months=1)]
 
@@ -639,3 +721,37 @@ def test_predict_leaves_the_fitted_temporal_clusters_unchanged(baseline, reporti
 
     pd.testing.assert_frame_equal(hm._df_temporal_clusters, fitted)
     assert hm.to_dict()["temporal_clusters"] == serialized
+
+
+def test_baseline_profile_is_the_same_after_a_short_prediction(profile_fit, baseline, reporting):
+    profile_fit.predict(_first_month(reporting))
+
+    _assert_profiles_close(profile_fit.compute_baseline_profile(baseline), profile_fit.baseline_profile)
+
+
+def test_baseline_profile_adds_under_100_kb_of_json(profile_fit):
+    payload = profile_fit.to_dict()
+    size_with_profile = len(json.dumps(payload))
+    del payload["baseline_profile"]
+
+    growth = size_with_profile - len(json.dumps(payload))
+
+    assert 0 < growth < 100_000, f"profile adds {growth} bytes"
+
+
+def test_baseline_profile_excludes_interpolated_rows(baseline):
+    """The block is computed on the non-interpolated rows alone, as baseline_metrics is."""
+    baseline = baseline.copy()
+    baseline.iloc[::97, baseline.columns.get_loc("observed")] = np.nan
+    hm = HourlyModel().fit(baseline, is_electricity_data=True, ignore_disqualification=True)
+    df_predicted = hm._predict(hm._fit_data)
+    interpolated = _get_interpolated_mask(df_predicted)
+
+    on_all_rows = compute_baseline_profile(df_predicted[["observed", "predicted"]], "hourly")
+    on_kept_rows = compute_baseline_profile(
+        df_predicted.loc[~interpolated, ["observed", "predicted"]], "hourly"
+    )
+
+    assert interpolated.sum() > 0
+    _assert_profiles_close(hm.baseline_profile, on_kept_rows)
+    assert hm.baseline_profile.n.sum() < on_all_rows.n.sum()
