@@ -19,11 +19,17 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from opendsm.common.metrics import (
+    BaselineProfileMetrics,
+    ProfileSettings,
+)
 from opendsm.comparison_groups.common import const as _const
 from opendsm.comparison_groups.population import (
     ComparisonPool,
     TreatmentGroup,
+    pooled_laws_from_profiles,
 )
+from opendsm.comparison_groups.savings.settings import NDIDSettings
 from opendsm.eemeter.common.warnings import EEMeterWarning
 from opendsm.eemeter.models.daily.data import DailyBaselineData
 
@@ -851,3 +857,257 @@ def test_from_data_all_meters_failing_raises(_comstock_daily_all):
 
     with pytest.raises(ValueError, match="All meters failed to fit"):
         TreatmentGroup.from_data(baseline, "daily", is_electricity_data=True)
+
+
+# -- baseline profiles ---------------------------------------------------------
+
+
+def test_on_demand_profile_matches_the_model_computation(daily_meters):
+    meters = _subset(daily_meters, 1)
+    mid = next(iter(meters))
+    group = TreatmentGroup.from_fit_models(meters, granularity="daily")
+    rec = group._meters[mid]
+    rec.model = copy.deepcopy(rec.model)
+    rec.model.baseline_profile = None
+    model = rec.model
+
+    profile = group.baseline_profile(mid)
+    expected = model.compute_baseline_profile(meters[mid]["baseline_df"])
+
+    np.testing.assert_array_equal(profile.n, expected.n)
+    for field in ("typical_load", "residual_rms", "state_spread", "residual_acf"):
+        np.testing.assert_allclose(
+            getattr(profile, field), getattr(expected, field), rtol=1e-12, atol=0, err_msg=field
+        )
+
+    for field in ("residual_cv", "annual_scale", "yj_lambda"):
+        assert getattr(profile, field) == pytest.approx(getattr(expected, field), rel=1e-12)
+
+    assert group.baseline_profile(mid) is profile, "the block is computed once and cached"
+
+
+def test_stored_profile_is_returned_without_baseline_data(daily_meters):
+    meters = _subset(daily_meters, 1)
+    mid = next(iter(meters))
+    group = TreatmentGroup.from_fit_models(meters, granularity="daily")
+    rec = group._meters[mid]
+    rec.model = copy.deepcopy(rec.model)
+    stored = rec.model.compute_baseline_profile(meters[mid]["baseline_df"])
+    rec.model.baseline_profile = stored
+    rec.baseline_data = None
+
+    assert group.baseline_profile(mid) is stored
+
+
+def test_missing_profile_and_baseline_data_raises_naming_meter(daily_meters):
+    meters = _subset(daily_meters, 1)
+    mid = next(iter(meters))
+    group = TreatmentGroup.from_fit_models(meters, granularity="daily")
+    rec = group._meters[mid]
+    rec.model = copy.deepcopy(rec.model)
+    rec.model.baseline_profile = None
+    rec.baseline_data = None
+
+    with pytest.raises(ValueError, match=f"Meter {mid}:"):
+        group.baseline_profile(mid)
+
+
+# -- pooled laws -----------------------------------------------------------------
+
+_N_DAILY_CELLS = 84
+_DAILY_ACF_LAGS = 7
+_CELL_RAMP = 1.0 + np.arange(_N_DAILY_CELLS) / _N_DAILY_CELLS
+
+
+def _profile(
+    r=1.0,
+    spread=0.2,
+    lam=1.0,
+    acf=0.1,
+    cv=0.3,
+    S=10.0,
+    settings=None,
+    cadence="daily",
+):
+    """Hand-built block whose normalized residual variance is r times a cell ramp."""
+    scheme, n_cells, k_acf = {
+        "daily": ("day_of_week_x_month", _N_DAILY_CELLS, _DAILY_ACF_LAGS),
+        "billing": ("month", 12, 0),
+    }[cadence]
+    ramp = _CELL_RAMP[:n_cells]
+    typical_load = 2.0 * np.ones(n_cells)
+    profile = BaselineProfileMetrics(
+        cadence=cadence,
+        scheme=scheme,
+        settings=settings or ProfileSettings(),
+        n=np.ones(n_cells, dtype=int),
+        typical_load=typical_load,
+        residual_rms=typical_load * np.sqrt(r * ramp),
+        state_spread=spread * ramp,
+        residual_acf=acf * np.ones(k_acf),
+        residual_cv=cv,
+        annual_scale=S,
+        yj_lambda=lam,
+    )
+
+    return profile
+
+
+def _laws(profiles, labels, D=20.0, gamma=None, sector="commercial"):
+    settings = NDIDSettings(cluster_pseudo_count=D, gamma=gamma, sector=sector)
+    S = [p.annual_scale for p in profiles]
+    laws = pooled_laws_from_profiles(profiles, labels, S, settings)
+
+    return laws
+
+
+def _three_meters():
+    profiles = [
+        _profile(r=1.0, spread=0.1, lam=0.5, acf=0.2, cv=0.4, S=1.0),
+        _profile(r=3.0, spread=0.3, lam=1.5, acf=0.4, cv=0.2, S=4.0),
+        _profile(r=5.0, spread=0.5, lam=0.9, acf=0.6, cv=0.1, S=16.0),
+    ]
+
+    return profiles
+
+
+def test_pooled_laws_blend_pins_hand_values():
+    laws = _laws(_three_meters(), [0, 0, 1], D=2.0)
+
+    np.testing.assert_allclose(laws.v_pop, 3.0 * _CELL_RAMP, rtol=1e-12)
+    np.testing.assert_allclose(laws.v[0], 2.5 * _CELL_RAMP, rtol=1e-12)
+    np.testing.assert_allclose(laws.v[1], 11.0 / 3.0 * _CELL_RAMP, rtol=1e-12)
+    pop_spread_sq = (0.01 + 0.09 + 0.25) / 3.0
+    np.testing.assert_allclose(
+        laws.spread[0], np.sqrt((2 * 0.05 + 2 * pop_spread_sq) / 4) * _CELL_RAMP, rtol=1e-12
+    )
+    np.testing.assert_allclose(laws.lam, [1.0, 0.9], rtol=1e-12)
+    np.testing.assert_allclose(laws.acf, [[0.3] * 7, [0.6] * 7], rtol=1e-12)
+    np.testing.assert_array_equal(laws.cluster_sizes, [2, 1])
+    assert laws.S_ref == 4.0
+
+
+def test_pooled_laws_zero_pseudo_count_is_the_cluster_mean():
+    laws = _laws(_three_meters(), [0, 0, 1], D=0.0)
+
+    np.testing.assert_allclose(laws.v[0], 2.0 * _CELL_RAMP, rtol=1e-12)
+    np.testing.assert_allclose(laws.v[1], 5.0 * _CELL_RAMP, rtol=1e-12)
+    np.testing.assert_allclose(laws.spread[1], 0.5 * _CELL_RAMP, rtol=1e-12)
+
+
+def test_pooled_laws_huge_pseudo_count_is_the_population_law():
+    laws = _laws(_three_meters(), [0, 0, 1], D=1e9)
+
+    for row in laws.v:
+        np.testing.assert_allclose(row, laws.v_pop, rtol=0, atol=1e-6)
+
+
+def test_pooled_laws_ignore_negative_labels_in_every_field():
+    outlier = _profile(
+        r=100.0,
+        spread=9.0,
+        lam=-3.0,
+        acf=-0.9,
+        cv=50.0,
+        S=1e6,
+        settings=ProfileSettings(calendar_bandwidth_d=5.0),
+    )
+    with_outlier = _laws([*_three_meters(), outlier], [0, 0, 1, -1])
+    without = _laws(_three_meters(), [0, 0, 1])
+
+    for field in ("v", "v_pop", "spread", "lam", "acf", "cluster_sizes"):
+        np.testing.assert_array_equal(getattr(with_outlier, field), getattr(without, field))
+
+    assert with_outlier.gamma_fit == without.gamma_fit
+    assert with_outlier.S_ref == without.S_ref
+    assert with_outlier.profile_settings_seen == [ProfileSettings()]
+
+
+def test_pooled_laws_clusters_are_sorted_labels_present():
+    profiles = _three_meters()
+    laws = _laws(profiles, [5, 2, 5], D=0.0)
+
+    np.testing.assert_array_equal(laws.cluster_sizes, [1, 2])
+    np.testing.assert_allclose(laws.v[0], 3.0 * _CELL_RAMP, rtol=1e-12)
+    np.testing.assert_allclose(laws.v[1], 3.0 * _CELL_RAMP, rtol=1e-12)
+    np.testing.assert_allclose(laws.lam, [1.5, 0.7], rtol=1e-12)
+    assert laws.v.shape == (2, _N_DAILY_CELLS)
+
+
+@pytest.mark.parametrize(
+    "exponent, expected",
+    [(0.3, 0.3), (1.0, 0.5), (-0.5, 0.0)],
+)
+def test_pooled_laws_gamma_fit_recovers_and_clips_the_size_law(exponent, expected):
+    S = np.array([1.0, 4.0, 16.0, 64.0])
+    profiles = [_profile(cv=0.5 * s**-exponent, S=s) for s in S]
+    profiles.append(_profile(cv=np.nan, S=1000.0))
+
+    laws = _laws(profiles, [0, 0, 1, 1, 1])
+
+    assert laws.gamma_fit == pytest.approx(expected, abs=1e-12)
+
+
+def test_pooled_laws_gamma_fit_is_nan_for_equal_scales():
+    profiles = [_profile(cv=cv, S=7.0) for cv in (0.1, 0.2, 0.3)]
+
+    laws = _laws(profiles, [0, 0, 1])
+
+    assert np.isnan(laws.gamma_fit)
+
+
+@pytest.mark.parametrize(
+    "gamma, sector, expected",
+    [(None, "commercial", 0.0), (None, "residential", 0.25), (0.1, "residential", 0.1)],
+)
+def test_pooled_laws_gamma_used_resolves_sector_default(gamma, sector, expected):
+    laws = _laws(_three_meters(), [0, 0, 1], gamma=gamma, sector=sector)
+
+    assert laws.gamma_used == expected
+
+
+def test_pooled_laws_list_distinct_profile_settings_in_first_seen_order():
+    a = ProfileSettings()
+    b = ProfileSettings(hour_bandwidth_h=4.0)
+    profiles = [_profile(settings=a), _profile(settings=b), _profile(settings=a)]
+
+    laws = _laws(profiles, [0, 1, 0])
+
+    assert laws.profile_settings_seen == [a, b]
+
+
+def test_pooled_laws_billing_acf_is_empty_per_cluster():
+    profiles = [_profile(cadence="billing"), _profile(cadence="billing")]
+
+    laws = _laws(profiles, [0, 1])
+
+    assert laws.acf.shape == (2, 0)
+    assert laws.v.shape == (2, 12)
+
+
+def test_pooled_laws_reject_mixed_cadences():
+    profiles = [_profile(cadence="daily"), _profile(cadence="billing")]
+
+    with pytest.raises(ValueError, match="different cadences"):
+        _laws(profiles, [0, 1])
+
+
+def test_pooled_laws_reject_all_negative_labels():
+    with pytest.raises(ValueError, match="non-negative"):
+        _laws(_three_meters(), [-1, -1, -1])
+
+
+def test_population_pooled_laws_uses_record_profiles(daily_meters):
+    meters = _subset(daily_meters, 3)
+    group = ComparisonPool.from_fit_models(meters, granularity="daily")
+    ids = group.ids
+    profiles = [group.baseline_profile(mid) for mid in ids]
+    settings = NDIDSettings(sector="commercial")
+
+    laws = group.pooled_laws(ids, [0, 1, 0], settings)
+    expected = pooled_laws_from_profiles(
+        profiles, [0, 1, 0], [p.annual_scale for p in profiles], settings
+    )
+
+    np.testing.assert_array_equal(laws.v, expected.v)
+    assert laws.S_ref == expected.S_ref

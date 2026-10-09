@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import warnings
+from dataclasses import dataclass
 from io import StringIO
 
 import numpy as np
@@ -178,8 +179,158 @@ def _deserialize_unc(payload, tz):
     return float(payload)
 
 
+_SECTOR_GAMMA = {
+    "commercial": 0.0,
+    "residential": 0.25,
+}
+
+
+@dataclass
+class PooledLaws:
+    """Pool-level laws of one NDID correction run, frozen for the run.
+
+    Cluster rows follow the sorted distinct non-negative labels of the meters the laws
+    were built from; cell columns follow the profiles' cell order.
+    """
+
+    v: np.ndarray
+    v_pop: np.ndarray
+    spread: np.ndarray
+    lam: np.ndarray
+    acf: np.ndarray
+    gamma_fit: float
+    gamma_used: float
+    S_ref: float
+    cluster_sizes: np.ndarray
+    profile_settings_seen: list
+
+
+def _blend(per_meter, labels, clusters, pseudo_count):
+    """Per-cluster mean shrunk toward the population mean by ``pseudo_count`` meters."""
+    pop = per_meter.mean(axis=0)
+    blended = []
+    for k in clusters:
+        members = per_meter[labels == k]
+        m_k = len(members)
+        blended.append((m_k * members.mean(axis=0) + pseudo_count * pop) / (m_k + pseudo_count))
+
+    blended = np.array(blended)
+
+    return blended, pop
+
+
+def _size_law_slope(residual_cv, S):
+    """Clipped size-law exponent from log residual_cv on log S; NaN when degenerate."""
+    with np.errstate(divide="ignore", invalid="ignore"):
+        log_cv = np.log(residual_cv)
+        log_s = np.log(S)
+
+    ok = np.isfinite(log_cv) & np.isfinite(log_s)
+    if ok.sum() < 2 or np.ptp(log_s[ok]) < 1e-9:
+        return np.nan
+
+    slope = np.polyfit(log_s[ok], log_cv[ok], 1)[0]
+    gamma = float(np.clip(-slope, 0.0, 0.5))
+
+    return gamma
+
+
+def pooled_laws_from_profiles(profiles, cg_label, S, settings) -> PooledLaws:
+    """Pool the admitted meters' baseline profile blocks into per-cluster laws.
+
+    Parameters
+    ----------
+    profiles : list of BaselineProfileMetrics
+        Blocks of the admitted pool meters, in pool order.
+    cg_label : array-like of int
+        Cluster label per meter; meters with a negative label are ignored in every field.
+    S : array-like of float
+        Annual scale per meter.
+    settings : NDIDSettings
+        Supplies `cluster_pseudo_count`, `gamma` and `sector`.
+
+    Returns
+    -------
+    PooledLaws
+        Clusters are the sorted distinct non-negative labels present, so a label with no
+        meter here is absent. `gamma_fit` excludes meters with a non-finite log
+        residual_cv or log S.
+
+    Raises
+    ------
+    ValueError
+        If the lengths disagree, no meter has a non-negative label, or the profiles carry
+        different cadences or cell schemes.
+    """
+    cg_label = np.asarray(cg_label, dtype=int)
+    S = np.asarray(S, dtype=float)
+    if not len(profiles) == len(cg_label) == len(S):
+        raise ValueError(
+            f"profiles, cg_label and S must align; got lengths {len(profiles)}, "
+            f"{len(cg_label)} and {len(S)}."
+        )
+
+    keep = cg_label >= 0
+    if not keep.any():
+        raise ValueError("No meter has a non-negative cluster label.")
+
+    profiles = [p for p, k in zip(profiles, keep) if k]
+    labels = cg_label[keep]
+    S = S[keep]
+
+    grids = {(p.cadence, p.scheme) for p in profiles}
+    if len(grids) > 1:
+        raise ValueError(f"Profiles carry different cadences or cell schemes: {sorted(grids)}.")
+
+    clusters = np.unique(labels)
+    r = np.array([p.residual_rms**2 / p.typical_load**2 for p in profiles])
+    spread_sq = np.array([p.state_spread**2 for p in profiles])
+    yj_lambda = np.array([p.yj_lambda for p in profiles])
+    acf = np.array([p.residual_acf for p in profiles])
+    residual_cv = np.array([p.residual_cv for p in profiles])
+
+    D = settings.cluster_pseudo_count
+    v, v_pop = _blend(r, labels, clusters, D)
+    spread_sq_k, _ = _blend(spread_sq, labels, clusters, D)
+    lam = np.array([np.median(yj_lambda[labels == k]) for k in clusters])
+    acf_k = np.array([acf[labels == k].mean(axis=0) for k in clusters])
+    cluster_sizes = np.array([(labels == k).sum() for k in clusters])
+
+    if settings.gamma is not None:
+        gamma_used = settings.gamma
+    else:
+        gamma_used = _SECTOR_GAMMA[settings.sector]
+
+    profile_settings_seen = []
+    for p in profiles:
+        if p.settings not in profile_settings_seen:
+            profile_settings_seen.append(p.settings)
+
+    laws = PooledLaws(
+        v=v,
+        v_pop=v_pop,
+        spread=np.sqrt(spread_sq_k),
+        lam=lam,
+        acf=acf_k,
+        gamma_fit=_size_law_slope(residual_cv, S),
+        gamma_used=float(gamma_used),
+        S_ref=float(np.median(S)),
+        cluster_sizes=cluster_sizes,
+        profile_settings_seen=profile_settings_seen,
+    )
+
+    return laws
+
+
 class _MeterRecord:
-    __slots__ = ("id", "model", "baseline_data", "reporting_data", "observed_unc")
+    __slots__ = (
+        "id",
+        "model",
+        "baseline_data",
+        "reporting_data",
+        "observed_unc",
+        "baseline_profile",
+    )
 
     def __init__(self, id, model, baseline_data=None, reporting_data=None, observed_unc=None):
         self.id = str(id)
@@ -187,6 +338,7 @@ class _MeterRecord:
         self.baseline_data = baseline_data
         self.reporting_data = reporting_data
         self.observed_unc = observed_unc
+        self.baseline_profile = None
 
 
 class MeterPopulation:
@@ -525,6 +677,41 @@ class MeterPopulation:
 
     def __len__(self):
         return len(self._meters)
+
+    # -- baseline profiles ---------------------------------------------------
+
+    def baseline_profile(self, mid):
+        """Baseline profile block of one meter: the model's stored block, else computed
+        once from the record's baseline data and cached on the record.
+
+        Raises
+        ------
+        ValueError
+            If the model holds no block and the record has no baseline data attached.
+        """
+        rec = self._meters[str(mid)]
+        if rec.model.baseline_profile is not None:
+            return rec.model.baseline_profile
+
+        if rec.baseline_profile is None:
+            if rec.baseline_data is None:
+                raise ValueError(
+                    f"Meter {rec.id}: the model holds no baseline profile and no baseline "
+                    "data is attached to compute one."
+                )
+
+            rec.baseline_profile = rec.model._baseline_profile_from_data(rec.baseline_data)
+
+        return rec.baseline_profile
+
+    def pooled_laws(self, ids, cg_label, settings):
+        """`pooled_laws_from_profiles` over the meters ``ids`` (pool order, aligned with
+        ``cg_label``), with their profiles' annual scales as S."""
+        profiles = [self.baseline_profile(mid) for mid in ids]
+        S = [p.annual_scale for p in profiles]
+        laws = pooled_laws_from_profiles(profiles, cg_label, S, settings)
+
+        return laws
 
     # -- reporting data ------------------------------------------------------
 
