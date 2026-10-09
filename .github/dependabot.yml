@@ -15,7 +15,7 @@ updates:
       interval: monthly
     # floors stay as measured; a cap is raised only when a release falls outside it,
     # so that pull request's CI shows whether the cap was still needed
-    versioning-strategy: widen
+    versioning-strategy: increase-if-necessary
     groups:
       python:
         patterns: ["*"]
