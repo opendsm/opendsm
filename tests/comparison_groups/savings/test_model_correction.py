@@ -18,9 +18,15 @@ import pathlib
 import numpy as np
 import pytest
 
+from opendsm.common.stats.basic import (
+    fast_std,
+    unc_factor,
+)
 from opendsm.comparison_groups.savings.model_correction import (
     model_correction,
+    _cluster_correction,
     _model_magnitude_weights,
+    _water_fill_weights,
 )
 from .generate_correction_fixtures import build_fixtures
 from opendsm.comparison_groups.savings.settings import (
@@ -55,10 +61,126 @@ def _settings(**overrides):
 def test_model_magnitude_weights_zero_sum_returns_none():
     """All-zero model magnitudes would divide by zero when normalized; the
     helper must fall back to None (uniform) instead of producing NaN weights."""
-    assert _model_magnitude_weights(np.zeros(4)) is None
+    assert _model_magnitude_weights(np.zeros(4), weight_cap=0.5, min_magnitude=0.0) is None
 
-    weights = _model_magnitude_weights(np.array([1.0, 1.0, 2.0]))
+    weights = _model_magnitude_weights(np.array([1.0, 1.0, 2.0]), weight_cap=0.5, min_magnitude=0.0)
     np.testing.assert_allclose(weights.sum(), 1.0)
+
+
+# ── Water-filling weight cap ─────────────────────────────────────────────────
+
+@pytest.mark.parametrize(
+    "magnitudes, expected",
+    [
+        ([0.8, 0.1, 0.1], [0.5, 0.25, 0.25]),
+        ([0.9, 0.1], [0.5, 0.5]),
+    ],
+)
+def test_model_magnitude_weights_water_fills_excess_over_cap(magnitudes, expected):
+    """Weight above `weight_cap` is clipped to the cap and its excess is
+    redistributed over the uncapped meters in proportion to their weight."""
+    weights = _model_magnitude_weights(np.array(magnitudes), weight_cap=0.5, min_magnitude=0.0)
+
+    np.testing.assert_allclose(weights, expected)
+
+
+def test_model_magnitude_weights_zero_magnitudes_never_receive_weight():
+    """A meter with zero model magnitude carries no information, so the cap's
+    excess is never redistributed to it; with nothing else able to receive it,
+    the dominant meter keeps full weight instead of being cut to the cap."""
+    weights = _model_magnitude_weights(np.array([1.0, 0.0, 0.0]), weight_cap=0.5, min_magnitude=0.0)
+
+    np.testing.assert_allclose(weights, [1.0, 0.0, 0.0])
+
+
+@pytest.mark.parametrize(
+    "magnitudes, min_magnitude, expected",
+    [
+        # both small meters at or below the floor: nothing can receive, the cap is not enforced
+        ([1.0, 0.05, 0.01], 0.05, [1.0 / 1.06, 0.05 / 1.06, 0.01 / 1.06]),
+        # only the meter above the floor receives the excess; the other keeps its own weight
+        ([1.0, 0.5, 0.04], 0.05, [0.5, 0.5 - 0.04 / 1.54, 0.04 / 1.54]),
+        # a floor of 0 lifts every meter with nonzero magnitude, split by magnitude
+        ([1.0, 0.05, 0.01], 0.0, [0.5, 0.5 * 0.05 / 0.06, 0.5 * 0.01 / 0.06]),
+    ],
+)
+def test_model_magnitude_weights_lift_only_meters_above_min_magnitude(
+    magnitudes, min_magnitude, expected
+):
+    """Excess above `weight_cap` goes only to meters whose model magnitude
+    exceeds `min_magnitude`; meters at or below it keep their own weight, and
+    when no meter can receive, the capped meter keeps its weight."""
+    weights = _model_magnitude_weights(
+        np.array(magnitudes), weight_cap=0.5, min_magnitude=min_magnitude
+    )
+
+    np.testing.assert_allclose(weights, expected)
+    assert weights.sum() == pytest.approx(1.0, abs=1e-15)
+
+
+def test_model_magnitude_weights_ignore_min_magnitude_when_no_meter_exceeds_it():
+    """When every meter in a cluster is at or below the floor there is nothing
+    to protect, so the floor does not apply and the cap redistributes as usual."""
+    weights = _model_magnitude_weights(
+        np.array([0.04, 0.005, 0.005]), weight_cap=0.5, min_magnitude=0.05
+    )
+
+    np.testing.assert_allclose(weights, [0.5, 0.25, 0.25])
+
+
+@pytest.mark.parametrize("n_meters", [2, 3, 5, 10])
+def test_model_magnitude_weights_default_cap_keeps_kish_ess_at_least_two(n_meters):
+    """A weight_cap of 0.5 caps any single meter's share at half the cluster's
+    weight, which keeps Kish's effective sample size at or above 2 for any
+    cluster of 2 or more meters that may receive weight (no magnitude floor
+    here), however skewed the magnitudes."""
+    rng = np.random.default_rng(0)
+    magnitudes = rng.exponential(scale=1.0, size=n_meters)
+    magnitudes[0] *= 1000.0  # force one meter to dominate
+
+    weights = _model_magnitude_weights(magnitudes, weight_cap=0.5, min_magnitude=0.0)
+    ess = 1.0 / np.sum(weights**2)
+
+    assert ess >= 2.0 - 1e-9
+
+
+def test_model_magnitude_weights_infeasible_cap_falls_back_to_uniform():
+    """A cap below 1/M cannot hold every weight at or below it while summing to
+    1 (M*cap < 1); rather than returning weights that sum below 1, the helper
+    falls back to uniform weights over the meters. M=3, cap=0.3 -> [1/3, 1/3,
+    1/3] summing to exactly 1."""
+    weights = _model_magnitude_weights(np.array([5.0, 3.0, 2.0]), weight_cap=0.3, min_magnitude=0.0)
+
+    np.testing.assert_allclose(weights, [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0])
+    assert weights.sum() == pytest.approx(1.0, abs=1e-15)
+
+
+def test_water_fill_infeasible_cap_uniform_only_over_valid_meters():
+    """The infeasible-cap uniform fallback spreads over the valid meters only:
+    with one invalid meter of three, cap 0.3 is infeasible for the two valid
+    meters (2*0.3 < 1) so they take 0.5 each and the invalid meter stays 0."""
+    weights = np.array([[0.5, 0.5, 0.0]])
+    valid = np.array([[True, True, False]])
+
+    filled = _water_fill_weights(weights, valid, cap=0.3)
+
+    np.testing.assert_allclose(filled, [[0.5, 0.5, 0.0]])
+    assert filled.sum() == pytest.approx(1.0, abs=1e-15)
+
+
+def test_water_fill_infeasible_cap_shares_weight_over_eligible_meters_only():
+    """When the cap cannot be met over the recipients and the capped meters
+    (cap times their number is below their combined weight), those meters
+    share that weight uniformly while a non-recipient keeps its own weight:
+    cap 0.3 over two eligible meters holding 0.9 gives 0.45 each."""
+    weights = np.array([[0.6, 0.3, 0.1]])
+    valid = np.ones_like(weights, dtype=bool)
+    recipient = np.array([[True, True, False]])
+
+    filled = _water_fill_weights(weights, valid, cap=0.3, recipient=recipient)
+
+    np.testing.assert_allclose(filled, [[0.45, 0.45, 0.1]])
+    assert filled.sum() == pytest.approx(1.0, abs=1e-15)
 
 
 def test_model_correction_contiguous_labels_runs():
@@ -296,6 +418,135 @@ def test_model_correction_zero_model_cluster_weights_finite():
     assert np.isfinite(mTrc)
 
 
+# ── Effective-sample-size uncertainty fallback ───────────────────────────────
+
+def test_cluster_unc_falls_back_to_uniform_weights_below_ess_two():
+    """When model-magnitude weights concentrate so the Kish effective sample size
+    drops below 2, the cluster's point correction stays weighted but its
+    uncertainty is estimated with uniform weights over the finite meters. The
+    resulting uncertainty must equal the hand-computed uniform-weight value.
+
+    weight_cap is set to 1.0 (disabling the water-filling cap) so this scenario
+    still concentrates enough to drop the effective sample size below 2; at the
+    default cap of 0.5 the same magnitudes resolve to the weighted path."""
+    mCGr = np.array([1000.0, 10.0, 10.0, 10.0])  # one meter carries ~97% of magnitude
+    oCGr = np.array([990.0, 8.0, 12.0, 9.0])
+    mCGr_unc = np.array([4.0, 3.0, 2.0, 1.0])
+    zeros = np.zeros_like(mCGr)
+    alpha = 0.10
+
+    settings = CGCorrectionSettings(
+        algorithm=CorrectionAlgorithm.ODID,
+        correction_cap={"enabled": False},
+        outlier_rejection={"enabled": False},
+        weight_cluster_aggregation=WeightClusterAggChoice.MODEL,
+        weight_cap=1.0,
+        alpha=alpha,
+    )
+
+    cluster_mean, cluster_unc, _ = _cluster_correction(
+        100.0, 110.0, oCGr, mCGr, None, 5.0, zeros, mCGr_unc, zeros, True, settings,
+    )
+
+    # ODID scale is 1, so each meter's correction is mCGr - oCGr and its model
+    # uncertainty is mCGr_unc; the point correction is the magnitude-weighted mean.
+    correct = mCGr - oCGr
+    weights = _model_magnitude_weights(
+        mCGr, weight_cap=1.0, min_magnitude=settings.weight_cap_min_magnitude
+    )
+    weighted_mean = np.average(correct, weights=weights)
+    # uniform-weight fallback: population std about the weighted mean, unc_factor
+    # on the finite meter count, unweighted mean of the per-meter model variance.
+    std = fast_std(correct, mean=weighted_mean, weights=None)
+    agg_unc = std * unc_factor(len(correct), interval="CI", alpha=alpha)
+    model_var = np.mean(mCGr_unc**2)
+    expected_unc = np.sqrt(agg_unc**2 + model_var)
+
+    assert cluster_mean == pytest.approx(weighted_mean, rel=1e-12)
+    assert np.isfinite(cluster_unc) and cluster_unc > 0
+    assert cluster_unc == pytest.approx(expected_unc, rel=1e-12)
+    assert cluster_unc == pytest.approx(10.099162001366, rel=1e-9)
+
+
+def test_cluster_correction_near_zero_meters_cannot_flip_the_correction():
+    """Two near-zero comparison meters beside one real meter must not be handed
+    half the cluster by the weight cap: their percent corrections are noise
+    (-150% and +100% against the real meter's +10%). With the default floor the
+    cluster keeps the magnitude-weighted correction and a finite uncertainty;
+    with the floor disabled the cap lifts them and the sign flips."""
+    mCGr = np.array([1.5, 0.02, 0.01])
+    oCGr = np.array([1.35, 0.05, 0.0])
+    mCGr_unc = 0.4 * mCGr
+    zeros = np.zeros_like(mCGr)
+    per_meter = 1.0 / mCGr * (mCGr - oCGr)  # ABSPCTDID with mTr = 1: [0.1, -1.5, 1.0]
+    magnitude_weighted = np.average(per_meter, weights=mCGr)
+
+    def correct(min_magnitude):
+        settings = CGCorrectionSettings(
+            algorithm=CorrectionAlgorithm.ABSPCTDID,
+            correction_cap={"enabled": False},
+            outlier_rejection={"enabled": False},
+            weight_cluster_aggregation=WeightClusterAggChoice.MODEL,
+            weight_cap_min_magnitude=min_magnitude,
+        )
+        cluster_mean, cluster_unc, _ = _cluster_correction(
+            1.0, 1.0, oCGr, mCGr, None, 0.05, zeros, mCGr_unc, zeros, True, settings,
+        )
+
+        return cluster_mean, cluster_unc
+
+    floored_mean, floored_unc = correct(0.05)
+    lifted_mean, lifted_unc = correct(0.0)
+
+    assert floored_mean == pytest.approx(magnitude_weighted, rel=1e-12)
+    assert np.isfinite(floored_unc) and floored_unc > 0
+    assert lifted_mean < 0 < floored_mean
+    assert np.isfinite(lifted_unc)
+
+
+def test_model_correction_near_zero_meters_keep_uncertainty_finite():
+    """Near-zero comparison meters stay in their cluster under model-magnitude
+    weighting (they are only barred from receiving redistributed weight), so
+    the corrected uncertainty is finite and no comparison meter is masked out."""
+    cg_label = np.array([0, 0, 0, 1, 1, 1])
+    T_weight = np.array([0.5, 0.5])
+    oCGr = np.array([1.35, 0.05, 0.0, 1.1, 0.9, 1.2])
+    mCGr = np.array([1.5, 0.02, 0.01, 1.0, 1.0, 1.0])
+    mCGr_unc = 0.4 * mCGr
+    settings = CGCorrectionSettings(
+        algorithm=CorrectionAlgorithm.ABSPCTDID,
+        correction_cap={"enabled": False},
+        weight_cluster_aggregation=WeightClusterAggChoice.MODEL,
+    )
+
+    mTrc, mTrc_unc, mask = model_correction(
+        1.0, 1.0, oCGr, mCGr, None, 0.05, None, mCGr_unc, None, cg_label, T_weight, settings,
+    )
+
+    assert np.isfinite(mTrc)
+    assert np.isfinite(mTrc_unc) and mTrc_unc > 0
+    assert mask.all()
+
+
+def test_cluster_unc_is_nan_with_single_finite_meter():
+    """A cluster with only one finite meter has nothing to estimate spread from,
+    so its uncertainty stays NaN even under the effective-sample-size fallback."""
+    settings = CGCorrectionSettings(
+        algorithm=CorrectionAlgorithm.ODID,
+        correction_cap={"enabled": False},
+        outlier_rejection={"enabled": False},
+        weight_cluster_aggregation=WeightClusterAggChoice.MODEL,
+    )
+
+    _, cluster_unc, _ = _cluster_correction(
+        100.0, 110.0,
+        np.array([990.0]), np.array([1000.0]),
+        None, 5.0, np.zeros(1), np.array([4.0]), np.zeros(1), True, settings,
+    )
+
+    assert np.isnan(cluster_unc)
+
+
 # ── Fixture generation (run once, manually, JIT-on) ──────────────────────────
 
 @pytest.mark.skipif(
@@ -342,9 +593,14 @@ def _load_fixture(granularity):
     return data
 
 
-def _run_correction(data, algorithm):
+def _run_correction(data, algorithm, weight_cluster_aggregation=None, weight_cap=0.5):
     """Run model_correction on fixture arrays for one algorithm."""
-    settings = CGCorrectionSettings(algorithm=algorithm, correction_cap={"enabled": False})
+    settings = CGCorrectionSettings(
+        algorithm=algorithm,
+        correction_cap={"enabled": False},
+        weight_cluster_aggregation=weight_cluster_aggregation,
+        weight_cap=weight_cap,
+    )
     mTrc, mTrc_unc, mask = model_correction(
         float(data["oTr"]), float(data["mTr"]), data["oCGr"], data["mCGr"],
         None, float(data["mTr_unc"]), None, data["mCGr_unc"], None,
@@ -395,3 +651,88 @@ class TestModelCorrectionRealData:
 
         assert abspct == pytest.approx(pct, rel=1e-9)
         assert abspct_unc == pytest.approx(pct_unc, rel=1e-9)
+
+
+# Pinned (mTrc, mTrc_unc) for MODEL-weighted correction with weight_cap=1.0,
+# under which water-filling never triggers, produced by model_correction on the
+# same committed real-ComStock fixtures. One of the two clusters carrying
+# treatment weight concentrates its model-magnitude weight enough to drop its
+# Kish effective sample size below 2, so that cluster's uncertainty is
+# estimated with uniform weights over its finite meters; the other stays on the
+# weighted path. The point correction stays weighted.
+_EXPECTED_MODEL_WEIGHTED = {
+    ("hourly", CorrectionAlgorithm.ODID): (-454686.4, 1275358.6),
+    ("hourly", CorrectionAlgorithm.PCTDID): (771013.3, 110099.4),
+    ("daily", CorrectionAlgorithm.ODID): (-452123.3, 1271456.5),
+    ("daily", CorrectionAlgorithm.PCTDID): (770111.2, 111793.7),
+    ("billing", CorrectionAlgorithm.ODID): (-451915.0, 1272270.6),
+    ("billing", CorrectionAlgorithm.PCTDID): (769590.4, 121178.9),
+}
+
+
+@pytest.mark.regression
+class TestModelCorrectionRealDataModelWeightedUncapped:
+    """Snapshot model_correction on real ComStock-derived inputs with
+    MODEL-weighted aggregation and the cap disabled (weight_cap=1.0)."""
+
+    GRANULARITIES = ["hourly", "daily", "billing"]
+
+    @pytest.mark.parametrize("granularity", GRANULARITIES)
+    @pytest.mark.parametrize("algorithm", [CorrectionAlgorithm.ODID, CorrectionAlgorithm.PCTDID])
+    def test_corrected_value_matches_snapshot(self, granularity, algorithm):
+        """Corrected usage and uncertainty match the pinned real-data snapshot.
+        One cluster's model-magnitude weighting drops its effective sample size
+        below 2, so its uncertainty takes the uniform-weight fallback and the
+        total uncertainty is finite and positive rather than NaN."""
+        data = _load_fixture(granularity)
+        mTrc, mTrc_unc, _ = _run_correction(
+            data,
+            algorithm,
+            weight_cluster_aggregation=WeightClusterAggChoice.MODEL,
+            weight_cap=1.0,
+        )
+
+        expected_mTrc, expected_unc = _EXPECTED_MODEL_WEIGHTED[(granularity, algorithm)]
+        assert mTrc == pytest.approx(expected_mTrc, rel=1e-4)
+        assert mTrc_unc == pytest.approx(expected_unc, rel=1e-4)
+        assert np.isfinite(mTrc_unc) and mTrc_unc > 0
+
+
+# Pinned (mTrc, mTrc_unc) for MODEL-weighted correction at the default
+# weight_cap of 0.5, produced by model_correction on the same committed
+# real-ComStock fixtures. The cap lifts the concentrated cluster's Kish
+# effective sample size above 2, so every cluster's point correction and
+# uncertainty stay on the weighted path.
+_EXPECTED_MODEL_WEIGHTED_DEFAULT_CAP = {
+    ("hourly", CorrectionAlgorithm.ODID): (79685.4, 1861504.0),
+    ("hourly", CorrectionAlgorithm.PCTDID): (780930.1, 131401.2),
+    ("daily", CorrectionAlgorithm.ODID): (80079.3, 1855869.4),
+    ("daily", CorrectionAlgorithm.PCTDID): (779806.8, 132522.8),
+    ("billing", CorrectionAlgorithm.ODID): (80135.7, 1856947.9),
+    ("billing", CorrectionAlgorithm.PCTDID): (779402.1, 140519.2),
+}
+
+
+@pytest.mark.regression
+class TestModelCorrectionRealDataModelWeighted:
+    """Snapshot model_correction on real ComStock-derived inputs with
+    MODEL-weighted aggregation at the default weight_cap of 0.5."""
+
+    GRANULARITIES = ["hourly", "daily", "billing"]
+
+    @pytest.mark.parametrize("granularity", GRANULARITIES)
+    @pytest.mark.parametrize("algorithm", [CorrectionAlgorithm.ODID, CorrectionAlgorithm.PCTDID])
+    def test_corrected_value_matches_snapshot(self, granularity, algorithm):
+        """Corrected usage and uncertainty match the pinned real-data snapshot.
+        The weight cap keeps every cluster's effective sample size at or above
+        2, so the point correction and uncertainty both stay on the weighted
+        path (finite and positive)."""
+        data = _load_fixture(granularity)
+        mTrc, mTrc_unc, _ = _run_correction(
+            data, algorithm, weight_cluster_aggregation=WeightClusterAggChoice.MODEL
+        )
+
+        expected_mTrc, expected_unc = _EXPECTED_MODEL_WEIGHTED_DEFAULT_CAP[(granularity, algorithm)]
+        assert mTrc == pytest.approx(expected_mTrc, rel=1e-4)
+        assert mTrc_unc == pytest.approx(expected_unc, rel=1e-4)
+        assert np.isfinite(mTrc_unc) and mTrc_unc > 0

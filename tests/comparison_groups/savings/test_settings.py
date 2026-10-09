@@ -53,3 +53,38 @@ def test_alpha_out_of_range_rejected():
 def test_outlier_quantile_out_of_range_rejected():
     with pytest.raises(ValueError):
         OutlierRejectionSettings(quantile=0.6)
+
+
+def test_weight_cap_defaults_to_one_half():
+    settings = CGCorrectionSettings()
+
+    assert settings.weight_cap == 0.5
+
+
+@pytest.mark.parametrize("weight_cap", [0.0, -0.1, 1.1])
+def test_weight_cap_out_of_range_rejected(weight_cap):
+    with pytest.raises(ValueError):
+        CGCorrectionSettings(weight_cap=weight_cap)
+
+
+def test_weight_cap_accepts_upper_bound():
+    settings = CGCorrectionSettings(weight_cap=1.0)
+
+    assert settings.weight_cap == 1.0
+
+
+def test_weight_cap_min_magnitude_defaults_to_five_hundredths():
+    settings = CGCorrectionSettings()
+
+    assert settings.weight_cap_min_magnitude == 0.05
+
+
+def test_weight_cap_min_magnitude_rejects_negative():
+    with pytest.raises(ValueError):
+        CGCorrectionSettings(weight_cap_min_magnitude=-0.01)
+
+
+def test_weight_cap_min_magnitude_accepts_zero():
+    settings = CGCorrectionSettings(weight_cap_min_magnitude=0.0)
+
+    assert settings.weight_cap_min_magnitude == 0.0
