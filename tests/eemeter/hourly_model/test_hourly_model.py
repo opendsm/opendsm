@@ -622,3 +622,20 @@ def test_settings_deviations_property_is_empty_for_default_hourly_settings(basel
     model = HourlyModel().fit(baseline, is_electricity_data=True)
 
     assert model.settings_deviations == {}
+
+
+def _first_month(reporting):
+    return reporting.loc[reporting.index < reporting.index.min() + pd.DateOffset(months=1)]
+
+
+def test_predict_leaves_the_fitted_temporal_clusters_unchanged(baseline, reporting):
+    """A prediction over a window missing most month and weekday combinations labels
+    them for that window only: the fitted cluster table and its serialized form stay."""
+    hm = HourlyModel().fit(baseline, is_electricity_data=True)
+    fitted = hm._df_temporal_clusters.copy()
+    serialized = hm.to_dict()["temporal_clusters"]
+
+    hm.predict(_first_month(reporting))
+
+    pd.testing.assert_frame_equal(hm._df_temporal_clusters, fitted)
+    assert hm.to_dict()["temporal_clusters"] == serialized
