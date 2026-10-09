@@ -13,12 +13,16 @@
 #  limitations under the License.
 
 import copy
+import json
 import os
+import re
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from opendsm.common.metrics import compute_baseline_profile
 from opendsm.comparison_groups import exclusions
 from opendsm.comparison_groups.population import ComparisonPool, TreatmentGroup
 from opendsm.comparison_groups.selection import select_comparison_group
@@ -41,11 +45,19 @@ from opendsm.comparison_groups.savings.savings import compute_savings
 from opendsm.comparison_groups.savings.settings import CGCorrectionSettings
 from opendsm.eemeter.common.warnings import EEMeterWarning
 from .equivalence_env import (
+    NDID_SNAPSHOT_COLUMNS,
+    NDID_SNAPSHOT_DIAGNOSTICS,
     VARIANT_NAMES,
     _manual_clustering_selection,
     _mixed_selection,
+    bank_ids,
+    build_ndid_run,
     load_equivalence_snapshot,
+    load_ndid_snapshot,
+    ndid_selection,
+    ndid_settings,
     write_models_fixture,
+    write_ndid_snapshot,
 )
 
 
@@ -2313,3 +2325,479 @@ def test_per_meter_correction_reproduces_the_batch_snapshot(
             check_dtype=False,
             obj=label,
         )
+
+
+# ── NDID on the pinned bank ──────────────────────────────────────────────────
+
+
+_NDID_COLUMNS = _CORRECTED_COLUMNS + ["cg_var", "cg_effective_n"]
+
+_NDID_CADENCES = ("hourly", "daily", "billing")
+
+_ACF_LAGS = {"hourly": 168, "daily": 7, "billing": 0}
+
+# The hourly model's band reconstructs the ASHRAE aggregate band over the whole
+# reporting window, so it (and the corrected band built on it) moves as the
+# window grows; every other output column depends only on its own timestep.
+_WINDOW_DEPENDENT_COLUMNS = {
+    "hourly": ("modeled_unc", "corrected_unc"),
+    "daily": (),
+    "billing": (),
+}
+
+
+def _no_load_profile(granularity, tz):
+    """A baseline profile block of a meter whose baseline predictions are all zero."""
+    index = pd.date_range("2018-01-01", periods=60, freq="D", tz=tz)
+    frame = pd.DataFrame({"observed": 1.0, "predicted": 0.0}, index=index)
+    profile = compute_baseline_profile(frame, granularity)
+
+    return profile
+
+
+@pytest.fixture(scope="module")
+def ndid_env(comstock, model_bank):
+    """Lazily built NDID end-to-end runs on the pinned bank, per cadence."""
+    cache = {}
+
+    def build(granularity):
+        if granularity not in cache:
+            cache[granularity] = build_ndid_run(granularity, comstock, model_bank)
+
+        return cache[granularity]
+
+    return build
+
+
+@pytest.mark.skipif(
+    not os.environ.get("GENERATE_FIXTURES"),
+    reason="regenerates the committed NDID snapshot; run manually",
+)
+def test_generate_ndid_snapshot(ndid_env):
+    """Rerun the NDID end-to-end runs and rewrite the pinned NDID snapshot.
+
+    GENERATE_FIXTURES=1 pytest -k generate_ndid_snapshot
+    """
+    results = {granularity: ndid_env(granularity)["result"] for granularity in _NDID_CADENCES}
+    write_ndid_snapshot(results)
+
+
+@pytest.fixture(scope="module")
+def ndid_snapshot():
+    return load_ndid_snapshot()
+
+
+def test_ndid_snapshot_covers_every_cadence(ndid_snapshot):
+    assert set(ndid_snapshot["cadences"]) == set(_NDID_CADENCES)
+
+
+@pytest.mark.parametrize("granularity", _NDID_CADENCES)
+def test_ndid_reproduces_the_pinned_snapshot(ndid_env, ndid_snapshot, granularity):
+    result = ndid_env(granularity)["result"]
+    expected = ndid_snapshot["cadences"][granularity]
+    actual = {column: result.corrected[column].to_numpy() for column in NDID_SNAPSHOT_COLUMNS}
+    actual["cg_acf"] = result.cg_acf
+
+    for key in NDID_SNAPSHOT_DIAGNOSTICS:
+        actual[key] = result.diagnostics[key]
+
+    for key in NDID_SNAPSHOT_COLUMNS + ("cg_acf",) + NDID_SNAPSHOT_DIAGNOSTICS:
+        np.testing.assert_allclose(
+            np.asarray(actual[key], dtype=np.float64),
+            np.asarray(expected[key], dtype=np.float64),
+            rtol=_EXACT_RTOL,
+            atol=0,
+            equal_nan=True,
+            err_msg=f"{granularity} {key}",
+        )
+
+    seen = json.loads(json.dumps(result.diagnostics["profile_settings_seen"]))
+    assert seen == expected["profile_settings_seen"]
+
+
+@pytest.mark.parametrize("granularity", _NDID_CADENCES)
+def test_ndid_end_to_end_is_finite_where_modeled(ndid_env, granularity):
+    env = ndid_env(granularity)
+    result = env["result"]
+    frame = result.corrected
+    modeled = np.isfinite(frame["modeled"].to_numpy())
+
+    assert list(frame.columns) == _NDID_COLUMNS
+    assert result.cg_ids == list(env["pool"].ids)
+    assert modeled.any()
+
+    for column in ("corrected", "corrected_unc", "cg_var", "cg_effective_n"):
+        assert np.isfinite(frame[column].to_numpy()[modeled]).all(), column
+
+    assert (frame["cg_var"].to_numpy()[modeled] > 0).mean() >= 0.99
+    assert result.cg_acf.shape == (_ACF_LAGS[granularity],)
+    assert result.diagnostics["cluster_sizes"] == [len(result.cg_ids)]
+    assert result.diagnostics["gamma_used"] == 0.0
+
+    usage = result.cg_usage
+    assert np.array_equal(
+        usage["clusters_used"].to_numpy(), (usage["cg_usage_fraction"].to_numpy() > 0).astype(int)
+    )
+
+
+@pytest.mark.parametrize("granularity", _NDID_CADENCES)
+def test_ndid_json_roundtrip_preserves_ndid_outputs(ndid_env, granularity):
+    result = ndid_env(granularity)["result"]
+    restored = CorrectionResult.from_json(result.to_json())
+
+    pd.testing.assert_frame_equal(restored.corrected, result.corrected)
+    assert np.array_equal(restored.cg_acf, result.cg_acf)
+
+    gamma_fit = restored.diagnostics.pop("gamma_fit")
+    expected = dict(result.diagnostics)
+    expected_gamma_fit = expected.pop("gamma_fit")
+    assert np.array_equal(gamma_fit, expected_gamma_fit, equal_nan=True)
+    assert restored.diagnostics == expected
+
+
+def test_ndid_json_roundtrip_encodes_nan_gamma_fit_as_null(ndid_env):
+    result = copy.deepcopy(ndid_env("billing")["result"])
+    result.diagnostics["gamma_fit"] = np.nan
+
+    payload = result.to_json()
+    restored = CorrectionResult.from_json(payload)
+
+    assert '"gamma_fit": null' in payload
+    assert np.isnan(restored.diagnostics["gamma_fit"])
+
+
+def test_legacy_result_json_carries_no_ndid_keys(guard_env):
+    result = correct_reporting(
+        guard_env["selection"],
+        guard_env["treatment"],
+        guard_env["pool"],
+        guard_env["treatment"].ids[0],
+    )
+    restored = CorrectionResult.from_json(result.to_json())
+
+    assert "cg_acf" not in result.to_json()
+    assert restored.cg_acf is None
+    assert restored.diagnostics is None
+
+
+@pytest.fixture(scope="module")
+def ndid_no_load_env(comstock, model_bank):
+    """A billing pool on the pinned bank whose first meter carries a no-load
+    baseline profile, corrected once with every pool meter in one cluster and
+    once with the no-load meter alone in a second selected cluster."""
+    ids = bank_ids(model_bank, "billing")
+    treatment = TreatmentGroup.from_fit_models(comstock.meters(model_bank, "billing", ids[:1]))
+    pool = ComparisonPool.from_fit_models(comstock.meters(model_bank, "billing", ids[1:9]))
+    victim = pool.ids[0]
+    pool._meters[victim].model.baseline_profile = _no_load_profile("billing", pool.tz)
+
+    treatment_id = treatment.ids[0]
+    one_cluster = correct_reporting(
+        ndid_selection(treatment, pool),
+        treatment,
+        pool,
+        treatment_id,
+        settings=ndid_settings(),
+    )
+
+    cluster_of = {p: 0 for p in pool.ids}
+    cluster_of[victim] = 1
+    two_clusters = correct_reporting(
+        ndid_selection(
+            treatment, pool, cluster_of, {"pct_cluster_0": 0.6, "pct_cluster_1": 0.4}
+        ),
+        treatment,
+        pool,
+        treatment_id,
+        settings=ndid_settings(),
+    )
+    bundle = {
+        "treatment": treatment,
+        "pool": pool,
+        "victim": victim,
+        "one_cluster": one_cluster,
+        "two_clusters": two_clusters,
+    }
+
+    return bundle
+
+
+def test_ndid_drops_a_pool_meter_without_baseline_load(ndid_no_load_env):
+    victim = ndid_no_load_env["victim"]
+    result = ndid_no_load_env["one_cluster"]
+    rows = result.exclusions[result.exclusions["id"] == victim]
+
+    assert victim not in result.cg_ids
+    assert len(result.cg_ids) == len(ndid_no_load_env["pool"].ids) - 1
+    assert rows["origin"].tolist() == ["no_baseline_load"]
+    assert rows["stage"].tolist() == ["correction"]
+    assert np.isfinite(result.corrected["corrected"].to_numpy()).all()
+
+
+def test_ndid_drops_a_pool_meter_with_no_obtainable_baseline_profile(ndid_no_load_env):
+    treatment = ndid_no_load_env["treatment"]
+    pool = copy.deepcopy(ndid_no_load_env["pool"])
+    victim = ndid_no_load_env["victim"]
+    pool._meters[victim].model.baseline_profile = None
+    pool._meters[victim].baseline_profile = None
+    pool._meters[victim].baseline_data = None
+
+    result = correct_reporting(
+        ndid_selection(treatment, pool),
+        treatment,
+        pool,
+        treatment.ids[0],
+        settings=ndid_settings(),
+    )
+    rows = result.exclusions[result.exclusions["id"] == victim]
+
+    assert victim not in result.cg_ids
+    assert rows["origin"].tolist() == ["no_baseline_profile"]
+    assert rows["stage"].tolist() == ["correction"]
+
+
+def test_ndid_cluster_emptied_by_gates_is_ledgered_and_renormalized(ndid_no_load_env):
+    one = ndid_no_load_env["one_cluster"]
+    two = ndid_no_load_env["two_clusters"]
+    origins = two.exclusions["origin"].tolist()
+
+    assert "no_baseline_load" in origins
+    assert "cluster_emptied_by_gates" in origins
+    assert "cluster_emptied_by_gates" not in one.exclusions["origin"].tolist()
+    assert two.cg_ids == one.cg_ids
+    assert two.diagnostics["cluster_sizes"] == [len(one.cg_ids)]
+
+    for column in _NDID_COLUMNS[2:]:
+        assert np.array_equal(
+            two.corrected[column].to_numpy(), one.corrected[column].to_numpy(), equal_nan=True
+        ), column
+
+
+def test_ndid_treatment_without_baseline_load_raises(ndid_env, comstock, model_bank):
+    env = ndid_env("billing")
+    ids = bank_ids(model_bank, "billing")
+    treatment = TreatmentGroup.from_fit_models(comstock.meters(model_bank, "billing", ids[:1]))
+    treatment_id = treatment.ids[0]
+    treatment._meters[treatment_id].model.baseline_profile = _no_load_profile(
+        "billing", treatment.tz
+    )
+
+    with pytest.raises(exclusions.MeterCorrectionError, match="no baseline load") as err:
+        correct_reporting(
+            env["selection"], treatment, env["pool"], treatment_id, settings=ndid_settings()
+        )
+
+    assert err.value.exclusions["origin"].tolist() == ["no_baseline_load"]
+
+
+def test_ndid_pool_in_another_timezone_raises(ndid_env):
+    env = ndid_env("billing")
+    mismatched_pool = copy.copy(env["pool"])
+    mismatched_pool.tz = "America/New_York"
+
+    with pytest.raises(ValueError, match="timezone"):
+        correct_reporting(
+            env["selection"],
+            env["treatment"],
+            mismatched_pool,
+            env["treatment_id"],
+            settings=ndid_settings(),
+        )
+
+
+def test_ndid_finer_pool_raises(ndid_env):
+    daily = ndid_env("daily")
+    hourly = ndid_env("hourly")
+
+    with pytest.raises(ValueError, match="NDID requires the pool granularity"):
+        correct_reporting(
+            daily["selection"],
+            daily["treatment"],
+            hourly["pool"],
+            daily["treatment_id"],
+            settings=ndid_settings(),
+        )
+
+
+def _assert_rows_match(result, reference):
+    """Every output column of ``result``'s rows equals ``reference`` at the same
+    datetimes, bit for bit (NaN equal to NaN), except the cadence's
+    window-dependent bands; those still combine exactly as the kernel states."""
+    assert result.cg_ids == reference.cg_ids, result.exclusions.to_dict("records")
+
+    window_dependent = _WINDOW_DEPENDENT_COLUMNS[result.granularity]
+    columns = [c for c in _NDID_COLUMNS[2:] if c not in window_dependent]
+    tables = (
+        (result.corrected, reference.corrected, columns),
+        (result.cg_usage, reference.cg_usage, ["cg_usage_fraction", "clusters_used"]),
+    )
+
+    for frame, reference_frame, columns in tables:
+        merged = frame.merge(reference_frame, on=["id", "datetime"], suffixes=("", "_ref"))
+        assert len(merged) == len(frame)
+
+        for column in columns:
+            assert np.array_equal(
+                merged[column].to_numpy(dtype=np.float64),
+                merged[f"{column}_ref"].to_numpy(dtype=np.float64),
+                equal_nan=True,
+            ), column
+
+    assert np.array_equal(result.cg_acf, reference.cg_acf)
+
+    frame = result.corrected
+    np.testing.assert_allclose(
+        frame["corrected_unc"].to_numpy() ** 2,
+        frame["modeled_unc"].to_numpy() ** 2 + frame["cg_var"].to_numpy(),
+        rtol=1e-12,
+    )
+
+
+def _empty_populations(comstock, model_bank, granularity, env):
+    """The env's treatment and pool rebuilt from fresh copies of the pinned
+    models (so no earlier prediction has touched them) with no reporting data
+    attached."""
+    treatment = TreatmentGroup.from_fit_models(
+        comstock.meters(model_bank, granularity, env["treatment"].ids, reporting=False)
+    )
+    pool = ComparisonPool.from_fit_models(
+        comstock.meters(model_bank, granularity, env["pool"].ids, reporting=False)
+    )
+
+    return treatment, pool
+
+
+def _deliver(treatment, pool, df_r, cutoff):
+    treatment.add_reporting_data(_reporting_map(df_r, [int(t) for t in treatment.ids], cutoff))
+    pool.add_reporting_data(_reporting_map(df_r, [int(p) for p in pool.ids], cutoff))
+
+
+@pytest.mark.parametrize(
+    "granularity",
+    [pytest.param("hourly", marks=pytest.mark.slow), "daily", "billing"],
+)
+def test_ndid_progressive_delivery_equals_one_shot(ndid_env, comstock, model_bank, granularity):
+    """Cumulative deliveries (hourly: each month of its window; daily: each quarter;
+    billing: every third read period), each chained to the last as ``prior``,
+    reproduce the one-shot run on every row."""
+    env = ndid_env(granularity)
+    one_shot = env["result"]
+    _, df_r = comstock.frames(granularity)
+    treatment, pool = _empty_populations(comstock, model_bank, granularity, env)
+    settings = ndid_settings(min_window_coverage=0.0)
+
+    if granularity == "billing":
+        starts = [start for start, _ in one_shot.correction_periods]
+        cutoffs = starts[2::3] + [None]
+    else:
+        first = one_shot.corrected["datetime"].min().normalize()
+        last = one_shot.corrected["datetime"].max()
+        freq = {"hourly": "MS", "daily": "QS"}[granularity]
+        period_starts = [c for c in pd.date_range(first, last, freq=freq) if c > first]
+        cutoffs = period_starts + [last + pd.Timedelta(seconds=1)]
+
+    prior = None
+    for cutoff in cutoffs:
+        _deliver(treatment, pool, df_r, cutoff)
+
+        read_boundaries = None
+        if granularity == "billing":
+            read_boundaries = [start for start in starts if cutoff is None or start < cutoff]
+
+        result = correct_reporting(
+            env["selection"],
+            treatment,
+            pool,
+            env["treatment_id"],
+            settings=settings,
+            prior=prior,
+            read_boundaries=read_boundaries,
+        )
+        _assert_rows_match(result, one_shot)
+        prior = result
+
+    assert len(result.corrected) == len(one_shot.corrected)
+
+
+def test_ndid_daily_delivery_of_hourly_data_is_finite_from_day_one(
+    ndid_env, comstock, model_bank
+):
+    """The first week of hourly reporting delivered after one, two and seven days:
+    every row of every delivery is finite and equals the one-shot week."""
+    env = ndid_env("hourly")
+    _, df_r = comstock.frames("hourly")
+    treatment, pool = _empty_populations(comstock, model_bank, "hourly", env)
+    settings = ndid_settings(min_window_coverage=0.0)
+    first = env["result"].corrected["datetime"].min().normalize()
+
+    deliveries = []
+    prior = None
+    for day in (1, 2, 7):
+        _deliver(treatment, pool, df_r, first + pd.Timedelta(days=day))
+        result = correct_reporting(
+            env["selection"], treatment, pool, env["treatment_id"], settings=settings, prior=prior
+        )
+
+        for column in ("corrected", "corrected_unc", "cg_var"):
+            assert np.isfinite(result.corrected[column].to_numpy()).all(), (day, column)
+
+        deliveries.append(result)
+        prior = result
+
+    one_shot = correct_reporting(
+        env["selection"], treatment, pool, env["treatment_id"], settings=settings
+    )
+
+    assert len(one_shot.corrected) == 7 * 24
+
+    for result in deliveries:
+        _assert_rows_match(result, one_shot)
+
+
+# ── EXAMPLES.md ──────────────────────────────────────────────────────────────
+
+
+_EXAMPLES_PATH = Path(__file__).parents[3] / "opendsm" / "comparison_groups" / "EXAMPLES.md"
+
+
+def _example_block(heading):
+    """The single fenced python block under ``## heading`` in EXAMPLES.md."""
+    text = _EXAMPLES_PATH.read_text()
+    marker = f"\n## {heading}\n"
+    assert marker in text, f"EXAMPLES.md has no section {heading!r}"
+    section = text.split(marker, 1)[1].split("\n## ", 1)[0]
+    blocks = re.findall(r"```python\n(.*?)```", section, flags=re.S)
+    assert len(blocks) == 1
+
+    return blocks[0]
+
+
+def test_examples_ndid_block_runs_on_the_pinned_bank(daily_env):
+    """The NDID example executes as written against the populations and selection
+    its earlier sections build, here taken from the pinned daily bank (the same
+    8 treatment and 60 pool ComStock meters with a clustering selection)."""
+    namespace = {
+        "treatment": daily_env["treatment"],
+        "pool": daily_env["pool"],
+        "selection": daily_env["selection"],
+        "correct_reporting": correct_reporting,
+        "compute_savings": compute_savings,
+    }
+    exec(_example_block("Example 3: the NDID correction"), namespace)
+
+    frame = namespace["ndid_correction"].corrected
+    assert {"cg_var", "cg_effective_n"} <= set(frame.columns)
+    assert np.isfinite(frame["corrected"]).sum() > 0
+
+    direct = correct_reporting(
+        daily_env["selection"],
+        daily_env["treatment"],
+        daily_env["pool"],
+        daily_env["treatment"].ids[0],
+        settings=ndid_settings(),
+    )
+    pd.testing.assert_frame_equal(frame, direct.corrected)
+
+    savings = namespace["ndid_savings"].savings
+    assert len(savings) == 12
+    assert np.isfinite(savings["savings"]).all()

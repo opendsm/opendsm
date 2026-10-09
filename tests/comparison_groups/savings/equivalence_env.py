@@ -33,10 +33,17 @@ import pathlib
 import subprocess
 from io import StringIO
 
+import numpy as np
 import pandas as pd
 
 from opendsm.comparison_groups import exclusions
 from opendsm.comparison_groups.population import ComparisonPool, TreatmentGroup
+from opendsm.comparison_groups.savings.correction import correct_reporting
+from opendsm.comparison_groups.savings.settings import (
+    CGCorrectionSettings,
+    CorrectionAlgorithm,
+    NDIDSettings,
+)
 from opendsm.comparison_groups.selection import (
     ComparisonGroupSelection,
     SelectionMethod,
@@ -55,6 +62,15 @@ SNAPSHOT_SCHEMA_VERSION = 1
 MODELS_PATH = pathlib.Path(__file__).parent / "fixtures" / "equivalence_models.json.gz"
 
 MODELS_SCHEMA_VERSION = 2
+
+NDID_SNAPSHOT_PATH = pathlib.Path(__file__).parent / "fixtures" / "ndid_snapshot.json.gz"
+
+NDID_SNAPSHOT_SCHEMA_VERSION = 1
+
+# The NDID per-row output columns and run diagnostics the NDID snapshot pins.
+NDID_SNAPSHOT_COLUMNS = ("corrected", "corrected_unc", "cg_var", "cg_effective_n")
+
+NDID_SNAPSHOT_DIAGNOSTICS = ("gamma_fit", "gamma_used", "S_ref", "cluster_sizes", "lam")
 
 
 VARIANT_NAMES = (
@@ -121,9 +137,12 @@ class ComStockData:
     def reporting(self, granularity, mid):
         return self._frame("reporting", granularity, mid)
 
-    def meters(self, bank, granularity, ids, observed_unc=None, reporting=True):
+    def meters(
+        self, bank, granularity, ids, observed_unc=None, reporting=True, reporting_cutoff=None
+    ):
         """A ``from_fit_models`` meters mapping over ``ids``: the pinned models
-        from ``bank`` with the cached per-meter frames attached."""
+        from ``bank`` with the cached per-meter frames attached; ``reporting_cutoff``
+        keeps only the reporting rows before it."""
         model_cls = _MODEL_CLASSES[granularity]
         meters = {}
 
@@ -135,7 +154,10 @@ class ComStockData:
                 "observed_unc": observed_unc,
             }
             if reporting:
-                entry["reporting_df"] = self.reporting(granularity, key)
+                reporting_df = self.reporting(granularity, key)
+                if reporting_cutoff is not None:
+                    reporting_df = reporting_df[reporting_df["datetime"] < reporting_cutoff]
+                entry["reporting_df"] = reporting_df
             meters[key] = entry
 
         return meters
@@ -316,6 +338,145 @@ def write_models_fixture(daily, monthly, hourly):
     }
     blob = json.dumps(payload, allow_nan=False).encode("utf-8")
     MODELS_PATH.write_bytes(gzip.compress(blob, compresslevel=9, mtime=0))
+
+
+# ── NDID runs on the pinned bank ─────────────────────────────────────────────
+
+
+def ndid_settings(**overrides):
+    settings = CGCorrectionSettings(
+        algorithm=CorrectionAlgorithm.NDID, ndid=NDIDSettings(sector="commercial"), **overrides
+    )
+
+    return settings
+
+
+def bank_ids(bank, granularity):
+    ids = sorted(int(mid) for mid in bank[granularity])
+
+    return ids
+
+
+def ndid_selection(treatment, pool, cluster_of=None, weights=None):
+    """A hand-built clustering selection over every pool meter; by default one
+    cluster with weight 1."""
+    if cluster_of is None:
+        cluster_of = {p: 0 for p in pool.ids}
+
+    if weights is None:
+        weights = {"pct_cluster_0": 1.0}
+
+    selection = _manual_clustering_selection(
+        treatment.ids,
+        pool.ids,
+        cluster_of,
+        {t: weights for t in treatment.ids},
+        treatment.tz,
+    )
+
+    return selection
+
+
+NDID_HOURLY_REPORTING_MONTHS = 3
+
+
+def build_ndid_run(granularity, comstock, bank):
+    """The NDID end-to-end run at one cadence: the treatment is the bank meter
+    with the smallest id, the pool every other bank meter at that cadence, all in
+    one cluster with weight 1. The pinned models carry their baseline profile
+    blocks. Hourly reporting covers the first ``NDID_HOURLY_REPORTING_MONTHS``
+    calendar months of the reporting year; daily and billing cover the whole year."""
+    ids = bank_ids(bank, granularity)
+    cutoff = None
+    if granularity == "hourly":
+        _, df_r = comstock.frames("hourly")
+        start = df_r.index.get_level_values("datetime").min().normalize()
+        cutoff = start + pd.DateOffset(months=NDID_HOURLY_REPORTING_MONTHS)
+
+    treatment = TreatmentGroup.from_fit_models(
+        comstock.meters(bank, granularity, ids[:1], reporting_cutoff=cutoff)
+    )
+    pool = ComparisonPool.from_fit_models(
+        comstock.meters(bank, granularity, ids[1:], reporting_cutoff=cutoff)
+    )
+    selection = ndid_selection(treatment, pool)
+    treatment_id = treatment.ids[0]
+    result = correct_reporting(selection, treatment, pool, treatment_id, settings=ndid_settings())
+    env = {
+        "treatment": treatment,
+        "pool": pool,
+        "selection": selection,
+        "treatment_id": treatment_id,
+        "result": result,
+    }
+
+    return env
+
+
+def _nullable(values):
+    nullable = [None if np.isnan(value) else float(value) for value in values]
+
+    return nullable
+
+
+def _ndid_snapshot_entry(result):
+    entry = {
+        column: _nullable(result.corrected[column].to_numpy(dtype=np.float64))
+        for column in NDID_SNAPSHOT_COLUMNS
+    }
+    entry["cg_acf"] = _nullable(result.cg_acf)
+    entry["gamma_fit"] = _nullable([result.diagnostics["gamma_fit"]])[0]
+
+    for key in NDID_SNAPSHOT_DIAGNOSTICS[1:]:
+        entry[key] = result.diagnostics[key]
+
+    entry["profile_settings_seen"] = result.diagnostics["profile_settings_seen"]
+
+    return entry
+
+
+def write_ndid_snapshot(results):
+    """Write the pinned NDID snapshot from ``results`` (cadence to
+    ``CorrectionResult`` of ``build_ndid_run``). Run manually through the guarded
+    ``test_generate_ndid_snapshot``; regenerate whenever the model bank or the
+    NDID correction changes."""
+    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    cadences = {granularity: _ndid_snapshot_entry(result) for granularity, result in results.items()}
+    payload = {
+        "schema_version": NDID_SNAPSHOT_SCHEMA_VERSION,
+        "git_sha": sha,
+        "cadences": cadences,
+    }
+    blob = json.dumps(payload, allow_nan=False).encode("utf-8")
+    NDID_SNAPSHOT_PATH.write_bytes(gzip.compress(blob, compresslevel=9, mtime=0))
+
+
+def load_ndid_snapshot():
+    """The pinned NDID snapshot per cadence: the per-row columns and ``cg_acf`` as
+    float64 arrays and ``gamma_fit`` as a float (null restored as NaN), the other
+    diagnostics as stored."""
+    payload = json.loads(gzip.decompress(NDID_SNAPSHOT_PATH.read_bytes()))
+
+    if payload["schema_version"] != NDID_SNAPSHOT_SCHEMA_VERSION:
+        raise ValueError(
+            f"Unsupported NDID snapshot schema_version {payload['schema_version']}; "
+            f"expected {NDID_SNAPSHOT_SCHEMA_VERSION}."
+        )
+
+    cadences = {}
+
+    for granularity, entry in payload["cadences"].items():
+        restored = dict(entry)
+
+        for key in NDID_SNAPSHOT_COLUMNS + ("cg_acf",):
+            restored[key] = np.array(entry[key], dtype=np.float64)
+
+        restored["gamma_fit"] = float(np.array(entry["gamma_fit"], dtype=np.float64))
+        cadences[granularity] = restored
+
+    snapshot = {"git_sha": payload["git_sha"], "cadences": cadences}
+
+    return snapshot
 
 
 # ── snapshot artifact ────────────────────────────────────────────────────────

@@ -20,6 +20,7 @@ from io import StringIO
 import numpy as np
 import pandas as pd
 
+from opendsm.common.stats.period_kernel import cell_index
 from opendsm.comparison_groups import exclusions
 from opendsm.comparison_groups.selection import (
     COVERAGE_FREQ,
@@ -29,8 +30,12 @@ from opendsm.comparison_groups.selection import (
     window_coverage,
 )
 from opendsm.comparison_groups.savings.model_correction import model_correction_matrix
+from opendsm.comparison_groups.savings.ndid import ndid_correction_matrix
 from opendsm.comparison_groups.savings.read_periods import derive_read_periods
-from opendsm.comparison_groups.savings.settings import CGCorrectionSettings
+from opendsm.comparison_groups.savings.settings import (
+    CGCorrectionSettings,
+    CorrectionAlgorithm,
+)
 from opendsm.eemeter.common.exceptions import EEMeterError
 
 
@@ -82,15 +87,16 @@ def _column_correlations(observed, modeled):
     return corr
 
 
-def _clusters_used(mask, cg_label):
-    """Per timestep, the count of distinct clusters that survived (>=3 finite
-    retained meters per ``mask``) out of the clusters in ``cg_label``."""
+def _clusters_used(mask, cg_label, min_meters):
+    """Per timestep, the count of distinct clusters that survived (at least
+    ``min_meters`` retained meters per ``mask``) out of the clusters in
+    ``cg_label``."""
     labels = np.unique(cg_label)
     labels = labels[labels >= 0]
     used = np.zeros(mask.shape[0], dtype=int)
 
     for label in labels:
-        used += mask[:, cg_label == label].sum(axis=1) >= 3
+        used += mask[:, cg_label == label].sum(axis=1) >= min_meters
 
     return used
 
@@ -168,6 +174,107 @@ def _cluster_weights(active, labels):
         t_weight = t_weight / total
 
     return t_weight
+
+
+def _admit_loaded(pool, selected, ledger):
+    """The ``(pool_id, cluster_label)`` pairs whose baseline profile carries load;
+    a meter whose baseline predictions have zero annual scale has no typical load
+    to normalize by, so NDID drops and ledgers it. A meter with no obtainable baseline
+    profile (a model serialized without one and no baseline data attached) is ledgered
+    as ``no_baseline_profile``."""
+    admitted = []
+
+    for mid, label in selected:
+        try:
+            profile = pool.baseline_profile(mid)
+        except ValueError as exc:
+            ledger = exclusions.append(
+                ledger,
+                [mid],
+                "correction",
+                "no_baseline_profile",
+                "no baseline profile",
+                detail=str(exc),
+            )
+            continue
+
+        if profile.annual_scale == 0:
+            ledger = exclusions.append(
+                ledger,
+                [mid],
+                "correction",
+                "no_baseline_load",
+                "no baseline load",
+                detail="baseline predictions have zero annual scale",
+            )
+            continue
+
+        admitted.append((mid, label))
+
+    return admitted, ledger
+
+
+def _profile_cells(out_index, correction_periods, granularity, tz):
+    """Profile cell of each output row. A billing read period runs from its start
+    to the next read's start (the last one day past its end) and takes the cell of
+    its midpoint."""
+    if granularity == "billing":
+        edges = _billing_edges(correction_periods)
+        span = np.diff(edges)
+        midpoints = pd.to_datetime(edges[:-1] + span // 2, utc=True).tz_convert(tz)
+        q = cell_index(midpoints, granularity)
+    else:
+        q = cell_index(out_index, granularity)
+
+    return q
+
+
+def _ndid_correction(
+    treatment, pool, treatment_id, cg_ids, cg_label, t_weight, mTr, mTr_unc, oCGr, mCGr, q,
+    t_scale, cg_scale, ndid_settings
+):
+    """Run the NDID kernel for one treatment meter over its admitted comparison
+    group, with typical loads taken from the baseline profiles at cells ``q`` and
+    scaled to each row by the days its sum covers (``t_scale`` for the treatment,
+    ``cg_scale`` per pool meter; all ones at native cadence) and the pool laws pooled over ``cg_ids``. Returns the kernel outputs (without the
+    trust array) followed by the diagnostics dict."""
+    tr_profile = treatment.baseline_profile(treatment_id)
+    profiles = [pool.baseline_profile(mid) for mid in cg_ids]
+
+    typical = np.array([p.typical_load for p in profiles])
+    s = typical[:, q].T * cg_scale
+    S = np.array([p.annual_scale for p in profiles])
+    s_Tr = tr_profile.typical_load[q] * t_scale
+    laws = pool.pooled_laws(cg_ids, cg_label, ndid_settings)
+
+    mTrc, mTrc_unc, cg_var, cg_effective_n, cg_acf, mask = ndid_correction_matrix(
+        mTr,
+        mTr_unc,
+        s_Tr,
+        tr_profile.annual_scale,
+        oCGr,
+        mCGr,
+        s,
+        S,
+        q,
+        cg_label,
+        t_weight,
+        laws,
+        ndid_settings,
+    )
+
+    diagnostics = {
+        "gamma_fit": float(laws.gamma_fit),
+        "gamma_used": float(laws.gamma_used),
+        "S_ref": float(laws.S_ref),
+        "cluster_sizes": [int(size) for size in laws.cluster_sizes],
+        "lam": [float(lam) for lam in laws.lam],
+        "profile_settings_seen": [
+            seen.model_dump(mode="json") for seen in laws.profile_settings_seen
+        ],
+    }
+
+    return mTrc, mTrc_unc, cg_var, cg_effective_n, cg_acf, mask, diagnostics
 
 
 def _align_to_index(arr, row_map, present, n_rows):
@@ -485,11 +592,21 @@ class CorrectionResult:
     used: the members that predicted over the reporting period. Passing this
     result as ``prior`` to a later call reuses exactly these members.
 
+    Under the NDID algorithm ``corrected`` also carries ``cg_var`` (the one-sigma
+    sampling variance of the correction, treatment units squared, already inside
+    ``corrected_unc``) and ``cg_effective_n`` (the cluster-weighted Kish effective
+    number of pool meters); ``cg_acf`` is the weighted pooled residual
+    autocorrelation at lags 1..K (empty at billing) and ``diagnostics`` holds the
+    run's pooled-laws summary (``gamma_fit``, NaN when degenerate, ``gamma_used``,
+    ``S_ref``, ``cluster_sizes``, ``lam`` and ``profile_settings_seen`` as a list
+    of dicts). Both are None for the other algorithms.
+
     ``cg_usage`` reports, per timestep, the fraction of the meter's
     comparison-group meters actually used in the correction (finite, retained,
     and in a cluster that survived the timestep; ``cg_usage_fraction``) and the
-    count of clusters that survived with at least three finite retained meters
-    (``clusters_used``). ``exclusions`` is the
+    count of clusters that survived (``clusters_used``): with at least three
+    finite retained meters, or under NDID with at least one weighted meter.
+    ``exclusions`` is the
     correction-stage disqualification ledger (``[id, stage, origin, reason,
     detail]``): the pool meters dropped while correcting this meter, and why.
 
@@ -514,6 +631,8 @@ class CorrectionResult:
         fingerprint,
         correction_periods=None,
         cg_ids=None,
+        cg_acf=None,
+        diagnostics=None,
     ):
         if correction_periods is None:
             correction_periods = []
@@ -532,6 +651,8 @@ class CorrectionResult:
         self.granularity = granularity
         self.fingerprint = fingerprint
         self.correction_periods = correction_periods
+        self.cg_acf = cg_acf
+        self.diagnostics = diagnostics
 
     @property
     def tables(self):
@@ -567,6 +688,14 @@ class CorrectionResult:
             "correction_periods": _correction_periods_to_json(self.correction_periods),
         }
 
+        if self.cg_acf is not None:
+            payload["cg_acf"] = [_float_to_json(value) for value in self.cg_acf]
+
+        if self.diagnostics is not None:
+            payload["diagnostics"] = dict(
+                self.diagnostics, gamma_fit=_float_to_json(self.diagnostics["gamma_fit"])
+            )
+
         return json.dumps(payload, allow_nan=False)
 
     @classmethod
@@ -584,6 +713,14 @@ class CorrectionResult:
         cg_usage = _read_table(payload["cg_usage"], tz)
         ledger = exclusions.read_table_json(payload["exclusions"])
 
+        cg_acf = payload.get("cg_acf")
+        if cg_acf is not None:
+            cg_acf = np.array([_float_from_json(value) for value in cg_acf], dtype=np.float64)
+
+        diagnostics = payload.get("diagnostics")
+        if diagnostics is not None:
+            diagnostics["gamma_fit"] = _float_from_json(diagnostics["gamma_fit"])
+
         result = cls(
             meter_id=header["meter_id"],
             corrected=corrected,
@@ -596,9 +733,26 @@ class CorrectionResult:
             fingerprint=header["fingerprint"],
             correction_periods=_correction_periods_from_json(payload["correction_periods"], tz),
             cg_ids=header["cg_ids"],
+            cg_acf=cg_acf,
+            diagnostics=diagnostics,
         )
 
         return result
+
+
+def _float_to_json(value):
+    """A float for strict JSON: NaN becomes null."""
+    if np.isnan(value):
+        return None
+
+    return float(value)
+
+
+def _float_from_json(value):
+    if value is None:
+        return np.nan
+
+    return float(value)
 
 
 def _window_to_json(window):
@@ -709,6 +863,15 @@ def correct_reporting(
     timestep, ``corrected`` and ``corrected_unc`` are NaN and the row is still
     emitted; ``compute_savings`` reports it through ``coverage``.
 
+    Under the NDID algorithm the treatment and every comparison-group meter need a
+    baseline profile (the model's stored block, else computed from the attached
+    baseline data). A pool meter without baseline load is dropped and ledgered
+    (``no_baseline_load``) before the five-meter floor and before a prior can
+    freeze it; a selected cluster left with no admitted meter is ledgered
+    (``cluster_emptied_by_gates``) and its weight renormalized over the rest.
+    Profile cells are taken in the populations' shared timezone, from each row's
+    local time or, at billing, from each read period's midpoint.
+
     Args:
         selection: ``ComparisonGroupSelection`` for this treatment/pool pair.
         treatment: ``TreatmentGroup`` with reporting data attached.
@@ -731,13 +894,14 @@ def correct_reporting(
             reporting data, a failed reporting prediction, reporting coverage
             below ``min_window_coverage`` over the reporting group window, an
             eemeter observed disqualification on the reporting data, an
-            unrecoverable billing read cadence, or a frozen comparison-group
+            unrecoverable billing read cadence, a frozen comparison-group
             member that no longer predicts or whose reporting observed data is
-            disqualified. The ledger rows recording the
+            disqualified, or (NDID) a treatment without baseline load. The ledger rows recording the
             drop, including the pool-side rows behind a short comparison group,
             ride on the exception's ``exclusions`` attribute.
         ValueError: an analysis-level problem — a timezone or fingerprint
-            mismatch, a comparison pool coarser than the treatment, an invalid
+            mismatch, a comparison pool coarser than the treatment (under NDID,
+            any pool granularity other than the treatment's), an invalid
             period, a ``prior`` belonging to a different meter, made against a
             different selection, or carrying no comparison group, or a ``prior``
             whose overlapping point corrections disagree.
@@ -761,6 +925,13 @@ def correct_reporting(
         )
 
     check_granularity_fineness(treatment, pool)
+
+    ndid = settings.algorithm == CorrectionAlgorithm.NDID
+    if ndid and pool.granularity != treatment.granularity:
+        raise ValueError(
+            f"NDID requires the pool granularity ({pool.granularity}) to equal the treatment "
+            f"granularity ({treatment.granularity})."
+        )
 
     if table_fingerprint(selection._fingerprint_tables()) != selection.fingerprint:
         raise ValueError(
@@ -838,6 +1009,18 @@ def correct_reporting(
     if not t_usable:
         raise _meter_error(ledger, treatment_id)
 
+    if ndid and treatment.baseline_profile(treatment_id).annual_scale == 0:
+        ledger = exclusions.append(
+            ledger,
+            [treatment_id],
+            "correction",
+            "no_baseline_load",
+            "treatment meter has no baseline load",
+            detail="baseline predictions have zero annual scale",
+        )
+
+        raise _meter_error(ledger, treatment_id)
+
     membership = _cg_membership(selection, treatment_id)
 
     if prior is None:
@@ -878,6 +1061,10 @@ def correct_reporting(
     # comparison-group columns keep their membership-walk order throughout
     usable = set(p_usable)
     selected = [(mid, label) for mid, label in membership if mid in usable]
+
+    if ndid:
+        selected, ledger = _admit_loaded(pool, selected, ledger)
+
     cg_ids = [mid for mid, _ in selected]
 
     if len(cg_ids) < _MIN_CG_METERS:
@@ -895,6 +1082,17 @@ def correct_reporting(
     labels = [label for _, label in selected]
     cg_label = np.array(labels, dtype=np.float64)
     t_weight = _cluster_weights(active, labels)
+
+    emptied = sorted(set(active) - set(labels))
+    if ndid and emptied:
+        ledger = exclusions.append(
+            ledger,
+            [treatment_id],
+            "correction",
+            "cluster_emptied_by_gates",
+            "selected cluster has no admitted comparison-group meter",
+            detail=f"clusters {emptied} dropped; remaining weights renormalized",
+        )
 
     p_index, _, p_obs, p_mod, p_mod_unc, p_obs_unc = pool._prediction_matrices(
         "reporting", ids=cg_ids
@@ -988,23 +1186,56 @@ def correct_reporting(
         if p_obs_unc is not None:
             oCGr_unc = _reduce_to_periods(p_obs_unc, pool_codes, n_periods, True)
 
+        # typical loads are per day, so each sum's state scale is the days it covers
+        t_days = _reduce_to_periods(np.isfinite(own_mod).astype(float), own_codes, n_periods, False)
+        cg_days = _reduce_to_periods(np.isfinite(p_mod).astype(float), pool_codes, n_periods, False)
+
         if p_obs_unc is not None and np.any(p_obs_unc != 0.0):
             cg_corr = _column_correlations(oCGr, mCGr)
 
-    mTrc, mTrc_unc, mask = model_correction_matrix(
-        oTr,
-        mTr,
-        oCGr,
-        mCGr,
-        oTr_unc,
-        mTr_unc,
-        oCGr_unc,
-        mCGr_unc,
-        cg_corr,
-        cg_label,
-        t_weight,
-        settings,
-    )
+    if ndid:
+        q = _profile_cells(out_index, correction_periods, granularity, tz)
+        if granularity == "billing":
+            t_scale = np.where(t_days > 0, t_days, np.nan)
+            cg_scale = np.where(cg_days > 0, cg_days, np.nan)
+        else:
+            t_scale = np.ones(len(out_index))
+            cg_scale = np.ones(oCGr.shape)
+        mTrc, mTrc_unc, cg_var, cg_effective_n, cg_acf, mask, diagnostics = _ndid_correction(
+            treatment,
+            pool,
+            treatment_id,
+            cg_ids,
+            cg_label,
+            t_weight,
+            mTr,
+            mTr_unc,
+            oCGr,
+            mCGr,
+            q,
+            t_scale,
+            cg_scale,
+            settings.ndid,
+        )
+        min_cluster_meters = 1
+    else:
+        mTrc, mTrc_unc, mask = model_correction_matrix(
+            oTr,
+            mTr,
+            oCGr,
+            mCGr,
+            oTr_unc,
+            mTr_unc,
+            oCGr_unc,
+            mCGr_unc,
+            cg_corr,
+            cg_label,
+            t_weight,
+            settings,
+        )
+        cg_acf = None
+        diagnostics = None
+        min_cluster_meters = 3
 
     corrected = pd.DataFrame(
         {
@@ -1019,12 +1250,16 @@ def correct_reporting(
         }
     )
 
+    if ndid:
+        corrected["cg_var"] = cg_var
+        corrected["cg_effective_n"] = cg_effective_n
+
     cg_usage = pd.DataFrame(
         {
             "id": treatment_id,
             "datetime": out_index,
             "cg_usage_fraction": mask.sum(axis=1) / len(cg_ids),
-            "clusters_used": _clusters_used(mask, cg_label),
+            "clusters_used": _clusters_used(mask, cg_label, min_cluster_meters),
         }
     )
 
@@ -1053,6 +1288,8 @@ def correct_reporting(
         fingerprint=selection.fingerprint,
         correction_periods=correction_periods,
         cg_ids=cg_ids,
+        cg_acf=cg_acf,
+        diagnostics=diagnostics,
     )
 
     return result
