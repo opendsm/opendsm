@@ -19,6 +19,7 @@ from opendsm.comparison_groups.savings.model_correction import (
     model_correction,
     model_correction_matrix,
 )
+from opendsm.comparison_groups.savings.ndid import ndid_correction_matrix
 from opendsm.comparison_groups.savings.correction import (
     CorrectionResult,
     correct_reporting,
@@ -28,17 +29,22 @@ from opendsm.comparison_groups.savings.savings import (
     SavingsResult,
     compute_savings,
 )
-from opendsm.comparison_groups.savings.settings import CGCorrectionSettings
+from opendsm.comparison_groups.savings.settings import (
+    CGCorrectionSettings,
+    NDIDSettings,
+)
 
 
 
 __all__ = [
     "CGCorrectionSettings",
     "CorrectionResult",
+    "NDIDSettings",
     "SavingsAggregation",
     "SavingsResult",
     "compute_savings",
     "correct_reporting",
     "model_correction",
     "model_correction_matrix",
+    "ndid_correction_matrix",
 ]
