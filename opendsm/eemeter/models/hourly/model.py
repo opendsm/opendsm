@@ -807,8 +807,6 @@ class HourlyModel:
                         missing_combinations, "temporal_cluster"
                     ] = labels
 
-                    self._df_temporal_clusters = df_temporal_clusters
-
                 else:
                     # TODO: There's better ways of handling this
                     # unstack and fill missing days in each month
@@ -833,13 +831,15 @@ class HourlyModel:
         df["day_of_week"] = df.index.dayofweek
         df["hour_of_day"] = df.index.hour
 
-        # assign temporal clusters
+        # assign temporal clusters; the fitted table is never replaced, so combinations unseen
+        # in the fit are labeled per prediction and a short window leaves later ones unchanged
         if not self._is_fit:
             self._df_temporal_clusters = set_initial_temporal_clusters(df)
-            n_clusters = self._df_temporal_clusters["temporal_cluster"].nunique()
+            df_temporal_clusters = self._df_temporal_clusters
+            n_clusters = df_temporal_clusters["temporal_cluster"].nunique()
 
         else:
-            self._df_temporal_clusters = correct_missing_temporal_clusters(df)
+            df_temporal_clusters = correct_missing_temporal_clusters(df)
 
             # Count unique temporal cluster base columns (e.g. temporal_cluster_0, temporal_cluster_1)
             n_clusters = sum(
@@ -850,7 +850,7 @@ class HourlyModel:
         # join df_temporal_clusters to df
         df = pd.merge(
             df,
-            self._df_temporal_clusters,
+            df_temporal_clusters,
             how="left",
             left_on=self._temporal_cluster_cols,
             right_index=True,

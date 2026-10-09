@@ -423,3 +423,41 @@ class TestBlasThreadLimit:
         HourlyModel().fit(baseline_data)
         after = [info["num_threads"] for info in threadpool_info()]
         assert before == after, f"thread limits leaked out of fit: {before} -> {after}"
+
+
+def _first_month(reporting):
+    first_month = reporting.index < reporting.index.min() + pd.DateOffset(months=1)
+
+    return reporting.loc[first_month]
+
+
+def test_predict_leaves_the_fitted_temporal_clusters_unchanged(baseline, reporting):
+    """A prediction over a window missing most month and weekday combinations labels
+    them for that window only: the fitted cluster table and its serialized form stay."""
+    hm = HourlyModel().fit(HourlyBaselineData(baseline, is_electricity_data=True))
+    fitted = hm._df_temporal_clusters.copy()
+    serialized = hm.to_dict()["temporal_clusters"]
+
+    hm.predict(HourlyReportingData(_first_month(reporting), is_electricity_data=True))
+
+    pd.testing.assert_frame_equal(hm._df_temporal_clusters, fitted)
+    assert hm.to_dict()["temporal_clusters"] == serialized
+
+
+def test_predict_labels_unseen_combinations_for_that_prediction_only(baseline, reporting):
+    """A fit through November has no December clusters; a prediction reaching into
+    December labels those combinations for itself and leaves the fitted table as fitted."""
+    through_november = baseline[baseline.index.month != 12]
+    hm = HourlyModel().fit(
+        HourlyBaselineData(through_november, is_electricity_data=True),
+        ignore_disqualification=True,
+    )
+    fitted = hm._df_temporal_clusters.copy()
+    assert 12 not in fitted.index.get_level_values("month")
+
+    days = reporting.index
+    window = reporting.loc[((days.month == 11) & (days.day >= 16)) | ((days.month == 12) & (days.day <= 15))]
+    predicted = hm.predict(HourlyReportingData(window, is_electricity_data=True))
+
+    assert predicted.loc[predicted.index.month == 12, "predicted"].notna().all()
+    pd.testing.assert_frame_equal(hm._df_temporal_clusters, fitted)
