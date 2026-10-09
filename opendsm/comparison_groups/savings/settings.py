@@ -126,11 +126,13 @@ class CGCorrectionSettings(BaseSettings):
         description=(
             "how to weight cluster aggregation. Model-magnitude weighting can "
             "concentrate weight on a single meter in small or magnitude-skewed "
-            "clusters; `weight_cap` bounds this. With a cap above 0.5 the Kish "
-            "effective sample size can still drop below 2; there the point "
-            "correction stays weighted, but the cluster's uncertainty is "
-            "estimated with uniform weights over its finite meters, since an "
-            "effective sample size below 2 cannot support a weighted interval."
+            "clusters; `weight_cap` bounds this unless no meter above "
+            "`weight_cap_min_magnitude` can take the excess. Where the Kish "
+            "effective sample size is below 2 (a cap above 0.5, or a capped "
+            "meter with no such recipient), the point correction stays weighted "
+            "but the cluster's uncertainty is estimated with uniform weights over "
+            "its finite meters, since a weighted interval needs an effective "
+            "sample size of at least 2."
         )
     )
 
