@@ -24,7 +24,7 @@ COPY pyproject.toml README.md uv.lock /app/
 # not a venv, because the compose services bind-mount the repo over /app and
 # would hide a /app/.venv
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv export --locked --no-emit-project --extra dev -o /tmp/requirements.txt && \
+    uv export --locked --no-emit-project --extra dev --extra tutorial -o /tmp/requirements.txt && \
     uv pip install --system -r /tmp/requirements.txt
 
 # ---- project install ----
@@ -32,7 +32,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY opendsm/ /app/opendsm/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system -e .[dev]
+    uv pip install --system -e ".[dev,tutorial]"
 
 ENV PYTHONPATH=/usr/local/bin:/app
 WORKDIR /app

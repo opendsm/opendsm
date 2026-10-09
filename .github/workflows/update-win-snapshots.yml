@@ -32,7 +32,7 @@ jobs:
       - name: Install package + test deps (mirrors tox.ini)
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
+          pip install -e ".[tutorial]"
           pip install pytest pytest-cov pytest-xdist "syrupy>=5,<6"
       - name: Regenerate snapshots
         # --snapshot-update returns non-zero when snapshots change; we
