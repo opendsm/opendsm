@@ -1,13 +1,14 @@
 # syntax=docker/dockerfile:1.7
-FROM python:3.10-slim AS app
+FROM ghcr.io/astral-sh/uv:0.12.23@sha256:61d393e44e249f2e4b526b6c7ddcecce245946826e608e11c93ad4f5bba55b21 AS uv
+FROM python:3.12-slim AS app
 
 # System deps for building native wheels
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-# Add uv (fast installer)
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# Add uv (fast installer) from the digest-pinned stage above
+COPY --from=uv /uv /uvx /bin/
 
 # Helpful uv settings: compile bytecode & avoid hardlinks
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy \
@@ -16,16 +17,15 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy \
 WORKDIR /app
 
 # ---- deps layer (cacheable) ----
-# Copy only metadata first to maximize Docker layer caching
-COPY pyproject.toml README.md /app/
-# If you keep a lockfile, copy it too for reproducible installs
-# (safe if missing)
-COPY uv.lock /app/uv.lock
+# Copy only metadata and the lockfile first to maximize Docker layer caching
+COPY pyproject.toml README.md uv.lock /app/
 
-# Resolve & install *only dependencies* into the system Python
-# Using uv pip compile -> requirements.txt for a stable, cacheable layer
+# Install *only the locked dependencies* into the system Python; the build
+# fails if uv.lock is out of date with pyproject.toml. The system interpreter,
+# not a venv, because the compose services bind-mount the repo over /app and
+# would hide a /app/.venv
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip compile pyproject.toml -o /tmp/requirements.txt && \
+    uv export --locked --no-emit-project --extra dev --extra tutorial -o /tmp/requirements.txt && \
     uv pip install --system -r /tmp/requirements.txt
 
 # ---- project install ----
@@ -33,7 +33,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY opendsm/ /app/opendsm/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system -e .[dev]
+    uv pip install --system -e ".[dev,tutorial]"
 
 ENV PYTHONPATH=/usr/local/bin:/app
 WORKDIR /app
+
+# Run as an unprivileged user whose UID matches the host user that bind-mounts the
+# repository, so files written into the mount stay writable on both sides
+ARG UID=1000
+RUN useradd --uid ${UID} --create-home --shell /bin/sh app
+ENV UV_CACHE_DIR=/home/app/.cache/uv
+USER app

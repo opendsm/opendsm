@@ -13,7 +13,6 @@ services:
     entrypoint: py.test -n0
     volumes:
       - .:/app
-      - /app/tests/__pycache__/
 
   uv:
     image: opendsm
