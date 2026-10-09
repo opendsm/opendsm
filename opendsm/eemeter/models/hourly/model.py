@@ -64,6 +64,26 @@ def _get_interpolated_mask(df):
     return df[cols].any(axis=1)
 
 
+def _hourly_profiles(df, group_cols, aggregation):
+    """Aggregate observed load by hour of day for each combination of `group_cols`, as a
+    (combination x 24) table.
+
+    A combination whose only days are 23-hour spring-forward days has no row for the skipped
+    hour. That hour takes the mean of its neighbours (an hour at either end of the day, its one
+    neighbour), the value the feature matrices insert for it, so clustering and nearest-profile
+    matching see complete profiles.
+    """
+    profiles = (
+        df.groupby(group_cols + ["hour_of_day"])["observed"]
+        .agg(aggregation)
+        .unstack("hour_of_day")
+        .reindex(columns=range(24))
+    )
+    profiles = profiles.interpolate(axis=1, limit_direction="both")
+
+    return profiles
+
+
 def _eliminate_empty_bins(bin_edges, temp):
     valid_bin_edges = [-np.inf]
     for i in range(len(bin_edges) - 1):
@@ -313,7 +333,6 @@ class HourlyModel:
         self.baseline_timezone = None
         self.version = __version__
 
-    
     def _warn_model_mismatch(self, description):
         warning = self._model_warning(
             qualified_name="eemeter.potential_model_mismatch",
@@ -331,7 +350,6 @@ class HourlyModel:
         elif self.settings.scaling_method == _settings.ScalingChoice.ROBUST_SCALER:
             self._feature_scaler = SafeRobustScaler(unit_variance=True)
             self._y_scaler = SafeRobustScaler(unit_variance=True)
-
 
     def _set_model(self):
         # set base model
@@ -407,7 +425,6 @@ class HourlyModel:
             model_fit_warning.warn()
             self.disqualification.append(model_fit_warning)
             raise DataSufficiencyError("Cannot fit model: Baseline data contains no finite observed values")
-
 
     def fit(
         self, baseline_data: HourlyBaselineData, ignore_disqualification: bool = False
@@ -566,6 +583,9 @@ class HourlyModel:
     def _prepare_features(self, meter_data):
         """Prepare feature matrices from meter data for model fitting or prediction."""
         dst_indices = _get_dst_indices(meter_data)
+
+        # the day-inclusion mask comes first: every statistic learned while fitting reads it
+        meter_data = self._daily_fitting_sufficiency(meter_data)
         meter_data = self._add_categorical_features(meter_data)
         self._add_supplemental_features(meter_data)
 
@@ -573,7 +593,6 @@ class HourlyModel:
             self._ts_features, self._categorical_features
         )
 
-        meter_data = self._daily_fitting_sufficiency(meter_data)
         meter_data = self._normalize_features(meter_data)
         meter_data = self._add_temperature_interactions(meter_data)
 
@@ -600,21 +619,23 @@ class HourlyModel:
 
         # add temperature bins based on temperature
         if not self._is_fit:
+            temperature = df.loc[df["include_date"], "temperature"]
+
             if settings.method == "equal_sample_count":
                 T_bin_edges = pd.qcut(
-                    df["temperature"], q=settings.n_bins, labels=False
+                    temperature, q=settings.n_bins, labels=False
                 )
 
             elif settings.method == "equal_bin_width":
                 T_bin_edges = pd.cut(
-                    df["temperature"], bins=settings.n_bins, labels=False
+                    temperature, bins=settings.n_bins, labels=False
                 )
 
             elif settings.method == "set_bin_width":
                 bin_width = settings.bin_width
 
-                min_temp = np.floor(df["temperature"].min())
-                max_temp = np.ceil(df["temperature"].max())
+                min_temp = np.floor(temperature.min())
+                max_temp = np.ceil(temperature.max())
 
                 if not settings.include_edge_bins:
                     step_num = (
@@ -635,10 +656,10 @@ class HourlyModel:
                         ]
 
                     else:
-                        edge_bin_count = int(len(df) * settings.edge_bin_percent)
+                        edge_bin_count = int(len(temperature) * settings.edge_bin_percent)
 
                         # get 5th smallest and 5th largest temperatures
-                        sorted_temp = np.sort(df["temperature"])
+                        sorted_temp = np.sort(temperature)
                         min_temp_reg_bin = np.ceil(sorted_temp[edge_bin_count])
                         max_temp_reg_bin = np.floor(sorted_temp[-edge_bin_count])
 
@@ -655,7 +676,7 @@ class HourlyModel:
                     )
 
             elif settings.method == "fixed_bins":
-                temp = df["temperature"].values
+                temp = temperature.values
 
                 T_bin_edges = np.array(settings.fixed_bins)
                 T_bin_edges = np.array([-np.inf, *T_bin_edges, np.inf])
@@ -697,16 +718,10 @@ class HourlyModel:
 
     def _add_categorical_features(self, df):
         def set_initial_temporal_clusters(df):
-            fit_df_grouped = (
-                df.groupby(self._temporal_cluster_cols + ["hour_of_day"])["observed"]
-                .agg(self.settings.temporal_cluster_aggregation)
-                .reset_index()
-            )
-            # pivot table to get 2D array of observed values
-            fit_df_grouped = fit_df_grouped.pivot_table(
-                index=self._temporal_cluster_cols,
-                columns="hour_of_day",
-                values="observed",
+            fit_df_grouped = _hourly_profiles(
+                df,
+                self._temporal_cluster_cols,
+                self.settings.temporal_cluster_aggregation,
             )
 
             labels = cluster_features(
@@ -751,17 +766,10 @@ class HourlyModel:
                     # filter df to only include missing combinations
                     df_missing = df[is_missing]
 
-                    df_missing_grouped = (
-                        df_missing.groupby(
-                            self._temporal_cluster_cols + ["hour_of_day"]
-                        )["observed"]
-                        .agg(self.settings.temporal_cluster_aggregation)
-                        .reset_index()
-                    )
-                    df_missing_grouped = df_missing_grouped.pivot_table(
-                        index=self._temporal_cluster_cols,
-                        columns="hour_of_day",
-                        values="observed",
+                    df_missing_grouped = _hourly_profiles(
+                        df_missing,
+                        self._temporal_cluster_cols,
+                        self.settings.temporal_cluster_aggregation,
                     )
                     X = df_missing_grouped.values
 
@@ -777,17 +785,8 @@ class HourlyModel:
 
                     df_known = df[~is_missing]
 
-                    df_known_mean = (
-                        df_known.groupby(self._temporal_cluster_cols + ["hour_of_day"])[
-                            "observed"
-                        ]
-                        .mean()
-                        .reset_index()
-                    )
-                    df_known_mean = df_known_mean.pivot_table(
-                        index=self._temporal_cluster_cols,
-                        columns="hour_of_day",
-                        values="observed",
+                    df_known_mean = _hourly_profiles(
+                        df_known, self._temporal_cluster_cols, "mean"
                     )
                     X_known = df_known_mean.values
 
@@ -806,8 +805,6 @@ class HourlyModel:
                     df_temporal_clusters.loc[
                         missing_combinations, "temporal_cluster"
                     ] = labels
-
-                    self._df_temporal_clusters = df_temporal_clusters
 
                 else:
                     # TODO: There's better ways of handling this
@@ -833,13 +830,18 @@ class HourlyModel:
         df["day_of_week"] = df.index.dayofweek
         df["hour_of_day"] = df.index.hour
 
-        # assign temporal clusters
+        # assign temporal clusters; the fitted table is never replaced, so combinations unseen
+        # in the fit are labeled per prediction and a short window leaves later ones unchanged
         if not self._is_fit:
-            self._df_temporal_clusters = set_initial_temporal_clusters(df)
+            self._df_temporal_clusters = set_initial_temporal_clusters(df[df["include_date"]])
             n_clusters = self._df_temporal_clusters["temporal_cluster"].nunique()
 
+            # a combination with no included day stays out of the fitted clusters; its rows are
+            # labeled the way prediction labels an unseen combination
+            df_temporal_clusters = correct_missing_temporal_clusters(df)
+
         else:
-            self._df_temporal_clusters = correct_missing_temporal_clusters(df)
+            df_temporal_clusters = correct_missing_temporal_clusters(df)
 
             # Count unique temporal cluster base columns (e.g. temporal_cluster_0, temporal_cluster_1)
             n_clusters = sum(
@@ -850,7 +852,7 @@ class HourlyModel:
         # join df_temporal_clusters to df
         df = pd.merge(
             df,
-            self._df_temporal_clusters,
+            df_temporal_clusters,
             how="left",
             left_on=self._temporal_cluster_cols,
             right_index=True,
@@ -917,12 +919,19 @@ class HourlyModel:
             # find any rows with interpolated or missing data
             df["interpolated"] = _get_interpolated_mask(df) | df.isnull().any(axis=1)
 
-            # count number of non interpolated hours per day
-            daily_hours = 24 - df.groupby("date")["interpolated"].sum()
+            # count number of non interpolated hours per day; a complete 23- or 25-hour DST
+            # day counts as 24
+            dates = pd.Series(df.index.date, index=df.index)
+            daily_hours = 24 - df.groupby(dates)["interpolated"].sum()
             sufficient_days = daily_hours[daily_hours >= min_hours].index
 
             # set "include_day" column to True if day has sufficient hours
-            df["include_date"] = df["date"].isin(sufficient_days)
+            df["include_date"] = dates.isin(sufficient_days)
+
+            if not self._is_fit and not df["include_date"].any():
+                raise DataSufficiencyError(
+                    f"Cannot fit model: no day has at least {min_hours} measured hours"
+                )
 
         else:
             df["include_date"] = True
@@ -936,8 +945,9 @@ class HourlyModel:
 
         # need to set scaler if not fit
         if not self._is_fit:
-            self._feature_scaler.fit(df[train_features].values)
-            self._y_scaler.fit(df["observed"].values.reshape(-1, 1))
+            df_fit = df[df["include_date"]]
+            self._feature_scaler.fit(df_fit[train_features].values)
+            self._y_scaler.fit(df_fit["observed"].values.reshape(-1, 1))
 
         data_transformed = self._feature_scaler.transform(df[train_features].values)
         normalized_df = pd.DataFrame(
@@ -959,7 +969,7 @@ class HourlyModel:
     def _add_extreme_temperature_bins(self, df, bin_range):
         settings = self.settings.temperature_bin
 
-        def get_k(int_col, a, b):
+        def get_k(df, int_col, a, b):
             k = []
             for hour in range(24):
                 df_hour = df[df["hour_of_day"] == hour]
@@ -1006,11 +1016,13 @@ class HourlyModel:
 
             # get k for exponential growth/decay
             if not self._is_fit:
+                df_fit = df[df["include_date"]]
+
                 # determine temperature conversion for bin
                 range_offset = settings.edge_bin_temperature_range_offset
                 T_range = [
-                    df[int_col].min() - range_offset,
-                    df[int_col].max() + range_offset,
+                    df_fit[int_col].min() - range_offset,
+                    df_fit[int_col].max() + range_offset,
                 ]
                 new_range = [-1, 1]
 
@@ -1019,7 +1031,7 @@ class HourlyModel:
 
                 # The best rate for exponential
                 if settings.edge_bin_rate == "heuristic":
-                    k = get_k(int_col, T_a, T_b)
+                    k = get_k(df_fit, int_col, T_a, T_b)
                 else:
                     k = settings.edge_bin_rate
 
