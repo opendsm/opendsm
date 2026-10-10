@@ -12,7 +12,17 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from opendsm.eemeter.common.warnings import EEMeterWarning
+import json
+
+from opendsm.common.base_settings import BaseSettings, CustomField
+from opendsm.eemeter.common.warnings import EEMeterWarning, nonstandard_settings_warning
+
+
+
+
+class _DummySettings(BaseSettings):
+    developer_value: float = CustomField(default=1.0, developer=True)
+    fixed_value: float = CustomField(default=2.0, developer=False)
 
 
 def test_eemeter_warning():
@@ -28,3 +38,38 @@ def test_eemeter_warning():
         "description": "description",
         "qualified_name": "qualified_name",
     }
+
+
+def test_nonstandard_settings_warning_returns_none_for_identical_settings():
+    settings = _DummySettings()
+    reference = _DummySettings()
+
+    assert nonstandard_settings_warning(settings, reference) is None
+
+
+def test_nonstandard_settings_warning_reports_developer_tier_deviation():
+    settings = _DummySettings(developer_value=3.0)
+    reference = _DummySettings()
+
+    warning = nonstandard_settings_warning(settings, reference)
+
+    assert warning.qualified_name == "eemeter.settings.nonstandard"
+    assert warning.data["deviations"] == {
+        "developer_value": {"value": 3.0, "default": 1.0},
+    }
+
+
+def test_nonstandard_settings_warning_ignores_non_developer_tier_deviation():
+    settings = _DummySettings(fixed_value=5.0)
+    reference = _DummySettings()
+
+    assert nonstandard_settings_warning(settings, reference) is None
+
+
+def test_nonstandard_settings_warning_payload_is_json_serializable():
+    settings = _DummySettings(developer_value=3.0)
+    reference = _DummySettings()
+
+    warning = nonstandard_settings_warning(settings, reference)
+
+    assert json.dumps(warning.json())

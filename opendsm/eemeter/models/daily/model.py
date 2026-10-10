@@ -25,7 +25,7 @@ from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
     DisqualifiedModelError,
 )
-from opendsm.eemeter.common.warnings import EEMeterWarning
+from opendsm.eemeter.common.warnings import EEMeterWarning, nonstandard_settings_warning
 from opendsm.eemeter.models.daily.base_models.full_model import (
     full_model,
     get_full_model_x,
@@ -42,7 +42,6 @@ from opendsm.eemeter.models.daily.parameters import (
 from opendsm.eemeter.models.daily.utilities.base_model import get_smooth_coeffs
 from opendsm.eemeter.models.daily.utilities.settings import (
     DailySettings,
-    DailyLegacySettings,
     update_daily_settings,
 )
 from opendsm.eemeter.models.daily.utilities.ellipsoid_test import ellipsoid_split_filter
@@ -77,19 +76,17 @@ class DailyModel:
 
     def __init__(
         self,
-        model: str = "current",
-        settings: dict | None = None,
+        settings: dict | DailySettings | None = None,
         verbose: bool = False,
     ):
         """
         Args:
-            model: The model to use (either 'current' or 'legacy').
             settings: DailySettings to be changed.
             verbose: Whether to print verbose output.
         """
 
         # Initialize settings
-        self._initialize_settings(model, settings)
+        self._initialize_settings(settings)
 
         # Initialize seasons and weekday/weekend
         self.seasonal_options = [
@@ -117,24 +114,22 @@ class DailyModel:
 
     def _initialize_settings(
         self,
-        model: str = "current",
-        settings: dict | None = None
+        settings: dict | DailySettings | None = None,
     ) -> None:
 
-        # Note: Model designates the base settings, it can be 'current' or 'legacy'
-        #       Settings is to be a dictionary of settings to be changed
-
         if settings is None:
-            settings = {}
-
-        if model.replace(" ", "").replace("_", ".").lower() in ["current", "default"]:
+            self.settings = DailySettings()
+        elif isinstance(settings, DailySettings):
+            self.settings = settings
+        elif isinstance(settings, dict):
             self.settings = DailySettings(**settings)
-        elif model.replace(" ", "").replace("_", ".").lower() in ["legacy"]:
-            self.settings = DailyLegacySettings(**settings)
         else:
-            raise Exception(
-                "Invalid 'settings' choice: must be 'current', 'default', or 'legacy'"
+            raise TypeError(
+                "'settings' must be None, a dict, or a DailySettings instance"
             )
+
+    def _reference_settings(self) -> DailySettings:
+        return DailySettings(preset=self.settings.preset)
 
     def fit(
         self, 
@@ -160,8 +155,14 @@ class DailyModel:
         if baseline_data.disqualification and not ignore_disqualification:
             raise DataSufficiencyError("Can't fit model on disqualified baseline data")
         self.baseline_timezone = baseline_data.tz
-        self.warnings = baseline_data.warnings
+        self.warnings = list(baseline_data.warnings)
         self.disqualification = baseline_data.disqualification
+
+        settings_warning = nonstandard_settings_warning(self.settings, self._reference_settings())
+        if settings_warning is not None:
+            self.warnings.append(settings_warning)
+            settings_warning.warn()
+
         df = getattr(baseline_data, self._data_df_name)
         self._fit(df)
         self._check_model_fit()
@@ -425,7 +426,7 @@ class DailyModel:
             An instance of the class.
 
         """
-        daily_model = cls(model="legacy")
+        daily_model = cls(settings={"preset": "legacy"})
         daily_model.params = DailyModelParameters.from_2_0_params(data)
         daily_model.warnings = []
         daily_model.disqualification = []
@@ -826,8 +827,6 @@ class DailyModel:
 
         if self.settings.alpha_final_type == "last":
             settings_update = {
-                "DEVELOPER_MODE": True,
-                "SILENT_DEVELOPER_MODE": True, 
                 "ALPHA_FINAL_TYPE": None,
                 "FINAL_BOUNDS_SCALAR": None,
             }
@@ -939,8 +938,6 @@ class DailyModel:
                 continue
 
             settings_update = {
-                "DEVELOPER_MODE": True, 
-                "SILENT_DEVELOPER_MODE": True, 
                 "REGULARIZATION_ALPHA": 0.0
             }
             settings = update_daily_settings(self.settings, settings_update)
