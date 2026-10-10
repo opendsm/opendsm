@@ -159,6 +159,22 @@ def test_json_daily(comstock_daily):
     assert total_metered_savings == total_metered_savings_loaded
 
 
+def test_to_dict_tags_model_type_daily(comstock_daily):
+    """to_dict tags a daily payload with model_type='daily', and from_dict
+    tolerates the tag on a round trip."""
+    df_b, _ = comstock_daily
+    baseline_data = DailyBaselineData(df=df_b.reset_index(), is_electricity_data=True)
+    baseline_model = DailyModel().fit(baseline_data, ignore_disqualification=True)
+
+    model_dict = baseline_model.to_dict()
+
+    assert model_dict["model_type"] == "daily"
+
+    rebuilt = DailyModel.from_dict(model_dict)
+
+    assert rebuilt.to_dict()["model_type"] == "daily"
+
+
 def test_legacy_deserialization_daily(comstock_daily, snapshot):
     legacy_model_dict = {
         "model_type": "hdd_only",

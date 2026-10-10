@@ -22,6 +22,7 @@ from opendsm.comparison_groups.savings.settings import (
 )
 
 
+
 def test_correction_cap_defaults_are_valid():
     cap = CorrectionCapSettings()
 

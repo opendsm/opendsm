@@ -14,6 +14,7 @@
 
 import numpy as np
 import pytest
+from matplotlib.figure import Figure
 
 from opendsm.comparison_groups.random_sampling.create_comparison_groups import Random_Sampling
 from opendsm.comparison_groups.random_sampling.settings import Settings
@@ -46,7 +47,7 @@ def test_get_comparison_pool_loadshape_is_single_labeled_row(fitted_algorithm):
 def test_plot_loadshapes_returns_a_figure(fitted_algorithm):
     figure = fitted_algorithm.plot_loadshapes()
 
-    assert figure is not None
+    assert isinstance(figure, Figure)
 
 
 def test_validate_ls_weights_none_returns_none(fitted_algorithm):

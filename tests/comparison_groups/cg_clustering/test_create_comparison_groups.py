@@ -67,19 +67,25 @@ def test_get_comparison_group_is_deterministic(cg_clustering_data):
 
 @pytest.mark.parametrize("seed", [42, 7, 123])
 def test_clustering_output_snapshot(cg_clustering_data, seed, snapshot):
-    """Pin permutation-invariant clustering outputs across seeds: number of
-    non-outlier clusters, sorted cluster sizes, and each treatment's dominant
-    weight."""
+    """Pin the permutation-invariant clustering outputs across seeds: the number
+    of non-outlier clusters and the sorted cluster sizes. Each treatment's
+    weights are checked for their structure only (a simplex row: in [0, 1],
+    summing to one), because a treatment that two clusters explain about
+    equally well splits its weight differently between BLAS builds."""
     treatment_data, comparison_pool_data = cg_clustering_data
     labels, coeffs = CG_Clustering(CG_Clustering_Settings(seed=seed)).get_comparison_group(
         treatment_data, comparison_pool_data
     )
 
-    sizes = labels[labels["cluster"] >= 0]["cluster"].value_counts().sort_values()
+    weights = coeffs.to_numpy()
+    assert weights.shape[0] == len(treatment_data.loadshape), "one weight row per treatment"
+    assert np.all((weights >= 0) & (weights <= 1)), f"weights outside [0, 1]: {weights}"
+    np.testing.assert_allclose(weights.sum(axis=1), 1.0, atol=1e-9)
+
+    clustered = labels[labels["cluster"] >= 0]["cluster"]
     summary = {
-        "n_clusters": int((labels["cluster"] >= 0).sum() and labels.loc[labels["cluster"] >= 0, "cluster"].nunique()),
-        "sorted_cluster_sizes": sorted(sizes.tolist()),
-        "dominant_weight_per_treatment": sorted(np.round(coeffs.to_numpy().max(axis=1), 4).tolist()),
+        "n_clusters": int(clustered.nunique()),
+        "sorted_cluster_sizes": sorted(clustered.value_counts().tolist()),
     }
 
     assert summary == snapshot

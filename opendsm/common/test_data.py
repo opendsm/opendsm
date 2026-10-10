@@ -22,17 +22,30 @@ import platformdirs
 import requests
 
 from opendsm import __file__ as opendsm_file_path
+from opendsm import __version__
 from opendsm.common.const import TutorialDataChoice
 
-# data/ ships only with the source repo, not the installed wheel. _load_file uses
+DOWNLOAD_TIMEOUT_S = 60
+
+
+def _data_ref(version: str) -> str:
+    """Git ref holding the data files for a package version: its release tag, or master."""
+    if version == "unknown":
+        return "master"
+
+    return f"v{version}"
+
+
+# data/ ships only with the source repo, not the installed wheel. _resolve_file uses
 # the in-repo copy when present (source checkouts, CI) and otherwise downloads the
-# file into a user cache directory.
+# file from the release tag matching the installed version into a per-version cache
+# directory, so one version's file is never served to another.
 repo_data_dir = Path(opendsm_file_path).resolve().parent.parent / "data"
 cache_dir = Path(platformdirs.user_cache_dir("opendsm")) / "data"
-
-repo_full_name = "opendsm/opendsm"
-branch = "master"
-path = "data"
+_raw_url = "https://raw.githubusercontent.com/opendsm/opendsm"
+base_url = f"{_raw_url}/{_data_ref(__version__)}/data"
+# unreleased installs can reference files added after their version's tag
+fallback_url = f"{_raw_url}/master/data"
 
 
 comparison_group_time_series = [
@@ -155,6 +168,15 @@ def _load_other_data(data_type):
 
 
 def _load_file(name: str):
+    if name.endswith(".parquet"):
+        # checked before _resolve_file so nothing is downloaded that cannot be read
+        try:
+            import pyarrow  # noqa: F401  # optional dependency from the tutorial extra
+        except ImportError as e:
+            raise ImportError(
+                f'Reading {name} requires pyarrow: pip install "opendsm[tutorial]"'
+            ) from e
+
     source = _resolve_file(name)
 
     if name.endswith(".csv"):
@@ -171,22 +193,34 @@ def _resolve_file(name: str) -> Path:
     """Return a local path to the data file, downloading + caching it if absent.
 
     The in-repo data/ copy is used in source checkouts and CI; otherwise the file
-    is fetched once from the OpenDSM repository into the user cache directory.
+    is fetched once from `base_url` into `cache_dir / __version__`, or from
+    `fallback_url` when the release tag does not hold it.
     """
 
     repo_file = repo_data_dir / name
     if repo_file.exists():
         return repo_file
 
-    cache_file = cache_dir / name
+    cache_file = cache_dir / __version__ / name
     if not cache_file.exists():
-        url = f"https://raw.githubusercontent.com/{repo_full_name}/{branch}/{path}/{name}"
-        response = requests.get(url)
-        response.raise_for_status()
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file.write_bytes(response.content)
+        try:
+            _download(f"{base_url}/{name}", cache_file)
+        except requests.HTTPError as e:
+            if e.response is None or e.response.status_code != 404:
+                raise
+            _download(f"{fallback_url}/{name}", cache_file)
 
     return cache_file
+
+
+def _download(url: str, dest: Path) -> None:
+    response = requests.get(url, timeout=DOWNLOAD_TIMEOUT_S)
+    response.raise_for_status()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    # written to a temporary name so an interrupted write never leaves a partial cache entry
+    partial = dest.with_name(dest.name + ".part")
+    partial.write_bytes(response.content)
+    partial.replace(dest)
 
 
 if __name__ == "__main__":

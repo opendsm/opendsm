@@ -49,6 +49,13 @@ OpenDSM is a python package and can be installed with pip.
 $ pip install opendsm
 ~~~~~~~~~~~~~~~
 
+To run the tutorials, install the `tutorial` extra, which adds the pyarrow dependency that
+`load_test_data` needs to read the parquet datasets.
+
+~~~~~~~~~~~~~~~
+$ pip install "opendsm[tutorial]"
+~~~~~~~~~~~~~~~
+
 ## Features
 
 - Models:
