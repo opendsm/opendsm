@@ -28,6 +28,7 @@ from opendsm.eemeter.models.hourly_caltrack.model import (
     fit_caltrack_hourly_model_segment,
     fit_caltrack_hourly_model,
 )
+from opendsm.eemeter.models.hourly_caltrack import segmentation
 from opendsm.eemeter.common.features import (
     compute_time_features,
 )
@@ -524,6 +525,52 @@ def test_json_caltrack_hourly(comstock_hourly):
         baseline_model.model.totals_metrics["dec-jan-feb-weighted"].observed_length
         == m.model.totals_metrics["dec-jan-feb-weighted"].observed_length
     )
+
+
+def _with_every_formula(obj, formula):
+    if isinstance(obj, dict):
+        return {
+            key: formula if key == "formula" else _with_every_formula(value, formula)
+            for key, value in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_with_every_formula(value, formula) for value in obj]
+
+    return obj
+
+
+def _forbid_dmatrix(monkeypatch):
+    def fail(*args, **kwargs):
+        pytest.fail("a formula outside the grammar reached patsy")
+
+    monkeypatch.setattr(segmentation, "dmatrix", fail)
+
+
+@pytest.mark.slow
+def test_from_json_rejects_formula_outside_the_grammar(comstock_hourly, monkeypatch):
+    df_b, _ = comstock_hourly
+    meter_b = df_b[["observed"]].rename(columns={"observed": "value"}).copy()
+    baseline = HourlyCaltrackBaselineData.from_series(
+        meter_b, df_b["temperature"], is_electricity_data=True
+    )
+    serialized = json.loads(HourlyCaltrackModel().fit(baseline).to_json())
+    tampered = _with_every_formula(
+        serialized, "meter_value ~ __import__('os').getpid()"
+    )
+    _forbid_dmatrix(monkeypatch)
+
+    with pytest.raises(ValueError, match="formula"):
+        HourlyCaltrackModel.from_json(json.dumps(tampered))
+
+
+def test_from_2_0_json_rejects_formula_outside_the_grammar(request, monkeypatch):
+    _forbid_dmatrix(monkeypatch)
+    with open(request.fspath.dirname + "/legacy_hourly.json", "r") as f:
+        legacy = json.load(f)
+    tampered = _with_every_formula(legacy, "meter_value ~ __import__('os').getpid()")
+
+    with pytest.raises(ValueError, match="formula"):
+        HourlyCaltrackModel.from_2_0_json(json.dumps(tampered))
 
 
 def test_legacy_deserialization_hourly(request, comstock_hourly, snapshot):

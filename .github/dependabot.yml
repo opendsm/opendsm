@@ -1,0 +1,29 @@
+# One grouped pull request per ecosystem per month, and nothing in a month without updates.
+# A new major release of a Python dependency gets a pull request of its own.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: monthly
+    # floors stay as measured; a cap is raised only when a release falls outside it,
+    # so that pull request's CI shows whether the cap was still needed
+    versioning-strategy: increase-if-necessary
+    groups:
+      python:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      images:
+        patterns: ["*"]

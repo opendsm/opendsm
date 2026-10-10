@@ -7,12 +7,11 @@ name = "opendsm"
 version = "1.2.7"
 description = "Standard methods for predicting building energy usage"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "opendsm", email = "opendsm@lists.lfenergy.org" }]
 classifiers = [
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -20,26 +19,26 @@ classifiers = [
 ]
 
 dependencies = [
-  "matplotlib",  # imported at module scope by the plotting and diagnostics modules
+  "matplotlib>=3.10.7",  # imported at module scope by the plotting and diagnostics modules
   "nlopt>=2.10",  # first release with cp313 / cp314 wheels
-  "numba",
-  "numpy>=1.24.4",
-  "pandas>=1.1.0,<4.0.0",
+  "numba>=0.60",
+  "numpy>=2,<3",  # nlopt 2.10 requires numpy 2
+  "pandas>=2.2.2,<4",  # first release built for numpy 2
+  "patsy>=1.0",  # imported directly by the CalTRACK hourly segment model
   "platformdirs",
-  "pyarrow>=15.0.0",
-  "pydantic>=2.0",
-  "pywavelets",
-  "requests",
-  "qpsolvers[highs]",
-  "scikit-learn>=1.5.0",  # first release with the covariance_eigh PCA solver
-  "scipy>=1.10.1",
-  "statsmodels",
-  "threadpoolctl>=3.2.0",
+  "pydantic>=2.4,<3",
+  "pywavelets>=1.6",  # first release with numpy 2 wheels
+  "requests>=2.33.0",
+  "qpsolvers[highs]>=4.1",  # the highs extra does not exist before 4.1.0
+  "scikit-learn>=1.5,<2",  # first release with the covariance_eigh PCA solver
+  "scipy>=1.15",  # ks_2samp returns NaN on empty input; spectral clustering is deterministic
+  "statsmodels>=0.14.2",  # 0.14.0 imports a private numpy module
+  "threadpoolctl>=3.2",
 ]
 
 [project.optional-dependencies]
 ann = [
-  "hnswlib>=0.7.0",
+  "hnswlib>=0.8.0",
 ]
 dev = [
   "black",
@@ -48,9 +47,12 @@ dev = [
   "pytest-cov>=7.0.0",
   "pytest-profiling",
   "pytest-xdist",
-  "syrupy>=5,<6",
+  "syrupy>=5,<7",
   "tox",
   "twine",
+]
+tutorial = [
+  "pyarrow>=23.0.1",  # reads the parquet tutorial dataset in load_test_data
 ]
 
 [tool.hatch.build.targets.wheel]

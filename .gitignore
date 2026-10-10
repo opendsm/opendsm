@@ -7,7 +7,6 @@ build/
 dist/
 prof/
 venv/
-uv.lock
 
 .ipynb_checkpoints/
 

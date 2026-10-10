@@ -13,10 +13,13 @@
 #  limitations under the License.
 
 import json
+import pickle
+
 import numpy as np
 import pandas as pd
 import pytest
 
+from opendsm.eemeter.models.hourly_caltrack import segmentation as segmentation_module
 from opendsm.eemeter.models.hourly_caltrack.segmentation import (
     CalTRACKSegmentModel,
     SegmentedModel,
@@ -271,3 +274,119 @@ def test_segmented_model_serialized():
         == "fake_feature_processor"
     )
     assert json.dumps(segmented_model.json())
+
+
+@pytest.fixture
+def dmatrix_must_not_run(monkeypatch):
+    def fail(*args, **kwargs):
+        pytest.fail("a formula outside the grammar reached patsy")
+
+    monkeypatch.setattr(segmentation_module, "dmatrix", fail)
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        None,
+        "meter_value ~ C(hour_of_week) - 1",
+        "meter_value ~ C(hour_of_week) - 1 + bin_0",
+        "meter_value ~ C(hour_of_week) - 1 + bin_0_occupied + bin_0_unoccupied",
+        "meter_value ~ C(hour_of_week) + a - 1",
+        "meter_value ~ C(hour_of_week) + a- 1",
+        "meter_value ~ a + b - 1",
+    ],
+)
+def test_segment_model_accepts_linear_formulas(formula):
+    segment_model = CalTRACKSegmentModel("jan", None, formula, {})
+    assert segment_model.formula == formula
+
+
+REJECTED_FORMULAS = [
+    "meter_value ~ __import__('os').getpid()",
+    "meter_value ~ C(hour_of_week) - 1 + bin_0_occupied + open('x')",
+    "meter_value ~ a.b",
+    "meter_value ~ a[0]",
+    "meter_value ~ a * b",
+    "meter_value ~ a:b",
+    "meter_value ~ 'a'",
+    "usage ~ a",
+    "meter_value ~",
+    "",
+    42,
+    "meter_value ~ C(hour_of_week)\u00a0- 1",
+    "meter_value ~ C(hour_of_week)\n- 1",
+]
+
+
+@pytest.mark.parametrize("formula", REJECTED_FORMULAS)
+def test_segment_model_rejects_formulas_outside_the_grammar(
+    formula, dmatrix_must_not_run
+):
+    with pytest.raises(ValueError, match="formula"):
+        CalTRACKSegmentModel("jan", None, formula, {})
+
+
+@pytest.mark.parametrize("formula", REJECTED_FORMULAS)
+def test_segment_model_rejects_assignment_outside_the_grammar(
+    formula, dmatrix_must_not_run
+):
+    segment_model = CalTRACKSegmentModel(
+        "jan", None, "meter_value ~ C(hour_of_week) - 1", {}
+    )
+    with pytest.raises(ValueError, match="formula"):
+        segment_model.formula = formula
+    assert segment_model.formula == "meter_value ~ C(hour_of_week) - 1"
+
+
+def test_segment_model_from_json_rejects_formula_outside_the_grammar(
+    dmatrix_must_not_run,
+):
+    data = {
+        "segment_name": "jan",
+        "formula": "meter_value ~ __import__('os').getpid()",
+        "model_params": {},
+        "warnings": [],
+    }
+    with pytest.raises(ValueError, match="formula"):
+        CalTRACKSegmentModel.from_json(data)
+
+
+def test_segment_model_predicts_builder_formula_in_empty_environment():
+    segment_model = CalTRACKSegmentModel(
+        segment_name="segment",
+        model=None,
+        formula="meter_value ~ C(hour_of_week) - 1 + bin_0_occupied",
+        model_params={"C(hour_of_week)[1]": 1, "bin_0_occupied": 2},
+    )
+    index = pd.date_range("2017-01-01", periods=2, freq="h", tz="UTC")
+    data = pd.DataFrame({"bin_0_occupied": [1, 1], "hour_of_week": [1, 1]}, index=index)
+    prediction = segment_model.predict(data)
+    assert prediction.tolist() == [3, 3]
+
+
+def _legacy_pickle(formula):
+    """A pickle of a segment model as 1.x wrote it: formula as a plain attribute."""
+    legacy = CalTRACKSegmentModel.__new__(CalTRACKSegmentModel)
+    legacy.__dict__.update(
+        {
+            "segment_name": "jan",
+            "model": None,
+            "formula": formula,
+            "model_params": {},
+            "warnings": [],
+        }
+    )
+
+    return pickle.dumps(legacy)
+
+
+def test_segment_model_unpickles_legacy_formula_attribute():
+    restored = pickle.loads(_legacy_pickle("meter_value ~ C(hour_of_week) - 1"))
+
+    assert restored.formula == "meter_value ~ C(hour_of_week) - 1"
+    assert pickle.loads(pickle.dumps(restored)).formula == restored.formula
+
+
+def test_segment_model_rejects_legacy_pickle_outside_the_grammar(dmatrix_must_not_run):
+    with pytest.raises(ValueError, match="formula"):
+        pickle.loads(_legacy_pickle("meter_value ~ __import__('os').getpid()"))

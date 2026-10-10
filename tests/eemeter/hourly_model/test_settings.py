@@ -73,3 +73,23 @@ def test_temporal_cluster_disables_outlier_removal(settings_cls):
         f"expected outlier_removal_sigma None, got "
         f"{settings.temporal_cluster.outlier_removal_sigma}"
     )
+
+
+@pytest.mark.parametrize("settings_cls", [HourlyNonSolarSettings, HourlySolarSettings])
+def test_temporal_cluster_uses_rbf_affinity(settings_cls):
+    """Temporal clustering builds its spectral affinity with the RBF kernel."""
+    settings = settings_cls()
+
+    affinity = settings.temporal_cluster.spectral.affinity
+    message = f"expected spectral affinity 'rbf', got {affinity!r}"
+    assert affinity == "rbf", message
+
+
+@pytest.mark.parametrize("settings_cls", [HourlyNonSolarSettings, HourlySolarSettings])
+def test_temporal_cluster_appends_median_magnitude_feature(settings_cls):
+    """Temporal clustering appends the profile median as its only magnitude feature."""
+    settings = settings_cls()
+
+    features = settings.temporal_cluster.feature_transform.magnitude_features.features
+    message = f"expected magnitude features ['median'], got {features!r}"
+    assert features == ["median"], message
