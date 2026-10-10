@@ -4,6 +4,7 @@ Changelog
 Development
 -----------
 
+* Tests (`eemeter`, `common`): shared fixtures move to conftests, near-duplicate tests are parametrized (snapshot files renamed with contents unchanged), assertion-free tests assert the behaviour their names state, and synthetic hourly data is seeded.
 * Bug fix (`comparison_groups/common/data`): on the error basis computed from observed and modeled, two readings of the same meter and hour were duplicates only when their observed values matched too, so differing readings were both kept and averaged into the cell; duplicates are now keyed by meter and hour alone, keeping the smallest |error| as on every other basis.
 * `tests/comparison_groups`: the clustering output snapshots pin the cluster count and sizes only; a treatment's weights are checked as a simplex row rather than pinned, because a treatment two clusters explain about equally well splits its weight differently between BLAS builds.
 * `comparison_groups/common/data`: faster loadshape aggregation.
