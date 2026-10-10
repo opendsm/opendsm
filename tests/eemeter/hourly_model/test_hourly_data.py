@@ -629,6 +629,49 @@ class TestHourlyDataProcessing:
         assert data.df.iloc[-5:]["observed"].notna().all()
         assert (data.df.iloc[-5:]["observed"] == last_valid_value).all()
 
+    def test_to_be_interpolated_columns_fixed(self):
+        """Interpolated columns are always temperature and observed"""
+        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
+
+        data = HourlyBaselineData(df=df, is_electricity_data=True)
+
+        assert data._to_be_interpolated_columns == ["temperature", "observed"]
+
+    def test_to_be_interpolated_columns_includes_ghi_when_present(self):
+        """GHI added to the fixed interpolated columns when the column exists"""
+        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31", include_ghi=True)
+
+        data = HourlyBaselineData(df=df, is_electricity_data=True)
+
+        assert data._to_be_interpolated_columns == ["temperature", "observed", "ghi"]
+
+    def test_outputs_fixed_list(self):
+        """_outputs is the fixed list of columns plus their interpolated flags"""
+        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
+
+        data = HourlyBaselineData(df=df, is_electricity_data=True)
+
+        assert data._outputs == [
+            "temperature",
+            "observed",
+            "interpolated_temperature",
+            "interpolated_observed",
+        ]
+
+    def test_outputs_fixed_list_includes_ghi_when_present(self):
+        """_outputs includes interpolated_ghi when GHI is present"""
+        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31", include_ghi=True)
+
+        data = HourlyBaselineData(df=df, is_electricity_data=True)
+
+        assert data._outputs == [
+            "temperature",
+            "observed",
+            "interpolated_temperature",
+            "interpolated_observed",
+            "interpolated_ghi",
+        ]
+
     # ===== PV Start Date Tests =====
 
     def test_pv_start_none_defaults_to_data_start(self):

@@ -12,11 +12,8 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from .data import HourlyBaselineData, HourlyReportingData
 from .wrapper import HourlyModel
 
-__all__ = (
-    "HourlyBaselineData",
-    "HourlyReportingData",
-    "HourlyModel",
-)
+
+
+__all__ = ("HourlyModel",)

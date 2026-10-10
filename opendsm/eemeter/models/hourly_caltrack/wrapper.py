@@ -31,6 +31,12 @@ from opendsm.eemeter.models.hourly_caltrack.model import (
     fit_caltrack_hourly_model,
 )
 from opendsm.eemeter.models.hourly_caltrack.segmentation import segment_time_series
+from opendsm.eemeter.models.hourly_caltrack.data import (
+    _HourlyBaselineData,
+    _HourlyReportingData,
+)
+
+
 
 month_dict = {
     "jan": 1,
@@ -62,7 +68,13 @@ class HourlyModel:
         self.segment_type = "three_month_weighted"
         self.alpha = 0.1
 
-    def fit(self, data):
+    def fit(self, df, *, is_electricity_data):
+        if isinstance(df, (_HourlyBaselineData, _HourlyReportingData)):
+            raise TypeError("fit expects a raw DataFrame, not a data class instance.")
+
+        self._is_electricity_data = is_electricity_data
+        data = _HourlyBaselineData(df, is_electricity_data)
+
         meter_data = data.df["observed"].to_frame("value")
         temperature_data = data.df["temperature"]
 
@@ -158,9 +170,15 @@ class HourlyModel:
 
         return self
 
-    def predict(self, reporting_data):
+    def predict(self, df):
+        if isinstance(df, (_HourlyBaselineData, _HourlyReportingData)):
+            raise TypeError("predict expects a raw DataFrame, not a data class instance.")
+
         if not self.is_fit:
             raise RuntimeError("Model must be fit before predictions can be made.")
+
+        reporting_data = _HourlyReportingData(df, self._is_electricity_data)
+
         prediction_index = reporting_data.df.index
         temperature_series = reporting_data.df["temperature"]
         model_prediction = self.model.predict(prediction_index, temperature_series)
@@ -204,36 +222,59 @@ class HourlyModel:
     def to_dict(self):
         model_dict = self.model.json()
         model_dict["model"]["unc_vars"] = self._autocorr_unc_vars
+        model_dict["model"]["is_electricity_data"] = self._is_electricity_data
+
         return model_dict
 
     def to_json(self):
         return json.dumps(self.to_dict())
 
     @classmethod
-    def from_dict(cls, data):
+    def from_dict(cls, data, *, is_electricity_data=None):
+        """Rebuild a fitted model. ``is_electricity_data`` is required only for payloads
+        written before the fuel flag was stored, and rejected when the payload carries it."""
+        stored = data["model"].get("is_electricity_data")
+        if stored is not None and is_electricity_data is not None:
+            raise ValueError(
+                "This model stores 'is_electricity_data'; it cannot be supplied here."
+            )
+
+        if stored is None and is_electricity_data is None:
+            raise ValueError(
+                "This model does not store 'is_electricity_data'; supply it as a keyword argument."
+            )
+
+        if stored is None:
+            stored = is_electricity_data
+
         hourly_model = cls()
         hourly_model.model = CalTRACKHourlyModelResults.from_json(data)
         hourly_model._autocorr_unc_vars = data["model"]["unc_vars"]
         hourly_model.is_fit = True
+        hourly_model._is_electricity_data = stored
+
         return hourly_model
 
     @classmethod
-    def from_json(cls, str_data):
-        return cls.from_dict(json.loads(str_data))
+    def from_json(cls, str_data, *, is_electricity_data=None):
+        return cls.from_dict(json.loads(str_data), is_electricity_data=is_electricity_data)
 
     @classmethod
-    def from_2_0_dict(cls, data):
+    def from_2_0_dict(cls, data, *, is_electricity_data):
         """fill default metrics and uncertainty variables to allow deserializing legacy models with new wrapper"""
         monthly_unc_vars = {"mean_baseline_usage": 0, "n": 0, "n_prime": 1, "MSE": 0}
         model_dict = dict(data)
         model_dict["model"]["unc_vars"] = {
             str(month): monthly_unc_vars for month in range(1, 13)
         }
-        return cls.from_dict(model_dict)
+
+        return cls.from_dict(model_dict, is_electricity_data=is_electricity_data)
 
     @classmethod
-    def from_2_0_json(cls, str_data):
-        return cls.from_2_0_dict(json.loads(str_data))
+    def from_2_0_json(cls, str_data, *, is_electricity_data):
+        data = json.loads(str_data)
+
+        return cls.from_2_0_dict(data, is_electricity_data=is_electricity_data)
 
     def plot(
         self,

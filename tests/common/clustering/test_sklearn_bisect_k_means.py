@@ -19,6 +19,9 @@ asserts the two reasons the fork exists: the ``labels_full`` dict of every
 intermediate bisection, and the forced single-threaded determinism.
 """
 
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 
@@ -27,6 +30,17 @@ from sklearn.metrics import adjusted_rand_score
 
 from opendsm.common.clustering.algorithms.sklearn_bisect_k_means import BisectingKMeans
 
+
+
+def test_importing_opendsm_leaves_root_logger_unconfigured():
+    """Importing opendsm must not attach handlers to the root logger of its importer."""
+    result = subprocess.run(
+        [sys.executable, "-c", "import logging, opendsm; assert not logging.getLogger().handlers"],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.fixture
