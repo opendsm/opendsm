@@ -16,8 +16,9 @@ Guidelines
 * Contributions that add new required dependencies to the library will be
   given a more thorough review to ensure that those dependency additions
   1) do not pose a security risk and 2) are absolutely necessary.
-* Contributions that allow for data exfiltration by making external HTTP or TCP
-  requests will not be accepted.
+* Contributions that allow for data exfiltration will not be accepted. The
+  library sends no user data over the network, and its only request downloads
+  the test data published in the opendsm repository.
 
 Author responsibility
 ---------------------
