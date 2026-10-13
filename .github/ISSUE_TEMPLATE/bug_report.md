@@ -15,17 +15,16 @@ Bug reports must:
     >>> import opendsm
     >>> import pandas as pd
     >>> meter_data = pd.DataFrame({"start": ..., "value": ...})
-    >>> opendsm.get_baseline_data(meter_data)
-    ...
+    >>> ...  # the call that fails
     ```
 
 2. Include the full version string of opendsm, pandas, and their dependencies. You can
-  use the built-in function:
+  print them with:
 
     ```python
     >>> import opendsm
     >>> import pandas as pd
-    >>> opendsm.get_version()
+    >>> opendsm.__version__
     >>> pd.show_versions()
     ```
 3. Explain why the current behavior is wrong/not desired and what you expect instead.

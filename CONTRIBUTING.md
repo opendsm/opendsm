@@ -10,10 +10,9 @@ Guidelines
 * Write new tests and run old tests! Make sure that % test coverage does not decrease.
 * Contributions are reviewed by a maintainer before acceptance. To facilitate
   review, please make a [pull request](https://github.com/opendsm/opendsm/pulls/new)
-  and provide a description and follow the checklist in the pull request template.
-  Tests will be automatically run using GitHub Actions after a pull request is created.
-* Prefix new feature branches with `feature/` and bug fix branches with `fix/`
-  and make pull requests directly against `master`.
+  against `master` from a branch prefixed `feature/` (new features) or `fix/`
+  (bug fixes), describe the change, and follow the checklist in the pull
+  request template. CI runs the tests on every pull request.
 * Contributions that add new required dependencies to the library will be
   given a more thorough review to ensure that those dependency additions
   1) do not pose a security risk and 2) are absolutely necessary.
@@ -58,7 +57,7 @@ maintainers to be too difficult to maintain will not be accepted.
 Testing
 -------
 
-Please write unit tests for all new features, and pair each bug fix with a
+Please write tests for all new features, and pair each bug fix with a
 regression test that fails without the fix.
 
 Test coverage must not fall. The floor is `fail_under` in `pyproject.toml`,
@@ -72,12 +71,11 @@ Tests are run using the following commands (flags are passed to the py.test
 executable):
 
 ```
-docker-compose run --rm test                         # run all tests
+docker-compose run --rm test                            # run all tests
 
 # cheat sheet of variations
-docker-compose run --rm test --no-cov                # no coverage
-docker-compose run --rm test tests/test_features.py  # run a specific suite
-docker-compose run --rm test -k compute              # filter for tests with `compute` in the name
+docker-compose run --rm test tests/eemeter/daily_model  # run a specific suite
+docker-compose run --rm test -k compute                 # filter for tests with `compute` in the name
 ```
 
 Test configuration can be found in `pyproject.toml` (`[tool.pytest.ini_options]`), `tox.ini`, and `tests/conftest.py`.
@@ -97,7 +95,7 @@ License
 
 This project is licensed under [Apache 2.0](LICENSE).
 
-All source files must apply the following SPDX header:
+All source files must apply the following license header:
 
 ``` python
 
@@ -117,8 +115,10 @@ Developer Certificate of Origin
 -------------------------------
 
 This project uses the
-[Developer Certificate of Origin](https://developercertificate.org/),
-the text of which is copied below:
+[Developer Certificate of Origin](https://developercertificate.org/). Sign off
+every commit with `git commit -s`, which adds a `Signed-off-by` line with your
+name and email. The DCO check on each pull request fails when a commit lacks
+it. The text of the certificate is copied below:
 
 ```
 Developer Certificate of Origin
@@ -163,7 +163,7 @@ By making a contribution to this project, I certify that:
 Charter
 -------
 
-The charter for the open source project can be found in [CHARTER](CHARTER) and
+The charter for the open source project can be found in [CHARTER](CHARTER.md) and
 contains the following sections:
 
 1. Mission and Scope of the Project
@@ -201,5 +201,6 @@ Other resources
 - [README](README.md): basic project information shown on the PyPI project page.
 - [MAINTAINERS](MAINTAINERS.md): an ordered list of project maintainers.
 - [LICENSE](LICENSE): Apache 2.0.
-- [CHARTER](CHARTER): open source project charter.
+- [CHARTER](CHARTER.md): open source project charter.
 - [CODE_OF_CONDUCT](CODE_OF_CONDUCT.md): code of conduct for contributors.
+- [SECURITY](SECURITY.md): how to report a vulnerability.

@@ -14,4 +14,4 @@ Please review the [guidelines for contributing](../CONTRIBUTING.md) to this repo
 
 ### Description
 
-Please describe your pull request.
+\<description of pull request (suggestion: start by copying from your changelog update and elaborate if necessary.)>
