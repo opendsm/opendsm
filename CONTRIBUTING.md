@@ -31,15 +31,14 @@ maintainers to be too difficult to maintain will not be accepted.
 Testing
 -------
 
-Please write unit tests for all new features. At time of writing, this
-package has 100% test coverage. We would like to maintain that coverage level,
-because 100% coverage is easier than 99% coverage. This does not necessarily
-mean that all line are tested. For lines that are sufficiently inconvenient to
-test, we maintain 100% test coverage by adding `# pragma: no cover` comments
-after the difficult to test lines or blocks.
+Please write unit tests for all new features.
 
-This helps us stay on top of un-covered sections without sacrificing the
-convenience of 100% coverage and without being too overbearing about tests.
+Test coverage must not fall. The floor is `fail_under` in `pyproject.toml`,
+measured over the full suite with numba JIT disabled so that JIT-compiled
+functions are visible to the tracer. CI does not measure coverage, so run
+`tox -e coverage` locally before opening a pull request (the run is serial
+and memory-intensive). Lines that are impractical to test may carry a
+`# pragma: no cover` comment, with a nearby comment giving the reason.
 
 Tests are run using the following commands (flags are passed to the py.test
 executable):
@@ -136,11 +135,11 @@ By making a contribution to this project, I certify that:
 Charter
 -------
 
-The charter for the open source project can be find in [CHARTER](CHARTER) and
+The charter for the open source project can be found in [CHARTER](CHARTER) and
 contains the following sections:
 
 1. Mission and Scope of the Project
-2. Techincal Steering Committee
+2. Technical Steering Committee
 3. TSC Voting
 4. Compliance with Policies
 5. Community Assets
