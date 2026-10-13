@@ -20,6 +20,33 @@ Guidelines
 * Contributions that allow for data exfiltration by making external HTTP or TCP
   requests will not be accepted.
 
+Author responsibility
+---------------------
+
+AI tools (e.g., coding assistants and large language models) may be used for
+any part of a contribution, including code, tests, documentation, and pull
+request descriptions. Their use does not need to be disclosed, and the project
+does not ask which tools were used. The author is responsible for all of the
+contribution, however it was produced, and the rules below apply to every
+contribution in the same way.
+
+* You are responsible for everything you submit. Understand each change well
+  enough to explain it in review. Maintainers may close a pull request whose
+  author cannot, because review depends on the author answering questions
+  about the change.
+* Your `Signed-off-by` line certifies, under the Developer Certificate of
+  Origin, that you have the right to submit every part of the contribution,
+  including any part you did not write by hand.
+* Statements in a pull request description are yours. Claim only what you
+  have checked (e.g., that the suite passes on a platform or that model
+  results are unchanged), and say what you left unchecked.
+* Do not change, skip, or loosen an existing test or snapshot to make a
+  failing test pass. When a pull request changes an existing test or
+  snapshot, its description explains why.
+* Bug reports include a short, self-contained snippet that reproduces the
+  problem, as the bug report template asks. Report security problems
+  privately as [SECURITY.md](SECURITY.md) describes, never in a public issue.
+
 Contributor maintenance responsibility
 --------------------------------------
 
@@ -31,7 +58,8 @@ maintainers to be too difficult to maintain will not be accepted.
 Testing
 -------
 
-Please write unit tests for all new features.
+Please write unit tests for all new features, and pair each bug fix with a
+regression test that fails without the fix.
 
 Test coverage must not fall. The floor is `fail_under` in `pyproject.toml`,
 measured over the full suite with numba JIT disabled so that JIT-compiled
