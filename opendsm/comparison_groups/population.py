@@ -751,12 +751,21 @@ class MeterPopulation:
 
     def loadshape_data(self, basis, data_settings=None, exclude=()):
         """Build a ``common.Data`` from baseline predictions. Datetimes are made
-        tz-naive (local clock) so ``Data`` bins on local time. This population
-        owns no pool trim, so ``Data``'s own trim is disabled here.
+        tz-naive (local clock) so ``Data`` bins on local time. ``data_settings``
+        supplies the aggregation, time period, interpolation, minimum data
+        fraction, season and weekday/weekend definitions; the loadshape type is
+        ``basis``. This population owns no pool trim, so ``Data``'s own trim is
+        disabled here.
 
         Args:
+            basis: Loadshape type: ``"observed"``, ``"modeled"`` or ``"error"``.
+            data_settings: Optional ``Data_Settings`` supplying the fields above; the
+                defaults suit the population's model frequency.
             exclude: Meter ids left out of the loadshapes, compared as strings. The
                 population itself is unchanged.
+
+        Returns:
+            The ``common.Data`` built from the baseline predictions.
 
         Raises:
             ValueError: A meter has no baseline data attached.
@@ -768,11 +777,21 @@ class MeterPopulation:
         basis = _const.LoadshapeType(basis)
 
         if data_settings is None:
-            agg_type = _const.AggType.MEAN
-            time_period = _DEFAULT_TIME_PERIOD[self.model_frequency]
+            caller_settings = {
+                "agg_type": _const.AggType.MEAN,
+                "time_period": _DEFAULT_TIME_PERIOD[self.model_frequency],
+            }
         else:
-            agg_type = data_settings.agg_type
-            time_period = data_settings.time_period
+            caller_settings = data_settings.model_dump(
+                include={
+                    "agg_type",
+                    "time_period",
+                    "interpolate_missing",
+                    "min_data_pct_required",
+                    "season",
+                    "weekday_weekend",
+                }
+            )
 
         exclude = {str(mid) for mid in exclude}
         ids = [mid for mid in self._meters if str(mid) not in exclude]
@@ -780,9 +799,8 @@ class MeterPopulation:
         time_series = pd.concat(frames, ignore_index=True)
 
         settings = Data_Settings(
-            agg_type=agg_type,
+            **caller_settings,
             loadshape_type=basis,
-            time_period=time_period,
             max_pool_size=len(ids),
             seed=_LOADSHAPE_SEED,
         )
