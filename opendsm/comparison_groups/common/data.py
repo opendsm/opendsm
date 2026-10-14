@@ -278,7 +278,6 @@ class Data:
             subset=subset_columns, keep="first"
         )
 
-        # pivot the loadshape_df to have the time as columns, one column per time
         matrix = df.pivot(index="id", columns="time", values="loadshape")
         matrix = self._time_matrix(matrix, df["time"].max())
 
