@@ -223,10 +223,8 @@ def _merge_preset(preset: dict, values: dict) -> dict:
     for key, value in values.items():
         preset_value = merged.get(key)
 
-        # Only dump nested settings objects into the merge when the preset itself
-        # defines that key as a nested dict; otherwise the value carries no
-        # preset overrides to merge and must pass through untouched so its type
-        # (e.g. a BillingDataSettings instance) is preserved.
+        # dump a nested settings object only where the preset nests that key; elsewhere it
+        # passes through untouched so its type (e.g. BillingDataSettings) survives
         if isinstance(preset_value, dict):
             if isinstance(value, pydantic.BaseModel):
                 value = value.model_dump(exclude_unset=True)

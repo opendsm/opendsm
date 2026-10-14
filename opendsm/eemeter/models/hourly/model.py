@@ -1717,8 +1717,8 @@ class HourlyModel:
 
         Args:
             data (dict): The dictionary containing the model data.
-            is_electricity_data (bool): The meter fuel, required only for serialized models
-                that predate it being stored and rejected for those that carry it.
+            is_electricity_data (bool): The meter fuel, required only when the payload
+                does not carry it and rejected when it does.
 
         Returns:
             An instance of the class.
@@ -1836,8 +1836,8 @@ class HourlyModel:
 
         Args:
             str_data: The JSON string representing the object.
-            is_electricity_data (bool): The meter fuel, required only for serialized models
-                that predate it being stored and rejected for those that carry it.
+            is_electricity_data (bool): The meter fuel, required only when the payload
+                does not carry it and rejected when it does.
 
         Returns:
             An instance of the class.

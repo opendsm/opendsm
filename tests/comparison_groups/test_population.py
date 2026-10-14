@@ -608,8 +608,8 @@ def test_json_header_carries_no_window_fields(daily_meters):
 
 
 def test_from_json_rebuilds_model_payload_missing_fuel_flag(daily_meters):
-    """A model payload written before the fuel flag was stored rebuilds using the
-    population header's is_electricity_data, and the rebuilt model records that."""
+    """A model payload without the fuel flag rebuilds using the population header's
+    is_electricity_data, and the rebuilt model records that."""
     subset = _subset(daily_meters, 2)
     group = TreatmentGroup.from_fit_models(subset, model_frequency="daily")
     payload = json.loads(group.to_json())

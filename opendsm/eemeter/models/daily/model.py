@@ -453,8 +453,7 @@ class DailyModel:
         Args:
             data (dict): The dictionary containing the model data.
             is_electricity_data: Whether the fitted data was electricity usage. Required only
-                when the serialized model predates the storage of this fact, and rejected
-                otherwise.
+                when the payload does not carry it, and rejected otherwise.
 
         Returns:
             An instance of the class.
@@ -540,8 +539,7 @@ class DailyModel:
         Args:
             str_data: The JSON string representing the object.
             is_electricity_data: Whether the fitted data was electricity usage. Required only
-                when the serialized model predates the storage of this fact, and rejected
-                otherwise.
+                when the payload does not carry it, and rejected otherwise.
 
         Returns:
             An instance of the class.
