@@ -1357,6 +1357,15 @@ class TestFrameAPI:
 
         assert exc_info.value.__cause__ is not None
 
+    def test_to_dict_writes_model_choice(self, baseline):
+        hm = HourlyModel().fit(baseline, is_electricity_data=True)
+
+        assert hm.to_dict()["model_choice"] == "hourly"
+
+    def test_from_dict_rejects_another_model_class_payload(self):
+        with pytest.raises(ModelLoadError, match="'daily' model; this class loads 'hourly'"):
+            HourlyModel.from_dict({"model_choice": "daily"})
+
 
 def test_settings_deviations_property_reports_hourly_developer_tier_changes(baseline):
     model = HourlyModel(settings=HourlyNonSolarSettings(cvrmse_threshold=1.2)).fit(

@@ -388,11 +388,16 @@ class DailyModelParameters(BaseModel):
 class SerializedDailyModel(DailyModelParameters):
     """A serialized daily model payload, validated when a model is loaded from it.
 
-    `schema_version` names the payload layout and `compliance` holds the records the
-    model carried when it was written, one `OpenDSMWarning.json()` entry each.
+    `schema_version` names the payload layout, `model_choice` the model class that wrote it,
+    and `compliance` holds the records the model carried when it was written, one
+    `OpenDSMWarning.json()` entry each.
     """
 
+    # model_choice is a payload key, not a pydantic API name
+    model_config = ConfigDict(protected_namespaces=())
+
     schema_version: int
+    model_choice: str
     compliance: list[Dict[str, Any]]
 
     @field_validator("schema_version")

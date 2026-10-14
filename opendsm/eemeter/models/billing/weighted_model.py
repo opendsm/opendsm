@@ -57,6 +57,7 @@ class BillingWeightedModel(DailyModel):
     """
 
     model_frequency = ModelFrequency.BILLING
+    model_choice = "billing_weighted"
 
     _baseline_data_type = BillingBaselineData
     _reporting_data_type = BillingReportingData

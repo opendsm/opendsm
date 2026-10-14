@@ -58,6 +58,7 @@ class BillingModel(DailyModel):
     """
 
     model_frequency = ModelFrequency.BILLING
+    model_choice = "billing"
     _baseline_data_type = BillingBaselineData
     _reporting_data_type = BillingReportingData
     _data_df_name = "df"

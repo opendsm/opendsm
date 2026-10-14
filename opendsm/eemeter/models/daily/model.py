@@ -37,6 +37,7 @@ from opendsm.eemeter.common.exceptions import (
     ModelLoadError,
     NonstandardSettingsError,
 )
+from opendsm.eemeter.common.model_choice import check_model_choice
 from opendsm.eemeter.common.warnings import EEMeterWarning, nonstandard_settings_warning
 from opendsm.common.warnings import OpenDSMWarning
 from opendsm.eemeter.models.daily.base_models.full_model import (
@@ -89,6 +90,7 @@ class DailyModel:
     """
 
     model_frequency = ModelFrequency.DAILY
+    model_choice = "daily"
 
     _baseline_data_type = DailyBaselineData
     _reporting_data_type = DailyReportingData
@@ -513,9 +515,11 @@ class DailyModel:
         always carries the records the model holds when it is written.
 
         Returns:
-            Model parameters.
+            Model parameters, plus the payload keys `model_choice`, `schema_version`
+            and `compliance`.
         """
         model_dict = self.params.model_dump()
+        model_dict["model_choice"] = self.model_choice
         model_dict["schema_version"] = SCHEMA_VERSION
         model_dict["compliance"] = [entry.json() for entry in self.compliance.all]
 
@@ -544,9 +548,10 @@ class DailyModel:
         Raises:
             ValueError: If is_electricity_data is missing from both the payload and the call,
                 or given when the payload already carries it.
-            ModelLoadError: If the payload is malformed, or was written by a schema
-                version this package cannot read.
+            ModelLoadError: If the payload was written by another model class, is
+                malformed, or was written by a schema version this package cannot read.
         """
+        check_model_choice(data, cls.model_choice)
         settings = data.get("settings")
         if settings is not None:
             settings = strip_removed_sufficiency_keys(settings)
