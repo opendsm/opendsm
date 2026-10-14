@@ -18,6 +18,7 @@ from opendsm.common.const import ModelFrequency
 
 class Model(HourlyModel):
     model_frequency = ModelFrequency.HOURLY
+    model_choice = "drmeter_caltrack"
 
     def __init__(self, settings=None):
         self.segment_type = "single"

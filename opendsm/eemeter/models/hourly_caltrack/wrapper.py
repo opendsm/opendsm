@@ -26,6 +26,7 @@ from opendsm.eemeter.common.features import (
     estimate_hour_of_week_occupancy,
     fit_temperature_bins,
 )
+from opendsm.eemeter.common.model_choice import check_model_choice
 from opendsm.eemeter.models.hourly_caltrack.design_matrices import (
     create_caltrack_hourly_preliminary_design_matrix,
     create_caltrack_hourly_segmented_design_matrices,
@@ -70,6 +71,7 @@ class IntermediateModelVariables:
 
 class HourlyModel:
     model_frequency = ModelFrequency.HOURLY
+    model_choice = "hourly_caltrack"
 
     def __init__(self, settings=None):
         self.segment_type = "three_month_weighted"
@@ -226,6 +228,7 @@ class HourlyModel:
 
     def to_dict(self):
         model_dict = self.model.json()
+        model_dict["model_choice"] = self.model_choice
         model_dict["model"]["unc_vars"] = self._autocorr_unc_vars
         model_dict["model"]["is_electricity_data"] = self._is_electricity_data
 
@@ -237,7 +240,9 @@ class HourlyModel:
     @classmethod
     def from_dict(cls, data, *, is_electricity_data=None):
         """Rebuild a fitted model. ``is_electricity_data`` is required only when the payload
-        does not carry the fuel flag, and rejected when it does."""
+        does not carry the fuel flag, and rejected when it does. A payload written by another
+        model class raises ModelLoadError."""
+        check_model_choice(data, cls.model_choice)
         is_electricity_data, _ = resolve_is_electricity_data(
             data["model"].get("is_electricity_data"), is_electricity_data
         )

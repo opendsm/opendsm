@@ -573,13 +573,17 @@ class SerializeModel(BaseSettings):
 class SerializedHourlyModel(SerializeModel):
     """A serialized hourly model payload, validated when a model is loaded from it.
 
-    `schema_version` names the payload layout and `compliance` holds the records the
-    model carried when it was written, one `OpenDSMWarning.json()` entry each. The
-    settings and metrics blocks are plain mappings here; the loader rebuilds each from
-    its serialized form.
+    `schema_version` names the payload layout, `model_choice` the model class that wrote it,
+    and `compliance` holds the records the model carried when it was written, one
+    `OpenDSMWarning.json()` entry each. The settings and metrics blocks are plain mappings
+    here; the loader rebuilds each from its serialized form.
     """
 
+    # model_choice is a payload key, not a pydantic API name
+    model_config = pydantic.ConfigDict(protected_namespaces=())
+
     schema_version: int
+    model_choice: str
     compliance: list[Dict[str, Any]]
     settings: Dict[str, Any]
     baseline_metrics: Optional[Dict[str, Any]] = None

@@ -122,34 +122,74 @@ def test_model_frequency_dispatch_billing_not_daily(billing_pair):
     assert group.model_frequency == "billing"
 
 
-def _payload_meters(daily_meters, serialize):
-    """One pinned daily meter whose model is a ``to_dict``/``to_json`` payload."""
-    mid = list(daily_meters)[0]
-    meters = {
+def _payload(meters, mid, serialize="to_dict"):
+    """One meter whose model is a ``to_dict``/``to_json`` payload."""
+    payload = {
         mid: {
-            "model": getattr(daily_meters[mid]["model"], serialize)(),
-            "baseline_df": daily_meters[mid]["baseline_df"],
+            "model": getattr(meters[mid]["model"], serialize)(),
+            "baseline_df": meters[mid]["baseline_df"],
         }
     }
 
-    return meters
+    return payload
+
+
+def _untagged_payload(meters, mid):
+    """A ``to_dict`` payload in the layout written before ``model_choice``."""
+    payload = _payload(meters, mid)
+    for key in ("schema_version", "compliance", "model_choice"):
+        del payload[mid]["model"][key]
+
+    return payload
 
 
 @pytest.mark.parametrize("serialize", ["to_dict", "to_json"])
-def test_from_fit_models_requires_model_frequency_for_payloads(daily_meters, serialize):
-    payload = _payload_meters(daily_meters, serialize)
+def test_from_fit_models_infers_model_frequency_from_payload_model_choice(daily_meters, serialize):
+    mid = list(daily_meters)[0]
+
+    rebuilt = TreatmentGroup.from_fit_models(_payload(daily_meters, mid, serialize))
+
+    assert rebuilt.model_frequency == "daily"
+
+
+def test_from_fit_models_infers_billing_from_payload_model_choice(billing_pair):
+    # billing and daily payloads share one layout; model_choice tells them apart
+    mid = list(billing_pair)[0]
+
+    rebuilt = TreatmentGroup.from_fit_models(_payload(billing_pair, mid))
+
+    assert rebuilt.model_frequency == "billing"
+
+
+def test_from_fit_models_requires_model_frequency_for_an_untagged_payload(daily_meters):
+    payload = _untagged_payload(daily_meters, list(daily_meters)[0])
 
     with pytest.raises(ValueError, match="model_frequency is required"):
         TreatmentGroup.from_fit_models(payload)
 
 
-@pytest.mark.parametrize("serialize", ["to_dict", "to_json"])
-def test_from_fit_models_builds_payloads_at_the_given_model_frequency(daily_meters, serialize):
-    payload = _payload_meters(daily_meters, serialize)
+def test_from_fit_models_builds_an_untagged_payload_at_the_given_model_frequency(daily_meters):
+    payload = _untagged_payload(daily_meters, list(daily_meters)[0])
 
     rebuilt = TreatmentGroup.from_fit_models(payload, model_frequency="daily")
 
     assert rebuilt.model_frequency == "daily"
+
+
+def test_from_fit_models_rejects_payload_model_choice_mismatch(daily_meters):
+    mid = list(daily_meters)[0]
+
+    with pytest.raises(TypeError, match="does not match"):
+        TreatmentGroup.from_fit_models(_payload(daily_meters, mid), model_frequency="billing")
+
+
+def test_from_fit_models_rejects_unsupported_payload_model_choice(daily_meters):
+    mid = list(daily_meters)[0]
+    payload = _payload(daily_meters, mid)
+    payload[mid]["model"]["model_choice"] = "hourly_caltrack"
+
+    with pytest.raises(ValueError, match="not supported"):
+        TreatmentGroup.from_fit_models(payload)
 
 
 def test_from_fit_models_rejects_mismatched_declared_model_frequency(billing_pair):
