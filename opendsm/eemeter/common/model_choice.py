@@ -25,7 +25,7 @@ def check_model_choice(payload: dict, expected: str) -> None:
 
     Raises:
         ModelLoadError: If the payload's `model_choice` differs from `expected`. A payload
-            without `model_choice` predates the tag and passes.
+            without `model_choice` passes.
     """
     found = payload.get("model_choice")
     if found is not None and found != expected:
