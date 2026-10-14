@@ -444,8 +444,7 @@ class HourlyModel:
     def settings_deviations(self) -> dict:
         """Developer-tier settings that differ from this model's reference defaults.
 
-        Recomputed from the model's own settings, so it stays correct after
-        deserialization and cannot contradict the values it describes.
+        Computed from the model's settings on each read, never stored.
 
         Returns:
             A dictionary keyed by dotted field path, each entry holding the field's
