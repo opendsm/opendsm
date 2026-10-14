@@ -881,8 +881,8 @@ _SUPPLEMENTAL = {
     "supplemental_categorical_columns": ["shift"],
 }
 
-# to_dict fields not learned from the fit days: metrics computed from every baseline day, and
-# the compliance records
+# to_dict fields not learned from the fit days: metrics computed from every baseline day, the
+# meter and model facts in info, and the compliance records
 _NOT_LEARNED_FIELDS = {"baseline_metrics", "baseline_hour_metrics", "info", "compliance"}
 
 

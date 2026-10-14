@@ -121,9 +121,9 @@ class OpenDSMWarning(UserWarning):
     ) -> "OpenDSMWarning":
         """Rebuild a record from a `json()` payload, dispatching on its category.
 
-        A payload carrying neither `category` nor `severity` predates the taxonomy and is
-        rebuilt as an `EEMeterWarning` with `legacy_severity`, which the caller knows from
-        the list the entry was stored in.
+        A payload carrying neither `category` nor `severity` is rebuilt as an
+        `EEMeterWarning` with `legacy_severity`, which the caller knows from the list the
+        entry was stored in.
         """
 
         category = json_dict.get("category")
