@@ -49,8 +49,7 @@ def _billing_frame(daily_load, temperature):
 
     Each read, placed at a month start, carries the summed load for the period running to
     the next read; a closing read one month past the data marks the final period's end with
-    no value, matching the billing data convention (an extra row appended to denote the
-    period's close).
+    no value, matching the billing data convention.
     """
     days = daily_load.index
     daily_temp = temperature.resample("D").mean().reindex(days)
@@ -103,12 +102,8 @@ def _slope_from_predictions(result):
 def test_fit_recovers_generative_temperature_slope(heating_baseline):
     """The fit reproduces the generative heating slope of 1.2/HDD.
 
-    Billing fits the daily-spread frame (each day in a period repeats that period's
-    average), so daily noise (sigma 2.0) is averaged down by the ~30 days per period before
-    it reaches the regression, leaving sampling error well under a percent; the measured
-    gap (recovered slope ~1.11) instead reflects the aggregation itself, since the
-    regression sees each day's own temperature against a period-constant response. The
-    tolerance is set to roughly twice that measured gap.
+    Billing regresses a period-constant response on each day's own temperature, which
+    pulls the recovered slope to about 1.11; the tolerance is roughly twice that gap.
     """
     model, df = heating_baseline
 

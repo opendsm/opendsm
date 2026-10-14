@@ -22,9 +22,8 @@ from regression_metrics import regression_block
 
 
 
-# Each scenario's expected disqualification qualified_names by is_electricity_data,
-# read from an actual fit against the DEFAULT meter's monthly frame. An empty list
-# means the scenario is expected to stay qualified in that fuel mode.
+# Each scenario's expected disqualification qualified_names by is_electricity_data, on the
+# DEFAULT meter's monthly frame; an empty list means the scenario stays qualified.
 BILLING_SCHEDULE_SCENARIOS = {
     "offcycle_read": (
         offcycle_read,

@@ -42,10 +42,8 @@ FRAME_SCENARIOS = {
     "dst_week_gap": dst_week_gap,
 }
 
-# Disqualification names each scenario produces against the default meter,
-# read from an actual fit. Single-hour gaps and the 3-day gap stay under the
-# coverage thresholds in both fuel modes; the negative-observed check only
-# runs for gas, since electricity can legitimately net-export.
+# Disqualification names each scenario produces against the default meter; the
+# negative-observed check runs for gas only, since electricity can net-export.
 FRAME_SCENARIO_DISQUALIFICATIONS = {
     ("single_hour_gaps", True): set(),
     ("single_hour_gaps", False): set(),
