@@ -80,12 +80,9 @@ _DST_FALLBACK_DATE = pd.Timestamp("2019-11-03").date()
 # Split point for the incremental (Jan–Jun then full-year) tests.
 _MIDYEAR = pd.Timestamp("2019-07-01", tz="America/Chicago")
 
-# Variants whose treatment reads its prediction frames at float64 in both the
-# pinned batch output and the per-meter path, so equivalence holds to 1e-9
-# relative: the pinned models pass through a JSON round trip, and library
-# versions differ in their summation and t-quantile kernels in the last few
-# digits, so bit equality is not portable while anything larger would be a
-# real change.
+# Variants whose treatment prediction frames are float64 in both the snapshot and the
+# per-meter path, so equivalence holds to 1e-9 relative: the pinned models pass through a
+# JSON round trip and library summation and t-quantile kernels differ in the last digits.
 _EXACT_RTOL = 1e-9
 
 _EXACT_EQUIVALENCE_VARIANTS = (
@@ -94,9 +91,9 @@ _EXACT_EQUIVALENCE_VARIANTS = (
     "billing_imm",
 )
 
-# Absolute floor for the hourly/daily equivalence comparison, in kWh: those
-# variants round the treatment through float32 buffers in the pinned batch
-# output, and a purely relative tolerance is meaningless on a near-zero row.
+# Absolute floor for the hourly/daily equivalence comparison, in kWh: their snapshot
+# treatment values carry float32 rounding, and a relative tolerance is meaningless on a
+# near-zero row.
 _EQUIVALENCE_ATOL = 1e-6
 
 
@@ -947,10 +944,9 @@ def test_cluster_weights_renormalize_when_a_selected_cluster_has_no_columns():
 
 
 def test_column_correlations_over_a_subset_equal_the_full_pool_restriction(guard_env):
-    """The correction computes the comparison-group correlation over one meter's
-    columns rather than the whole pool. ``_column_correlations`` is per column
-    over finite pairs, so a subset computation is identical to the full-pool one
-    restricted to those columns — the per-meter restriction changes no number."""
+    """Correlations over a subset of pool columns equal the full-pool correlations
+    restricted to those columns, since ``_column_correlations`` works per column over
+    finite pairs."""
     pool = guard_env["pool"]
     _, p_ids, observed, modeled, *_ = pool._prediction_matrices("reporting")
 
@@ -1862,8 +1858,7 @@ def heterogeneous_span_results(daily_dq_env):
 
 
 def test_heterogeneous_spans_emit_each_meters_own_index(heterogeneous_span_results):
-    """Each meter's frame spans its own prediction index and nothing else: the
-    truncated meter emits 300 rows, not the 365-row union padded with NaN."""
+    """Each meter's frame spans its own prediction index: the truncated meter emits 300 rows."""
     long_result = heterogeneous_span_results["results"][heterogeneous_span_results["long_id"]]
     short_result = heterogeneous_span_results["results"][heterogeneous_span_results["short_id"]]
 
@@ -1874,10 +1869,8 @@ def test_heterogeneous_spans_emit_each_meters_own_index(heterogeneous_span_resul
 
 
 def test_heterogeneous_spans_keep_the_boundary_period_whole(heterogeneous_span_results):
-    """Under own-index semantics the truncated meter's last (partial) month is a
-    complete period over the rows it has: coverage stays 1 and its
-    ``savings_unc`` is finite. Padding to the union index would put NaN rows in
-    that month, dropping its coverage and poisoning the quadrature sum."""
+    """The truncated meter's last (partial) month is a complete period over the rows
+    it has: coverage stays 1 and its ``savings_unc`` is finite."""
     long_id = heterogeneous_span_results["long_id"]
     short_id = heterogeneous_span_results["short_id"]
 
@@ -2125,7 +2118,7 @@ def test_prior_belonging_to_another_meter_raises_before_its_periods_are_read(gua
         )
 
 
-# ── incremental hybrid semantics (slow) ──────────────────────────────────────
+# ── incremental reporting windows (slow) ─────────────────────────────────────
 
 
 def test_incremental_treatment_overlap_is_slice_invariant(daily_env, daily_data):
@@ -2435,8 +2428,7 @@ def test_dst_fallback_day_has_no_duplicate_or_missing_hours(hourly_dst_result):
 
 @pytest.fixture(scope="module")
 def equivalence_snapshot():
-    """The pinned per-meter correction and savings output the reshaped
-    per-meter API is compared against."""
+    """The pinned correction and savings output the per-meter API is checked against."""
     return load_equivalence_snapshot()
 
 
@@ -2521,9 +2513,8 @@ def test_equivalence_snapshot_coverage_matches_corrected_nan_positions(equivalen
 
 @pytest.mark.regression
 def test_equivalence_snapshot_reproduces_pinned_correction_totals(equivalence_snapshot):
-    """The artifact is real pipeline output rather than hand-authored values:
-    its daily and billing clustering variants sum to the correction totals the
-    end-to-end tests already pin over the same populations."""
+    """The snapshot's daily and billing clustering variants sum to the correction
+    totals the end-to-end tests pin over the same populations."""
     totals = {}
 
     for name in ("daily_cg_clustering", "billing_cg_clustering"):
@@ -2536,7 +2527,7 @@ def test_equivalence_snapshot_reproduces_pinned_correction_totals(equivalence_sn
     assert totals["billing_cg_clustering"] == pytest.approx(2263284.60, rel=1e-3)
 
 
-# ── correction equivalence with the pinned batch output (slow) ───────────────
+# ── correction equivalence with the pinned snapshot (slow) ───────────────────
 
 
 def _assert_values_match(actual, expected, exact, label):
@@ -2567,16 +2558,14 @@ def _assert_values_match(actual, expected, exact, label):
 
 @pytest.mark.regression
 @pytest.mark.parametrize("variant_name", VARIANT_NAMES)
-def test_per_meter_correction_reproduces_the_batch_snapshot(
+def test_per_meter_correction_reproduces_the_pinned_snapshot(
     variant_name, variant_env, equivalence_snapshot
 ):
-    """The per-meter correction reproduces the pinned output meter by meter:
-    to 1e-9 relative for the billing variants, and at float32 precision for
-    the hourly/daily ones, where the batch-pinned treatment values carry a float32
-    rounding the per-meter path's float64 prediction frames do not. The
-    hourly-pool variant is pinned from the per-meter path itself and shares
-    that tolerance, which leaves room for platform-level differences in the
-    hourly model fits."""
+    """The per-meter correction reproduces the pinned output meter by meter: to 1e-9
+    relative for the billing variants, and at float32 precision for the hourly/daily
+    ones, whose pinned treatment values carry a float32 rounding the per-meter path's
+    float64 prediction frames do not. The hourly-pool variant shares that tolerance,
+    which leaves room for platform-level differences in the hourly model fits."""
     env = variant_env(variant_name)
     pinned = equivalence_snapshot["variants"][variant_name]
     exact = variant_name in _EXACT_EQUIVALENCE_VARIANTS

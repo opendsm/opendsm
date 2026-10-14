@@ -491,15 +491,14 @@ class CorrectionResult:
     ``observed``, ``modeled``, ``modeled_unc``, ``corrected``, ``corrected_unc``,
     ``observed_unc``. ``observed_unc`` carries the treatment meter's
     observed uncertainty (0 when it carries none), threaded from the treatment
-    population so ``compute_savings`` can combine it into the savings band
-    without a separate hand-off. At hourly cadence the per-timestep model
-    uncertainty already reconstructs the ASHRAE hourly aggregate band; at
-    daily/billing cadence it is a t-scaled prediction-interval band treated as
-    sigma-like by the kernel for combination. Either way,
-    ``modeled_unc``/``corrected_unc`` quadrature-combine that per-timestep band
-    across the comparison-group meters used at each timestep, treating them as
-    independent, and are heuristic bands rather than calibrated (1 - alpha)
-    intervals.
+    population for ``compute_savings`` to combine into the savings band. At hourly
+    cadence the per-timestep model uncertainty already reconstructs the ASHRAE
+    hourly aggregate band; at daily/billing cadence it is a t-scaled
+    prediction-interval band treated as sigma-like by the kernel for combination.
+    Either way, ``modeled_unc``/``corrected_unc`` quadrature-combine that
+    per-timestep band across the comparison-group meters used at each timestep,
+    treating them as independent, and are heuristic bands rather than calibrated
+    (1 - alpha) intervals.
 
     ``cg_ids`` is the ordered list of comparison-group meter ids the correction
     used: the members that predicted over the reporting period. Passing this
@@ -709,8 +708,8 @@ def correct_reporting(
     leaves every sum. A same-or-finer comparison pool is aggregated up to the
     treatment's cadence the same way.
 
-    ``treatment`` and ``pool`` are whole populations — they hold the data, the
-    timezone and model frequency validation, and the prediction cache — while
+    ``treatment`` and ``pool`` are whole populations (they hold the data, the
+    timezone and model frequency validation, and the prediction cache), while
     ``treatment_id`` singles out the meter to correct. The comparison group is
     the raw cluster membership behind that meter's weights row, pruned to the
     pool meters that predict over the reporting period; only those columns are
@@ -731,14 +730,13 @@ def correct_reporting(
     point corrections exactly, and a billing extension also freezes the prior's
     confirmed read periods so only the trailing period can be re-drawn.
 
-    Treatment observed uncertainty never enters the correction math (that is by
-    design); it is threaded from the treatment population onto the result's
-    ``corrected`` frame as an ``observed_unc`` column (0 when the meter carries
-    none), which ``compute_savings`` reads as the default for the savings band.
+    Treatment observed uncertainty never enters the correction math; it is
+    threaded from the treatment population onto the result's ``corrected`` frame
+    as an ``observed_unc`` column (0 when the meter carries none), which
+    ``compute_savings`` reads as the default for the savings band.
 
     A pool meter whose reporting prediction raises is dropped and ledgered in
-    every call that selects it, because the population caches prediction
-    successes only.
+    every call that selects it.
 
     Per-timestep failures never raise. Where the correction kernel's mask kills a
     timestep, ``corrected`` and ``corrected_unc`` are NaN and the row is still
@@ -778,9 +776,7 @@ def correct_reporting(
             whose overlapping point corrections disagree.
 
     Returns:
-        ``CorrectionResult``. Its ``*_unc`` columns quadrature-combine the
-        per-timestep model uncertainty across the comparison group used at
-        each timestep and are heuristic bands, not calibrated intervals.
+        ``CorrectionResult``.
     """
     if settings is None:
         settings = CGCorrectionSettings()
@@ -884,10 +880,7 @@ def correct_reporting(
             pool, member_ids, ledger, "reporting_data", skip=set(p_failed)
         )
     else:
-        # the prior froze the comparison group: its members are reused as they
-        # are, with no coverage prune (data-quality enforcement still applies)
-        # and no new entrants, so past points stay reproducible while the
-        # reporting window grows
+        # the prior's members as they are: no coverage prune and no new entrants
         frozen = set(prior.cg_ids)
         membership = [(mid, label) for mid, label in membership if mid in frozen]
         member_ids = [mid for mid, _ in membership]
@@ -939,9 +932,7 @@ def correct_reporting(
     own = treatment._ensure_pred("reporting", ids=[treatment_id])[treatment_id]
     own_obs_unc = treatment._materialize_observed_unc(treatment_id, own.index)
 
-    # treatment observed uncertainty never enters the correction math (oTr_unc
-    # stays None); it is threaded onto the corrected frame's observed_unc
-    # column (oTr_unc_out) for compute_savings to read
+    # observed uncertainty stays out of the correction math; compute_savings reads oTr_unc_out
     oTr_unc = None
     cg_corr = None
     correction_periods = []

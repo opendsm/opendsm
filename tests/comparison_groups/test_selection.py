@@ -434,8 +434,7 @@ def test_coarser_pool_raises_fineness_error(daily_and_billing_meters):
 def test_finer_pool_builds_both_loadshapes_at_treatment_time_period(daily_and_billing_meters):
     """A billing (coarser) treatment against a daily (finer) pool is allowed;
     both loadshapes build at the treatment's MONTH time period, so they come
-    out the same length (the v1 bug let the daily pool default to its own,
-    finer, time period)."""
+    out the same length."""
     treatment = TreatmentGroup.from_fit_models(daily_and_billing_meters["billing"])
     pool = ComparisonPool.from_fit_models(daily_and_billing_meters["daily"])
     settings = RS_Settings(n_meters_total=len(pool.ids), n_meters_per_treatment=None)

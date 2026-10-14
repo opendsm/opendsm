@@ -119,15 +119,11 @@ def test_single_valid_read_returns_one_period():
 
 
 def test_dst_spanning_reads_have_no_spurious_boundaries():
-    """Day-length normalization is load-bearing at a read boundary coinciding
-    with a DST transition. The two reads straddling the fall-back boundary
-    (Nov 3, a 25-hour day that opens the final read) differ in rate by exactly the
-    25/24 day-length ratio: WITHOUT normalization the 25-hour day carries the same
-    raw daily energy as the preceding read and is misassigned backward across the
-    boundary, shifting the read lengths from 46/46 to 47/45. Normalization
-    recovers the constant per-read rate and keeps every boundary where it belongs.
-    The interior spring-forward day (Mar 10, 23 hours) likewise stays within its
-    read. Removing normalization makes the pinned lengths below fail."""
+    """Day-length normalization holds read boundaries at DST transitions. The reads
+    straddling the fall-back day (Nov 3, 25 hours, opening the final read) differ in rate
+    by exactly 25/24, so without normalization that day joins the preceding read and the
+    lengths shift from 46/46 to 47/45. The spring-forward day (Mar 10, 23 hours) stays
+    within its read."""
     r_post = 40.0
     r_pre = r_post * 25.0 / 24.0  # the fall-back day at read 6's start hides this jump
     specs = [(10.0, 45), (15.0, 46), (20.0, 46), (25.0, 46), (30.0, 46), (r_pre, 46), (r_post, 46)]

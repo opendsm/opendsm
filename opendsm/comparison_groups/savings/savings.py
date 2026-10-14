@@ -95,8 +95,8 @@ def _expand_read_periods(native, periods):
     over its calendar days, so calendar rollups sum whole days into buckets.
 
     A read landing inside a single bucket contributes its total exactly; a read
-    straddling a bucket boundary is pro-rated by day count into each bucket (a
-    documented approximation — the daily shape within a read is unknown).
+    straddling a bucket boundary is pro-rated by day count into each bucket (an
+    approximation: the daily shape within a read is unknown).
     Variance is spread the same way, so a period's days sum back to its read
     variance additively and a bucket fed by several reads combines those reads'
     variances in quadrature. Coverage is measured at day grain: every expanded
@@ -185,29 +185,17 @@ def compute_savings(correction, observed_unc=None, aggregation="native", season_
     and observed values are finite; uncovered timesteps leave every period sum,
     the band included, and ``coverage`` reports their share.
 
-    Every output is a SUM (total energy) at its aggregation — native, monthly,
-    seasonal, annual, total — never an average. The native cadence equals the
+    Every output is a SUM (total energy) at its aggregation (native, monthly,
+    seasonal, annual or total), never an average. The native cadence equals the
     correction cadence, so a billing treatment's native rows are its read
     periods. Calendar rollups (monthly and coarser) of a billing meter spread
     each read period's savings and variance uniformly over its calendar days
     and sum whole days into buckets: exact for a read that lands inside one
-    bucket, pro-rated by day count for a read that straddles a boundary (a
-    documented approximation). Hourly and daily rollups group native rows
-    directly. The month-length normalization of billing baseline loadshapes is
-    a selection feature only and never touches a savings number.
+    bucket, pro-rated by day count for a read that straddles a boundary (an
+    approximation). Hourly and daily rollups group native rows directly.
 
     Time roll-up sums float64; uncertainty aggregates in quadrature (variance
     sums, then a single final square root).
-
-    Whether the time roll-up is exact depends on the treatment's model frequency.
-    At hourly cadence, ``corrected_unc`` already carries the per-hour ASHRAE
-    aggregate band, so quadrature-summing it across a period reconstructs that
-    aggregate exactly. At daily/billing cadence, ``corrected_unc`` is itself
-    only a t-scaled prediction-interval band for that single read period, so a
-    period's ``savings_unc`` is a quadrature-summed PI band rather than an
-    ASHRAE aggregate share, an approximation distinct from the hourly path's
-    exact reconstruction (unifying the two constructions is future work; see
-    ``ROADMAP.md``).
 
     Args:
         correction: ``CorrectionResult`` to compute savings from.
