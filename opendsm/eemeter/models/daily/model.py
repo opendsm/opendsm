@@ -64,6 +64,7 @@ from opendsm.eemeter.models.daily.utilities.ellipsoid_test import ellipsoid_spli
 from opendsm.eemeter.models.daily.utilities.selection_criteria import selection_criteria
 from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict
 from opendsm.common.const import ModelFrequency
+from opendsm import __version__
 
 
 
@@ -739,6 +740,7 @@ class DailyModel:
                 "metrics": self.baseline_metrics.model_dump(),
                 "baseline_timezone": str(self.baseline_timezone),
                 "is_electricity_data": bool(self._is_electricity_data),
+                "version": __version__,
             },
         )
 

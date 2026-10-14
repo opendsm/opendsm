@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from opendsm import __version__
 from opendsm.eemeter.common.data_settings import BillingDataSettings
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
@@ -666,3 +667,7 @@ def test_from_dict_rejects_a_daily_payload(fitted_model):
 
     with pytest.raises(ModelLoadError, match="'daily' model; this class loads 'billing'"):
         BillingModel.from_dict(model_dict)
+
+
+def test_to_dict_records_the_opendsm_version(fitted_model):
+    assert fitted_model.to_dict()["info"]["version"] == __version__
