@@ -867,7 +867,8 @@ def test_prior_format_model_fit_metrics_disqualification_reports_model_status(
 def test_prior_format_settings_payload_drops_removed_sufficiency_keys(
     default_fitted_daily_model,
 ):
-    """A pre-PR payload carrying a pruned threshold key loads through the prior-format path."""
+    """A payload without a schema version that carries an undeclared threshold key loads
+    through the prior-format path."""
     model_dict = default_fitted_daily_model.to_dict()
     del model_dict["schema_version"]
     del model_dict["compliance"]
@@ -883,7 +884,7 @@ def test_prior_format_settings_payload_drops_removed_sufficiency_keys(
 
 
 def test_versioned_payload_drops_removed_sufficiency_keys(default_fitted_daily_model):
-    """A payload stamped with the current schema version still sheds pruned threshold keys."""
+    """A payload stamped with the current schema version also sheds undeclared threshold keys."""
     model_dict = default_fitted_daily_model.to_dict()
     sufficiency = model_dict["settings"]["data"]["sufficiency"]
     sufficiency["temperature"]["min_pct_hourly_coverage"] = 0.5
