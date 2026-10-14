@@ -655,17 +655,17 @@ def _cluster_reduce(correct_c, correct_unc_c, valid_c, mag_c, calculate_unc, set
 
 
 def model_correction_matrix(
-    oTr: np.ndarray,        # observed treatment values, shape (T,)
-    mTr: np.ndarray,        # model treatment values, shape (T,)
-    oCGr: np.ndarray,       # comparison-group observed, shape (T, M)
-    mCGr: np.ndarray,       # comparison-group model, shape (T, M)
-    oTr_unc: Optional[np.ndarray],   # (T,) or None
-    mTr_unc: Optional[np.ndarray],   # (T,) or None
-    oCGr_unc: Optional[np.ndarray],  # (T, M) or None
-    mCGr_unc: Optional[np.ndarray],  # (T, M) or None
-    CGr_corr: Optional[np.ndarray],  # per-meter correlation, shape (M,) or None
-    CG_label: np.ndarray,   # per-meter cluster label, shape (M,)
-    T_weight: np.ndarray,   # per-cluster weight, shape (K,)
+    oTr: np.ndarray,
+    mTr: np.ndarray,
+    oCGr: np.ndarray,
+    mCGr: np.ndarray,
+    oTr_unc: Optional[np.ndarray],
+    mTr_unc: Optional[np.ndarray],
+    oCGr_unc: Optional[np.ndarray],
+    mCGr_unc: Optional[np.ndarray],
+    CGr_corr: Optional[np.ndarray],
+    CG_label: np.ndarray,
+    T_weight: np.ndarray,
     settings: _settings.CGCorrectionSettings,
 ):
     """Vectorized difference-in-differences correction over a whole window.
@@ -691,13 +691,6 @@ def model_correction_matrix(
     interval. `mTrc_unc[t]` is NaN
     only when `mTr_unc[t]` is non-finite or no surviving cluster contributes a
     finite uncertainty. The global `M < 5` check is a hard error.
-
-    The per-timestep model uncertainty this kernel combines is
-    model-frequency-dependent: at hourly cadence it already reconstructs the
-    ASHRAE hourly aggregate band; at daily/billing cadence it is a t-scaled
-    prediction-interval band treated as sigma-like for the combination. The
-    `*_unc` outputs are therefore heuristic combined bands, not calibrated
-    (1 - alpha) intervals, at any cadence.
 
     Args:
         oTr, mTr: treatment observed/model, shape (T,)
@@ -729,7 +722,6 @@ def model_correction_matrix(
     method = settings.algorithm
 
     if method is None:
-        # no difference-in-differences correction applied
         mTrc = mTr.copy()
 
         if mTr_unc is not None:
@@ -807,7 +799,6 @@ def model_correction_matrix(
 
         return mTrc, mTrc_unc, mask
 
-    # per-meter unit correction, fully vectorized
     CG_diff = mCGr - oCGr
     if method == _settings.CorrectionAlgorithm.ODID:
         scale = np.ones((T, M))
@@ -888,11 +879,8 @@ def model_correction_matrix(
     cu = np.stack(cluster_uncs, axis=1)
     cw = np.asarray(comb_weights)
 
-    # per timestep, average the surviving clusters (>= 3 finite meters) with
-    # their weights renormalized over the survivors; the row is NaN only when no
-    # cluster survives or the treatment model is non-finite. A survivor whose
-    # point is itself non-finite propagates NaN into the row, as in the scalar
-    # kernel.
+    # a survivor whose point is itself non-finite propagates NaN into the row, as in the
+    # scalar kernel
     surv = ~np.stack(cluster_deg, axis=1)
     w = cw[None, :] * surv
     wsum = w.sum(axis=1)
@@ -913,10 +901,8 @@ def model_correction_matrix(
     mask[no_survivor] = False
 
     if calculate_unc:
-        # quadrature over survivors that also carry a finite uncertainty, using
-        # the survivor-renormalized point weights; a surviving cluster with a
-        # non-finite uncertainty stays in the point but drops here, spending its
-        # weight without contributing — a documented understatement of the band.
+        # a survivor with a non-finite uncertainty keeps its weight but contributes
+        # nothing, so the band understates
         unc_contrib = surv & np.isfinite(cu)
 
         with np.errstate(invalid="ignore"):

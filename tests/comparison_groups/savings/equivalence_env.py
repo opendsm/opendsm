@@ -358,11 +358,8 @@ def _read_periods(payload, tz):
 def load_equivalence_snapshot():
     """The pinned correction/savings output, per variant and treatment meter,
     with every table restored as a DataFrame (NaN preserved) and every read
-    period as a ``(start, end)`` Timestamp pair. Five variants carry the
-    batch-path pin; the hourly-pool variant is pinned from the per-meter path
-    (its ``pinned_from`` entry names the commit), because its hourly pool
-    models carry the deterministic curvature floor, for which no batch-path
-    values exist."""
+    period as a ``(start, end)`` Timestamp pair. Variants were pinned at
+    ``git_sha`` unless their ``pinned_from`` entry names another source."""
     payload = json.loads(gzip.decompress(SNAPSHOT_PATH.read_bytes()))
 
     if payload["schema_version"] != SNAPSHOT_SCHEMA_VERSION:

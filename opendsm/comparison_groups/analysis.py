@@ -45,8 +45,6 @@ class MeterAnalysis:
 
     A meter that cannot be corrected at all raises ``MeterCorrectionError``;
     individual timesteps that cannot be corrected come back as NaN rows instead.
-    Uncertainty columns downstream are the models' heuristic combined bands, not
-    calibrated intervals.
 
     Reporting coverage is judged over this meter's own reporting span against
     ``correction_settings.min_window_coverage``, the package default when no

@@ -37,9 +37,6 @@ from opendsm.eemeter.models import (
 
 
 
-# ── builders ─────────────────────────────────────────────────────────────────
-
-
 # ── fixtures ─────────────────────────────────────────────────────────────────
 
 
@@ -307,8 +304,7 @@ def test_stages_return_self_for_chaining(billing_env):
 
 
 def test_analysis_corrects_only_its_own_meter(billing_env):
-    """The per-meter API corrects exactly the treatment meter it was given, not
-    the whole treatment population."""
+    """``correct()`` emits rows for its own treatment meter only."""
     treatment_id = billing_env["treatment"].ids[1]
     analysis = _analysis(billing_env, treatment_id=treatment_id).correct()
 
