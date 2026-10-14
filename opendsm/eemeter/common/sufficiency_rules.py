@@ -109,7 +109,7 @@ def baseline_day_length(context: SufficiencyCriteria) -> list[EEMeterWarning]:
 
 @register("negative_observed_values")
 def negative_observed_values(context: SufficiencyCriteria) -> list[EEMeterWarning]:
-    # Only check for gas data (electricity can have negative values)
+    # electricity goes negative under net export
     if context.is_electricity_data:
         return []
 
@@ -133,13 +133,11 @@ def negative_observed_values(context: SufficiencyCriteria) -> list[EEMeterWarnin
 def unique_values(context: SufficiencyCriteria, col: Column) -> list[EEMeterWarning]:
     min_pct_unique = context._col_settings(col).min_pct_unique_values
 
-    # Get non-null values for the column
     values = context.data[col].dropna()
 
     if values.empty:
         return []
 
-    # Calculate percentage of unique values
     n_total = len(values)
     n_unique = values.nunique()
     unique_percentage = n_unique / n_total
@@ -342,7 +340,6 @@ def consecutive_missing_temperature_hours(
     context: SufficiencyCriteria,
 ) -> list[EEMeterWarning]:
     # TODO : Check implementation wrt Caltrack 2.2.4.1
-    # Resample to hourly by taking the first non NaN value
     hourly_data = context.data["temperature"].resample("h").first()
     mask = hourly_data.isna()
     grouped = mask.groupby((mask != mask.shift()).cumsum())

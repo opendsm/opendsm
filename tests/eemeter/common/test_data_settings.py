@@ -184,7 +184,7 @@ def toggle_paths(settings):
     ],
 )
 def test_default_rule_toggle_matrix(family, path, expected):
-    """Every rule toggle defaults to the phases the live rule set runs it in."""
+    """Every rule toggle defaults to the phases in ``DEFAULT_TOGGLES``."""
     settings = SETTINGS_BY_FAMILY[family]()
     block_name, field_name = path.split(".")
 
@@ -295,8 +295,8 @@ PRIOR_FORMAT_HOURLY_PAYLOAD = {
 }
 
 
-def test_strip_drops_every_key_the_schema_no_longer_declares():
-    """Only the thresholds still declared on each block survive the strip."""
+def test_strip_drops_every_key_the_schema_does_not_declare():
+    """Only the thresholds declared on each block survive the strip."""
     stripped = strip_removed_sufficiency_keys(PRIOR_FORMAT_HOURLY_PAYLOAD)
 
     sufficiency = stripped["data"]["sufficiency"]
@@ -329,7 +329,7 @@ def test_strip_drops_every_key_the_schema_no_longer_declares():
 
 
 def test_stripped_prior_format_payload_rebuilds_hourly_sufficiency():
-    """A payload serialized before the schema was tightened loads once stripped."""
+    """A prior-format payload carrying undeclared threshold keys loads once stripped."""
     stripped = strip_removed_sufficiency_keys(PRIOR_FORMAT_HOURLY_PAYLOAD)
 
     settings = HourlyDataSufficiencySettings(**stripped["data"]["sufficiency"])
@@ -338,7 +338,7 @@ def test_stripped_prior_format_payload_rebuilds_hourly_sufficiency():
 
 
 # ---------------------------------------------------------------------------
-# the settings schema is bound to the registry, not to a table in this file
+# settings schema against the rule registry
 # ---------------------------------------------------------------------------
 
 def _expected_toggle_paths(family):
@@ -359,12 +359,9 @@ def _expected_toggle_paths(family):
 
 @pytest.mark.parametrize("family", sorted(SETTINGS_BY_FAMILY))
 def test_settings_expose_a_toggle_for_every_registered_rule(family):
-    """Adding a rule to the registry forces every family to declare a toggle.
-
-    Derived from RULE_SPECS rather than a table here, so a rule wired into the
-    registry without a settings toggle fails instead of passing unnoticed. A
-    column the family does not carry (ghi outside hourly) is excluded, since the
-    settings object has no block to hang the toggle on.
+    """Each family declares a toggle for every registered rule it can run, read from
+    RULE_SPECS. A column the family does not carry (ghi outside hourly) is excluded, since
+    the settings object has no block to hang the toggle on.
     """
     settings = SETTINGS_BY_FAMILY[family]()
     carried_blocks = {

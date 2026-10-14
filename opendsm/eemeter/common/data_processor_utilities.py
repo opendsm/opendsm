@@ -149,8 +149,7 @@ def trim_edge_rows(df, trailing_columns):
 def clean_billing_data(data, source_interval, settings):
     """Drop off-cycle billing periods and fold estimated reads forward.
 
-    Returns the cleaned frame alongside a :any:`DataReport` of the judgments behind it; no
-    compliance entries are constructed here.
+    Returns the cleaned frame alongside a :any:`DataReport` of the judgments behind it.
     """
     # check for empty data
     if data["value"].dropna().empty:
@@ -424,7 +423,7 @@ def downsample_and_clean_daily_data(dataset, settings):
     """Downsample a sub-daily series to days, dropping days that are too sparse.
 
     Returns the daily frame alongside a :any:`DataReport` naming the dropped days and
-    their observed fractions; no compliance entries are constructed here.
+    their observed fractions.
     """
     dataset = as_freq(dataset, "D", include_coverage=True)
 

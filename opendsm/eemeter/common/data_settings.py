@@ -217,7 +217,6 @@ class TemperatureSufficiencySettings(ColumnSufficiencySettings):
     )
 
     def __init__(self, **kwargs):
-        # Define settings with defaults for temperature-specific fields
         settings = {
             'min_pct_daily_coverage': 0.9,
             'min_pct_monthly_coverage': 0.9,
@@ -475,13 +474,13 @@ _REMOVED_SUFFICIENCY_KEYS: dict[str, set[str]] = {
 
 
 def strip_removed_sufficiency_keys(settings_payload: dict) -> dict:
-    """Drop threshold keys pruned from the sufficiency schema from a prior-format settings payload.
+    """Drop the threshold keys the sufficiency schema does not declare from a prior-format
+    settings payload.
 
-    A model serialized before the sufficiency schema was tightened may carry keys that no
-    longer exist on their block: min_pct_hourly_coverage under temperature, ghi, and joint,
-    and min_pct_period_coverage under observed, ghi, and joint. Returns a new dict with
-    those keys dropped from any sufficiency block present in the payload; everything else,
-    including the input, is left untouched.
+    Those keys are min_pct_hourly_coverage under temperature, ghi and joint, and
+    min_pct_period_coverage under observed, ghi and joint. Returns a new dict with them
+    dropped from any sufficiency block present in the payload; everything else, including
+    the input, is left untouched.
     """
     data = settings_payload.get("data")
     if not isinstance(data, dict):

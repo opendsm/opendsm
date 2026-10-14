@@ -622,7 +622,7 @@ def test_high_frequency_meter_coverage_passes_on_an_empty_report():
 
 
 # ---------------------------------------------------------------------------
-# estimated_reads  (billing, advisory, new estimated_reads_merged qualified name)
+# estimated_reads  (billing, advisory, estimated_reads_merged qualified name)
 # ---------------------------------------------------------------------------
 
 def test_estimated_reads_warns_on_merged_reads():
