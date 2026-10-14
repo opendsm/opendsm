@@ -627,7 +627,7 @@ def test_from_dict_reports_the_validation_failure_that_rejected_a_payload(
 
 
 def test_prior_format_payload_loads_and_carries_its_advisory(default_fitted_daily_model):
-    """A payload without a schema version predates it and is read by the prior rules."""
+    """A payload without a schema version is read by the prior-format rules."""
     model_dict = default_fitted_daily_model.to_dict()
     del model_dict["schema_version"]
     del model_dict["compliance"]
@@ -641,7 +641,7 @@ def test_prior_format_payload_loads_and_carries_its_advisory(default_fitted_dail
 
 
 def test_prior_format_records_rebuild_from_the_info_lists(poor_fit_daily_model):
-    """Entries stored before the taxonomy carry the severity of the list they came from."""
+    """Entries without a severity take the severity of the list they came from."""
     model_dict = poor_fit_daily_model.to_dict()
     stored = model_dict.pop("compliance")
     del model_dict["schema_version"]

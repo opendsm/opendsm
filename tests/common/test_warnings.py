@@ -149,7 +149,7 @@ def test_from_json_legacy_payload_rebuilds_as_eemeter_warning_with_passed_severi
 
     legacy_payload = {
         "qualified_name": "eemeter.legacy.record",
-        "description": "Written before the taxonomy.",
+        "description": "A record without a category or severity.",
         "data": {"n": 1},
     }
 

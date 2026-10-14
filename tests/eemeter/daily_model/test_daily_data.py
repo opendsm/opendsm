@@ -471,7 +471,6 @@ def test_daily_baseline_data_with_missing_meter_data(
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
     assert len(cls.compliance.warnings) == 0
-    # assert all(warning.qualified_name in expected_warnings for warning in cls.compliance.warnings)
     assert len(cls.compliance.disqualification) == 2
     expected_disqualifications = [
         "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
@@ -503,7 +502,6 @@ def test_daily_baseline_data_with_missing_meter_data_37_days(
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
     assert len(cls.compliance.warnings) == 0
-    # assert all(warning.qualified_name in expected_warnings for warning in cls.compliance.warnings)
     assert len(cls.compliance.disqualification) == 2
     expected_disqualifications = [
         "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",

@@ -38,14 +38,14 @@ def _prior_format_member(payload: dict) -> str:
 
     Derived from `qualified_name`: `eemeter.model_fit_metrics` and
     `eemeter.settings.nonstandard` are the only non-data qualified names prior-format
-    payloads carry; every other qualified name was a data disqualification.
+    payloads carry; every other qualified name is a data disqualification.
     """
 
     return _PRIOR_FORMAT_MEMBER_BY_QUALIFIED_NAME.get(payload.get("qualified_name"), "data")
 
 
 def _prior_format_entries(info: dict) -> list[OpenDSMWarning]:
-    """Rebuild the records a payload written before `schema_version` stored in its info block.
+    """Rebuild the records a payload without `schema_version` keeps in its info block.
 
     Such a payload keeps its records in two lists whose severity is implied by the list.
     """
