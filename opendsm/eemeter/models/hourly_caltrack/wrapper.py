@@ -234,8 +234,8 @@ class HourlyModel:
 
     @classmethod
     def from_dict(cls, data, *, is_electricity_data=None):
-        """Rebuild a fitted model. ``is_electricity_data`` is required only for payloads
-        written before the fuel flag was stored, and rejected when the payload carries it."""
+        """Rebuild a fitted model. ``is_electricity_data`` is required only when the payload
+        does not carry the fuel flag, and rejected when it does."""
         stored = data["model"].get("is_electricity_data")
         if stored is not None and is_electricity_data is not None:
             raise ValueError(
