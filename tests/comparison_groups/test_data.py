@@ -593,8 +593,8 @@ def _drop_time(frame, settings, season, day_of_week, hour):
 
 @pytest.mark.parametrize("drop_times", [False, True], ids=["complete", "missing_times"])
 def test_constant_loads_keep_their_own_ids(drop_times):
-    """Regression: with several meters, interpolating missing times assigned each meter
-    another meter's loadshape. Constant loads must come back unchanged under their own id."""
+    """With several meters, each keeps its own loadshape through interpolation: constant
+    loads come back unchanged under their own id."""
     settings = _observed_settings()
     frames = []
     for offset, (meter_id, load) in enumerate([("c", 100.0), ("a", 300.0), ("b", 200.0)]):
@@ -637,7 +637,7 @@ def test_fill_does_not_borrow_across_season_boundary():
 
 def test_meter_without_a_season_is_excluded():
     """A meter with no readings in a whole season falls below the minimum-data rule and
-    is recorded in the ledger with the existing reason."""
+    is recorded in the ledger under the minimum-data reason."""
     settings = _observed_settings()
     gap = _year_frame("gap", 1.0)
     gap = gap[_season_ordinal(gap["datetime"], settings) != 1]
