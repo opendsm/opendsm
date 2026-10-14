@@ -204,15 +204,16 @@ class Data:
         return df
 
 
-    def _time_matrix(self, matrix: pd.DataFrame, n_times: int) -> pd.DataFrame:
-        """Reindex an id-indexed matrix to times 1..n_times, exclude and record the meters
+    def _time_matrix(self, matrix: pd.DataFrame, times: range) -> pd.DataFrame:
+        """Reindex an id-indexed matrix to the given times, exclude and record the meters
         short of times, and fill the rest flat when interpolating."""
         matrix = (
-            matrix.reindex(columns=range(1, int(n_times) + 1))
+            matrix.reindex(columns=times)
             .rename_axis(None, axis=1)
             .sort_index()
             .astype(float)
         )
+        n_times = len(times)
 
         if self._settings.interpolate_missing:
             min_times = n_times * self._settings.min_data_pct_required
@@ -244,7 +245,10 @@ class Data:
         df = df.set_index("id")
         df.columns = df.columns.astype(int)
 
-        matrix = self._time_matrix(df, df.columns.max())
+        # Wide columns keep the caller's numbering (0-based hour of week is common), so only
+        # the gaps inside it are added
+        times = range(int(df.columns.min()), int(df.columns.max()) + 1)
+        matrix = self._time_matrix(df, times)
 
         return matrix
 
@@ -279,7 +283,7 @@ class Data:
         )
 
         matrix = df.pivot(index="id", columns="time", values="loadshape")
-        matrix = self._time_matrix(matrix, df["time"].max())
+        matrix = self._time_matrix(matrix, range(1, int(df["time"].max()) + 1))
 
         return matrix
 

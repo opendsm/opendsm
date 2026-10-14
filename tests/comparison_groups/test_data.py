@@ -721,6 +721,20 @@ def test_wide_loadshape_missing_column_is_added_and_filled():
     assert loadshape.loc["b", 7] == 14.0
 
 
+def test_wide_loadshape_keeps_zero_based_time_columns():
+    """A 0-based hour-of-week loadshape keeps hour 0, with id as the index."""
+    hours = range(168)
+    wide = pd.DataFrame(
+        [[300.0 + h for h in hours], [100.0 + h for h in hours]],
+        index=pd.Index(["a", "b"], name="id"),
+        columns=hours,
+    )
+
+    data = Data(loadshape_df=wide)
+
+    pd.testing.assert_frame_equal(data.loadshape, wide, check_column_type=False)
+
+
 def _wide_loadshape_df():
     wide = pd.DataFrame({"id": ["a", "b"]})
     for t in range(1, 25):
