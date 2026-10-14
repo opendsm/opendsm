@@ -1780,16 +1780,10 @@ def test_supplemental_features_fit_and_predict(baseline_with_supplemental_featur
     through the hourly settings' supplemental_time_series_columns and
     supplemental_categorical_columns, are picked up as features and the fitted
     model predicts on reporting data that carries the same columns.
-
-    The drop-a-fit-feature-from-reporting -> ValueError case is already pinned
-    by test_predict_missing_fit_features for the same code path (ghi as the
-    dropped feature), so it is not duplicated here.
     """
     rng = np.random.default_rng(42)
     reporting = reporting.copy()
     reporting["custom_ts_feature"] = rng.standard_normal(len(reporting))
-    # categorical columns are one-hot encoded numerically; string labels reach
-    # the design matrix as-is and fail to cast, so the codes are supplied here
     reporting["custom_cat_feature"] = rng.integers(0, 3, len(reporting))
 
     hm = HourlyModel(

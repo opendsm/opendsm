@@ -194,7 +194,6 @@ def create_extreme_values(df, n_extreme, column="observed", seed=0):
     iqr = q3 - q1
     upper_bound = q3 + 3 * iqr
 
-    # Add values beyond upper bound
     extreme_indices = np.random.default_rng(seed).choice(len(df), n_extreme, replace=False)
     df.loc[df.index[extreme_indices], column] = upper_bound * 2
 

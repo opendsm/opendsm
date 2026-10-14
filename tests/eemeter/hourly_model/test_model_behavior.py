@@ -100,11 +100,8 @@ def test_fit_recovers_generative_temperature_slope(cooling_baseline):
     """The fit reproduces the generative response above the balance point.
 
     The hourly model exposes no single temperature coefficient, so the slope is
-    recovered by regressing predicted load on temperature over the hours above
-    the balance point. Generator noise (sigma 0.05 on a 0.15/F response over
-    thousands of hours) puts the sampling error on that regression well under a
-    percent; the tolerance is set an order of magnitude wider to cover the
-    smoothing the clustered hour-of-week fit applies to the response.
+    recovered by regressing predicted load on temperature over the hours above the
+    balance point. The tolerance covers the smoothing of the clustered hour-of-week fit.
     """
     model, df = cooling_baseline
 
