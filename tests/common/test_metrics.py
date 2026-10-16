@@ -323,6 +323,23 @@ def test_baseline_metrics_from_dict_roundtrip(realistic_baseline):
     assert restored.r_squared == pytest.approx(realistic_baseline.r_squared)
 
 
+def test_baseline_metrics_from_dict_builds_genuine_instances(realistic_baseline):
+    """The rebuilt metrics and their column metrics are real pydantic instances, which a
+    schema validating by isinstance (the hourly model's serializer) requires."""
+    restored = BaselineMetricsFromDict(realistic_baseline.model_dump())
+
+    assert type(restored) is BaselineMetrics
+    assert type(restored.observed) is ColumnMetrics
+
+
+def test_baseline_metrics_from_dict_leaves_its_input_unchanged(realistic_baseline):
+    payload = realistic_baseline.model_dump()
+
+    BaselineMetricsFromDict(payload)
+
+    assert all(isinstance(payload[k], dict) for k in ("observed", "predicted", "residuals"))
+
+
 # ---------------------------------------------------------------------------
 # ReportingMetrics — savings and ASHRAE uncertainty
 # ---------------------------------------------------------------------------

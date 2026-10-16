@@ -916,8 +916,8 @@ def test_daily_baseline_sufficient_unique_observed_passes():
     assert len(insufficient) == 0
 
 
-def test_daily_reporting_skips_unique_values_check():
-    """Reporting data is not checked for uniqueness (reporting may legitimately be constant)."""
+def test_daily_reporting_flags_unique_values_when_observed_present():
+    """Reporting data with observed present runs the uniqueness check."""
     rng = np.random.default_rng(0)
     observed = rng.choice(np.arange(5), size=365)  # heavily constant
     reporting = DailyReportingData(_daily_df(observed), is_electricity_data=True)
@@ -926,4 +926,4 @@ def test_daily_reporting_skips_unique_values_check():
         d for d in reporting.disqualification
         if "insufficient_unique_observed_values" in d.qualified_name
     ]
-    assert len(insufficient) == 0
+    assert len(insufficient) == 1
