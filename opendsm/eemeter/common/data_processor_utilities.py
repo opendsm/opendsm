@@ -328,7 +328,7 @@ def as_freq(
         resampled["coverage"] = n_coverage / n_total
 
         # TODO : hacky fix to account all occurences of last hour not being counted due to the NaN appended above.
-        # Due to above issue number of median granularity periods would end up being 1 rather than the entire 720(24 * 30), thus squashing the
+        # Due to above issue number of median-interval periods would end up being 1 rather than the entire 720(24 * 30), thus squashing the
         # reported value to 1/720th the actual. Set it back to 1 like the other usual periods. Might break if the last period is uneven.
         if resampled.coverage.iloc[-1] > 1:
             resampled.iloc[-1, resampled.columns.get_loc("coverage")] = 1
@@ -377,51 +377,39 @@ def clean_billing_daily_data(data, source_interval, warnings):
 
 
 # TODO : requires more testing
-def compute_minimum_granularity(index: pd.Series, default_granularity: Optional[str]):
+def compute_data_frequency(index: pd.Series, default_data_frequency: Optional[str]):
     if len(index) <= 1:
-        return default_granularity
+        return default_data_frequency
     # Inferred frequency returns None if frequency can't be autodetected
     index.freq = index.inferred_freq
     if index.freq is None:
-        # max_difference = day_counts(index).max()
-        # min_difference = day_counts(index).min()
         median_difference = day_counts(index).median()
-        # if max_difference == 1 and min_difference == 1:
-        #     min_granularity = 'daily'
-        # elif max_difference < 1:
-        #     min_granularity = 'hourly'
-        # elif max_difference >= 60:
-        #     min_granularity = 'billing_bimonthly'
-        # elif max_difference >= 30:
-        #     min_granularity = 'billing_monthly'
-        # else:
-        #     min_granularity = default_granularity
 
-        granularity_dict = {
+        data_frequency_dict = {
             median_difference < 1: "hourly",
             median_difference == 1: "daily",
             1 < median_difference <= 35: "billing_monthly",
             35 < median_difference <= 70: "billing_bimonthly",
         }
-        min_granularity = granularity_dict.get(True, default_granularity)
-        return min_granularity
-    # The other cases still result in granularity being unknown so this causes the frequency to be resampled to daily
+        data_frequency = data_frequency_dict.get(True, default_data_frequency)
+        return data_frequency
+    # The other cases still result in data frequency being unknown so this causes the frequency to be resampled to daily
     if isinstance(index.freq, MonthEnd) or isinstance(
         index.freq, MonthBegin
     ):  # Can be MonthEnd or MonthBegin instance
         if index.freq.n == 1:
-            min_granularity = "billing_monthly"
+            data_frequency = "billing_monthly"
         else:
-            min_granularity = "billing_bimonthly"
+            data_frequency = "billing_bimonthly"
     else:
         duration = frequency_duration(index.freq)
         if duration <= pd.Timedelta(hours=1):
-            min_granularity = "hourly"
+            data_frequency = "hourly"
         elif duration <= pd.Timedelta(days=1):
-            min_granularity = "daily"
+            data_frequency = "daily"
         elif duration <= pd.Timedelta(days=30):
-            min_granularity = "billing_monthly"
+            data_frequency = "billing_monthly"
         else:
-            min_granularity = "billing_bimonthly"
+            data_frequency = "billing_bimonthly"
 
-    return min_granularity
+    return data_frequency

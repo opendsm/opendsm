@@ -13,9 +13,12 @@
 #  limitations under the License.
 
 from opendsm.eemeter.models.hourly_caltrack import HourlyModel
+from opendsm.common.const import ModelFrequency
 
 
 class Model(HourlyModel):
+    model_frequency = ModelFrequency.HOURLY
+
     def __init__(self, settings=None):
         self.segment_type = "single"
         self.alpha = 0.1

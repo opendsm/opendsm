@@ -17,7 +17,7 @@ from typing import Optional, Union
 import numpy as np
 import pandas as pd
 
-from opendsm.eemeter.common.data_processor_utilities import compute_minimum_granularity
+from opendsm.eemeter.common.data_processor_utilities import compute_data_frequency
 from opendsm.eemeter.common.features import compute_temperature_features, merge_features
 from opendsm.eemeter.models.hourly_caltrack.usage_per_day import (
     caltrack_sufficiency_criteria,
@@ -43,11 +43,11 @@ class HourlyReportingData:
         temp = df["temperature"]
 
         # unknown for weirdly large frequencies. Anything higher frequency than hourly frequency still comes up as hourly
-        min_granularity = compute_minimum_granularity(meter.dropna().index, "unknown")
+        data_frequency = compute_data_frequency(meter.dropna().index, "unknown")
 
-        if meter.index.inferred_freq is None and min_granularity != "hourly":
+        if meter.index.inferred_freq is None and data_frequency != "hourly":
             raise ValueError(
-                f"Meter Data must be atleast hourly, but is {min_granularity}."
+                f"Meter Data must be atleast hourly, but is {data_frequency}."
             )
         else:
             # TODO : Add the high frequency check for meter data

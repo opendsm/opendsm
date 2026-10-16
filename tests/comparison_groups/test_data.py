@@ -48,11 +48,9 @@ def _treatment_time_series(comstock_hourly_all, n_ids=3):
 
 
 def test_hour_time_period_keys_present():
-    """Regression: TimePeriod.HOUR must be a valid key in the row-count and
-    granularity dicts. The dicts previously keyed the standalone hour period as
-    'hourly', mismatching the enum value 'hour', so any lookup raised KeyError."""
+    """TimePeriod.HOUR is a valid key in the row-count and data interval dicts."""
     assert _const.time_period_row_counts[_const.TimePeriod.HOUR] == 24
-    assert _const.min_granularity_per_time_period[_const.TimePeriod.HOUR] == 60
+    assert _const.max_data_interval_minutes_per_time_period[_const.TimePeriod.HOUR] == 60
 
 
 def test_time_series_ingestion_hourly(_comstock_hourly_all):

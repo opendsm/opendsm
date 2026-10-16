@@ -19,7 +19,7 @@ produce committed ``.npz`` fixtures consumed by ``test_model_correction.py``;
 NOT part of the normal test run.  ``build_fixtures`` is driven through pytest so
 it shares the suite's ComStock data loading.  The comparison-group clustering is
 derived once from hourly load shapes (a property of the meters' profiles) and
-reused across granularities; only the observed/modelled reporting-period totals
+reused across model frequencies; only the observed/modelled reporting-period totals
 differ per model.
 """
 
@@ -114,7 +114,7 @@ def build_fixtures(hourly_data, daily_data, monthly_data, n_pool=99, min_cluster
     """
     FIXTURE_DIR.mkdir(exist_ok=True)
 
-    granularity_data = {"hourly": hourly_data, "daily": daily_data, "billing": monthly_data}
+    model_frequency_data = {"hourly": hourly_data, "daily": daily_data, "billing": monthly_data}
 
     df_hb, _ = hourly_data
     all_ids = sorted(df_hb.index.get_level_values("id").unique())
@@ -127,7 +127,7 @@ def build_fixtures(hourly_data, daily_data, monthly_data, n_pool=99, min_cluster
     print(f"clusters found: {n_clusters}  weights={weight_by_cluster}")
 
     for gran, (model_cls, baseline_cls, reporting_cls) in _MODELS.items():
-        df_b, df_r = granularity_data[gran]
+        df_b, df_r = model_frequency_data[gran]
 
         treatment = _model_reporting_totals(model_cls, baseline_cls, reporting_cls, df_b, df_r, treatment_id)
         if treatment is None:

@@ -568,7 +568,7 @@ def test_generate_correction_fixtures(
     )
 
 
-# ── Real-data snapshot across granularities x correction algorithms ──────────
+# ── Real-data snapshot across model frequencies x correction algorithms ──────────
 
 _FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures"
 
@@ -586,9 +586,9 @@ _EXPECTED = {
 }
 
 
-def _load_fixture(granularity):
-    """Load committed real-data model_correction inputs for a granularity."""
-    data = np.load(_FIXTURE_DIR / f"model_correction_{granularity}.npz")
+def _load_fixture(model_frequency):
+    """Load committed real-data model_correction inputs for a model frequency."""
+    data = np.load(_FIXTURE_DIR / f"model_correction_{model_frequency}.npz")
 
     return data
 
@@ -618,34 +618,34 @@ class TestModelCorrectionRealData:
     deterministic; the pinned outputs catch drift in the correction math.
     """
 
-    GRANULARITIES = ["hourly", "daily", "billing"]
+    MODEL_FREQUENCIES = ["hourly", "daily", "billing"]
 
-    @pytest.mark.parametrize("granularity", GRANULARITIES)
+    @pytest.mark.parametrize("model_frequency", MODEL_FREQUENCIES)
     @pytest.mark.parametrize("algorithm", [CorrectionAlgorithm.ODID, CorrectionAlgorithm.PCTDID])
-    def test_corrected_value_matches_snapshot(self, granularity, algorithm):
+    def test_corrected_value_matches_snapshot(self, model_frequency, algorithm):
         """Corrected usage and uncertainty match the pinned real-data snapshot."""
-        data = _load_fixture(granularity)
+        data = _load_fixture(model_frequency)
         mTrc, mTrc_unc, _ = _run_correction(data, algorithm)
 
-        expected_mTrc, expected_unc = _EXPECTED[(granularity, algorithm)]
+        expected_mTrc, expected_unc = _EXPECTED[(model_frequency, algorithm)]
         assert mTrc == pytest.approx(expected_mTrc, rel=1e-4)
         assert mTrc_unc == pytest.approx(expected_unc, rel=1e-4)
 
-    @pytest.mark.parametrize("granularity", GRANULARITIES)
-    def test_correction_pulls_inflated_estimate_toward_observed(self, granularity):
+    @pytest.mark.parametrize("model_frequency", MODEL_FREQUENCIES)
+    def test_correction_pulls_inflated_estimate_toward_observed(self, model_frequency):
         """The DID correction moves the (over-predicting) model estimate toward
         observed: oTr < mTrc < mTr when the comparison group shares the gap."""
-        data = _load_fixture(granularity)
+        data = _load_fixture(model_frequency)
         oTr, mTr = float(data["oTr"]), float(data["mTr"])
         mTrc, _, _ = _run_correction(data, CorrectionAlgorithm.PCTDID)
 
         assert mTr > mTrc > oTr
 
-    @pytest.mark.parametrize("granularity", GRANULARITIES)
-    def test_abspct_equals_pct_for_positive_magnitudes(self, granularity):
+    @pytest.mark.parametrize("model_frequency", MODEL_FREQUENCIES)
+    def test_abspct_equals_pct_for_positive_magnitudes(self, model_frequency):
         """With positive model magnitudes the absolute-percent scale equals the
         percent scale (the |.| is a no-op)."""
-        data = _load_fixture(granularity)
+        data = _load_fixture(model_frequency)
         pct, pct_unc, _ = _run_correction(data, CorrectionAlgorithm.PCTDID)
         abspct, abspct_unc, _ = _run_correction(data, CorrectionAlgorithm.ABSPCTDID)
 
@@ -675,16 +675,16 @@ class TestModelCorrectionRealDataModelWeightedUncapped:
     """Snapshot model_correction on real ComStock-derived inputs with
     MODEL-weighted aggregation and the cap disabled (weight_cap=1.0)."""
 
-    GRANULARITIES = ["hourly", "daily", "billing"]
+    MODEL_FREQUENCIES = ["hourly", "daily", "billing"]
 
-    @pytest.mark.parametrize("granularity", GRANULARITIES)
+    @pytest.mark.parametrize("model_frequency", MODEL_FREQUENCIES)
     @pytest.mark.parametrize("algorithm", [CorrectionAlgorithm.ODID, CorrectionAlgorithm.PCTDID])
-    def test_corrected_value_matches_snapshot(self, granularity, algorithm):
+    def test_corrected_value_matches_snapshot(self, model_frequency, algorithm):
         """Corrected usage and uncertainty match the pinned real-data snapshot.
         One cluster's model-magnitude weighting drops its effective sample size
         below 2, so its uncertainty takes the uniform-weight fallback and the
         total uncertainty is finite and positive rather than NaN."""
-        data = _load_fixture(granularity)
+        data = _load_fixture(model_frequency)
         mTrc, mTrc_unc, _ = _run_correction(
             data,
             algorithm,
@@ -692,7 +692,7 @@ class TestModelCorrectionRealDataModelWeightedUncapped:
             weight_cap=1.0,
         )
 
-        expected_mTrc, expected_unc = _EXPECTED_MODEL_WEIGHTED[(granularity, algorithm)]
+        expected_mTrc, expected_unc = _EXPECTED_MODEL_WEIGHTED[(model_frequency, algorithm)]
         assert mTrc == pytest.approx(expected_mTrc, rel=1e-4)
         assert mTrc_unc == pytest.approx(expected_unc, rel=1e-4)
         assert np.isfinite(mTrc_unc) and mTrc_unc > 0
@@ -718,21 +718,21 @@ class TestModelCorrectionRealDataModelWeighted:
     """Snapshot model_correction on real ComStock-derived inputs with
     MODEL-weighted aggregation at the default weight_cap of 0.5."""
 
-    GRANULARITIES = ["hourly", "daily", "billing"]
+    MODEL_FREQUENCIES = ["hourly", "daily", "billing"]
 
-    @pytest.mark.parametrize("granularity", GRANULARITIES)
+    @pytest.mark.parametrize("model_frequency", MODEL_FREQUENCIES)
     @pytest.mark.parametrize("algorithm", [CorrectionAlgorithm.ODID, CorrectionAlgorithm.PCTDID])
-    def test_corrected_value_matches_snapshot(self, granularity, algorithm):
+    def test_corrected_value_matches_snapshot(self, model_frequency, algorithm):
         """Corrected usage and uncertainty match the pinned real-data snapshot.
         The weight cap keeps every cluster's effective sample size at or above
         2, so the point correction and uncertainty both stay on the weighted
         path (finite and positive)."""
-        data = _load_fixture(granularity)
+        data = _load_fixture(model_frequency)
         mTrc, mTrc_unc, _ = _run_correction(
             data, algorithm, weight_cluster_aggregation=WeightClusterAggChoice.MODEL
         )
 
-        expected_mTrc, expected_unc = _EXPECTED_MODEL_WEIGHTED_DEFAULT_CAP[(granularity, algorithm)]
+        expected_mTrc, expected_unc = _EXPECTED_MODEL_WEIGHTED_DEFAULT_CAP[(model_frequency, algorithm)]
         assert mTrc == pytest.approx(expected_mTrc, rel=1e-4)
         assert mTrc_unc == pytest.approx(expected_unc, rel=1e-4)
         assert np.isfinite(mTrc_unc) and mTrc_unc > 0

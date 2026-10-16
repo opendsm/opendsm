@@ -512,7 +512,7 @@ def test_fresh_instances_have_independent_result_lists():
 # reporting path: observed checks run when observed is present
 # ---------------------------------------------------------------------------
 
-_GRANULARITY_CLASSES = [
+_DATA_FREQUENCY_CLASSES = [
     (SufficiencyCriteria, DailyDataSufficiencySettings),
     (DailySufficiencyCriteria, DailyDataSufficiencySettings),
     (HourlySufficiencyCriteria, HourlyDataSufficiencySettings),
@@ -525,7 +525,7 @@ _UNIQUE_VALUES_CLASSES = [
 ]
 
 
-@pytest.mark.parametrize("cls, settings_cls", _GRANULARITY_CLASSES)
+@pytest.mark.parametrize("cls, settings_cls", _DATA_FREQUENCY_CLASSES)
 def test_reporting_flags_observed_valid_days_when_coverage_insufficient(cls, settings_cls):
     """Reporting observed below the daily-coverage floor is disqualified once observed is present."""
     df = _daily_frame()
@@ -549,7 +549,7 @@ def test_reporting_flags_unique_values_when_observed_flat(cls, settings_cls):
     assert "eemeter.sufficiency_criteria.insufficient_unique_observed_values" in _dq_names(sc)
 
 
-@pytest.mark.parametrize("cls, settings_cls", _GRANULARITY_CLASSES)
+@pytest.mark.parametrize("cls, settings_cls", _DATA_FREQUENCY_CLASSES)
 def test_reporting_skips_observed_checks_for_all_nan_observed(cls, settings_cls):
     """An all-NaN (prediction-only) reporting observed column triggers neither observed check."""
     df = _daily_frame()
@@ -570,7 +570,7 @@ def _frame_long_with_extreme_observed(n_days=400):
     return df
 
 
-@pytest.mark.parametrize("cls, settings_cls", _GRANULARITY_CLASSES)
+@pytest.mark.parametrize("cls, settings_cls", _DATA_FREQUENCY_CLASSES)
 def test_baseline_still_runs_day_length_and_extreme_values(cls, settings_cls):
     """Control: the reporting-path frame fails baseline day-length and extreme-values."""
     sc = cls(
@@ -586,7 +586,7 @@ def test_baseline_still_runs_day_length_and_extreme_values(cls, settings_cls):
     assert "eemeter.sufficiency_criteria.extreme_values_detected" in _warning_names(sc)
 
 
-@pytest.mark.parametrize("cls, settings_cls", _GRANULARITY_CLASSES)
+@pytest.mark.parametrize("cls, settings_cls", _DATA_FREQUENCY_CLASSES)
 def test_reporting_skips_day_length_and_extreme_values(cls, settings_cls):
     """A large, extreme-valued reporting frame is not disqualified by baseline-only rules."""
     sc = cls(

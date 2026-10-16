@@ -348,7 +348,7 @@ def test_reporting_metrics_savings_is_predicted_minus_observed(realistic_baselin
     """Savings equals the predicted-minus-observed sum over the reporting period."""
     reporting = realistic_baseline.df
     rm = ReportingMetrics(
-        baseline_metrics=realistic_baseline, reporting_df=reporting, data_frequency="hourly"
+        baseline_metrics=realistic_baseline, reporting_df=reporting, model_frequency="hourly"
     )
 
     expected = reporting["predicted"].sum() - reporting["observed"].sum()
@@ -361,7 +361,7 @@ def test_reporting_metrics_no_load_change_zero_savings(realistic_baseline):
     reporting = realistic_baseline.df.copy()
     reporting["observed"] = reporting["predicted"]
     rm = ReportingMetrics(
-        baseline_metrics=realistic_baseline, reporting_df=reporting, data_frequency="hourly"
+        baseline_metrics=realistic_baseline, reporting_df=reporting, model_frequency="hourly"
     )
 
     assert rm.savings == pytest.approx(0.0, abs=1e-9)
@@ -372,7 +372,7 @@ def test_reporting_metrics_t_stat_matches_basic(realistic_baseline):
     rm = ReportingMetrics(
         baseline_metrics=realistic_baseline,
         reporting_df=realistic_baseline.df,
-        data_frequency="hourly",
+        model_frequency="hourly",
         confidence_level=0.90,
         t_tail=2,
     )
@@ -388,9 +388,9 @@ def test_reporting_metrics_ashrae_frequency_factors(realistic_baseline):
     (here a single January, so M=1).
     """
     df = realistic_baseline.df
-    rm_h = ReportingMetrics(baseline_metrics=realistic_baseline, reporting_df=df, data_frequency="hourly")
-    rm_d = ReportingMetrics(baseline_metrics=realistic_baseline, reporting_df=df, data_frequency="daily")
-    rm_b = ReportingMetrics(baseline_metrics=realistic_baseline, reporting_df=df, data_frequency="billing")
+    rm_h = ReportingMetrics(baseline_metrics=realistic_baseline, reporting_df=df, model_frequency="hourly")
+    rm_d = ReportingMetrics(baseline_metrics=realistic_baseline, reporting_df=df, model_frequency="daily")
+    rm_b = ReportingMetrics(baseline_metrics=realistic_baseline, reporting_df=df, model_frequency="billing")
 
     base = rm_h.total_savings_uncertainty / 1.26
     months = 1
@@ -406,7 +406,7 @@ def test_reporting_metrics_ashrae_frequency_factors(realistic_baseline):
 def test_reporting_metrics_fsu_and_per_point_definitions(realistic_baseline):
     """FSU = uncertainty / savings and per-point unc = uncertainty / √n."""
     df = realistic_baseline.df
-    rm = ReportingMetrics(baseline_metrics=realistic_baseline, reporting_df=df, data_frequency="hourly")
+    rm = ReportingMetrics(baseline_metrics=realistic_baseline, reporting_df=df, model_frequency="hourly")
 
     assert rm.fsu == pytest.approx(rm.total_savings_uncertainty / rm.savings)
     assert rm.predicted_data_point_unc == pytest.approx(

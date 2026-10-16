@@ -48,6 +48,7 @@ from opendsm.eemeter.models.daily.utilities.settings import (
 from opendsm.eemeter.models.daily.utilities.ellipsoid_test import ellipsoid_split_filter
 from opendsm.eemeter.models.daily.utilities.selection_criteria import selection_criteria
 from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict
+from opendsm.common.const import ModelFrequency
 
 class DailyModel:
     """
@@ -70,6 +71,8 @@ class DailyModel:
         model (sklearn.pipeline.Pipeline): The final fitted model.
         id (str): The index of the meter data.
     """
+
+    model_frequency = ModelFrequency.DAILY
 
     _baseline_data_type = DailyBaselineData
     _reporting_data_type = DailyReportingData

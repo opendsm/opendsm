@@ -19,14 +19,13 @@ from pandas.tseries.offsets import Day
 
 from opendsm.eemeter.common.data_processor_utilities import (
     as_freq,
-    compute_minimum_granularity,
+    compute_data_frequency,
     frequency_duration,
 )
 
 
 
-# day_counts / remove_duplicates / as_freq are exercised in test_transform.py;
-# compute_minimum_granularity has no direct coverage.
+# day_counts, remove_duplicates and as_freq are tested in test_transform.py.
 
 @pytest.mark.parametrize(
     "freq,periods,expected",
@@ -37,34 +36,34 @@ from opendsm.eemeter.common.data_processor_utilities import (
         ("2MS", 6, "billing_bimonthly"),
     ],
 )
-def test_compute_minimum_granularity_from_regular_index(freq, periods, expected):
-    """A regularly-spaced index resolves to the matching granularity label."""
+def test_compute_minimum_data_frequency_from_regular_index(freq, periods, expected):
+    """A regularly-spaced index resolves to the matching data frequency label."""
     index = pd.date_range("2020-01-01", periods=periods, freq=freq)
 
-    assert compute_minimum_granularity(index.copy(), default_granularity="daily") == expected
+    assert compute_data_frequency(index.copy(), default_data_frequency="daily") == expected
 
 
-def test_compute_minimum_granularity_single_point_returns_default():
-    """A length-1 index has no spacing, so the default granularity is returned."""
+def test_compute_minimum_data_frequency_single_point_returns_default():
+    """A length-1 index has no spacing, so the default data frequency is returned."""
     index = pd.date_range("2020-01-01", periods=1, freq="D")
 
-    assert compute_minimum_granularity(index, default_granularity="billing_monthly") == "billing_monthly"
+    assert compute_data_frequency(index, default_data_frequency="billing_monthly") == "billing_monthly"
 
 
-def test_compute_minimum_granularity_irregular_index_uses_median_spacing():
+def test_compute_minimum_data_frequency_irregular_index_uses_median_spacing():
     """An index with no inferrable frequency falls back to the median day spacing."""
     index = pd.to_datetime(["2020-01-01", "2020-01-02", "2020-01-03", "2020-01-05"])
 
-    assert compute_minimum_granularity(index, default_granularity="daily") == "daily"
+    assert compute_data_frequency(index, default_data_frequency="daily") == "daily"
 
 
-def test_compute_minimum_granularity_irregular_monthly_spacing():
+def test_compute_minimum_data_frequency_irregular_monthly_spacing():
     """Irregular reads averaging ~monthly spacing resolve to billing_monthly."""
     index = pd.to_datetime(
         ["2020-01-01", "2020-02-03", "2020-03-01", "2020-04-05", "2020-04-28"]
     )
 
-    assert compute_minimum_granularity(index, default_granularity="daily") == "billing_monthly"
+    assert compute_data_frequency(index, default_data_frequency="daily") == "billing_monthly"
 
 
 @pytest.mark.parametrize(

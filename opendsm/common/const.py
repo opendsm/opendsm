@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import Enum, StrEnum
 
 
 default_season_def = {
@@ -70,3 +70,15 @@ class TutorialDataChoice(str, Enum):
     DAILY_TREATMENT_DATA = "daily_treatment_data".replace("_", "")
     MONTHLY_COMPARISON_GROUP_DATA = "monthly_comparison_group_data".replace("_", "")
     MONTHLY_TREATMENT_DATA = "monthly_treatment_data".replace("_", "")
+
+
+class ModelFrequency(StrEnum):
+    """
+    The resolution of the energy quantity a model predicts. It selects the savings
+    uncertainty correction: ASHRAE Guideline 14 for hourly, Sun & Baltazar for daily and
+    billing.
+    """
+
+    HOURLY = "hourly"
+    DAILY = "daily"
+    BILLING = "billing"

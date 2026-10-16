@@ -27,6 +27,7 @@ from opendsm.eemeter.models.billing.data import (
     BillingReportingData,
 )
 from opendsm.eemeter.models.daily.model import DailyModel
+from opendsm.common.const import ModelFrequency
 
 
 class BillingModel(DailyModel):
@@ -51,6 +52,8 @@ class BillingModel(DailyModel):
         model (sklearn.pipeline.Pipeline): The final fitted model.
         id (str): The index of the meter data.
     """
+
+    model_frequency = ModelFrequency.BILLING
     _baseline_data_type = BillingBaselineData
     _reporting_data_type = BillingReportingData
     _data_df_name = "df"

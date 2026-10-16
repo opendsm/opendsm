@@ -424,15 +424,15 @@ class Data:
 
         base_df = self._add_index_columns_from_datetime(base_df) # Add month / day_of_week / hour / etc columns
 
-        # Check that each id has a minimum granularity lower than requested time period, otherwise we cannot aggregate
+        # Check that each id's finest data interval is within the requested time period's maximum, otherwise we cannot aggregate
         # get minimum time interval per id
         base_df["time_diff"] = base_df.groupby("id")["datetime"].diff()
         min_time_diff_per_id = base_df.groupby("id")["time_diff"].min() / np.timedelta64(1, 'm')
 
-        # Get the ids that have a higher minimum granularity than defined
+        # Get the ids whose finest data interval exceeds that maximum
         if self._settings.time_period != 'month':
             invalid_ids = min_time_diff_per_id[
-                min_time_diff_per_id > _const.min_granularity_per_time_period[self._settings.time_period]
+                min_time_diff_per_id > _const.max_data_interval_minutes_per_time_period[self._settings.time_period]
             ].index.tolist()
 
         else:

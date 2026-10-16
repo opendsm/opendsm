@@ -56,6 +56,7 @@ from opendsm.eemeter.common.warnings import EEMeterWarning
 from opendsm.common.clustering.cluster import cluster_features
 from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict, ReportingMetrics
 from opendsm import __version__
+from opendsm.common.const import ModelFrequency
 
 
 
@@ -268,6 +269,8 @@ class HourlyModel:
         settings (dict): A dictionary of settings.
         baseline_metrics (dict): A dictionary of metrics based on input baseline data and model fit.
     """
+
+    model_frequency = ModelFrequency.HOURLY
     
     # thresholds for switching model types
     _alpha_model_threshold = 1E-5
@@ -1471,7 +1474,7 @@ class HourlyModel:
             reporting_h = ReportingMetrics(
                 baseline_metrics=bm_h,
                 reporting_df=reporting_df,
-                data_frequency="hourly",
+                model_frequency=self.model_frequency,
                 confidence_level=confidence_level,
                 t_tail=2,
             )
@@ -1508,7 +1511,7 @@ class HourlyModel:
         reporting_metrics = ReportingMetrics(
             baseline_metrics=self.baseline_metrics,
             reporting_df=df_eval[measured],
-            data_frequency="hourly",
+            model_frequency=self.model_frequency,
             confidence_level=1 - self.settings.uncertainty_alpha,
             t_tail=2,
         )

@@ -646,13 +646,6 @@ class BillingSufficiencyCriteria(SufficiencyCriteria):
     def check_sufficiency_baseline(self):
         super().check_sufficiency_baseline()
 
-        # self._check_n_days_boundary_gap("start")
-        # self._check_n_days_boundary_gap("end")
-        # if self.median_granularity == "billing_monthly":
-        #     self._check_observed_data_billing_monthly()
-        # else :
-        #     self._check_observed_data_billing_bimonthly()
-
         self._check_estimated_observed_values()
 
     def check_sufficiency_reporting(self):

@@ -108,7 +108,7 @@ time_period_row_counts = {
 }
 
 
-min_granularity_per_time_period = {
+max_data_interval_minutes_per_time_period = {
     # All the values are in minutes
     "hour": 60,
     "month": 60 * 24 * 28, # this is not used since we can have a different day per month

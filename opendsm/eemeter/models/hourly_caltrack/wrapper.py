@@ -31,6 +31,7 @@ from opendsm.eemeter.models.hourly_caltrack.model import (
     fit_caltrack_hourly_model,
 )
 from opendsm.eemeter.models.hourly_caltrack.segmentation import segment_time_series
+from opendsm.common.const import ModelFrequency
 
 month_dict = {
     "jan": 1,
@@ -58,6 +59,8 @@ class IntermediateModelVariables:
 
 
 class HourlyModel:
+    model_frequency = ModelFrequency.HOURLY
+
     def __init__(self, settings=None):
         self.segment_type = "three_month_weighted"
         self.alpha = 0.1

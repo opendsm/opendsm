@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr
 
+from opendsm.common.const import ModelFrequency
 from opendsm.common.utils import safe_divide
 from opendsm.common.stats.basic import (
     median_absolute_deviation,
@@ -1253,29 +1254,6 @@ def BaselineMetricsFromDict(input_dict: dict) -> BaselineMetrics:
     return result
 
 
-class ModelChoice(str, Enum):
-    """Data frequency choices for baseline models.
-
-    Determines the time granularity of the baseline model, which affects
-    uncertainty calculations in ASHRAE Guideline 14 methodology.
-
-    Attributes
-    ----------
-    HOURLY : str
-        Hourly data frequency.
-    HOURLYSOLAR : str
-        Hourly solar data frequency (mapped to "hourly").
-    DAILY : str
-        Daily data frequency.
-    BILLING : str
-        Billing period data frequency.
-    """
-    HOURLY = "hourly"
-    HOURLYSOLAR = "hourly"
-    DAILY = "daily"
-    BILLING = "billing"
-
-
 class ReportingMetrics(pydantic.BaseModel):
     """Reporting period metrics for energy savings calculations.
 
@@ -1283,7 +1261,8 @@ class ReportingMetrics(pydantic.BaseModel):
     for a reporting period based on baseline model metrics and reporting data.
     Follows ASHRAE Guideline 14 methodology.
     """
-    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
+    # model_frequency is a field name, not a pydantic API name
+    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True, protected_namespaces=())
 
     baseline_metrics: Union[BaselineMetrics, pydantic.BaseModel] = pydantic.Field(
         exclude=True,
@@ -1295,9 +1274,12 @@ class ReportingMetrics(pydantic.BaseModel):
         description="Reporting period dataframe with 'observed' and 'predicted' columns",
     )
 
-    data_frequency: ModelChoice = pydantic.Field(
+    model_frequency: ModelFrequency = pydantic.Field(
         exclude=False,
-        description="Data frequency of the model (hourly, daily, or billing)",
+        description=(
+            "Resolution of the energy quantity the baseline model predicts (hourly, daily or "
+            "billing), which selects the savings uncertainty correction"
+        ),
     )
 
     confidence_level: float = pydantic.Field(
@@ -1448,15 +1430,15 @@ class ReportingMetrics(pydantic.BaseModel):
         except (ZeroDivisionError, FloatingPointError, ValueError):
             return None
 
-        if self.data_frequency == "hourly":
+        if self.model_frequency == "hourly":
             # ASHRAE 14 hourly data correction factor
             s_unc = 1.26 * s_unc_base
 
-        elif self.data_frequency in ["daily", "billing"]:
+        elif self.model_frequency in ["daily", "billing"]:
             M = len(self._df.index.month.unique())
 
             # Sun & Baltazar 2013 polynomial corrections
-            if self.data_frequency == "daily":
+            if self.model_frequency == "daily":
                 coefs = [-0.00024, 0.03535, 1.00286]
             else:
                 coefs = [-0.00022, 0.03306, 0.94054]
@@ -1464,7 +1446,7 @@ class ReportingMetrics(pydantic.BaseModel):
             s_unc = np.polyval(coefs, M) * s_unc_base
 
         else:
-            raise ValueError("model_type must be 'hourly', 'daily', or 'billing'")
+            raise ValueError("model_frequency must be 'hourly', 'daily', or 'billing'")
 
         return s_unc
 

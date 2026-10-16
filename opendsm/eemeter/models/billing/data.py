@@ -23,7 +23,7 @@ from pandas.tseries.offsets import MonthBegin, MonthEnd
 from opendsm.eemeter.common.data_processor_utilities import (
     as_freq,
     clean_billing_daily_data,
-    compute_minimum_granularity,
+    compute_data_frequency,
     frequency_duration,
 )
 from opendsm.eemeter.common.features import compute_temperature_features
@@ -58,7 +58,7 @@ class _BillingData(_DailyData):
     def _compute_meter_value_df(self, df: pd.DataFrame):
         """
         Computes the meter value DataFrame by cleaning and processing the observed meter data.
-        1. The minimum granularity is computed from the non null rows. If the billing cycle is mixed between monthly and bimonthly, then the minimum granularity is bimonthly
+        1. The data frequency is computed from the non null rows. If the billing cycle is mixed between monthly and bimonthly, then the data frequency is bimonthly
         2. The meter data is cleaned and downsampled/upsampled into the correct frequency using clean_billing_daily_data()
         3. Add missing days as NaN by merging with a full year daily index.
 
@@ -85,12 +85,12 @@ class _BillingData(_DailyData):
         if end_date > meter_series_full.index.max():
             end_date = end_date - pd.Timedelta(days=1)
 
-        min_granularity = compute_minimum_granularity(
-            meter_series.index, default_granularity="billing_bimonthly"
+        data_frequency = compute_data_frequency(
+            meter_series.index, default_data_frequency="billing_bimonthly"
         )
 
         # Ensure higher frequency data is aggregated to the monthly model
-        if not min_granularity.startswith("billing"):
+        if not data_frequency.startswith("billing"):
             # MS is so that the date for Month Start
             meter_series = meter_series.resample("MS").sum(min_count=1)
             # normalize to midnight since we're picking an arbitrary day to represent period start anyway
@@ -104,14 +104,14 @@ class _BillingData(_DailyData):
                     data={},
                 )
             )
-            min_granularity = "billing_monthly"
+            data_frequency = "billing_monthly"
 
         # Adjust index to follow final nan convention--without this, final period will be short one day
         meter_series[end_date + pd.Timedelta(days=1)] = np.nan
 
         # This checks for offcycle reads. That is a disqualification if the billing cycle is less than 25 days
         meter_value_df = clean_billing_daily_data(
-            meter_series.to_frame("value"), min_granularity, self.disqualification
+            meter_series.to_frame("value"), data_frequency, self.disqualification
         )
 
         # Spread billing data to daily
