@@ -12,7 +12,10 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+import pytest
+
 from opendsm.drmeter.models.caltrack.model import Model
+from opendsm.eemeter.common.exceptions import ModelLoadError
 from opendsm.eemeter.models.hourly_caltrack import HourlyModel
 
 
@@ -24,3 +27,8 @@ def test_drmeter_model_is_single_segment_hourly_model():
     assert isinstance(model, HourlyModel)
     assert model.segment_type == "single"
     assert model.alpha == 0.1
+
+
+def test_drmeter_model_rejects_an_eemeter_caltrack_payload():
+    with pytest.raises(ModelLoadError, match="'hourly_caltrack' model; this class loads 'drmeter_caltrack'"):
+        Model.from_dict({"model_choice": "hourly_caltrack", "model": {}})

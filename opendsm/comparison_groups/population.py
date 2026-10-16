@@ -62,6 +62,8 @@ _MODEL_CLASSES = {
     for model_cls in (HourlyModel, DailyModel, BillingModel)
 }
 
+_MODEL_CHOICES = {model_cls.model_choice: model_cls for model_cls in _MODEL_CLASSES.values()}
+
 _DEFAULT_TIME_PERIOD = {
     "hourly": _const.TimePeriod.SEASONAL_HOURLY_DAY_OF_WEEK,
     "daily": _const.TimePeriod.SEASONAL_DAY_OF_WEEK,
@@ -110,6 +112,16 @@ def _model_from_payload(model_cls, payload):
         return model_cls.from_dict(payload)
 
     raise TypeError(f"Model payload must be a dict or JSON string, got {type(payload).__name__}")
+
+
+def _payload_model_choice(payload):
+    """The `model_choice` a dict or JSON model payload names, or None for an untagged one."""
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+
+    choice = payload.get("model_choice")
+
+    return choice
 
 
 def _require_frame(mid, name, value):
@@ -295,9 +307,10 @@ class MeterPopulation:
                 model's ``from_dict(payload, is_electricity_data=...)`` and pass the
                 instance. ``baseline_df`` and ``reporting_df`` are the meter's
                 dataframes; the model builds the data objects from them.
-            model_frequency: Inferred from each fitted instance's type, so optional
-                for instances, and validated against it when supplied (mismatch
-                raises ``TypeError``). Required when models are passed as payloads.
+            model_frequency: Inferred from each model: a fitted instance's type or a
+                payload's ``model_choice``. Required only for a payload without
+                ``model_choice``; when supplied it is validated against the inferred
+                value (mismatch raises ``TypeError``).
         """
         records = {}
         resolved = model_frequency
@@ -306,12 +319,29 @@ class MeterPopulation:
             model_obj = entry["model"]
 
             if isinstance(model_obj, (dict, str)):
-                if model_frequency is None:
+                choice = _payload_model_choice(model_obj)
+                if choice is None:
+                    if model_frequency is None:
+                        raise ValueError(
+                            "model_frequency is required when models are passed as dict or "
+                            "JSON payloads without a model_choice."
+                        )
+                    inferred = model_frequency
+
+                elif choice not in _MODEL_CHOICES:
                     raise ValueError(
-                        "model_frequency is required when models are passed as dict or JSON "
-                        "payloads."
+                        f"Meter {mid}: payload model_choice {choice!r} is not supported; "
+                        f"expected one of {sorted(_MODEL_CHOICES)}."
                     )
-                inferred = model_frequency
+
+                else:
+                    inferred = _MODEL_CHOICES[choice].model_frequency.value
+                    if model_frequency is not None and inferred != model_frequency:
+                        raise TypeError(
+                            f"Meter {mid}: payload model_choice {choice!r} does not match "
+                            f"requested model_frequency {model_frequency!r}."
+                        )
+
                 model = _model_from_payload(_MODEL_CLASSES[inferred], model_obj)
 
             else:

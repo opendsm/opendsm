@@ -67,6 +67,7 @@ from opendsm.eemeter.common.exceptions import (
     ModelLoadError,
     NonstandardSettingsError,
 )
+from opendsm.eemeter.common.model_choice import check_model_choice
 from opendsm.eemeter.common.warnings import EEMeterWarning, nonstandard_settings_warning
 from opendsm.common.warnings import OpenDSMWarning
 from opendsm.common.clustering.cluster import cluster_features
@@ -287,6 +288,7 @@ class HourlyModel:
     """
 
     model_frequency = ModelFrequency.HOURLY
+    model_choice = "hourly"
     
     # thresholds for switching model types
     _alpha_model_threshold = 1E-5
@@ -1768,7 +1770,8 @@ class HourlyModel:
         always carries the records the model holds when it is written.
 
         Returns:
-            Model parameters.
+            Model parameters, plus the payload keys `model_choice`, `schema_version`
+            and `compliance`.
         """
         loc_attr = "mean_" if self.settings.scaling_method == _settings.ScalingChoice.STANDARD_SCALER else "center_"
         feature_loc = getattr(self._feature_scaler, loc_attr)
@@ -1820,6 +1823,7 @@ class HourlyModel:
         )
 
         model_dict = params.model_dump()
+        model_dict["model_choice"] = self.model_choice
         model_dict["schema_version"] = self._base_settings.SCHEMA_VERSION
         model_dict["compliance"] = [entry.json() for entry in self.compliance.all]
 
@@ -1848,9 +1852,10 @@ class HourlyModel:
         Raises:
             ValueError: If is_electricity_data is supplied alongside a serialized value,
                 or omitted when the serialized model lacks one.
-            ModelLoadError: If the payload is malformed, or was written by a schema
-                version this package cannot read.
+            ModelLoadError: If the payload was written by another model class, is
+                malformed, or was written by a schema version this package cannot read.
         """
+        check_model_choice(data, cls.model_choice)
         info_data = dict(data.get("info") or {})
         prior_format_warning = None
         if "is_electricity_data" in info_data:

@@ -18,11 +18,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from opendsm import __version__
 from opendsm.eemeter.common.data_settings import BillingDataSettings
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
     DisqualifiedModelError,
     InfeasibleDataError,
+    ModelLoadError,
     NonstandardSettingsError,
 )
 from opendsm.eemeter.common.warnings import nonstandard_settings_warning
@@ -653,3 +655,19 @@ def test_predict_aggregation_on_temperature_only_frame(
     assert list(result.columns) == list(with_observed.columns)
     assert result["observed"].isna().all()
     assert result["predicted"].notna().any()
+
+
+def test_to_dict_writes_billing_model_choice(fitted_model):
+    assert fitted_model.to_dict()["model_choice"] == "billing"
+
+
+def test_from_dict_rejects_a_daily_payload(fitted_model):
+    model_dict = fitted_model.to_dict()
+    model_dict["model_choice"] = "daily"
+
+    with pytest.raises(ModelLoadError, match="'daily' model; this class loads 'billing'"):
+        BillingModel.from_dict(model_dict)
+
+
+def test_to_dict_records_the_opendsm_version(fitted_model):
+    assert fitted_model.to_dict()["info"]["version"] == __version__
