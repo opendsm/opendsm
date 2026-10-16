@@ -26,6 +26,8 @@ from sklearn.metrics import adjusted_rand_score
 from opendsm.common.clustering.settings import ClusteringSettings
 from opendsm.common.clustering.algorithms.birch import birch
 
+from .conftest import three_blobs
+
 
 
 def _bcs(lower, upper, **birch_settings):
@@ -39,35 +41,25 @@ def _bcs(lower, upper, **birch_settings):
     return cs
 
 
-def _three_blobs(n_per=30, d=5, sep=50.0, seed=0):
-    """Three well-separated blobs with ground-truth labels."""
-    rng = np.random.default_rng(seed)
-    blocks = [rng.normal(np.full(d, i * sep), 1.0, size=(n_per, d)) for i in range(3)]
-    data = np.vstack(blocks)
-    truth = np.repeat(np.arange(3), n_per)
-
-    return data, truth
-
-
 class TestBirchHappyPath:
     """Valid structure is recovered across the requested range."""
 
     def test_recovers_well_separated_blobs(self):
         """A [2,5] sweep selects k=3 and recovers the ground truth (ARI ~ 1)."""
-        data, truth = _three_blobs()
+        data, truth = three_blobs()
         result = birch(data, _bcs(2, 5))
         assert result.k == 3
         assert adjusted_rand_score(truth, result.labels) > 0.99
 
     def test_forced_k_returns_exactly_k(self):
         """Forcing k=3 on three blobs yields exactly three clusters."""
-        data, _ = _three_blobs()
+        data, _ = three_blobs()
         result = birch(data, _bcs(3, 3))
         assert len(np.unique(result.labels)) == 3
 
     def test_deterministic(self):
         """BIRCH has no seed; repeated runs are bit-identical."""
-        data, _ = _three_blobs()
+        data, _ = three_blobs()
         a = birch(data, _bcs(3, 3)).labels
         b = birch(data, _bcs(3, 3)).labels
         assert np.array_equal(a, b)
@@ -95,7 +87,7 @@ class TestBirchFailures:
 
     def test_nan_raises(self):
         """Non-finite data is rejected by the underlying distance computation."""
-        data, _ = _three_blobs()
+        data, _ = three_blobs()
         data[0, 0] = np.nan
         with pytest.raises(ValueError, match="finite"):
             birch(data, _bcs(3, 3))

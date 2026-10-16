@@ -13,19 +13,11 @@
 #  limitations under the License.
 
 import logging
-import os
 import random
 
 import numpy as np
 import pandas as pd
 import pytest
-
-
-def _total_memory_gb():
-    try:
-        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1e9
-    except (AttributeError, ValueError):
-        return float("inf")
 
 from opendsm.comparison_groups.individual_meter_matching.settings import Settings
 from opendsm.comparison_groups.individual_meter_matching.distance_calc_selection import (
@@ -142,19 +134,17 @@ def test_distance_match_duplicates_forbidden():
     assert not comparison_group["duplicated"].any()
 
 
-@pytest.mark.skipif(
-    _total_memory_gb() < 12,
-    reason="Needs >12 GB RAM; large allocations OOM-kill the process on smaller machines",
-)
-def test_distance_match_large_treatments():
+def test_chunked_pool_matches_every_treatment_once():
+    """A pool larger than one chunk is matched across chunks: every treatment
+    gets its one match and, with duplicates disallowed, no pool meter repeats."""
     random.seed(1)
 
-    n_treatment = 10000
-    n_pool = 20000
+    n_treatment = 200
+    n_pool = 400
     selection_method = "minimize_meter_distance"
     allow_duplicate_matches = False
     n_matches_per_treatment = 1
-    n_pool_meters_per_chunk = 5000
+    n_pool_meters_per_chunk = 100
 
     treatment_group = generate_group(n_treatment, make_random=True)
     comparison_pool = generate_group(n_pool, make_random=True, id_prefix="c")
@@ -171,12 +161,14 @@ def test_distance_match_large_treatments():
         treatment_group=treatment_group,
         comparison_pool=comparison_pool
     )
-    assert not comparison_group.empty
+
+    assert set(comparison_group["treatment"]) == set(treatment_group.index)
+    assert len(comparison_group) == n_treatment
+    assert comparison_group["id"].is_unique
+    assert not comparison_group["duplicated"].any()
 
 
 def test_distance_duplicate_best_match():
-    n_treatment = 2
-    n_pool = 2
     selection_method = "minimize_meter_distance"
     allow_duplicate_matches = False
     n_matches_per_treatment = 1

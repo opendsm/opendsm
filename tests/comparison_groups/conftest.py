@@ -12,6 +12,8 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+import pathlib
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -19,6 +21,9 @@ import pytest
 from opendsm.comparison_groups.common import Data, Data_Settings
 from opendsm.comparison_groups.common import const as _const
 
+
+
+_SAVINGS_FIXTURE_DIR = pathlib.Path(__file__).parent / "savings" / "fixtures"
 
 
 def _hour_loadshape_data(df_baseline, meter_ids):
@@ -31,6 +36,18 @@ def _hour_loadshape_data(df_baseline, meter_ids):
     data = Data(time_series_df=time_series, settings=settings)
 
     return data
+
+
+@pytest.fixture(scope="session")
+def model_correction_inputs():
+    """Committed single-timestep real-ComStock ``model_correction`` inputs by
+    model frequency, loaded once."""
+    inputs = {
+        model_frequency: np.load(_SAVINGS_FIXTURE_DIR / f"model_correction_{model_frequency}.npz")
+        for model_frequency in ("hourly", "daily", "billing")
+    }
+
+    return inputs
 
 
 @pytest.fixture(scope="session")

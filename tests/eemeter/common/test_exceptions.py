@@ -12,41 +12,50 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+from opendsm.eemeter.common import exceptions
 from opendsm.eemeter.common.exceptions import (
     EEMeterError,
     NoBaselineDataError,
     NoReportingDataError,
     MissingModelParameterError,
     UnrecognizedModelTypeError,
+    DataSufficiencyError,
+    DisqualifiedModelError,
 )
 
 import pytest
 
 
-def test_eemeter_error():
-    with pytest.raises(EEMeterError):
+
+SUBCLASSES = [
+    NoBaselineDataError,
+    NoReportingDataError,
+    MissingModelParameterError,
+    UnrecognizedModelTypeError,
+    DataSufficiencyError,
+    DisqualifiedModelError,
+]
+
+
+def test_eemeter_error_is_catchable_as_exception():
+    with pytest.raises(Exception):
         raise EEMeterError
 
 
-def test_no_baseline_data_error():
-    with pytest.raises(NoBaselineDataError):
-        raise NoBaselineDataError
-    assert isinstance(NoBaselineDataError(), EEMeterError)
+def test_every_exported_error_is_covered():
+    exported = set(exceptions.__all__)
+    covered = {EEMeterError.__name__} | {cls.__name__ for cls in SUBCLASSES}
+
+    assert exported == covered, f"uncovered exports: {sorted(exported - covered)}"
 
 
-def test_no_reporting_data_error():
-    with pytest.raises(NoReportingDataError):
-        raise NoReportingDataError
-    assert isinstance(NoReportingDataError(), EEMeterError)
+@pytest.mark.parametrize("error_cls", SUBCLASSES, ids=lambda cls: cls.__name__)
+def test_subclass_is_catchable_as_eemeter_error(error_cls):
+    with pytest.raises(EEMeterError):
+        raise error_cls
 
 
-def test_missing_model_parameter_error():
-    with pytest.raises(MissingModelParameterError):
-        raise MissingModelParameterError
-    assert isinstance(MissingModelParameterError(), EEMeterError)
-
-
-def test_unrecognized_model_type_error():
-    with pytest.raises(UnrecognizedModelTypeError):
-        raise UnrecognizedModelTypeError
-    assert isinstance(UnrecognizedModelTypeError(), EEMeterError)
+@pytest.mark.parametrize("error_cls", SUBCLASSES, ids=lambda cls: cls.__name__)
+def test_subclass_raises_without_arguments(error_cls):
+    with pytest.raises(error_cls):
+        raise error_cls

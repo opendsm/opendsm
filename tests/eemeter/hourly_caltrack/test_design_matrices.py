@@ -27,6 +27,7 @@ from opendsm.eemeter.common.features import (
 from opendsm.eemeter.models.hourly_caltrack.segmentation import segment_time_series
 
 
+
 def _meter_temp(df):
     """Return (meter_df with 'value' column, temperature series) from a comstock baseline DataFrame."""
     meter = df[["observed"]].rename(columns={"observed": "value"}).copy()
@@ -103,25 +104,31 @@ def preliminary_hourly_design_matrix(comstock_hourly):
 
 @pytest.fixture
 def segmentation(preliminary_hourly_design_matrix):
-    return segment_time_series(
+    segments = segment_time_series(
         preliminary_hourly_design_matrix.index, "three_month_weighted"
     )
+
+    return segments
 
 
 @pytest.fixture
 def occupancy_lookup(preliminary_hourly_design_matrix, segmentation):
-    return estimate_hour_of_week_occupancy(
+    occupancy = estimate_hour_of_week_occupancy(
         preliminary_hourly_design_matrix, segmentation=segmentation
     )
+
+    return occupancy
 
 
 @pytest.fixture
 def temperature_bins(preliminary_hourly_design_matrix, segmentation, occupancy_lookup):
-    return fit_temperature_bins(
+    bins = fit_temperature_bins(
         preliminary_hourly_design_matrix,
         segmentation=segmentation,
         occupancy_lookup=occupancy_lookup,
     )
+
+    return bins
 
 
 def test_create_caltrack_hourly_segmented_design_matrices(
@@ -161,4 +168,9 @@ def test_create_caltrack_billing_design_matrix_partial_empty_temp(comstock_month
     meter = meter.dropna()
     temperature = df_hourly["temperature"]
     design_matrix = create_caltrack_billing_design_matrix(meter[:10], temperature[:200])
-    assert design_matrix is not None
+    assert design_matrix.shape == (274, 6)
+
+    temperature_columns = ["temperature_mean", "temperature_not_null", "temperature_null"]
+    is_temp_nan = design_matrix[temperature_columns].isna().any(axis=1)
+    # only the first 9 days fall within the 200 hours of supplied temperature data
+    assert is_temp_nan.tolist() == [False] * 9 + [True] * 265
