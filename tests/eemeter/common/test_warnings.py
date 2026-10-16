@@ -14,7 +14,10 @@
 
 import json
 
+import pytest
+
 from opendsm.common.base_settings import BaseSettings, CustomField
+from opendsm.common.warnings import OpenDSMWarning
 from opendsm.eemeter.common.warnings import EEMeterWarning, nonstandard_settings_warning
 
 
@@ -27,17 +30,47 @@ class _DummySettings(BaseSettings):
 
 def test_eemeter_warning():
     eemeter_warning = EEMeterWarning(
-        qualified_name="qualified_name", description="description", data={}
+        qualified_name="qualified_name",
+        description="description",
+        severity="advisory",
+        data={},
     )
     assert eemeter_warning.qualified_name == "qualified_name"
     assert eemeter_warning.description == "description"
+    assert eemeter_warning.severity == "advisory"
+    assert eemeter_warning.member is None
     assert eemeter_warning.data == {}
-    assert str(eemeter_warning).startswith("EEMeterWarning")
+    assert repr(eemeter_warning) == "EEMeterWarning(qualified_name)"
     assert eemeter_warning.json() == {
-        "data": {},
-        "description": "description",
+        "category": "EEMeterWarning",
+        "severity": "advisory",
+        "member": None,
         "qualified_name": "qualified_name",
+        "description": "description",
+        "data": {},
     }
+
+
+def test_eemeter_warning_is_an_opendsm_warning_category():
+    eemeter_warning = EEMeterWarning(
+        qualified_name="qualified_name",
+        description="description",
+        severity="advisory",
+    )
+
+    assert isinstance(eemeter_warning, OpenDSMWarning)
+    assert isinstance(eemeter_warning, UserWarning)
+
+
+def test_eemeter_warning_emits_on_the_warnings_channel():
+    eemeter_warning = EEMeterWarning(
+        qualified_name="qualified_name",
+        description="description",
+        severity="advisory",
+    )
+
+    with pytest.warns(EEMeterWarning, match="qualified_name: description"):
+        eemeter_warning.warn()
 
 
 def test_nonstandard_settings_warning_returns_none_for_identical_settings():
@@ -54,6 +87,8 @@ def test_nonstandard_settings_warning_reports_developer_tier_deviation():
     warning = nonstandard_settings_warning(settings, reference)
 
     assert warning.qualified_name == "eemeter.settings.nonstandard"
+    assert warning.severity == "disqualified"
+    assert warning.member == "settings"
     assert warning.data["deviations"] == {
         "developer_value": {"value": 3.0, "default": 1.0},
     }

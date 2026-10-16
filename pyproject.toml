@@ -101,6 +101,7 @@ filterwarnings = [
   "default:`BaseEstimator._validate_data` is deprecated in 1.6",
   # coverage on Python <3.12 can't use the sysmon core and warns; harmless fallback
   "ignore:Can't use core=sysmon",
+  "ignore::opendsm.OpenDSMWarning",
 ]
 
 [tool.coverage.run]

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import warnings
 from io import StringIO
 
 import numpy as np
@@ -25,9 +24,14 @@ import pandas as pd
 from opendsm.comparison_groups import exclusions
 from opendsm.comparison_groups.common import Data, Data_Settings
 from opendsm.comparison_groups.common import const as _const
+from opendsm.comparison_groups.warnings import ComparisonGroupWarning
+from opendsm.eemeter.common.compliance import normalize_enforce_compliance
 from opendsm.eemeter.common.exceptions import (
+    ComplianceError,
     DataSufficiencyError,
     DisqualifiedModelError,
+    ModelFitError,
+    NonstandardSettingsError,
 )
 from opendsm.eemeter.models import (
     BillingModel,
@@ -70,6 +74,20 @@ _INPUT_COLS = {
     "daily": ("temperature", "observed"),
     "billing": ("temperature", "observed"),
 }
+
+
+def _fit_failure_origin(exc) -> str:
+    """The ledger origin naming the part of the fit a failure came from."""
+    if isinstance(exc, DataSufficiencyError):
+        return "baseline_data"
+
+    if isinstance(exc, NonstandardSettingsError):
+        return "settings"
+
+    if isinstance(exc, (DisqualifiedModelError, ModelFitError)):
+        return "model"
+
+    raise TypeError(f"Unrecognized fit failure {type(exc).__name__}")
 
 
 def _model_frequency_of_model(model) -> str:
@@ -229,6 +247,10 @@ class MeterPopulation:
 
     Uncertainty columns (``modeled_unc``) are the models' t-scaled ASHRAE-style
     bands, not calibrated 1-sigma intervals.
+
+    ``enforce_compliance`` is the caller's policy, kept verbatim and handed to
+    every prediction the population makes, so a population built on relaxed
+    enforcement keeps predicting on the meters it admitted.
     """
 
     _role = "population"
@@ -238,6 +260,7 @@ class MeterPopulation:
         meters,
         model_frequency,
         features=None,
+        enforce_compliance=True,
     ):
         if not meters:
             raise ValueError("A population must contain at least one meter.")
@@ -249,6 +272,7 @@ class MeterPopulation:
 
         self.model_frequency = model_frequency
         self._meters = {str(k): v for k, v in meters.items()}
+        self.enforce_compliance = enforce_compliance
         self.features = self._validate_features(features)
         self._exclusions = exclusions.empty_ledger()
         self._baseline_pred = {}
@@ -339,14 +363,16 @@ class MeterPopulation:
     ):
         """Fit one model per meter serially (never in parallel).
 
-        A meter whose fit raises a data-sufficiency or model-disqualification
-        error is excluded and recorded on the population's exclusions ledger
-        while the loop continues; raises only when every meter fails.
+        A meter whose fit raises a compliance or model-fit error is excluded and
+        recorded on the population's exclusions ledger under the leaf exception
+        name while the loop continues; raises only when every meter fails.
 
         Args:
             baseline: ``{id: baseline_df}`` for the requested model frequency.
             model_frequency: ``"hourly"``, ``"daily"``, or ``"billing"``.
             is_electricity_data: Whether the observed values are electricity usage.
+            enforce_compliance: Which compliance members to enforce, passed through
+                to each fit unchanged and kept for the population's predictions.
             reporting: Optional ``{id: reporting_df}``. Reporting for a meter
                 that is excluded is ignored.
 
@@ -378,26 +404,25 @@ class MeterPopulation:
                     is_electricity_data=is_electricity_data,
                     enforce_compliance=enforce_compliance,
                 )
-            except DataSufficiencyError as exc:
-                detail = exclusions.format_warnings(exc.disqualification) or str(exc)
+            except ComplianceError as exc:
+                detail = exclusions.format_warnings(exc.entries) or str(exc)
                 dropped = exclusions.append(
                     dropped,
                     [mid],
                     "population",
-                    "baseline_data",
-                    "baseline data insufficient to fit a model",
+                    _fit_failure_origin(exc),
+                    type(exc).__name__,
                     detail=detail,
                 )
                 continue
-            except DisqualifiedModelError as exc:
-                detail = exclusions.format_warnings(model.disqualification) or str(exc)
+            except ModelFitError as exc:
                 dropped = exclusions.append(
                     dropped,
                     [mid],
                     "population",
-                    "model",
-                    "fitted model disqualified",
-                    detail=detail,
+                    _fit_failure_origin(exc),
+                    type(exc).__name__,
+                    detail=str(exc),
                 )
                 continue
 
@@ -414,7 +439,13 @@ class MeterPopulation:
             summary = "; ".join(f"{row.id}: {row.reason}" for row in dropped.itertuples())
             raise ValueError(f"All meters failed to fit: {summary}")
 
-        population = cls(records, model_frequency, features=features, **kwargs)
+        population = cls(
+            records,
+            model_frequency,
+            features=features,
+            enforce_compliance=enforce_compliance,
+            **kwargs,
+        )
         if not dropped.empty:
             population._exclusions = pd.concat(
                 [dropped, population._exclusions], ignore_index=True
@@ -451,7 +482,7 @@ class MeterPopulation:
 
             tz = str(rec.model.baseline_timezone)
             baseline = rec.baseline_data
-            disqualification = rec.model.disqualification
+            disqualification = rec.model.compliance.disqualification
 
             # the model builds its meter's data objects, so its own fuel flag is
             # every meter's, with or without baseline data
@@ -464,7 +495,7 @@ class MeterPopulation:
                         f"timezone {baseline.tz}."
                     )
 
-                disqualification = disqualification or baseline.disqualification
+                disqualification = disqualification or baseline.compliance.disqualification
 
             if rec.reporting_data is not None and str(rec.reporting_data.tz) != tz:
                 raise ValueError(
@@ -496,10 +527,15 @@ class MeterPopulation:
             raise ValueError("Population mixes solar (using ghi) and non-solar meters.")
 
         if disqualified:
-            warnings.warn(
-                f"Population includes disqualified meters or baselines: {disqualified}.",
-                stacklevel=2,
+            entry = ComparisonGroupWarning(
+                qualified_name="comparison_groups.population.disqualified_meters",
+                description=(
+                    f"Population includes disqualified meters or baselines: {disqualified}."
+                ),
+                severity="advisory",
+                data={"ids": disqualified},
             )
+            entry.warn()
 
         tz = timezones.pop()
         is_electricity_data = fuels.pop()
@@ -570,10 +606,17 @@ class MeterPopulation:
         if data is None:
             raise ValueError(f"Meter {rec.id}: no {period} data attached.")
 
+        # A population may admit a meter whose fit metrics failed (see
+        # `_validate_meters`); its model compliance member must not be enforced here
+        # or that admission is immediately undone.
+        enforce_compliance = sorted(normalize_enforce_compliance(self.enforce_compliance) - {"model"})
+
         if self.model_frequency == "billing":
-            pred = rec.model._predict_data(data, aggregation=None)
+            pred = rec.model._predict_data(
+                data, aggregation=None, enforce_compliance=enforce_compliance
+            )
         else:
-            pred = rec.model._predict_data(data)
+            pred = rec.model._predict_data(data, enforce_compliance=enforce_compliance)
 
         frame = pd.DataFrame(
             {
@@ -812,6 +855,10 @@ class MeterPopulation:
     # -- serialization -------------------------------------------------------
 
     def _header(self):
+        enforce_compliance = self.enforce_compliance
+        if isinstance(enforce_compliance, (list, tuple, frozenset, set)):
+            enforce_compliance = list(enforce_compliance)
+
         header = {
             "schema_version": SCHEMA_VERSION,
             "model_frequency": self.model_frequency,
@@ -819,6 +866,7 @@ class MeterPopulation:
             "tz": self.tz,
             "is_electricity_data": bool(self.is_electricity_data),
             "exclusions": self._exclusions.to_json(orient="table"),
+            "enforce_compliance": enforce_compliance,
         }
 
         return header
@@ -916,7 +964,12 @@ class MeterPopulation:
 
     @classmethod
     def _restored(cls, records, model_frequency, features, header):
-        population = cls(records, model_frequency, features=features)
+        population = cls(
+            records,
+            model_frequency,
+            features=features,
+            enforce_compliance=header["enforce_compliance"],
+        )
 
         return population
 
@@ -1000,8 +1053,11 @@ class ComparisonPool(MeterPopulation):
         features=None,
         max_pool_size=_DEFAULT_POOL_SIZE,
         seed=0,
+        enforce_compliance=True,
     ):
-        super().__init__(meters, model_frequency, features=features)
+        super().__init__(
+            meters, model_frequency, features=features, enforce_compliance=enforce_compliance
+        )
         self.max_pool_size = _resolve_max_pool_size(max_pool_size)
         self.seed = seed
 
@@ -1064,6 +1120,7 @@ class ComparisonPool(MeterPopulation):
             records,
             model_frequency,
             features=features,
+            enforce_compliance=header["enforce_compliance"],
             max_pool_size=None,
             seed=header["seed"],
         )

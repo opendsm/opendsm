@@ -110,6 +110,7 @@ def get_missing_hours_of_week_warning(hours_of_week):
         return EEMeterWarning(
             qualified_name="eemeter.hour_of_week.missing",
             description="Missing some of the (zero-indexed) 168 hours of the week.",
+            severity="advisory",
             data={"missing_hours_of_week": missing},
         )
 

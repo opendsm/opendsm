@@ -320,7 +320,7 @@ def _coverage_exclusions(population, ids, window, min_window_coverage):
     """Selection-stage baseline-coverage ledger: the meters among ``ids`` whose
     finite observed-and-temperature coverage over the group ``window`` falls
     below ``min_window_coverage``. The computed coverage goes in ``detail``, with
-    any construction-time eemeter disqualification warnings appended verbatim.
+    any construction-time disqualification records appended verbatim.
     Returns the failing ids (for pruning) and their ledger rows."""
     freq = COVERAGE_FREQ[population.model_frequency]
     ledger = exclusions.empty_ledger()
@@ -336,7 +336,9 @@ def _coverage_exclusions(population, ids, window, min_window_coverage):
             continue
 
         detail = f"baseline window coverage {coverage:.4f} < {min_window_coverage}"
-        warning_text = exclusions.format_warnings(rec.baseline_data.disqualification)
+        warning_text = exclusions.format_warnings(
+            rec.baseline_data.compliance.disqualification
+        )
         if warning_text:
             detail = f"{detail}; {warning_text}"
 

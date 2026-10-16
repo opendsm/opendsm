@@ -18,7 +18,7 @@ Every meter dropped anywhere in the comparison-group stream is recorded in a
 ledger frame with columns ``[id, stage, origin, reason, detail]`` (all str;
 ``detail`` may be empty). ``stage`` is the pipeline stage that dropped the
 meter, ``origin`` names the source of the problem, ``reason`` is a short human
-string, and ``detail`` carries verbatim eemeter warning qualified names /
+string, and ``detail`` carries verbatim compliance record qualified names /
 descriptions or exception text.
 """
 
@@ -28,7 +28,7 @@ from io import StringIO
 
 import pandas as pd
 
-from opendsm.eemeter.common.exceptions import EEMeterError
+from opendsm.comparison_groups.exceptions import ComparisonGroupError
 
 
 
@@ -37,14 +37,12 @@ COLUMNS = ["id", "stage", "origin", "reason", "detail"]
 STAGES = ("population", "selection", "correction")
 
 
-class MeterCorrectionError(EEMeterError):
+class MeterCorrectionError(ComparisonGroupError):
     """A treatment meter cannot be corrected at all.
 
     ``exclusions`` carries the ledger rows explaining the drop in the shared
     ``[id, stage, origin, reason, detail]`` schema, so a caller looping over
-    treatment meters can record why this one failed and move on. Subclassing
-    ``EEMeterError`` lets that caller catch a guard and a raw model failure
-    together.
+    treatment meters can record why this one failed and move on.
     """
 
     def __init__(self, message, exclusions):
@@ -126,26 +124,26 @@ def merge(*ledgers):
     return combined
 
 
-def format_warnings(warnings):
-    """Format an eemeter warnings list as ledger detail: ``; ``-joined
-    qualified names, each with its description when present.
+def format_warnings(entries):
+    """Format compliance records as ledger detail: ``; ``-joined qualified names,
+    each with its description when present.
 
     Args:
-        warnings: eemeter warnings, each with a ``qualified_name`` and an optional
+        entries: compliance records, each with a ``qualified_name`` and an optional
             ``description``.
 
     Returns:
         The detail string.
     """
-    entries = []
+    parts = []
 
-    for warning in warnings:
-        if warning.description:
-            entries.append(f"{warning.qualified_name}: {warning.description}")
+    for entry in entries:
+        if entry.description:
+            parts.append(f"{entry.qualified_name}: {entry.description}")
         else:
-            entries.append(warning.qualified_name)
+            parts.append(entry.qualified_name)
 
-    text = "; ".join(entries)
+    text = "; ".join(parts)
 
     return text
 

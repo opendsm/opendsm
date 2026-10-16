@@ -22,6 +22,7 @@ from scipy.spatial.distance import cdist
 
 from qpsolvers import solve_ls
 
+from opendsm.comparison_groups.exceptions import ComparisonGroupError
 from opendsm.comparison_groups.individual_meter_matching import highs_settings as _highs_settings
 from opendsm.comparison_groups.individual_meter_matching.settings import Settings
 
@@ -199,7 +200,7 @@ def highs_fit_comparison_group_loadshape(t_ls, cp_ls, coef_sum=1, solver="highs"
     return x_opt
 
 
-class DistanceMatchingError(Exception):
+class DistanceMatchingError(ComparisonGroupError):
     """Raised when distance-based comparison group matching cannot be completed."""
 
 

@@ -49,11 +49,14 @@ if platform.system() == "Windows":
     config.DISABLE_JIT = True
 
 from .common import test_data
+from .common.warnings import OpenDSMWarning
 from . import (
     eemeter,
     drmeter,
     comparison_groups,
 )
+
+
 
 # Set default logging handler to avoid "No handler found" warnings.
 _logging.getLogger(__name__).addHandler(_logging.NullHandler())
@@ -72,6 +75,7 @@ __all__ = [
     "drmeter",
     "comparison_groups",
     "test_data",
+    "OpenDSMWarning",
 ]
 
 def __dir__():

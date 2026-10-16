@@ -14,11 +14,13 @@
 
 import copy
 import json
+import warnings
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from opendsm.comparison_groups import population as population_module
 from opendsm.comparison_groups.common import Data_Settings
 from opendsm.comparison_groups.common import const as _const
 from opendsm.comparison_groups.population import (
@@ -26,7 +28,15 @@ from opendsm.comparison_groups.population import (
     TreatmentGroup,
 )
 from opendsm.comparison_groups.selection import select_comparison_group
-from opendsm.eemeter.common.exceptions import DataSufficiencyError
+from opendsm.comparison_groups.warnings import ComparisonGroupWarning
+from opendsm.eemeter.common.compliance import Compliance
+from opendsm.eemeter.common.exceptions import (
+    DataSufficiencyError,
+    DisqualifiedModelError,
+    InfeasibleDataError,
+    ModelFitError,
+    NonstandardSettingsError,
+)
 from opendsm.eemeter.common.warnings import EEMeterWarning
 from opendsm.eemeter.models import DailyModel
 from opendsm.eemeter.models.daily.data import DailyBaselineData
@@ -189,9 +199,15 @@ def test_model_and_baseline_data_timezone_mismatch_raises(comstock, daily_meters
 def test_disqualified_meter_warns(daily_meters):
     ids = list(daily_meters)[:2]
     flagged = copy.deepcopy(daily_meters[ids[0]]["model"])
-    flagged.disqualification = [
-        EEMeterWarning(qualified_name="eemeter.test", description="flagged", data=None)
-    ]
+    flagged.compliance.record(
+        EEMeterWarning(
+            qualified_name="eemeter.test",
+            description="flagged",
+            severity="disqualified",
+            member="model",
+            data=None,
+        )
+    )
     meters = {
         ids[0]: {"model": flagged, "baseline_df": daily_meters[ids[0]]["baseline_df"]},
         ids[1]: {
@@ -200,7 +216,7 @@ def test_disqualified_meter_warns(daily_meters):
         },
     }
 
-    with pytest.warns(UserWarning, match="disqualified"):
+    with pytest.warns(ComparisonGroupWarning, match="disqualified meters or baselines"):
         TreatmentGroup.from_fit_models(meters, model_frequency="daily")
 
 
@@ -622,7 +638,7 @@ def test_from_json_rebuilds_model_payload_missing_fuel_flag(daily_meters):
 
     assert rebuilt.is_electricity_data == group.is_electricity_data
     for mid in rebuilt.ids:
-        names = {w.qualified_name for w in rebuilt._meters[mid].model.warnings}
+        names = {w.qualified_name for w in rebuilt._meters[mid].model.compliance.warnings}
         assert "eemeter.serialization.prior_format" in names
 
 
@@ -670,6 +686,21 @@ def test_to_json_refuses_above_ceiling(daily_meters, monkeypatch):
 
     with pytest.raises(ValueError, match="ceiling"):
         group.to_json()
+
+
+def test_json_roundtrip_preserves_relaxed_enforce_compliance(daily_meters):
+    """A rebuilt population carries the enforcement policy it was built with
+    and still predicts on its meters."""
+    group = TreatmentGroup.from_fit_models(daily_meters, enforce_compliance=["settings"])
+
+    rebuilt = TreatmentGroup.from_json(
+        group.to_json(),
+        baseline=_baseline_map(daily_meters),
+        reporting=_reporting_map(daily_meters),
+    )
+
+    assert rebuilt.enforce_compliance == ["settings"]
+    pd.testing.assert_frame_equal(group.predictions("baseline"), rebuilt.predictions("baseline"))
 
     text = group.to_ndjson()
 
@@ -883,7 +914,7 @@ def test_from_data_excludes_meter_failing_baseline_sufficiency(_comstock_daily_a
     row = group.exclusions.set_index("id").loc[str(ids[2])]
     assert row["stage"] == "population"
     assert row["origin"] == "baseline_data"
-    assert row["reason"] == "baseline data insufficient to fit a model"
+    assert row["reason"] == "DataSufficiencyError"
     assert "eemeter.sufficiency_criteria" in row["detail"]
     assert len(group.predictions("baseline")) > 0
 
@@ -1050,3 +1081,162 @@ def test_from_data_all_meters_failing_raises(_comstock_daily_all):
 
     with pytest.raises(ValueError, match="All meters failed to fit"):
         TreatmentGroup.from_data(baseline, "daily", is_electricity_data=True)
+
+
+# -- fit-failure ledger reasons ----------------------------------------------
+
+_STUB_TZ = "America/Chicago"
+
+_LEDGER_ENTRY = EEMeterWarning(
+    qualified_name="eemeter.test.check",
+    description="ledger detail",
+    severity="advisory",
+    data=None,
+)
+
+_FAILING_ROWS = 5
+
+
+def _stub_frame(n_rows):
+    index = pd.date_range("2023-01-01", periods=n_rows, freq="D", tz=_STUB_TZ)
+    frame = pd.DataFrame({"datetime": index, "temperature": 50.0, "observed": 10.0})
+
+    return frame
+
+
+class _StubData:
+    """The minimum a built data object owes a population."""
+
+    def __init__(self, df):
+        self.df = df.set_index("datetime")
+        self.tz = self.df.index.tz
+        self.compliance = Compliance()
+
+
+def _stub_model_cls(failure):
+    """A daily-model stand-in whose fit raises ``failure`` on the short frame and
+    succeeds on any other, so one meter lands on the ledger and one survives."""
+
+    class StubModel:
+        def __init__(self, settings=None):
+            self.compliance = Compliance()
+            self.baseline_timezone = _STUB_TZ
+
+        def fit(self, df, is_electricity_data, enforce_compliance):
+            if len(df) == _FAILING_ROWS:
+                raise failure
+
+            self._is_electricity_data = bool(is_electricity_data)
+
+            return self
+
+        def _baseline_data(self, df):
+            return _StubData(df)
+
+    return StubModel
+
+
+def _fit_one_failing_meter(monkeypatch, failure):
+    monkeypatch.setitem(population_module._MODEL_CLASSES, "daily", _stub_model_cls(failure))
+    baseline = {"ok": _stub_frame(400), "bad": _stub_frame(_FAILING_ROWS)}
+
+    group = TreatmentGroup.from_data(baseline, "daily", is_electricity_data=True)
+
+    return group
+
+
+@pytest.mark.parametrize(
+    "failure, origin",
+    [
+        (DataSufficiencyError("insufficient", entries=[_LEDGER_ENTRY]), "baseline_data"),
+        (InfeasibleDataError("no model fits", entries=[_LEDGER_ENTRY]), "baseline_data"),
+        (DisqualifiedModelError("disqualified", entries=[_LEDGER_ENTRY]), "model"),
+        (NonstandardSettingsError("nonstandard", entries=[_LEDGER_ENTRY]), "settings"),
+    ],
+    ids=["sufficiency", "infeasible", "disqualified_model", "nonstandard_settings"],
+)
+def test_from_data_ledger_reason_is_the_leaf_compliance_exception(monkeypatch, failure, origin):
+    group = _fit_one_failing_meter(monkeypatch, failure)
+
+    assert group.ids == ["ok"]
+    row = group.exclusions.set_index("id").loc["bad"]
+    assert row["stage"] == "population"
+    assert row["origin"] == origin
+    assert row["reason"] == type(failure).__name__
+    assert row["detail"] == "eemeter.test.check: ledger detail"
+
+
+def test_from_data_ledger_records_a_model_fit_error(monkeypatch):
+    """A ModelFitError carries no compliance entries, so its message is the detail."""
+    failure = ModelFitError("solver did not converge", component="smoothed", segment="summer")
+
+    group = _fit_one_failing_meter(monkeypatch, failure)
+
+    row = group.exclusions.set_index("id").loc["bad"]
+    assert row["origin"] == "model"
+    assert row["reason"] == "ModelFitError"
+    assert row["detail"] == "solver did not converge"
+
+
+# -- relaxed enforcement -----------------------------------------------------
+
+
+def _disqualified_meter(daily_meters, member="model"):
+    mid = list(daily_meters)[0]
+    flagged = copy.deepcopy(daily_meters[mid]["model"])
+    flagged.compliance.record(
+        EEMeterWarning(
+            qualified_name="eemeter.test.flagged",
+            description="flagged",
+            severity="disqualified",
+            member=member,
+            data=None,
+        )
+    )
+    meters = {mid: {"model": flagged, "baseline_df": daily_meters[mid]["baseline_df"]}}
+
+    return meters
+
+
+def _population_on_disqualified_meter(meters, enforce_compliance):
+    # construction warns about the disqualified meter, which the suite would
+    # otherwise raise
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ComparisonGroupWarning)
+        group = TreatmentGroup.from_fit_models(
+            meters, model_frequency="daily", enforce_compliance=enforce_compliance
+        )
+
+    return group
+
+
+def test_relaxed_enforcement_predicts_on_a_disqualified_meter(daily_meters):
+    """A population that admitted a disqualified meter at fit keeps the caller's
+    enforcement list and predicts on that meter."""
+    meters = _disqualified_meter(daily_meters)
+
+    group = _population_on_disqualified_meter(meters, ["settings"])
+
+    assert len(group.predictions("baseline")) > 0
+
+
+def test_full_enforcement_refuses_to_predict_on_a_disqualified_meter(daily_meters):
+    """A meter disqualified on a member other than ``model`` still blocks prediction
+    under full enforcement."""
+    meters = _disqualified_meter(daily_meters, member="data")
+
+    group = _population_on_disqualified_meter(meters, True)
+
+    with pytest.raises(DisqualifiedModelError):
+        group.predictions("baseline")
+
+
+def test_model_fit_metrics_disqualification_does_not_block_prediction(daily_meters):
+    """A meter admitted despite a failing ``model`` fit-metrics compliance record
+    (`_validate_meters` warns and keeps it) still predicts under the default,
+    fully-enforced ``enforce_compliance``."""
+    meters = _disqualified_meter(daily_meters, member="model")
+
+    group = _population_on_disqualified_meter(meters, True)
+
+    assert len(group.predictions("baseline")) > 0

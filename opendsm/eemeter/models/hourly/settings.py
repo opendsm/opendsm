@@ -20,7 +20,7 @@ import pandas as pd
 import pydantic
 
 from enum import Enum
-from typing import Optional, Literal, Union, TypeVar, Dict
+from typing import Any, Optional, Literal, Union, TypeVar, Dict
 
 import pywt
 
@@ -30,11 +30,13 @@ from opendsm.common.metrics import BaselineMetrics
 from opendsm.common.const import CAlgoChoice
 
 from opendsm.eemeter.common.data_settings import HourlyDataSettings
-from opendsm.eemeter.common.warnings import EEMeterWarning
 
 
 
 # from opendsm.common.const import CountryCode
+
+
+SCHEMA_VERSION = 1
 
 
 class SelectionChoice(str, Enum):
@@ -551,8 +553,6 @@ class ModelInfo(pydantic.BaseModel):
     """additional information about the model"""
 
     baseline_timezone: str
-    disqualification: list[EEMeterWarning]
-    warnings: list[EEMeterWarning]
     version: str
     is_electricity_data: bool
     pv_start: Optional[str] = None
@@ -576,3 +576,29 @@ class SerializeModel(BaseSettings):
     baseline_metrics: Optional[BaselineMetrics] = None
     baseline_hour_metrics: Optional[Dict[str, BaselineMetrics]] = None
     info: ModelInfo
+
+
+class SerializedHourlyModel(SerializeModel):
+    """A serialized hourly model payload, validated when a model is loaded from it.
+
+    `schema_version` names the payload layout and `compliance` holds the records the
+    model carried when it was written, one `OpenDSMWarning.json()` entry each. The
+    settings and metrics blocks are plain mappings here: each is rebuilt by the loader
+    from its serialized form rather than revalidated as the object that wrote it.
+    """
+
+    schema_version: int
+    compliance: list[Dict[str, Any]]
+    settings: Dict[str, Any]
+    baseline_metrics: Optional[Dict[str, Any]] = None
+    baseline_hour_metrics: Optional[Dict[str, Dict[str, Any]]] = None
+
+    @pydantic.field_validator("schema_version")
+    def _known_schema_version(cls, v):
+        if v > SCHEMA_VERSION:
+            raise ValueError(
+                f"payload schema_version {v} is newer than the {SCHEMA_VERSION} this "
+                "package can read"
+            )
+
+        return v

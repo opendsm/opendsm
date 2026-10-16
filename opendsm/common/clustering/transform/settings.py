@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import warnings
-
 import numpy as np
 
 import pydantic
@@ -13,6 +11,8 @@ import pywt
 
 from opendsm.common.base_settings import BaseSettings
 from opendsm.common.clustering.transform.normalize_settings import NormalizeSettings
+from opendsm.common.warnings import ClusteringWarning
+
 
 
 class TransformChoice(str, Enum):
@@ -277,10 +277,13 @@ class FeatureTransformSettings(BaseSettings):
         default_mag = FeatureMagnitudeSettings()
         is_customized = self.magnitude_features != default_mag
         if is_customized and not self.normalize.enabled:
-            warnings.warn(
-                "magnitude_features was customized but normalization is disabled. "
-                "Magnitude features are only appended when normalization is enabled.",
-                UserWarning,
-                stacklevel=2,
-            )
+            ClusteringWarning(
+                qualified_name="opendsm.clustering.transform.magnitude_without_normalization",
+                description=(
+                    "magnitude_features was customized but normalization is disabled. "
+                    "Magnitude features are only appended when normalization is enabled."
+                ),
+                severity="advisory",
+            ).warn()
+
         return self

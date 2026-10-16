@@ -137,6 +137,8 @@ def clean_billing_data(data, source_interval, warnings):
                         description=(
                             "Off-cycle reads found in billing monthly data having a duration of less than 25 days"
                         ),
+                        severity="disqualified",
+                        member="data",
                         data=[
                             timestamp.isoformat()
                             for timestamp in data[(filter_ > 35) | (filter_ < 25)].index
@@ -157,6 +159,8 @@ def clean_billing_data(data, source_interval, warnings):
                         description=(
                             "Off-cycle reads found in billing monthly data having a duration of less than 25 days"
                         ),
+                        severity="disqualified",
+                        member="data",
                         data=[
                             timestamp.isoformat()
                             for timestamp in data[(filter_ > 70) | (filter_ < 25)].index
@@ -396,6 +400,7 @@ def downsample_and_clean_daily_data(dataset, warnings):
                 description=(
                     "More than 50% of the high frequency Meter data is missing."
                 ),
+                severity="advisory",
                 data=[
                     timestamp.isoformat()
                     for timestamp in dataset[dataset.coverage <= 0.5].index

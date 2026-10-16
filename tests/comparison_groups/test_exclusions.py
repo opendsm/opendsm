@@ -16,7 +16,7 @@ import pandas as pd
 import pytest
 
 from opendsm.comparison_groups import MeterCorrectionError, exclusions
-from opendsm.eemeter.common.exceptions import EEMeterError
+from opendsm.common.exceptions import OpenDSMError
 from opendsm.eemeter.common.warnings import EEMeterWarning
 
 
@@ -97,9 +97,12 @@ def test_format_warnings_joins_qualified_names_with_descriptions():
         EEMeterWarning(
             qualified_name="eemeter.sufficiency_criteria.too_few_days",
             description="Baseline is too short.",
+            severity="advisory",
             data=None,
         ),
-        EEMeterWarning(qualified_name="eemeter.other", description="", data=None),
+        EEMeterWarning(
+            qualified_name="eemeter.other", description="", severity="advisory", data=None
+        ),
     ]
 
     detail = exclusions.format_warnings(warnings_list)
@@ -124,14 +127,14 @@ def test_table_json_roundtrip_preserves_numeric_looking_ids():
     assert rebuilt["id"].iloc[0] == "0042"
 
 
-def test_meter_correction_error_is_catchable_as_an_eemeter_error():
+def test_meter_correction_error_is_catchable_as_an_opendsm_error():
     """A caller looping over treatment meters catches the correction guard and a
-    raw model failure with a single ``except EEMeterError``."""
+    raw model failure with a single ``except OpenDSMError``."""
     ledger = exclusions.append(
         exclusions.empty_ledger(), ["m1"], "correction", "correction_guard", "all-NaN cluster weights"
     )
 
-    with pytest.raises(EEMeterError, match="cannot be corrected"):
+    with pytest.raises(OpenDSMError, match="cannot be corrected"):
         raise exclusions.MeterCorrectionError("treatment meter m1 cannot be corrected", ledger)
 
 

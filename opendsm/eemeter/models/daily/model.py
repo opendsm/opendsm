@@ -21,12 +21,23 @@ import numpy as np
 import pandas as pd
 
 from opendsm.common.base_settings import settings_deviation_report
+from opendsm.eemeter.common.compliance import (
+    Compliance,
+    _prior_format_entries,
+    normalize_enforce_compliance,
+    record_timezone_mismatch,
+)
 from opendsm.eemeter.common.data_processor_utilities import trim_edge_rows
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
     DisqualifiedModelError,
+    InfeasibleDataError,
+    ModelFitError,
+    ModelLoadError,
+    NonstandardSettingsError,
 )
 from opendsm.eemeter.common.warnings import EEMeterWarning, nonstandard_settings_warning
+from opendsm.common.warnings import OpenDSMWarning
 from opendsm.eemeter.models.daily.base_models.full_model import (
     full_model,
     get_full_model_x,
@@ -37,8 +48,10 @@ from opendsm.eemeter.models.daily.fit_base_models import (
     fit_initial_models_from_full_model,
 )
 from opendsm.eemeter.models.daily.parameters import (
+    SCHEMA_VERSION,
     DailyModelParameters,
     DailySubmodelParameters,
+    SerializedDailyModel,
 )
 from opendsm.eemeter.models.daily.utilities.base_model import get_smooth_coeffs
 from opendsm.eemeter.models.daily.utilities.settings import (
@@ -49,6 +62,8 @@ from opendsm.eemeter.models.daily.utilities.ellipsoid_test import ellipsoid_spli
 from opendsm.eemeter.models.daily.utilities.selection_criteria import selection_criteria
 from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict
 from opendsm.common.const import ModelFrequency
+
+
 
 class DailyModel:
     """
@@ -79,7 +94,6 @@ class DailyModel:
     _settings_class = DailySettings
     _data_df_name = "df"
     _trim_trailing_columns = ("observed", "temperature")
-    _check_timezone = True
 
     def __init__(
         self,
@@ -117,6 +131,7 @@ class DailyModel:
             "we": [n + 1 for n in n_week if day_dict[n+1] == "weekend"],
         }
         self.verbose = verbose
+        self.compliance = Compliance()
         self.is_fitted = False
         self._is_electricity_data = None
         self._baseline_df = None
@@ -166,9 +181,9 @@ class DailyModel:
         return self._baseline_df.copy()
 
     def _reject_data_object(self, df) -> None:
-        """Raise if a data class instance is passed where a dataframe is expected."""
+        """Raise unless a dataframe was passed where a dataframe is expected."""
 
-        if isinstance(df, (self._baseline_data_type, self._reporting_data_type)):
+        if not isinstance(df, pd.DataFrame):
             raise TypeError(
                 f"Expected a pandas DataFrame, got a {type(df).__name__}. Models take "
                 "a dataframe with a tz-aware DatetimeIndex or a tz-aware 'datetime' column."
@@ -209,24 +224,40 @@ class DailyModel:
             df: Baseline data indexed by a tz-aware DatetimeIndex, or containing a tz-aware
                 'datetime' column, with 'observed' and 'temperature' columns.
             is_electricity_data: Whether the observed values are electricity usage.
-            enforce_compliance: Whether to enforce data-sufficiency compliance. Defaults to True.
+            enforce_compliance: Which compliance members to enforce. True enforces all of
+                'data', 'model' and 'settings', False enforces none, and a list or tuple
+                names the members to enforce.
 
         Returns:
             The fitted model.
 
         Raises:
             TypeError: If df is not a dataframe.
+            NonstandardSettingsError: If settings compliance is enforced and the settings
+                deviate from the OpenDSM reference.
+            InfeasibleDataError: If no model can be fit on the baseline data at all.
             DataSufficiencyError: If the model can't be fit on disqualified baseline data.
         """
         self._reject_data_object(df)
+        enforced = normalize_enforce_compliance(enforce_compliance)
+
+        self.compliance = Compliance()
+
+        settings_warning = nonstandard_settings_warning(self.settings, self._reference_settings())
+        if settings_warning is not None:
+            self.compliance.record(settings_warning)
+            if "settings" in enforced:
+                raise NonstandardSettingsError(
+                    "Can't fit a compliant model with nonstandard settings",
+                    entries=[settings_warning],
+                )
 
         self._is_electricity_data = bool(is_electricity_data)
         baseline = self._baseline_data(df)
-        baseline.log_warnings()
 
         self.baseline_timezone = baseline.tz
-        self.warnings = list(baseline.warnings)
-        self.disqualification = baseline.disqualification
+        for entry in baseline.compliance.all:
+            self.compliance.record(entry)
 
         if any(self._edge_rows_trimmed.values()):
             trim_warning = EEMeterWarning(
@@ -235,21 +266,25 @@ class DailyModel:
                     "Rows at the start or end of the baseline data were missing values "
                     "and have been trimmed."
                 ),
+                severity="advisory",
                 data=dict(self._edge_rows_trimmed),
             )
-            self.warnings.append(trim_warning)
+            self.compliance.record(trim_warning)
             trim_warning.warn()
 
-        if self.disqualification and enforce_compliance:
-            raise DataSufficiencyError(
-                "Can't fit model on disqualified baseline data",
-                disqualification=self.disqualification,
-            )
+        self._raise_if_infeasible()
 
-        settings_warning = nonstandard_settings_warning(self.settings, self._reference_settings())
-        if settings_warning is not None:
-            self.warnings.append(settings_warning)
-            settings_warning.warn()
+        if "data" in enforced:
+            insufficient = [
+                entry
+                for entry in self.compliance.disqualification
+                if entry.member == "data"
+            ]
+            if insufficient:
+                raise DataSufficiencyError(
+                    "Can't fit model on disqualified baseline data",
+                    entries=insufficient,
+                )
 
         self._fit(getattr(baseline, self._data_df_name))
         self._check_model_fit()
@@ -281,25 +316,53 @@ class DailyModel:
         self.is_fitted = True
         return self
 
-    def _check_predictable(self, data, enforce_compliance: bool) -> None:
+    def _raise_if_infeasible(self) -> None:
+        """Raise when a record says no model can be fit on this data at all."""
+
+        entries = [
+            entry for entry in self.compliance.all if entry.severity == "infeasible"
+        ]
+        if entries:
+            raise InfeasibleDataError(
+                "Can't fit any model on this baseline data", entries=entries
+            )
+
+    def _check_model_compliance(self, enforced) -> None:
+        """Raise when an enforced member is disqualified on this model."""
+
+        blocking = [
+            entry
+            for entry in self.compliance.disqualification
+            if entry.member in enforced
+        ]
+        if blocking:
+            raise DisqualifiedModelError(
+                "Attempting to predict using disqualified model without relaxing enforce_compliance",
+                entries=blocking,
+            )
+
+    def _check_reporting_compliance(self, data, enforced) -> None:
+        """Raise when data compliance is enforced and the reporting data is disqualified."""
+
+        if "data" not in enforced:
+            return
+
+        entries = data.compliance.disqualification
+        if entries:
+            raise DataSufficiencyError(
+                "Can't predict on disqualified reporting data", entries=entries
+            )
+
+    def _check_predictable(self, data, enforce_compliance) -> None:
         """Raise unless this fitted model may predict on the built data object."""
 
         if not self.is_fitted:
             raise RuntimeError("Model must be fit before predictions can be made.")
 
-        if self.disqualification and enforce_compliance:
-            raise DisqualifiedModelError(
-                "Attempting to predict using disqualified model without setting enforce_compliance=False"
-            )
-
-        if self._check_timezone and str(self.baseline_timezone) != str(data.tz):
-            """would be preferable to directly compare, but
-            * using str() helps accomodate mixed tzinfo implementations,
-            * the likelihood of sub-hour offset inconsistencies being relevant to the daily model is low
-            """
-            raise ValueError(
-                "Reporting data must use the same timezone that the model was initially fit on."
-            )
+        enforced = normalize_enforce_compliance(enforce_compliance)
+        self._check_model_compliance(enforced)
+        record_timezone_mismatch(data.compliance, self.baseline_timezone, data.tz)
+        self._check_reporting_compliance(data, enforced)
 
     def _predict_data(self, data, enforce_compliance: bool = True) -> pd.DataFrame:
         """Predict on an already built reporting or baseline data object."""
@@ -322,22 +385,32 @@ class DailyModel:
             df: Reporting data indexed by a tz-aware DatetimeIndex, or containing a tz-aware
                 'datetime' column, with a 'temperature' column. An 'observed' column is
                 optional and is passed through to the output.
-            enforce_compliance: Whether to enforce model disqualification. Defaults to True.
+            enforce_compliance: Which compliance members to enforce. True enforces all of
+                'data', 'model' and 'settings', False enforces none, and a list or tuple
+                names the members to enforce.
 
         Returns:
             Dataframe with input data along with predicted energy consumption.
 
         Raises:
             RuntimeError: If the model is not fitted.
-            DisqualifiedModelError: If the model is disqualified and enforce_compliance is True.
-            ValueError: If the reporting data has a different timezone than the model.
+            DisqualifiedModelError: If an enforced member is disqualified on the model.
+            DataSufficiencyError: If data compliance is enforced and the reporting data
+                is disqualified.
             TypeError: If df is not a dataframe.
         """
         self._reject_data_object(df)
         if not self.is_fitted:
             raise RuntimeError("Model must be fit before predictions can be made.")
 
-        df_res = self._predict_data(self._reporting_data(df), enforce_compliance)
+        enforced = normalize_enforce_compliance(enforce_compliance)
+        self._check_model_compliance(enforced)
+
+        reporting = self._reporting_data(df)
+        record_timezone_mismatch(reporting.compliance, self.baseline_timezone, reporting.tz)
+        self._check_reporting_compliance(reporting, enforced)
+
+        df_res = self._predict_data(reporting, enforce_compliance=False)
 
         return df_res
 
@@ -420,6 +493,8 @@ class DailyModel:
             model_fit_warning = EEMeterWarning(
                 qualified_name="eemeter.model_fit_metrics",
                 description="Model disqualified due to poor fit.",
+                severity="disqualified",
+                member="model",
                 data={
                     "cvrmse_threshold": cvrmse_threshold,
                     "cvrmse": cvrmse,
@@ -428,15 +503,22 @@ class DailyModel:
                 },
             )
             model_fit_warning.warn()
-            self.disqualification.append(model_fit_warning)
-            
+            self.compliance.record(model_fit_warning)
+
     def to_dict(self) -> dict:
         """Returns a dictionary of model parameters.
+
+        The compliance records are read from the model at call time, so a payload
+        always carries the records the model holds when it is written.
 
         Returns:
             Model parameters.
         """
-        return self.params.model_dump()
+        model_dict = self.params.model_dump()
+        model_dict["schema_version"] = SCHEMA_VERSION
+        model_dict["compliance"] = [entry.json() for entry in self.compliance.all]
+
+        return model_dict
 
     def to_json(self) -> str:
         """Returns a JSON string of model parameters.
@@ -461,10 +543,12 @@ class DailyModel:
         Raises:
             ValueError: If is_electricity_data is missing from both the payload and the call,
                 or given when the payload already carries it.
+            ModelLoadError: If the payload is malformed, or was written by a schema
+                version this package cannot read.
         """
         settings = data.get("settings")
         daily_model = cls(settings=settings)
-        info = dict(data.get("info"))
+        info = dict(data.get("info") or {})
 
         if "is_electricity_data" in info:
             if is_electricity_data is not None:
@@ -486,35 +570,35 @@ class DailyModel:
                     "Model was serialized before 'is_electricity_data' was stored with the "
                     "model, so the supplied value was used."
                 ),
+                severity="advisory",
                 data={"is_electricity_data": daily_model._is_electricity_data},
             )
 
-        daily_model.params = DailyModelParameters(
-            submodels=data.get("submodels"),
-            info=info,
-            settings=settings,
-        )
-
-        def deserialize_warnings(warnings):
-            if not warnings:
-                return []
-            warn_list = []
-            for warning in warnings:
-                warn_list.append(
-                    EEMeterWarning(
-                        qualified_name=warning.get("qualified_name"),
-                        description=warning.get("description"),
-                        data=warning.get("data"),
-                    )
+        payload = {**data, "info": info}
+        try:
+            if payload.get("schema_version") is None:
+                params = DailyModelParameters(**payload)
+                entries = _prior_format_entries(info)
+            else:
+                validated = SerializedDailyModel(**payload)
+                params = DailyModelParameters(
+                    submodels=validated.submodels,
+                    info=validated.info,
+                    settings=validated.settings,
                 )
-            return warn_list
+                entries = [
+                    OpenDSMWarning.from_json(entry) for entry in validated.compliance
+                ]
+        except (ValueError, KeyError) as exc:
+            raise ModelLoadError("Serialized daily model could not be read") from exc
 
-        daily_model.disqualification = deserialize_warnings(
-            info.get("disqualification")
-        )
-        daily_model.warnings = deserialize_warnings(info.get("warnings"))
+        daily_model.params = params
+
+        for entry in entries:
+            daily_model.compliance.record(entry)
+
         if prior_format is not None:
-            daily_model.warnings.append(prior_format)
+            daily_model.compliance.record(prior_format)
 
         daily_model.baseline_timezone = info.get("baseline_timezone")
         if info.get("metrics") is not None:
@@ -572,17 +656,17 @@ class DailyModel:
         daily_model._is_electricity_data = bool(is_electricity_data)
         if isinstance(daily_model.params.info, dict):
             daily_model.params.info["is_electricity_data"] = daily_model._is_electricity_data
-        daily_model.warnings = [
+        daily_model.compliance.record(
             EEMeterWarning(
                 qualified_name="eemeter.serialization.prior_format",
                 description=(
                     "Model was serialized before 'is_electricity_data' was stored with the "
                     "model, so the supplied value was used."
                 ),
+                severity="advisory",
                 data={"is_electricity_data": daily_model._is_electricity_data},
             )
-        ]
-        daily_model.disqualification = []
+        )
         daily_model.baseline_timezone = "UTC"
         daily_model.is_fitted = True
 
@@ -647,8 +731,6 @@ class DailyModel:
                 "metrics": self.baseline_metrics.model_dump(),
                 "baseline_timezone": str(self.baseline_timezone),
                 "is_electricity_data": bool(self._is_electricity_data),
-                "disqualification": [dq.json() for dq in self.disqualification],
-                "warnings": [warning.json() for warning in self.warnings],
             },
         )
 
@@ -1032,7 +1114,12 @@ class DailyModel:
         else:
             wRMSE = self._get_error_metrics(combination).wrmse
 
-        loss = wRMSE / self.wRMSE_base
+        if self.wRMSE_base == 0:
+            # every combination reproduces the data exactly, so no combination can improve
+            # on the unsplit fit; a flat loss leaves the Occam tiebreak to decide
+            loss = 1.0
+        else:
+            loss = wRMSE / self.wRMSE_base
 
         criteria_type = self.settings.split_selection.criteria.lower()
         penalty_multiplier = self.settings.split_selection.penalty_multiplier
@@ -1058,10 +1145,32 @@ class DailyModel:
         # When scores are within float-roundoff, prefer fewer components (Occam);
         # final tiebreak is lex on the combo string for full determinism.
         TIE_TOLERANCE = 1e-6
-        scored = [
-            (self._combination_selection_criteria(combo), len(combo.split("__")), combo)
-            for combo in self.combinations
-        ]
+
+        scored = []
+        for combo in self.combinations:
+            score = self._combination_selection_criteria(combo)
+
+            if not np.isfinite(score):
+                dropped_warning = EEMeterWarning(
+                    qualified_name="eemeter.model_selection.candidate_dropped",
+                    description=(
+                        f"Combination '{combo}' was dropped from model selection because "
+                        f"its selection criterion is not finite."
+                    ),
+                    severity="advisory",
+                    data={"candidate": combo, "reason": "non-finite selection criterion"},
+                )
+                dropped_warning.warn()
+                self.compliance.record(dropped_warning)
+                continue
+
+            scored.append((score, len(combo.split("__")), combo))
+
+        if not scored:
+            raise ModelFitError(
+                "No candidate combination produced a finite selection criterion.",
+                component="model_selection",
+            )
 
         best_score = min(score for score, _, _ in scored)
         within_tol = [s for s in scored if s[0] <= best_score + TIE_TOLERANCE]

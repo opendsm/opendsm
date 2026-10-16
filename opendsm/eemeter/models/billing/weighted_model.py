@@ -62,7 +62,6 @@ class BillingWeightedModel(DailyModel):
     _reporting_data_type = BillingReportingData
     _data_df_name = "billing_df"
     _trim_trailing_columns = ()
-    _check_timezone = False
     _default_overrides = {"segment_minimum_count": 3}
     _settings_class = BillingSettings
 
@@ -158,14 +157,16 @@ class BillingWeightedModel(DailyModel):
             df: Reporting data indexed by a tz-aware DatetimeIndex, or containing a tz-aware
                 'datetime' column, with a 'temperature' column. Rows are period starts.
             aggregation: The aggregation level for the prediction. One of [None, 'none', 'monthly', 'bimonthly'].
-            enforce_compliance: Whether to enforce model disqualification. Defaults to True.
+            enforce_compliance: Which compliance members to enforce. True enforces all of
+                'data', 'model' and 'settings', False enforces none, and a list or tuple
+                names the members to enforce.
 
         Returns:
             Dataframe with input data along with predicted energy consumption.
 
         Raises:
             RuntimeError: If the model is not fitted.
-            DisqualifiedModelError: If the model is disqualified and enforce_compliance is True.
+            DisqualifiedModelError: If an enforced member is disqualified on the model.
             TypeError: If df is not a dataframe.
             ValueError: If the aggregation is not one of [None, 'none', 'monthly', 'bimonthly'].
         """

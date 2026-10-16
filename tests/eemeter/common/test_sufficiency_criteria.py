@@ -66,11 +66,15 @@ def _criteria(df, is_electricity_data=True, is_reporting_data=False, settings=No
 
 
 def _dq_names(sc):
-    return {d.qualified_name for d in sc.disqualification}
+    return {d.qualified_name for d in sc.compliance.disqualification}
 
 
 def _warning_names(sc):
-    return {w.qualified_name for w in sc.warnings}
+    return {w.qualified_name for w in sc.compliance.warnings}
+
+
+def _find(records, qualified_name):
+    return next(r for r in records if r.qualified_name == qualified_name)
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +90,9 @@ def test_no_data_disqualifies_when_all_nan():
 
     sc._check_no_data()
 
-    assert "eemeter.sufficiency_criteria.no_data" in _dq_names(sc)
+    record = _find(sc.compliance.all, "eemeter.sufficiency_criteria.no_data")
+    assert record.severity == "infeasible"
+    assert record.member is None
 
 
 def test_no_data_passes_on_clean_frame():
@@ -95,7 +101,19 @@ def test_no_data_passes_on_clean_frame():
 
     sc._check_no_data()
 
-    assert sc.disqualification == []
+    assert sc.compliance.disqualification == []
+
+
+def test_no_data_passes_when_only_auxiliary_column_is_nan():
+    """Usable temperature/observed rows pass no_data even if another column is all-NaN."""
+    df = _daily_frame()
+    df["temperature_not_null"] = np.nan
+    sc = _criteria(df)
+
+    sc._check_no_data()
+
+    names = {r.qualified_name for r in sc.compliance.all}
+    assert "eemeter.sufficiency_criteria.no_data" not in names
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +128,9 @@ def test_baseline_day_length_disqualifies_out_of_range(n_days):
     sc._check_baseline_day_length()
 
     assert "eemeter.sufficiency_criteria.incorrect_number_of_total_days" in _dq_names(sc)
+    record = _find(sc.compliance.disqualification, "eemeter.sufficiency_criteria.incorrect_number_of_total_days")
+    assert record.severity == "disqualified"
+    assert record.member == "data"
 
 
 @pytest.mark.parametrize("n_days", [329, 365, 366])
@@ -119,7 +140,7 @@ def test_baseline_day_length_passes_in_range(n_days):
 
     sc._check_baseline_day_length()
 
-    assert sc.disqualification == []
+    assert sc.compliance.disqualification == []
 
 
 def test_baseline_day_length_skipped_for_reporting_data():
@@ -128,7 +149,7 @@ def test_baseline_day_length_skipped_for_reporting_data():
 
     sc._check_baseline_day_length()
 
-    assert sc.disqualification == []
+    assert sc.compliance.disqualification == []
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +165,9 @@ def test_negative_observed_disqualifies_gas():
     sc._check_negative_observed_values()
 
     assert "eemeter.sufficiency_criteria.negative_observed_values" in _dq_names(sc)
+    record = _find(sc.compliance.disqualification, "eemeter.sufficiency_criteria.negative_observed_values")
+    assert record.severity == "disqualified"
+    assert record.member == "data"
 
 
 def test_negative_observed_allowed_for_electricity():
@@ -154,7 +178,7 @@ def test_negative_observed_allowed_for_electricity():
 
     sc._check_negative_observed_values()
 
-    assert sc.disqualification == []
+    assert sc.compliance.disqualification == []
 
 
 def test_negative_observed_passes_clean_gas():
@@ -163,7 +187,7 @@ def test_negative_observed_passes_clean_gas():
 
     sc._check_negative_observed_values()
 
-    assert sc.disqualification == []
+    assert sc.compliance.disqualification == []
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +204,10 @@ def test_unique_values_disqualifies_repeated_observed():
 
     name = "eemeter.sufficiency_criteria.insufficient_unique_observed_values"
     assert name in _dq_names(sc)
-    payload = next(d for d in sc.disqualification if d.qualified_name == name).data
+    record = _find(sc.compliance.disqualification, name)
+    assert record.severity == "disqualified"
+    assert record.member == "data"
+    payload = record.data
     assert payload["n_unique_values"] == 1
     assert payload["n_total_values"] == 365
     assert payload["unique_percentage"] == 0.3
@@ -193,7 +220,7 @@ def test_unique_values_passes_varied_observed():
 
     sc._check_unique_values(col="observed")
 
-    assert sc.disqualification == []
+    assert sc.compliance.disqualification == []
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +237,11 @@ def test_valid_days_percentage_disqualifies_low_temperature_coverage():
 
     sc._check_valid_days_percentage(col="temperature")
 
-    assert "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data" in _dq_names(sc)
+    name = "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data"
+    assert name in _dq_names(sc)
+    record = _find(sc.compliance.disqualification, name)
+    assert record.severity == "disqualified"
+    assert record.member == "data"
 
 
 def test_valid_days_percentage_disqualifies_low_observed_coverage():
@@ -225,7 +256,11 @@ def test_valid_days_percentage_disqualifies_low_observed_coverage():
 
     sc._check_valid_days_percentage(col="observed")
 
-    assert "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data" in _dq_names(sc)
+    name = "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data"
+    assert name in _dq_names(sc)
+    record = _find(sc.compliance.disqualification, name)
+    assert record.severity == "disqualified"
+    assert record.member == "data"
 
 
 @pytest.mark.parametrize("col", ["temperature", "observed"])
@@ -235,7 +270,7 @@ def test_valid_days_percentage_passes_full_coverage(col):
 
     sc._check_valid_days_percentage(col=col)
 
-    assert sc.disqualification == []
+    assert sc.compliance.disqualification == []
 
 
 @pytest.mark.parametrize("n_days", [1, 7, 9])
@@ -248,7 +283,7 @@ def test_valid_days_count_every_day_of_a_short_window(n_days):
 
     assert sc.n_valid_days == n_days
     assert sc.n_days_total == n_days
-    assert sc.disqualification == []
+    assert sc.compliance.disqualification == []
 
 
 def _hourly_frame(n_days, start="2020-03-05", tz="America/Chicago"):
@@ -326,7 +361,11 @@ def test_valid_monthly_coverage_disqualifies_sparse_month():
 
     sc._check_valid_monthly_coverage(col="temperature")
 
-    assert "eemeter.sufficiency_criteria.missing_monthly_temperature_data" in _dq_names(sc)
+    name = "eemeter.sufficiency_criteria.missing_monthly_temperature_data"
+    assert name in _dq_names(sc)
+    record = _find(sc.compliance.disqualification, name)
+    assert record.severity == "disqualified"
+    assert record.member == "data"
 
 
 def test_valid_monthly_coverage_passes_full_year():
@@ -335,7 +374,7 @@ def test_valid_monthly_coverage_passes_full_year():
 
     sc._check_valid_monthly_coverage(col="temperature")
 
-    assert sc.disqualification == []
+    assert sc.compliance.disqualification == []
 
 
 # ---------------------------------------------------------------------------
@@ -352,8 +391,10 @@ def test_extreme_values_warns_on_outlier():
 
     name = "eemeter.sufficiency_criteria.extreme_values_detected"
     assert name in _warning_names(sc)
-    payload = next(w for w in sc.warnings if w.qualified_name == name).data
-    assert payload["n_extreme_values"] == 1
+    record = _find(sc.compliance.warnings, name)
+    assert record.severity == "advisory"
+    assert record.member is None
+    assert record.data["n_extreme_values"] == 1
 
 
 def test_extreme_values_quiet_on_clean_data():
@@ -362,7 +403,7 @@ def test_extreme_values_quiet_on_clean_data():
 
     sc._check_extreme_values()
 
-    assert sc.warnings == []
+    assert sc.compliance.warnings == []
 
 
 # ---------------------------------------------------------------------------
@@ -378,7 +419,11 @@ def test_boundary_gap_disqualifies_extra_data_before_start():
 
     sc._check_n_days_boundary_gap("start")
 
-    assert "eemeter.sufficiency_criteria.extra_data_before_requested_start_date" in _dq_names(sc)
+    name = "eemeter.sufficiency_criteria.extra_data_before_requested_start_date"
+    assert name in _dq_names(sc)
+    record = _find(sc.compliance.disqualification, name)
+    assert record.severity == "disqualified"
+    assert record.member == "data"
 
 
 def test_boundary_gap_passes_when_aligned():
@@ -389,7 +434,7 @@ def test_boundary_gap_passes_when_aligned():
 
     sc._check_n_days_boundary_gap("start")
 
-    assert sc.disqualification == []
+    assert sc.compliance.disqualification == []
 
 
 # ---------------------------------------------------------------------------
@@ -417,7 +462,11 @@ def test_billing_offcycle_read_disqualifies():
 
     sc._check_observed_data_billing_monthly()
 
-    assert "eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data" in _dq_names(sc)
+    name = "eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data"
+    assert name in _dq_names(sc)
+    record = _find(sc.compliance.disqualification, name)
+    assert record.severity == "disqualified"
+    assert record.member == "data"
 
 
 def test_billing_regular_monthly_cadence_passes():
@@ -428,7 +477,7 @@ def test_billing_regular_monthly_cadence_passes():
 
     sc._check_observed_data_billing_monthly()
 
-    assert sc.disqualification == []
+    assert sc.compliance.disqualification == []
 
 
 # ---------------------------------------------------------------------------
@@ -485,7 +534,8 @@ def test_baseline_orchestration_wires_each_rule(build_frame, expected_suffix):
     sc.check_sufficiency_baseline()
 
     expected = f"eemeter.sufficiency_criteria.{expected_suffix}"
-    assert expected in (_dq_names(sc) | _warning_names(sc))
+    all_names = {entry.qualified_name for entry in sc.compliance.all}
+    assert expected in all_names
 
 
 def test_clean_frame_passes_full_baseline():
@@ -494,7 +544,7 @@ def test_clean_frame_passes_full_baseline():
 
     sc.check_sufficiency_baseline()
 
-    assert sc.disqualification == []
+    assert sc.compliance.disqualification == []
 
 
 def test_fresh_instances_have_independent_result_lists():
@@ -502,10 +552,10 @@ def test_fresh_instances_have_independent_result_lists():
     first = _criteria(_daily_frame())
     second = _criteria(_daily_frame())
 
-    first.disqualification.append("sentinel")
+    first.compliance.all.append("sentinel")
 
-    assert second.disqualification == []
-    assert second.warnings == []
+    assert second.compliance.disqualification == []
+    assert second.compliance.warnings == []
 
 
 # ---------------------------------------------------------------------------

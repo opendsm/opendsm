@@ -179,12 +179,30 @@ class BaseSufficiencySettings(BaseSettings):
         return self
 
 
+class DailyTemperatureSufficiencySettings(TemperatureSufficiencySettings):
+    def __init__(self, **kwargs):
+        # a constant temperature series leaves the balance points unidentifiable
+        settings = {
+            'min_pct_unique_values': 0.10,
+        }
+        settings.update(kwargs)
+        super().__init__(**settings)
+
+
 class DailyDataSufficiencySettings(BaseSufficiencySettings):
     ghi: None = None
-    
+
+    temperature: DailyTemperatureSufficiencySettings = pydantic.Field(
+        default_factory=DailyTemperatureSufficiencySettings,
+    )
+
 
 class BillingDataSufficiencySettings(BaseSufficiencySettings):
     ghi: None = None
+
+    temperature: DailyTemperatureSufficiencySettings = pydantic.Field(
+        default_factory=DailyTemperatureSufficiencySettings,
+    )
 
     min_days_in_period: int = pydantic.Field(
         default=25,

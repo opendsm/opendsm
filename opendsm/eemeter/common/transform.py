@@ -195,6 +195,7 @@ def _make_baseline_warnings(
                 description=(
                     "Data does not have coverage at requested baseline end date."
                 ),
+                severity="advisory",
                 data={
                     "requested_end": end_limit.isoformat(),
                     "data_end": data_end.isoformat(),
@@ -209,6 +210,7 @@ def _make_baseline_warnings(
                 description=(
                     "Data does not have coverage at requested baseline start date."
                 ),
+                severity="advisory",
                 data={
                     "requested_start": start_limit.isoformat(),
                     "data_start": data_start.isoformat(),
@@ -361,6 +363,7 @@ def _make_reporting_warnings(
                 description=(
                     "Data does not have coverage at requested reporting end date."
                 ),
+                severity="advisory",
                 data={
                     "requested_end": end_limit.isoformat(),
                     "data_end": data_end.isoformat(),
@@ -375,6 +378,7 @@ def _make_reporting_warnings(
                 description=(
                     "Data does not have coverage at requested reporting start date."
                 ),
+                severity="advisory",
                 data={
                     "requested_start": start_limit.isoformat(),
                     "data_start": data_start.isoformat(),

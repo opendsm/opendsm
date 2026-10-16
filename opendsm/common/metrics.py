@@ -1149,6 +1149,9 @@ class BaselineMetrics(ArbitraryPydanticModel):
         if np.array_equal(observed, predicted):
             return 1.0
 
+        if np.ptp(observed) == 0 or np.ptp(predicted) == 0:
+            return float("nan")
+
         return pearsonr(observed, predicted)[0]
 
     @computed_field_cached_property()
