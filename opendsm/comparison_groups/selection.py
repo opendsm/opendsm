@@ -131,6 +131,9 @@ def _build_data(population, method, basis, data_settings, exclude):
         features_df=features,
         settings=settings,
     )
+    data._excluded_ids = pd.concat(
+        [data._excluded_ids, loadshape_data.excluded_ids], ignore_index=True
+    )
 
     return data
 

@@ -266,6 +266,28 @@ class _StubPopulation:
         return self._loadshape_data
 
 
+def test_stratified_build_data_carries_forward_loadshape_exclusions():
+    """A meter the loadshape ``Data`` drops (too few times, interpolation
+    off) must still reach the stratified ``Data``'s exclusion ledger, and must
+    not remain selectable through its surviving features row."""
+    settings = Data_Settings(
+        agg_type=_const.AggType.MEAN,
+        loadshape_type=_const.LoadshapeType.OBSERVED,
+        time_period=_const.TimePeriod.HOUR,
+        interpolate_missing=False,
+    )
+    loadshape_data = Data(
+        time_series_df=_hourly_meters({"p0": 48, "p1": 20, "p2": 48}), settings=settings
+    )
+    features = pd.DataFrame({"summer_usage": [1.0, 2.0, 3.0]}, index=["p0", "p1", "p2"])
+    population = _StubPopulation(loadshape_data, features)
+
+    data = _build_data(population, SelectionMethod.STRATIFIED_SAMPLING, "observed", settings, ())
+
+    assert "p1" in set(data.excluded_ids["id"])
+    assert "p1" not in set(data.features.index.astype(str))
+
+
 def test_stratified_build_data_drops_excluded_ids_from_features():
     """An id selection excludes loses its features row too, so stratified
     sampling cannot draw it."""
