@@ -300,10 +300,10 @@ def test_billing_baseline_data_with_bimonthly_daily_frequencies(
 
 
 def _meter_temp(df_hourly_baseline):
-    """Extract (meter_df_with_value, temperature_series) in UTC from a ComStock hourly baseline DataFrame."""
+    """Extract (meter_df_with_observed, temperature_series) in UTC from a ComStock hourly baseline DataFrame."""
     sub = df_hourly_baseline.copy()
     sub.index = sub.index.tz_convert("UTC")
-    meter = sub[["observed"]].rename(columns={"observed": "value"})
+    meter = sub[["observed"]]
     temperature = sub["temperature"]
 
     return meter, temperature
@@ -313,7 +313,7 @@ def test_billing_baseline_data_with_specific_hourly_input(comstock_hourly, snaps
     df_b, _ = comstock_hourly
     meter, temperature = _meter_temp(df_b)
 
-    cls = BillingBaselineData.from_series(meter, temperature, is_electricity_data=True)
+    cls = BillingBaselineData(pd.concat([meter, temperature], axis=1, sort=True), is_electricity_data=True)
 
     assert cls.df is not None
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
@@ -327,10 +327,10 @@ def test_billing_baseline_data_with_specific_daily_input(comstock_daily, comstoc
 
     sub_daily = df_daily.copy()
     sub_daily.index = sub_daily.index.tz_convert("UTC")
-    meter = sub_daily[["observed"]].rename(columns={"observed": "value"})
+    meter = sub_daily[["observed"]]
     _, temperature = _meter_temp(df_hourly)
 
-    cls = BillingBaselineData.from_series(meter, temperature, is_electricity_data=True)
+    cls = BillingBaselineData(pd.concat([meter, temperature], axis=1, sort=True), is_electricity_data=True)
 
     assert cls.df is not None
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
@@ -344,12 +344,12 @@ def test_billing_baseline_data_with_specific_missing_daily_input(comstock_daily,
 
     sub_daily = df_daily.copy()
     sub_daily.index = sub_daily.index.tz_convert("UTC")
-    meter = sub_daily[["observed"]].rename(columns={"observed": "value"})
+    meter = sub_daily[["observed"]].copy()
     # Set 1 month meter data to NaN
     meter.loc[meter.index.month == 4] = np.nan
     _, temperature = _meter_temp(df_hourly)
 
-    cls = BillingBaselineData.from_series(meter, temperature, is_electricity_data=True)
+    cls = BillingBaselineData(pd.concat([meter, temperature], axis=1, sort=True), is_electricity_data=True)
 
     assert cls.df is not None
     assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
@@ -362,10 +362,10 @@ def test_billing_baseline_data_with_specific_monthly_input(comstock_monthly, com
 
     sub_monthly = df_monthly.copy()
     sub_monthly.index = sub_monthly.index.tz_convert("UTC")
-    meter = sub_monthly[["observed"]].rename(columns={"observed": "value"}).dropna()
+    meter = sub_monthly[["observed"]].dropna()
     _, temperature = _meter_temp(df_hourly)
 
-    cls = BillingBaselineData.from_series(meter, temperature, is_electricity_data=True)
+    cls = BillingBaselineData(pd.concat([meter, temperature], axis=1, sort=True), is_electricity_data=True)
 
     assert cls.df is not None
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")

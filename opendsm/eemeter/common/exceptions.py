@@ -54,9 +54,19 @@ class UnrecognizedModelTypeError(EEMeterError):
 
 
 class DataSufficiencyError(EEMeterError):
-    """Error indicating insufficient data to fit model on."""
+    """Error indicating insufficient data to fit model on.
 
-    pass
+    Args:
+        message: Why the fit was refused.
+        disqualification: The disqualification warnings that caused the refusal.
+
+    Attributes:
+        disqualification: Those warnings, as a list; empty when none were given.
+    """
+
+    def __init__(self, message="", disqualification=None):
+        super().__init__(message)
+        self.disqualification: list["EEMeterWarning"] = list(disqualification or [])
 
 
 class DisqualifiedModelError(EEMeterError):

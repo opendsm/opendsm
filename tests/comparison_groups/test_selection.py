@@ -43,10 +43,8 @@ from opendsm.comparison_groups.stratified_sampling.settings import (
     StratificationColumnSettings,
     StratifiedSamplingSettings,
 )
-from opendsm.eemeter.models import (
-    DailyBaselineData,
-    DailyModel,
-)
+from opendsm.eemeter.models import DailyModel
+from opendsm.eemeter.models.daily.data import DailyBaselineData
 
 
 
@@ -395,7 +393,7 @@ def test_selection_without_baseline_raises_naming_every_meter(treatment, pool, b
     kept = pool.ids[0]
     reloaded_treatment = TreatmentGroup.from_json(treatment.to_json())
     reloaded_pool = ComparisonPool.from_json(
-        pool.to_json(), baseline={kept: billing_meters["pool"][kept]["baseline_data"]}
+        pool.to_json(), baseline={kept: billing_meters["pool"][kept]["baseline_df"]}
     )
     missing = {"treatment": treatment.ids, "pool": pool.ids[1:]}
 
@@ -577,20 +575,13 @@ def test_incomplete_meter_without_interpolation_is_ledgered_and_selection_procee
 # -- short-baseline exclusion (MONTH loadshapes) -----------------------------
 
 
-def _with_short_baselines(meters, short_ids):
-    """``meters`` with the baselines of ``short_ids`` cut to their first six
-    daily rows, so each spans a single month."""
-    shortened = {}
-
-    for mid, entry in meters.items():
-        entry = dict(entry)
-        if mid in short_ids:
-            baseline_data = copy.deepcopy(entry["baseline_data"])
-            baseline_data._df = baseline_data._df.head(6)
-            entry["baseline_data"] = baseline_data
-        shortened[mid] = entry
-
-    return shortened
+def _shorten_baselines(population, short_ids):
+    """Cut the attached baselines of ``short_ids`` to their first six daily rows,
+    so each spans a single month; done after construction so the cut is not
+    itself a construction-time sufficiency failure."""
+    for mid in short_ids:
+        baseline_data = population._meters[mid].baseline_data
+        baseline_data._df = baseline_data._df.head(6)
 
 
 @pytest.fixture
@@ -599,15 +590,17 @@ def short_baseline_env(billing_meters):
     treatment meter and one pool meter have a single baseline month."""
     short_treatment = list(billing_meters["treatment"])[1]
     short_pool = list(billing_meters["pool"])[3]
-    treatment_meters = _with_short_baselines(billing_meters["treatment"], {short_treatment})
-    pool_meters = _with_short_baselines(billing_meters["pool"], {short_pool})
+    treatment = TreatmentGroup.from_fit_models(
+        billing_meters["treatment"], features=_synthetic_features(billing_meters["treatment"])
+    )
+    pool = ComparisonPool.from_fit_models(
+        billing_meters["pool"], features=_synthetic_features(billing_meters["pool"])
+    )
+    _shorten_baselines(treatment, {short_treatment})
+    _shorten_baselines(pool, {short_pool})
     env = {
-        "treatment": TreatmentGroup.from_fit_models(
-            treatment_meters, features=_synthetic_features(treatment_meters)
-        ),
-        "pool": ComparisonPool.from_fit_models(
-            pool_meters, features=_synthetic_features(pool_meters)
-        ),
+        "treatment": treatment,
+        "pool": pool,
         "short_treatment": short_treatment,
         "short_pool": short_pool,
     }
@@ -717,18 +710,18 @@ def overlap_env(billing_meters):
     treatment_meters = billing_meters["treatment"]
     plain_meters = billing_meters["pool"]
     overlap = list(treatment_meters)[:2]
-    overlap_meters = _with_short_baselines(
-        {mid: treatment_meters[mid] for mid in overlap}, {overlap[1]}
-    )
+    overlap_meters = {mid: treatment_meters[mid] for mid in overlap}
     plain_features = _synthetic_features(plain_meters)
     overlap_features = pd.concat([plain_features, _synthetic_features(overlap_meters)])
+    pool = ComparisonPool.from_fit_models(
+        {**plain_meters, **overlap_meters}, features=overlap_features
+    )
+    _shorten_baselines(pool, {overlap[1]})
     env = {
         "treatment": TreatmentGroup.from_fit_models(
             treatment_meters, features=_synthetic_features(treatment_meters)
         ),
-        "pool": ComparisonPool.from_fit_models(
-            {**plain_meters, **overlap_meters}, features=overlap_features
-        ),
+        "pool": pool,
         "plain_pool": ComparisonPool.from_fit_models(plain_meters, features=plain_features),
         "overlap": [str(mid) for mid in overlap],
     }
@@ -807,9 +800,10 @@ def test_overlapping_id_short_in_both_copies_has_one_row_per_copy(billing_meters
     ``pool_overlap`` row for its pool copy."""
     treatment_meters = billing_meters["treatment"]
     mid = list(treatment_meters)[0]
-    shortened = _with_short_baselines(treatment_meters, {mid})
-    treatment = TreatmentGroup.from_fit_models(shortened)
-    pool = ComparisonPool.from_fit_models({**billing_meters["pool"], mid: shortened[mid]})
+    treatment = TreatmentGroup.from_fit_models(treatment_meters)
+    pool = ComparisonPool.from_fit_models({**billing_meters["pool"], mid: treatment_meters[mid]})
+    _shorten_baselines(treatment, {mid})
+    _shorten_baselines(pool, {mid})
 
     selection = _select(treatment, pool, "random_sampling", method_settings=RS_Settings(seed=42))
 
@@ -889,10 +883,11 @@ _COVERAGE_TZ = "America/New_York"
 
 
 def _daily_baseline(seed=0, hole=None, span=365, start="2020-01-01", nan_where=None):
-    """A constructed DailyBaselineData with a smooth weather-driven load. ``hole``
-    is a ``(start, stop)`` positional slice of observed rows set to NaN, and
-    ``nan_where`` a predicate on the index selecting further NaN days; ``span``
-    and ``start`` shift the meter's coverage relative to a group window."""
+    """A constructed daily baseline frame with a smooth weather-driven load.
+    ``hole`` is a ``(start, stop)`` positional slice of observed rows set to NaN,
+    and ``nan_where`` a predicate on the index selecting further NaN days;
+    ``span`` and ``start`` shift the meter's coverage relative to a group
+    window."""
     index = pd.date_range(start, periods=span, freq="D", tz=_COVERAGE_TZ)
     rng = np.random.default_rng(seed)
     temperature = 50 + 25 * np.sin(np.arange(span) / 365 * 2 * np.pi) + rng.normal(0, 2, span)
@@ -906,19 +901,22 @@ def _daily_baseline(seed=0, hole=None, span=365, start="2020-01-01", nan_where=N
     if nan_where is not None:
         frame.loc[nan_where(index), "observed"] = np.nan
 
-    baseline = DailyBaselineData(
-        frame.reset_index().rename(columns={"index": "datetime"}),
-        is_electricity_data=True,
-    )
+    baseline = frame.reset_index().rename(columns={"index": "datetime"})
 
     return baseline
 
 
+def _daily_baseline_data(**kwargs):
+    """``_daily_baseline`` as a data object, for the coverage helper that reads
+    one directly rather than through a population."""
+    return DailyBaselineData(_daily_baseline(**kwargs), is_electricity_data=True)
+
+
 def _daily_population(cls, specs, model, **kwargs):
-    """Build a daily population from ``{id: baseline_data}``, reusing one fitted
+    """Build a daily population from ``{id: baseline_df}``, reusing one fitted
     model (the coverage DQ reads only baseline data). The disqualified-meter
     warning is expected for gross-hole meters and suppressed here."""
-    meters = {mid: {"model": model, "baseline_data": bd} for mid, bd in specs.items()}
+    meters = {mid: {"model": model, "baseline_df": df} for mid, df in specs.items()}
 
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="Population includes disqualified")
@@ -931,7 +929,9 @@ def _daily_population(cls, specs, model, **kwargs):
 def daily_model():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        model = DailyModel().fit(_daily_baseline(seed=0), ignore_disqualification=True)
+        model = DailyModel().fit(
+            _daily_baseline(seed=0), is_electricity_data=True, enforce_compliance=False
+        )
 
     return model
 
@@ -994,7 +994,7 @@ def test_selection_data_settings_interpolate_missing_reaches_data(
 
 
 def test_window_coverage_is_finite_fraction_over_window_length():
-    baseline = _daily_baseline(hole=(100, 160))  # 60 of 365 observed days NaN
+    baseline = _daily_baseline_data(hole=(100, 160))  # 60 of 365 observed days NaN
     window = (baseline.df.index.min(), baseline.df.index.max())
 
     coverage = window_coverage(baseline, window, "D")
@@ -1004,7 +1004,7 @@ def test_window_coverage_is_finite_fraction_over_window_length():
 
 
 def test_window_coverage_full_clean_meter_is_one():
-    baseline = _daily_baseline()
+    baseline = _daily_baseline_data()
     window = (baseline.df.index.min(), baseline.df.index.max())
 
     coverage = window_coverage(baseline, window, "D")
@@ -1013,7 +1013,7 @@ def test_window_coverage_full_clean_meter_is_one():
 
 
 def test_window_coverage_penalizes_a_span_short_of_the_window():
-    baseline = _daily_baseline(span=300, start="2020-02-01")  # 300 finite days inside 2020
+    baseline = _daily_baseline_data(span=300, start="2020-02-01")  # 300 finite days inside 2020
     window = (
         pd.Timestamp("2020-01-01", tz=_COVERAGE_TZ),
         pd.Timestamp("2020-12-30", tz=_COVERAGE_TZ),

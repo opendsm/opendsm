@@ -14,18 +14,23 @@
 
 from __future__ import annotations
 
+import pydantic
+
 from typing import Literal
 
 from opendsm.common.base_settings import CustomField
+from opendsm.eemeter.common.data_settings import BillingDataSettings
 from opendsm.eemeter.models.daily.utilities.settings import DailySettings
 
 
 
 class BillingSettings(DailySettings):
-    """Daily settings on the legacy preset."""
+    """Daily settings on the legacy preset with the billing data block."""
 
     preset: Literal["current", "legacy"] = CustomField(
         default="legacy",
         developer=False,
         description="Named set of default values that all other settings fall back to",
     )
+
+    data: BillingDataSettings = pydantic.Field(default_factory=BillingDataSettings)
