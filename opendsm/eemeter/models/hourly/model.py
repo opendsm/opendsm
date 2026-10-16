@@ -48,11 +48,12 @@ from opendsm.eemeter.models.hourly.regressors import (
     SafeElasticNet,
     AdaptiveElasticNetRegressor,
 )
+from opendsm.common.base_settings import settings_deviation_report
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
     DisqualifiedModelError,
 )
-from opendsm.eemeter.common.warnings import EEMeterWarning
+from opendsm.eemeter.common.warnings import EEMeterWarning, nonstandard_settings_warning
 from opendsm.common.clustering.cluster import cluster_features
 from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict, ReportingMetrics
 from opendsm import __version__
@@ -407,6 +408,9 @@ class HourlyModel:
 
         return model
 
+    def _reference_settings(self):
+        return type(self.settings)()
+
     def _model_prefit_check(self, baseline_data):
         if "ghi" in self._ts_features and "ghi" not in baseline_data.df.columns:
             raise ValueError(
@@ -436,6 +440,21 @@ class HourlyModel:
             self.disqualification.append(model_fit_warning)
             raise DataSufficiencyError("Cannot fit model: Baseline data contains no finite observed values")
 
+    @property
+    def settings_deviations(self) -> dict:
+        """Developer-tier settings that differ from this model's reference defaults.
+
+        Computed from the model's settings on each read, never stored.
+
+        Returns:
+            A dictionary keyed by dotted field path, each entry holding the field's
+            ``value`` and the reference's ``default``. Empty when the model's settings
+            are the standard OpenDSM ones for its type.
+        """
+        report = settings_deviation_report(self.settings, self._reference_settings())
+
+        return report
+
     def fit(
         self, baseline_data: HourlyBaselineData, ignore_disqualification: bool = False
     ) -> HourlyModel:
@@ -460,12 +479,17 @@ class HourlyModel:
         if baseline_data.disqualification and not ignore_disqualification:
             raise DataSufficiencyError("Can't fit model on disqualified baseline data")
 
-        self.warnings = baseline_data.warnings
+        self.warnings = list(baseline_data.warnings)
         self.disqualification = baseline_data.disqualification
 
         if not self._ts_features:
             self.settings = self.settings.add_default_features(baseline_data.df.columns)
             self._ts_features = self.settings.train_features.copy()
+
+        settings_warning = nonstandard_settings_warning(self.settings, self._reference_settings())
+        if settings_warning is not None:
+            self.warnings.append(settings_warning)
+            settings_warning.warn()
 
         self._model_prefit_check(baseline_data)
         
