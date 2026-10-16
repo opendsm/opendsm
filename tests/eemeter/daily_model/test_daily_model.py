@@ -677,6 +677,38 @@ def test_prior_format_model_fit_metrics_disqualification_reports_model_status(
     assert rebuilt.compliance.status == ["model"]
 
 
+def test_prior_format_settings_payload_drops_removed_sufficiency_keys(
+    default_fitted_daily_model,
+):
+    """A payload without a schema version that carries an undeclared threshold key loads
+    through the prior-format path."""
+    model_dict = default_fitted_daily_model.to_dict()
+    del model_dict["schema_version"]
+    del model_dict["compliance"]
+    del model_dict["info"]["is_electricity_data"]
+    sufficiency = model_dict["settings"]["data"]["sufficiency"]
+    sufficiency["temperature"]["min_pct_hourly_coverage"] = 0.5
+    sufficiency["observed"]["min_pct_period_coverage"] = 0.5
+    sufficiency["joint"]["min_pct_period_coverage"] = 0.5
+
+    rebuilt = DailyModel.from_dict(model_dict, is_electricity_data=True)
+
+    assert rebuilt.settings.data.sufficiency.temperature.min_pct_daily_coverage == 0.9
+
+
+def test_versioned_payload_drops_removed_sufficiency_keys(default_fitted_daily_model):
+    """A payload stamped with the current schema version also sheds undeclared threshold keys."""
+    model_dict = default_fitted_daily_model.to_dict()
+    sufficiency = model_dict["settings"]["data"]["sufficiency"]
+    sufficiency["temperature"]["min_pct_hourly_coverage"] = 0.5
+    sufficiency["observed"]["min_pct_period_coverage"] = 0.5
+    sufficiency["joint"]["min_pct_period_coverage"] = 0.5
+
+    rebuilt = DailyModel.from_dict(model_dict)
+
+    assert rebuilt.settings.data.sufficiency.temperature.min_pct_daily_coverage == 0.9
+
+
 def test_daily_settings_data_block_has_sufficiency_defaults():
     settings = DailySettings()
 

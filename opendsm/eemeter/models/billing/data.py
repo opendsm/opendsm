@@ -26,7 +26,8 @@ from opendsm.eemeter.common.data_processor_utilities import (
 )
 from opendsm.eemeter.common.features import compute_temperature_features
 from opendsm.eemeter.common.data_settings import BillingDataSettings
-from opendsm.eemeter.common.sufficiency_criteria import BillingSufficiencyCriteria
+from opendsm.eemeter.common.sufficiency_criteria import SufficiencyCriteria
+from opendsm.eemeter.common.sufficiency_rules import run_sufficiency
 from opendsm.eemeter.models.daily.data import _DailyData
 
 from opendsm.eemeter.common.warnings import EEMeterWarning
@@ -84,7 +85,10 @@ class _BillingData(_DailyData):
             end_date = end_date - pd.Timedelta(days=1)
 
         data_frequency = compute_data_frequency(
-            meter_series.index, default_data_frequency="billing_bimonthly"
+            meter_series.index,
+            default_data_frequency="billing_bimonthly",
+            max_days_in_monthly_period=self.settings.sufficiency.max_days_in_monthly_period,
+            max_days_in_bimonthly_period=self.settings.sufficiency.max_days_in_bimonthly_period,
         )
 
         # Ensure higher frequency data is aggregated to the monthly model
@@ -109,13 +113,9 @@ class _BillingData(_DailyData):
         meter_series[end_date + pd.Timedelta(days=1)] = np.nan
 
         # This checks for offcycle reads. That is a disqualification if the billing cycle is less than 25 days
-        offcycle_entries = []
-        meter_value_df = clean_billing_daily_data(
-            meter_series.to_frame("value"), data_frequency, offcycle_entries
+        meter_value_df, self._data_report = clean_billing_daily_data(
+            meter_series.to_frame("value"), data_frequency, self.settings.sufficiency
         )
-
-        for entry in offcycle_entries:
-            self._record(entry)
 
         # Spread billing data to daily
         meter_value_df = as_freq(meter_value_df["value"], "D").to_frame("value")
@@ -380,15 +380,17 @@ class BillingBaselineData(_BillingData):
             The compliance records produced by the sufficiency checks.
 
         """
-        bsc = BillingSufficiencyCriteria(
-            data=sufficiency_df, 
+        context = SufficiencyCriteria(
+            data=sufficiency_df,
             is_electricity_data=self.is_electricity_data,
             is_reporting_data=False,
+            family="billing",
             settings=self.settings.sufficiency,
+            data_report=self._data_report,
         )
-        bsc.check_sufficiency_baseline()
+        run_sufficiency(context, "baseline")
 
-        return bsc.compliance.all
+        return context.compliance.all
 
 
 class BillingReportingData(_BillingData):
@@ -441,12 +443,14 @@ class BillingReportingData(_BillingData):
             The compliance records produced by the sufficiency checks.
 
         """
-        bsc = BillingSufficiencyCriteria(
-            data=sufficiency_df, 
+        context = SufficiencyCriteria(
+            data=sufficiency_df,
             is_electricity_data=self.is_electricity_data,
             is_reporting_data=True,
+            family="billing",
             settings=self.settings.sufficiency,
+            data_report=self._data_report,
         )
-        bsc.check_sufficiency_reporting()
+        run_sufficiency(context, "reporting")
 
-        return bsc.compliance.all
+        return context.compliance.all

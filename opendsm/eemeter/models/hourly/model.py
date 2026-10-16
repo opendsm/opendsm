@@ -57,6 +57,7 @@ from opendsm.eemeter.common.compliance import (
     _prior_format_entries,
     normalize_enforce_compliance,
 )
+from opendsm.eemeter.common.data_settings import strip_removed_sufficiency_keys
 from opendsm.eemeter.common.data_processor_utilities import trim_edge_rows
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
@@ -1887,12 +1888,13 @@ class HourlyModel:
             raise ModelLoadError("Serialized hourly model could not be read") from exc
 
         # get settings
-        train_features = data.get("settings").get("train_features")
+        settings_payload = strip_removed_sufficiency_keys(data.get("settings"))
+        train_features = settings_payload.get("train_features")
 
         if "ghi" in train_features:
-            settings = _settings.HourlySolarSettings(**data.get("settings"))
+            settings = _settings.HourlySolarSettings(**settings_payload)
         else:
-            settings = _settings.HourlyNonSolarSettings(**data.get("settings"))
+            settings = _settings.HourlyNonSolarSettings(**settings_payload)
 
         # initialize model class
         model_cls = cls(settings=settings)
