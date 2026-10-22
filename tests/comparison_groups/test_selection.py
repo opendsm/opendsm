@@ -967,7 +967,7 @@ def test_selection_data_settings_interpolate_missing_reaches_data(
         # 18 summer Mondays missing, 347/365 days clears baseline coverage
         "p-gap": _daily_baseline(
             seed=3,
-            nan_where=lambda index: (index.dayofweek == 0) & index.month.isin([6, 7, 8, 9]),
+            nan_where=lambda index: (index.day_of_week == 0) & index.month.isin([6, 7, 8, 9]),
         ),
     }
     treatment_specs = {"t0": _daily_baseline(seed=100), "t1": _daily_baseline(seed=101)}
