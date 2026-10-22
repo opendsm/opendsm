@@ -320,6 +320,30 @@ class TestInterpolateIntegration:
         hourly_std = result_hourly_mean.std()
         assert hourly_std > 1.0  # At least some daily variation
 
+    # the series length sets the lag window: a day of lags for a week, two weeks for a year
+    @pytest.mark.parametrize(
+        ("column", "n_days", "gap_start", "gap_hours"),
+        [
+            ("temperature", 7, 72, 24),
+            ("observed", 365, 240, 48),
+            ("ghi", 7, 86, 10),
+        ],
+        ids=["temperature", "observed", "ghi"],
+    )
+    def test_long_gap_fill_matches_snapshot(
+        self, real_hourly_data, snapshot, column, n_days, gap_start, gap_hours
+    ):
+        """The values filled into a gap of several hours to two days in one column of real
+        hourly data match their snapshot."""
+        df = real_hourly_data.head(24 * n_days).copy()
+        gap = df.index[gap_start:gap_start + gap_hours]
+        df.loc[gap, column] = np.nan
+
+        result = interpolate(df, columns=[column])
+
+        filled = result.loc[gap, column].tolist()
+        assert filled == snapshot
+
 
 # =============================================================================
 # _autocorr_fcn — characterization & correctness (masked loop vs FFT branch)
