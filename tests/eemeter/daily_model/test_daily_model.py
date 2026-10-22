@@ -732,12 +732,20 @@ def test_from_dict_rejects_keyword_when_payload_carries_meter_fact(default_fitte
 
 
 @pytest.fixture(scope="module")
-def poor_fit_daily_model(comstock_daily):
-    """A fitted model whose fit metrics disqualify it, so its record is written after the fit."""
+def poor_fit_daily_frame(comstock_daily):
     df_b, _ = comstock_daily
     df = df_b.reset_index().copy()
     df.loc[:50, "observed"] += df["observed"].median() * 50
-    model = DailyModel().fit(df, is_electricity_data=True, enforce_compliance=False)
+
+    return df
+
+
+@pytest.fixture(scope="module")
+def poor_fit_daily_model(poor_fit_daily_frame):
+    """A fitted model whose fit metrics disqualify it, so its record is written after the fit."""
+    model = DailyModel().fit(
+        poor_fit_daily_frame, is_electricity_data=True, enforce_compliance=False
+    )
 
     return model
 
@@ -1097,6 +1105,19 @@ def test_enforce_compliance_true_and_false_yield_identical_parameters(daily_seri
         expected = submodel.coefficients.to_np_array()
         actual = model_false.params.submodels[key].coefficients.to_np_array()
         np.testing.assert_allclose(actual, expected, atol=1e-9)
+
+
+def test_fit_starts_its_own_compliance_record(poor_fit_daily_frame, poor_fit_daily_model):
+    """A model refit on a frame carries one fit-metrics disqualification, and fitting it
+    leaves another model fit on that frame unchanged."""
+    first_payload = poor_fit_daily_model.to_json()
+
+    model = DailyModel()
+    model.fit(poor_fit_daily_frame, is_electricity_data=True, enforce_compliance=False)
+    model.fit(poor_fit_daily_frame, is_electricity_data=True, enforce_compliance=False)
+
+    _named_entry(model, "eemeter.model_fit_metrics")
+    assert poor_fit_daily_model.to_json() == first_payload
 
 
 # ---------------------------------------------------------------------------

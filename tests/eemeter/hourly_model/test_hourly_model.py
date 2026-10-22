@@ -323,6 +323,23 @@ def test_hourly_error_metric_dq(baseline):
         model.predict(baseline)
 
 
+@pytest.mark.filterwarnings("ignore:Objective did not converge.")
+def test_fit_starts_its_own_compliance_record(baseline):
+    """A second model fit on a frame carries one fit-metrics disqualification and leaves the
+    first model fit on that frame unchanged."""
+    baseline["observed"] = np.random.default_rng(0).normal(-1, 10, len(baseline)) ** 3
+    first = HourlyModel().fit(baseline, is_electricity_data=True)
+    first_payload = first.to_json()
+
+    second = HourlyModel().fit(baseline, is_electricity_data=True)
+
+    names = [entry.qualified_name for entry in second.compliance.disqualification]
+    assert names.count("eemeter.model_fit_metrics") == 1, (
+        f"expected exactly one eemeter.model_fit_metrics disqualification, found {names}"
+    )
+    assert first.to_json() == first_payload
+
+
 def assert_dq(data, expected_disqualifications):
     remaining_dq = set(expected_disqualifications)
     if isinstance(data, DataSufficiencyError):
