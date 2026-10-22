@@ -540,11 +540,11 @@ def _time_digits(datetimes, column, settings):
     elif column == "month":
         keys = datetimes.dt.month - 1
     elif column == "day_of_week":
-        keys = datetimes.dt.dayofweek
+        keys = datetimes.dt.day_of_week
     elif column == "day_of_year":
-        keys = datetimes.dt.dayofyear - 1
+        keys = datetimes.dt.day_of_year - 1
     elif column == "weekday_weekend":
-        labels = datetimes.dt.dayofweek.map(settings.weekday_weekend._num_dict)
+        labels = datetimes.dt.day_of_week.map(settings.weekday_weekend._num_dict)
         keys = labels.map(settings.weekday_weekend.options.index)
     elif column == "hour":
         keys = datetimes.dt.hour
@@ -584,7 +584,7 @@ def _drop_time(frame, settings, season, day_of_week, hour):
     """Remove every reading of one (season, day_of_week, hour) time."""
     has_time = (
         (_season_ordinal(frame["datetime"], settings) == season)
-        & (frame["datetime"].dt.dayofweek == day_of_week)
+        & (frame["datetime"].dt.day_of_week == day_of_week)
         & (frame["datetime"].dt.hour == hour)
     )
 
