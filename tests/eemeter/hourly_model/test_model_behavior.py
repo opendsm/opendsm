@@ -30,7 +30,7 @@ def _seasonal_temperature(year=2020, seed=1):
     hours = pd.date_range(
         f"{year}-01-01", f"{year}-12-31 23:00", freq="h", tz="America/Chicago"
     )
-    doy = hours.dayofyear.values
+    doy = hours.day_of_year.values
     hour_of_day = hours.hour.values
     rng = np.random.default_rng(seed)
     values = (
@@ -46,7 +46,7 @@ def _seasonal_temperature(year=2020, seed=1):
 def _cooling_load(temperature, seed):
     """Hour-of-week profile plus a linear response above the balance point, with noise."""
     hour_of_day = temperature.index.hour.values
-    is_weekend = (temperature.index.dayofweek.values >= 5).astype(float)
+    is_weekend = (temperature.index.day_of_week.values >= 5).astype(float)
     rng = np.random.default_rng(seed)
     profile = 1.2 + 0.5 * np.sin(2 * np.pi * (hour_of_day - 8) / 24) + 0.3 * is_weekend
     response = TEMPERATURE_SLOPE * np.maximum(temperature.values - BALANCE_POINT, 0.0)
@@ -69,7 +69,7 @@ def _slope_above_balance_point(result):
     temperature cycle cannot leak the load profile into the slope estimate.
     """
     above = result[result["temperature"] > BALANCE_POINT]
-    hour_of_week = above.index.dayofweek.values * 24 + above.index.hour.values
+    hour_of_week = above.index.day_of_week.values * 24 + above.index.hour.values
     x = above["temperature"] - above.groupby(hour_of_week)["temperature"].transform("mean")
     y = above["predicted"] - above.groupby(hour_of_week)["predicted"].transform("mean")
     slope = float((x * y).sum() / (x * x).sum())

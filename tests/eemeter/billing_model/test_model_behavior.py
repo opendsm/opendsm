@@ -29,7 +29,7 @@ def _seasonal_temperature(year=2020, seed=1):
     """Hourly seasonal temperature swinging ~25..85 F, padded a month past year-end so
     the billing frame's closing read still has a temperature."""
     hours = pd.date_range(f"{year}-01-01", periods=396 * 24, freq="h", tz="America/Chicago")
-    doy = hours.dayofyear.values
+    doy = hours.day_of_year.values
     rng = np.random.default_rng(seed)
     values = 55.0 + 30.0 * np.sin(2 * np.pi * (doy - 110) / 365) + rng.normal(0, 2, len(hours))
 
