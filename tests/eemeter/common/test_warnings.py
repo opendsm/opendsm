@@ -14,15 +14,11 @@
 
 import json
 
-from opendsm.common.base_settings import BaseSettings, CustomField
 from opendsm.eemeter.common.warnings import EEMeterWarning, nonstandard_settings_warning
 
 
 
-
-class _DummySettings(BaseSettings):
-    developer_value: float = CustomField(default=1.0, developer=True)
-    fixed_value: float = CustomField(default=2.0, developer=False)
+_REPORT = {"developer_value": {"value": 3.0, "default": 1.0}}
 
 
 def test_eemeter_warning():
@@ -40,36 +36,25 @@ def test_eemeter_warning():
     }
 
 
-def test_nonstandard_settings_warning_returns_none_for_identical_settings():
-    settings = _DummySettings()
-    reference = _DummySettings()
-
-    assert nonstandard_settings_warning(settings, reference) is None
+def test_nonstandard_settings_warning_returns_none_for_an_empty_report():
+    assert nonstandard_settings_warning({}) is None
 
 
-def test_nonstandard_settings_warning_reports_developer_tier_deviation():
-    settings = _DummySettings(developer_value=3.0)
-    reference = _DummySettings()
-
-    warning = nonstandard_settings_warning(settings, reference)
+def test_nonstandard_settings_warning_has_the_nonstandard_qualified_name():
+    warning = nonstandard_settings_warning(_REPORT)
 
     assert warning.qualified_name == "eemeter.settings.nonstandard"
-    assert warning.data["deviations"] == {
-        "developer_value": {"value": 3.0, "default": 1.0},
-    }
 
 
-def test_nonstandard_settings_warning_ignores_non_developer_tier_deviation():
-    settings = _DummySettings(fixed_value=5.0)
-    reference = _DummySettings()
+def test_nonstandard_settings_warning_carries_the_report_as_its_deviations():
+    warning = nonstandard_settings_warning(_REPORT)
 
-    assert nonstandard_settings_warning(settings, reference) is None
+    assert warning.data["deviations"] == _REPORT, (
+        f"expected the report as the deviations payload, got {warning.data}"
+    )
 
 
 def test_nonstandard_settings_warning_payload_is_json_serializable():
-    settings = _DummySettings(developer_value=3.0)
-    reference = _DummySettings()
-
-    warning = nonstandard_settings_warning(settings, reference)
+    warning = nonstandard_settings_warning(_REPORT)
 
     assert json.dumps(warning.json())

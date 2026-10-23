@@ -16,9 +16,14 @@ from __future__ import annotations
 import pydantic
 
 from enum import Enum
-from typing import Any, ClassVar, Optional, Literal, Union
+from typing import Any, ClassVar, Optional, Literal, Union, get_args
 
-from opendsm.common.base_settings import BaseSettings, CustomField
+from opendsm.common.base_settings import (
+    BaseSettings,
+    DeveloperField,
+    UserField,
+    lowercase_keys,
+)
 import opendsm.eemeter.models.daily.utilities.const as _const
 from opendsm.eemeter.models.daily.utilities.opt_settings import AlgorithmChoice
 
@@ -56,18 +61,18 @@ class FullModelSelection(str, Enum):
 
 
 class Season_Definition(BaseSettings):
-    january: str = CustomField(default="winter", developer=False)
-    february: str = CustomField(default="winter", developer=False)
-    march: str = CustomField(default="shoulder", developer=False)
-    april: str = CustomField(default="shoulder", developer=False)
-    may: str = CustomField(default="shoulder", developer=False)
-    june: str = CustomField(default="summer", developer=False)
-    july: str = CustomField(default="summer", developer=False)
-    august: str = CustomField(default="summer", developer=False)
-    september: str = CustomField(default="summer", developer=False)
-    october: str = CustomField(default="shoulder", developer=False)
-    november: str = CustomField(default="winter", developer=False)
-    december: str = CustomField(default="winter", developer=False)
+    january: str = UserField(default="winter")
+    february: str = UserField(default="winter")
+    march: str = UserField(default="shoulder")
+    april: str = UserField(default="shoulder")
+    may: str = UserField(default="shoulder")
+    june: str = UserField(default="summer")
+    july: str = UserField(default="summer")
+    august: str = UserField(default="summer")
+    september: str = UserField(default="summer")
+    october: str = UserField(default="shoulder")
+    november: str = UserField(default="winter")
+    december: str = UserField(default="winter")
 
     options: ClassVar[list[str]] = ["summer", "shoulder", "winter"]
 
@@ -90,13 +95,13 @@ class Season_Definition(BaseSettings):
 
 
 class Weekday_Weekend_Definition(BaseSettings):
-    monday: str = CustomField(default="weekday", developer=False)
-    tuesday: str = CustomField(default="weekday", developer=False)
-    wednesday: str = CustomField(default="weekday", developer=False)
-    thursday: str = CustomField(default="weekday", developer=False)
-    friday: str = CustomField(default="weekday", developer=False)
-    saturday: str = CustomField(default="weekend", developer=False)
-    sunday: str = CustomField(default="weekend", developer=False)
+    monday: str = UserField(default="weekday")
+    tuesday: str = UserField(default="weekday")
+    wednesday: str = UserField(default="weekday")
+    thursday: str = UserField(default="weekday")
+    friday: str = UserField(default="weekday")
+    saturday: str = UserField(default="weekend")
+    sunday: str = UserField(default="weekend")
 
     options: ClassVar[list[str]] = ["weekday", "weekend"]
 
@@ -119,59 +124,50 @@ class Weekday_Weekend_Definition(BaseSettings):
     
 
 class Split_Selection_Definition(BaseSettings):
-    criteria: ModelSelectionCriteria = CustomField(
+    criteria: ModelSelectionCriteria = DeveloperField(
         default=ModelSelectionCriteria.BIC,
-        developer=True,
         description="What selection criteria is used to select data splits of models",
     )
 
-    penalty_multiplier: float = CustomField(
+    penalty_multiplier: float = DeveloperField(
         default=0.24,
         ge=0,
-        developer=True,
         description="Penalty multiplier for split selection criteria",
     )
 
-    penalty_power: float = CustomField(
+    penalty_power: float = DeveloperField(
         default=2.061,
         ge=1,
-        developer=True,
         description="What power should the penalty of the selection criteria be raised to",
     )
 
-    allow_separate_summer: bool = CustomField(
+    allow_separate_summer: bool = DeveloperField(
         default=True,
-        developer=True,
         description="Allow summer to be modeled separately",
     )
 
-    allow_separate_shoulder: bool = CustomField(
+    allow_separate_shoulder: bool = DeveloperField(
         default=True,
-        developer=True,
         description="Allow shoulder to be modeled separately",
     )
 
-    allow_separate_winter: bool = CustomField(
+    allow_separate_winter: bool = DeveloperField(
         default=True,
-        developer=True,
         description="Allow winter to be modeled separately",
     )
 
-    allow_separate_weekday_weekend: bool = CustomField(
+    allow_separate_weekday_weekend: bool = DeveloperField(
         default=True,
-        developer=True,
         description="Allow weekdays and weekends to be modeled separately",
     )
 
-    reduce_splits_by_gaussian: bool = CustomField(
+    reduce_splits_by_gaussian: bool = DeveloperField(
         default=True,
-        developer=True,
         description="Reduces splits by fitting with multivariate Gaussians and testing for overlap",
     )
 
-    reduce_splits_num_std: Optional[list[float]] = CustomField(
+    reduce_splits_num_std: Optional[list[float]] = DeveloperField(
         default=[1.4, 0.89],
-        developer=True,
         description="Number of standard deviations to use with Gaussians",
     )
 
@@ -201,17 +197,17 @@ _LEGACY_PRESET = {
     },
 }
 
+PresetName = Literal["current", "legacy"]
+
 _PRESETS = {
     "current": {},
     "legacy": _LEGACY_PRESET,
 }
 
-
-def _lowercase_keys(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {k.lower().strip() if isinstance(k, str) else k: _lowercase_keys(v) for k, v in value.items()}
-
-    return value
+if set(get_args(PresetName)) != _PRESETS.keys():
+    raise RuntimeError(
+        f"PresetName {get_args(PresetName)} and the preset table {list(_PRESETS)} name different presets"
+    )
 
 
 def _merge_preset(preset: dict, values: dict) -> dict:
@@ -239,141 +235,120 @@ class DailySettings(BaseSettings):
     Be advised that any changes to the default settings deviates from OpenEEmeter standard methods and should be used with caution.
     """
 
-    preset: Literal["current", "legacy"] = CustomField(
+    preset: PresetName = UserField(
         default="current",
-        developer=False,
         description="Named set of default values that all other settings fall back to",
     )
 
-    algorithm_choice: Optional[AlgorithmChoice] = CustomField(
+    algorithm_choice: Optional[AlgorithmChoice] = DeveloperField(
         default=AlgorithmChoice.NLOPT_SBPLX,
-        developer=True,
         description="Optimization algorithm choice",
     )
 
-    initial_guess_algorithm_choice: Optional[AlgorithmChoice] = CustomField(
+    initial_guess_algorithm_choice: Optional[AlgorithmChoice] = DeveloperField(
         default=AlgorithmChoice.NLOPT_DIRECT,
-        developer=True,
         description="Initial guess optimization algorithm choice",
     )
 
-    full_model: Optional[FullModelSelection] = CustomField(
+    full_model: Optional[FullModelSelection] = DeveloperField(
         default=FullModelSelection.HDD_TIDD_CDD,
-        developer=True,
         description="The largest model allowed",
     )
 
-    allow_smooth_model: bool = CustomField(
+    allow_smooth_model: bool = DeveloperField(
         default=True,
-        developer=True,
         description="Allow smoothed models",
     )
 
-    alpha_minimum: float = CustomField(
+    alpha_minimum: float = DeveloperField(
         default=-100,
         le=-10,
-        developer=True,
         description="Alpha where adaptive robust loss function is Welsch loss",
     )
 
-    alpha_selection: float = CustomField(
+    alpha_selection: float = DeveloperField(
         default=2,
         ge=-10,
         le=2,
-        developer=True,
         description="Specified alpha to evaluate which is the best model type",
     )
 
-    alpha_final_type: Optional[AlphaFinalType] = CustomField(
+    alpha_final_type: Optional[AlphaFinalType] = DeveloperField(
         default=AlphaFinalType.LAST,
-        developer=True,
         description="When to use 'alpha_final: 'all': on every model, 'last': on final model, 'None': don't use",
     )
 
-    alpha_final: Optional[Union[float, Literal["adaptive"]]] = CustomField(
+    alpha_final: Optional[Union[float, Literal["adaptive"]]] = DeveloperField(
         default="adaptive",
-        developer=True,
         description="Specified alpha or 'adaptive' for adaptive loss in model evaluation",
     )
 
-    final_bounds_scalar: Optional[float] = CustomField(
+    final_bounds_scalar: Optional[float] = DeveloperField(
         default=1,
-        developer=True,
         description="Scalar for calculating bounds of 'alpha_final'",
     )
 
-    regularization_alpha: float = CustomField(
+    regularization_alpha: float = DeveloperField(
         default=0.001,
         ge=0,
-        developer=True,
         description="Alpha for elastic net regularization",
     )
 
-    regularization_percent_lasso: float = CustomField(
+    regularization_percent_lasso: float = DeveloperField(
         default=1,
         ge=0,
         le=1,
-        developer=True,
         description="Percent lasso vs (1 - perc) ridge regularization",
     )
 
-    segment_minimum_count: int = CustomField(
+    segment_minimum_count: int = DeveloperField(
         default=6,
         ge=3,
-        developer=True,
         description="Minimum number of data points for HDD/CDD",
     )
 
-    maximum_slope_oom_scalar: float = CustomField(
+    maximum_slope_oom_scalar: float = DeveloperField(
         default=2,
         ge=1,
-        developer=True,
         description="Scaler for initial slope to calculate bounds based on order of magnitude",
     )
 
-    initial_step_percentage: Optional[float] = CustomField(
+    initial_step_percentage: Optional[float] = DeveloperField(
         default=0.1,
-        developer=True,
         description="Initial step-size for relevant algorithms",
     )
 
-    split_selection: Split_Selection_Definition = CustomField(
+    split_selection: Split_Selection_Definition = DeveloperField(
         default_factory=Split_Selection_Definition,
-        developer=True,
         description="Settings for split selection",
     )
 
-    season: Season_Definition = CustomField(
+    season: Season_Definition = DeveloperField(
         default_factory=Season_Definition,
-        developer=False,
         description="Dictionary of months and their associated season (January is 1)",
     )
 
-    weekday_weekend: Weekday_Weekend_Definition = CustomField(
+    weekday_weekend: Weekday_Weekend_Definition = DeveloperField(
         default_factory=Weekday_Weekend_Definition,
-        developer=False,
         description="Dictionary of days (1 = Monday) and if that day is a weekday (True/False)",
     )
 
-    uncertainty_alpha: float = CustomField(
+    uncertainty_alpha: float = UserField(
         default=0.1,
         ge=0,
         le=1,
-        developer=False,
         description="Significance level used for uncertainty calculations",
     )
 
-    cvrmse_threshold: float = CustomField(
+    cvrmse_threshold: float = DeveloperField(
         default=1,
         ge=0,
-        developer=True,
         description="Threshold for the CVRMSE to disqualify a model",
     )
 
-    pnrmse_threshold: float = CustomField(
+    pnrmse_threshold: float = DeveloperField(
         default=1.6,
         ge=0,
-        developer=True,
         description="Threshold for the PNRMSE to disqualify a model",
     )
 
@@ -383,17 +358,20 @@ class DailySettings(BaseSettings):
         if not isinstance(values, dict):
             return values
 
-        values = _lowercase_keys(values)
-
+        # Runs before the BaseSettings key lowercasing, and the preset lookup needs lowercase keys.
+        values = lowercase_keys(values)
         preset = values.get("preset", cls.model_fields["preset"].default)
-        if isinstance(preset, str):
-            preset = preset.lower().strip()
-            values["preset"] = preset
+        if not isinstance(preset, str):
+            return values
 
+        preset = preset.lower().strip()
+        values["preset"] = preset
         if preset not in _PRESETS:
             return values
 
-        return _merge_preset(_PRESETS[preset], values)
+        merged = _merge_preset(_PRESETS[preset], values)
+
+        return merged
 
 
     @pydantic.model_validator(mode="after")
@@ -493,6 +471,7 @@ def update_daily_settings(settings, update_dict):
 
     # update settings with update_dict
     settings_dict = settings.model_dump()
-    settings_dict.update(update_dict)
+    settings_dict.update(lowercase_keys(update_dict))
+    updated = type(settings)(**settings_dict)
 
-    return type(settings)(**settings_dict)
+    return updated

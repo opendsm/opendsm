@@ -22,6 +22,30 @@ from typing import Any
 
 
 
+def lowercase_keys(value: Any) -> Any:
+    """Return a copy of a dict with every string key lowercased and stripped, nested dicts included.
+
+    Values that are not dicts are returned as given, and lists are not descended into.
+
+    Raises:
+        ValueError: If two keys of one dict normalize to the same key.
+    """
+    if not isinstance(value, dict):
+        return value
+
+    lowered = {}
+    for key, item in value.items():
+        if isinstance(key, str):
+            key = key.lower().strip()
+
+        if key in lowered:
+            raise ValueError(f"settings key '{key}' is given more than once in different spellings")
+
+        lowered[key] = lowercase_keys(item)
+
+    return lowered
+
+
 class BaseSettings(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(
         frozen = True,
@@ -33,12 +57,7 @@ class BaseSettings(pydantic.BaseModel):
     """Make all property keys lowercase and strip whitespace"""
     @pydantic.model_validator(mode="before")
     def __lowercase_property_keys__(cls, values: Any) -> Any:
-        def __lower__(value: Any) -> Any:
-            if isinstance(value, dict):
-                return {k.lower().strip() if isinstance(k, str) else k: __lower__(v) for k, v in value.items()}
-            return value
-
-        return __lower__(values)
+        return lowercase_keys(values)
 
     """Make all property values lowercase and strip whitespace before validation"""
     @pydantic.field_validator("*", mode="before")
@@ -57,10 +76,21 @@ class MutableBaseSettings(BaseSettings):
     )
 
 
-# add developer field to pydantic Field
-def CustomField(developer=True, *args, **kwargs):
-    field = pydantic.Field(json_schema_extra={"developer": developer}, *args, **kwargs)
+def _tiered_field(developer: bool, *args, **kwargs):
+    extra = {**(kwargs.pop("json_schema_extra", None) or {}), "developer": developer}
+    field = pydantic.Field(*args, json_schema_extra=extra, **kwargs)
+
     return field
+
+
+def UserField(*args, **kwargs):
+    """Return a pydantic ``Field`` that a deviation report never lists, nor recurses into."""
+    return _tiered_field(False, *args, **kwargs)
+
+
+def DeveloperField(*args, **kwargs):
+    """Return a pydantic ``Field`` that a deviation report lists or recurses into."""
+    return _tiered_field(True, *args, **kwargs)
 
 
 def _collect_deviations(settings: BaseSettings, reference: BaseSettings, prefix: str) -> list[tuple[str, Any, Any]]:
@@ -83,21 +113,6 @@ def _collect_deviations(settings: BaseSettings, reference: BaseSettings, prefix:
     return deviations
 
 
-def settings_deviations(settings: BaseSettings, reference: BaseSettings) -> list[tuple[str, Any, Any]]:
-    """Return (path, value, default) for every developer-tier leaf that differs from the reference.
-
-    Args:
-        settings: Settings to inspect.
-        reference: Settings holding the reference values.
-
-    Returns:
-        One tuple per differing developer-tier leaf: its dotted path, its value, and the
-        reference value, both converted to JSON-compatible Python.
-    """
-
-    return _collect_deviations(settings, reference, "")
-
-
 def settings_deviation_report(settings: BaseSettings, reference: BaseSettings) -> dict:
     """Report the developer-tier settings that differ from a reference.
 
@@ -107,12 +122,12 @@ def settings_deviation_report(settings: BaseSettings, reference: BaseSettings) -
 
     Returns:
         A dictionary keyed by dotted field path, each entry holding the field's ``value``
-        and the reference's ``default``. Empty when the two agree on every developer-tier
-        field.
+        and the reference's ``default``, both converted to JSON-compatible Python. Empty
+        when the two agree on every developer-tier field.
     """
-    deviations = settings_deviations(settings, reference)
     report = {
-        path: {"value": value, "default": default} for path, value, default in deviations
+        path: {"value": value, "default": default}
+        for path, value, default in _collect_deviations(settings, reference, "")
     }
 
     return report

@@ -22,7 +22,7 @@ import datetime
 
 from typing import Optional, Union
 
-from opendsm.common.base_settings import MutableBaseSettings
+from opendsm.common.base_settings import MutableBaseSettings, lowercase_keys
 
 
 
@@ -73,7 +73,7 @@ class TemperatureSufficiencySettings(ColumnSufficiencySettings):
             'min_pct_period_coverage': 0.9,
             'min_pct_unique_values': None,
         }
-        settings.update(kwargs)
+        settings.update(lowercase_keys(kwargs))
         super().__init__(**settings)
 
 
@@ -87,7 +87,7 @@ class GhiSufficiencySettings(ColumnSufficiencySettings):
             'min_pct_period_coverage': None,
             'min_pct_unique_values': None,
         }
-        settings.update(kwargs)
+        settings.update(lowercase_keys(kwargs))
         super().__init__(**settings)
 
 
@@ -101,7 +101,7 @@ class ObservedSufficiencySettings(ColumnSufficiencySettings):
             'min_pct_period_coverage': None,
             'min_pct_unique_values': 0.10,
         }
-        settings.update(kwargs)
+        settings.update(lowercase_keys(kwargs))
         super().__init__(**settings)
 
 
@@ -115,7 +115,7 @@ class JointSufficiencySettings(ColumnSufficiencySettings):
             'min_pct_period_coverage': None,
             'min_pct_unique_values': None,
         }
-        settings.update(kwargs)
+        settings.update(lowercase_keys(kwargs))
         super().__init__(**settings)
 
 

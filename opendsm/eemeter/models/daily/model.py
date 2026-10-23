@@ -140,12 +140,8 @@ class DailyModel:
     def settings_deviations(self) -> dict:
         """Developer-tier settings that differ from this model's reference defaults.
 
-        Computed from the model's settings on each read, never stored.
-
         Returns:
-            A dictionary keyed by dotted field path, each entry holding the field's
-            ``value`` and the reference's ``default``. Empty when the model's settings
-            are the standard OpenDSM ones for its type.
+            the `settings_deviation_report` of the model's settings against its reference settings.
         """
         report = settings_deviation_report(self.settings, self._reference_settings())
 
@@ -178,7 +174,7 @@ class DailyModel:
         self.warnings = list(baseline_data.warnings)
         self.disqualification = baseline_data.disqualification
 
-        settings_warning = nonstandard_settings_warning(self.settings, self._reference_settings())
+        settings_warning = nonstandard_settings_warning(self.settings_deviations)
         if settings_warning is not None:
             self.warnings.append(settings_warning)
             settings_warning.warn()

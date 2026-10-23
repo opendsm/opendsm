@@ -11,6 +11,7 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
+import pydantic
 import pytest
 
 from opendsm.eemeter.models.daily.utilities.settings import (
@@ -18,6 +19,7 @@ from opendsm.eemeter.models.daily.utilities.settings import (
     Season_Definition,
     Split_Selection_Definition,
     Weekday_Weekend_Definition,
+    update_daily_settings,
 )
 
 
@@ -132,10 +134,43 @@ def test_unknown_preset_raises():
         DailySettings(preset="not_a_preset")
 
 
-def test_unknown_key_is_ignored_and_preset_defaults_to_current():
-    settings = DailySettings(**{"developer_mode": True})
+def test_non_string_preset_raises_validation_error_naming_preset():
+    with pytest.raises(pydantic.ValidationError, match="preset"):
+        DailySettings(preset=["legacy"])
 
-    assert settings.preset == "current"
+
+def test_uppercase_keys_apply_the_preset_and_the_nested_value():
+    settings = DailySettings(
+        **{"PRESET": "legacy", "SPLIT_SELECTION": {"PENALTY_MULTIPLIER": 0.5}}
+    )
+
+    assert settings.preset == "legacy"
+    assert settings.segment_minimum_count == 10
+    assert settings.split_selection.penalty_multiplier == 0.5
+    assert settings.split_selection.allow_separate_summer is False
+
+
+def test_two_spellings_of_one_key_raise_naming_the_key():
+    with pytest.raises(ValueError, match="segment_minimum_count"):
+        DailySettings(**{"segment_minimum_count": 7, "SEGMENT_MINIMUM_COUNT": 9})
+
+
+def test_update_with_uppercase_keys_replaces_the_lowercase_fields():
+    settings = DailySettings()
+
+    updated = update_daily_settings(
+        settings, {"ALPHA_FINAL_TYPE": None, "FINAL_BOUNDS_SCALAR": None}
+    )
+
+    assert updated.alpha_final_type is None
+    assert updated.final_bounds_scalar is None
+
+
+def test_unknown_key_is_dropped():
+    settings = DailySettings(**{"not_a_setting": 1})
+
+    assert "not_a_setting" not in settings.model_dump()
+    assert not hasattr(settings, "not_a_setting")
 
 
 def test_season_and_weekday_options_are_constants_not_settings():

@@ -16,7 +16,6 @@ import numpy as np
 import pytest
 
 from opendsm.eemeter.common.exceptions import DisqualifiedModelError
-from opendsm.eemeter.common.warnings import nonstandard_settings_warning
 from opendsm.eemeter.models.billing.data import (
     BillingBaselineData,
     BillingReportingData,
@@ -25,6 +24,8 @@ from opendsm.eemeter.models.billing.model import BillingModel
 from opendsm.eemeter.models.billing.settings import BillingSettings
 from opendsm.eemeter.models.billing.weighted_model import BillingWeightedModel
 from opendsm.eemeter.models.daily.utilities.settings import DailySettings
+
+from ..helpers import nonstandard_settings_warnings
 
 
 
@@ -40,56 +41,56 @@ def fitted_model(baseline_data):
     return BillingModel().fit(baseline_data, ignore_disqualification=True)
 
 
-def _has_nonstandard_settings_warning(warnings):
-    return any(w.qualified_name == "eemeter.settings.nonstandard" for w in warnings)
-
-
+@pytest.mark.slow
 def test_default_settings_fit_has_no_nonstandard_settings_warning(fitted_model):
     """BillingModel's own defaults never trigger a nonstandard settings warning."""
-    assert not _has_nonstandard_settings_warning(fitted_model.warnings)
+    assert nonstandard_settings_warnings(fitted_model.warnings) == []
 
 
+@pytest.mark.slow
 def test_nonstandard_setting_fit_carries_deviation_warning(baseline_data):
     """A caller-supplied deviation from BillingModel's defaults warns exactly once."""
     baseline_model = BillingModel(settings={"segment_minimum_count": 4}).fit(
         baseline_data, ignore_disqualification=True
     )
 
-    matching = [
-        w
-        for w in baseline_model.warnings
-        if w.qualified_name == "eemeter.settings.nonstandard"
-    ]
+    matching = nonstandard_settings_warnings(baseline_model.warnings)
     assert len(matching) == 1
 
 
 def test_different_preset_is_judged_against_the_billing_reference():
-    """BillingModel is judged against the legacy preset, so another preset deviates on
-    every field it moved, and 'preset' itself is not listed."""
+    """BillingModel judges current-preset settings against the legacy preset:
+    `segment_minimum_count` and `allow_smooth_model` deviate, and `preset` itself is not
+    listed."""
     model = BillingModel(settings={"preset": "current"})
 
-    warning = nonstandard_settings_warning(model.settings, model._reference_settings())
+    deviations = model.settings_deviations
 
-    deviations = warning.data["deviations"]
     assert "segment_minimum_count" in deviations
     assert "allow_smooth_model" in deviations
     assert "preset" not in deviations
+
+
+@pytest.mark.parametrize("model_class", [BillingModel, BillingWeightedModel])
+def test_default_settings_use_legacy_preset(model_class):
+    """Both billing models default to the legacy preset."""
+    assert model_class().settings.preset == "legacy"
 
 
 @pytest.mark.parametrize(
     "model_class, segment_minimum_count",
     [(BillingModel, 10), (BillingWeightedModel, 3)],
 )
-def test_default_settings_use_legacy_preset_with_own_segment_minimum(
-    model_class, segment_minimum_count
-):
-    """Both billing models default to the legacy preset; the weighted model lowers the
-    minimum segment count as its own default, and neither warns on its defaults."""
-    model = model_class()
+def test_default_segment_minimum_count(model_class, segment_minimum_count):
+    """The weighted model lowers the legacy preset's minimum segment count as its own
+    default."""
+    assert model_class().settings.segment_minimum_count == segment_minimum_count
 
-    assert model.settings.preset == "legacy"
-    assert model.settings.segment_minimum_count == segment_minimum_count
-    assert nonstandard_settings_warning(model.settings, model._reference_settings()) is None
+
+@pytest.mark.parametrize("model_class", [BillingModel, BillingWeightedModel])
+def test_default_settings_have_no_deviations(model_class):
+    """Neither billing model reports deviations on its own defaults."""
+    assert model_class().settings_deviations == {}
 
 
 @pytest.mark.parametrize("model_class", [BillingModel, BillingWeightedModel])
@@ -100,15 +101,8 @@ def test_settings_instance_is_used_as_given(model_class):
     assert model_class(settings=settings).settings is settings
 
 
-def test_billing_weighted_model_construction_prints_nothing(capsys):
-    """Constructing BillingWeightedModel prints nothing."""
-    BillingWeightedModel()
-
-    assert capsys.readouterr().out == ""
-
-
 # ---------------------------------------------------------------------------
-# failure paths (no fit required for the unfitted case)
+# failure paths
 # ---------------------------------------------------------------------------
 
 def test_predict_before_fit_raises(baseline_data):

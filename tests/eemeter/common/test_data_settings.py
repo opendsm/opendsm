@@ -62,6 +62,13 @@ def test_temperature_defaults():
     assert settings.min_pct_period_coverage == 0.9
 
 
+def test_sufficiency_settings_accept_uppercase_kwargs_over_defaults():
+    """An uppercase keyword overrides the lowercase default of the same setting."""
+    settings = TemperatureSufficiencySettings(MIN_PCT_DAILY_COVERAGE=0.5)
+
+    assert settings.min_pct_daily_coverage == 0.5
+
+
 def test_billing_period_bounds_default_and_validate():
     """Billing period bounds default sensibly and reject non-positive day counts."""
     settings = BillingDataSufficiencySettings()
