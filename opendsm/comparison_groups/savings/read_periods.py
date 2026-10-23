@@ -20,19 +20,9 @@ processed frame. This module recovers the read periods that partition that
 substrate, so the correction can aggregate the meter back to its received
 cadence.
 
-A caller may pass explicit ``read_boundaries`` (period start datetimes), which
-always win. Otherwise the periods are inferred from the daily observed spread:
-within one read the per-minute spread rate is constant, so day-length-normalized
-observed values are equal within a read and jump between reads. Boundaries are
-drawn only between finite days (NaN days belong to no period); spurious short
-segments are absorbed into a neighbor; and a merged span of near-identical reads
-is subdivided into equal periods at the detected cadence. When a prior result is
-supplied its confirmed periods are frozen and only the trailing region is
-re-inferred, so an extension can never re-draw an earlier period.
-
-Meters whose cadence cannot be recovered (no observed, a constant spread with no
-resolvable cadence, or an inferred period outside the valid day range) are
-reported with a ledger reason for the caller to record and drop.
+Periods are inferred from the daily observed spread: within one read the
+per-minute spread rate is constant, so day-length-normalized observed values are
+equal within a read and jump between reads.
 """
 
 from __future__ import annotations
@@ -47,9 +37,9 @@ import pandas as pd
 _MIN_READ_DAYS = 25
 _MAX_READ_DAYS = 70
 
-# A detected segment shorter than this is treated as a single-day spread blip
-# (a re-estimated or partial-coverage day) and absorbed into a neighbor rather
-# than emitted as its own read period.
+# A detected segment shorter than this is a spread blip (re-estimated or
+# partial-coverage days) and is absorbed into a neighbor rather than emitted as
+# its own read period.
 _MIN_PERIOD_DAYS = 5
 
 # Relative tolerance below which two day-length-normalized spread rates are the
@@ -61,15 +51,16 @@ _RATE_RTOL = 1e-2
 # merged near-identical reads and subdivided into equal periods.
 _SUBDIVIDE_RATIO = 1.5
 
+_NO_OBSERVED_REASON = "reporting observed is absent or all NaN"
+
 
 class ReadPeriodResult:
-    """Inferred read periods for one billing treatment meter.
+    """Read periods for one billing treatment meter.
 
-    ``periods`` is the ordered list of ``(start, end)`` tz-aware daily datetimes
-    (both inclusive) partitioning the meter's daily substrate, or ``None`` when
-    the cadence could not be recovered. ``ledger_reason`` is the human string for
-    the reporting_data ledger entry when ``periods`` is ``None`` (``None``
-    otherwise).
+    ``periods`` is the ordered, non-overlapping list of ``(start, end)`` tz-aware
+    daily datetimes (both inclusive), or ``None`` when no credible periods could
+    be drawn. ``ledger_reason`` is the human string for the reporting_data ledger
+    entry when ``periods`` is ``None`` (``None`` otherwise).
     """
 
     def __init__(self, periods, ledger_reason):
@@ -77,78 +68,123 @@ class ReadPeriodResult:
         self.ledger_reason = ledger_reason
 
 
-def derive_read_periods(daily, read_boundaries=None, prior_periods=None):
-    """Derive read periods for one billing treatment meter's daily substrate.
+def periods_from_boundaries(index, read_boundaries):
+    """Build read periods from explicit period start datetimes.
+
+    Each boundary is snapped to the daily row containing it; a tz-naive boundary
+    is read in the index's zone. The first row always opens the first period and
+    the last row always closes the last, so a boundary before the first row or
+    after the last row's day adds no period. The periods are not checked against
+    the valid read length.
+
+    Args:
+        index: tz-aware daily ``DatetimeIndex`` of the meter's substrate.
+        read_boundaries: period start datetimes, in any order.
+
+    Returns:
+        ``ReadPeriodResult`` with ``periods`` always set.
+    """
+    starts = {0}
+
+    for boundary in read_boundaries:
+        stamp = pd.Timestamp(boundary)
+        if stamp.tzinfo is None:
+            stamp = stamp.tz_localize(index.tz)
+        else:
+            stamp = stamp.tz_convert(index.tz)
+
+        day = stamp.normalize()
+        if day > index[-1]:
+            continue
+
+        pos = int(index.get_indexer([day], method="ffill")[0])
+        starts.add(max(pos, 0))
+
+    periods = _starts_to_periods(index, sorted(starts))
+    result = ReadPeriodResult(periods, None)
+
+    return result
+
+
+def infer_read_periods(daily, prior_periods=None):
+    """Infer read periods for one billing treatment meter's daily substrate.
+
+    Boundaries are drawn only between finite days, so NaN days before the first
+    read, after the last, or between two reads of different rate belong to no
+    period. Spurious short segments are absorbed into a neighbor, and a span of
+    merged near-identical reads is subdivided into equal periods at the median
+    cadence.
 
     Args:
         daily: DataFrame with a tz-aware ``DatetimeIndex`` and an ``observed``
             column at daily cadence.
-        read_boundaries: optional explicit period start datetimes; when given
-            they win outright and no inference runs.
-        prior_periods: optional ``[(start, end), ...]`` from a prior result. Its
-            earlier periods are frozen and only the trailing region is
-            re-inferred; the median cadence is not recomputed over the extended
-            data.
+        prior_periods: optional ``[(start, end), ...]`` from a prior result on a
+            prefix of ``daily``. Every period but the last is kept unchanged and
+            only the region from the last period's start is re-inferred, with
+            the subdivision median taken from the kept periods. With a single
+            prior period the region from its start is inferred afresh.
 
     Returns:
         ``ReadPeriodResult``. ``periods`` is ``None`` with a ``ledger_reason``
-        when the cadence cannot be recovered.
+        when observed is absent or all NaN, when a lone run longer than the
+        valid read length leaves no recoverable cadence, or when any period
+        falls outside the valid read length.
     """
     index = daily.index
-
-    if read_boundaries is not None:
-        periods = _periods_from_boundaries(index, read_boundaries)
-
-        return ReadPeriodResult(periods, None)
-
     observed = daily["observed"].to_numpy(dtype=np.float64)
 
     if observed.size == 0 or not np.isfinite(observed).any():
-        return ReadPeriodResult(None, "reporting observed is absent or all NaN")
+        result = ReadPeriodResult(None, _NO_OBSERVED_REASON)
+
+        return result
 
     if prior_periods:
-        return _infer_with_prior(index, observed, prior_periods)
+        result = _infer_with_prior(index, observed, prior_periods)
+
+        return result
 
     runs = _segment(index, observed)
-    periods, reason = _finalize(index, runs)
+    result = _finalize(index, runs)
 
-    return ReadPeriodResult(periods, reason)
+    return result
 
 
 def _infer_with_prior(index, observed, prior_periods):
-    """Freeze the prior's confirmed periods and re-infer only the trailing
-    region. The subdivision median is taken from the frozen periods, so
-    extending the data can never move an earlier boundary."""
     frozen = list(prior_periods[:-1])
-    trailing_start = prior_periods[-1][0]
-    start_pos = int(index.get_loc(trailing_start))
+    start_pos = int(index.get_loc(prior_periods[-1][0]))
 
     sub_runs = _segment(index[start_pos:], observed[start_pos:])
-    sub_runs = [(start + start_pos, end + start_pos) for start, end in sub_runs]
+    runs = [(start + start_pos, end + start_pos) for start, end in sub_runs]
 
-    if not sub_runs:
-        return ReadPeriodResult(None, "reporting observed is absent or all NaN")
+    if not frozen:
+        result = _finalize(index, runs)
 
-    frozen_lengths = [_frozen_length(index, start, end) for start, end in frozen]
-    if frozen_lengths:
-        median = float(np.median(frozen_lengths))
-        sub_runs = _subdivide_runs(sub_runs, median)
+        return result
 
-    periods, reason = _check_ranges(index, sub_runs)
-    if reason is not None:
-        return ReadPeriodResult(None, reason)
+    if not runs:
+        result = ReadPeriodResult(None, _NO_OBSERVED_REASON)
 
-    combined = frozen + periods
+        return result
 
-    return ReadPeriodResult(combined, None)
+    frozen_runs = [(int(index.get_loc(start)), int(index.get_loc(end))) for start, end in frozen]
+    median = float(np.median([_run_length(run) for run in frozen_runs]))
+    runs = _subdivide_runs(runs, median)
+
+    result = _check_ranges(index, runs)
+    if result.periods is None:
+        return result
+
+    result = ReadPeriodResult(frozen + result.periods, None)
+
+    return result
 
 
 def _finalize(index, runs):
     """Turn detected runs into validated read periods or a ledger reason."""
     if not runs:
-        reason = "reporting observed is absent or all NaN"
+        result = ReadPeriodResult(None, _NO_OBSERVED_REASON)
 
-        return None, reason
+        return result
 
     if len(runs) == 1:
         return _finalize_single(index, runs[0])
@@ -160,30 +196,20 @@ def _finalize(index, runs):
 
 
 def _finalize_single(index, run):
-    """A lone detected run is a clean single read only inside the valid range; a
-    longer constant spread has no resolvable cadence and a shorter one is a
-    truncated read — both route to the ledger."""
+    """A lone run longer than the valid read length is a constant spread with no
+    resolvable cadence; any other lone run is validated like a set of runs."""
     length = _run_length(run)
-
-    if _MIN_READ_DAYS <= length <= _MAX_READ_DAYS:
-        periods = [_period(index, run)]
-
-        return periods, None
 
     if length > _MAX_READ_DAYS:
         reason = (
             f"reporting spread is constant over {length} days with no recoverable read "
             "cadence; pass explicit read_boundaries"
         )
+        result = ReadPeriodResult(None, reason)
 
-        return None, reason
+        return result
 
-    reason = (
-        f"the only inferred read period spans {length} days, outside the valid "
-        f"{_MIN_READ_DAYS}-{_MAX_READ_DAYS} day range"
-    )
-
-    return None, reason
+    return _check_ranges(index, [run])
 
 
 def _check_ranges(index, runs):
@@ -196,12 +222,14 @@ def _check_ranges(index, runs):
             f"inferred read period(s) span {offenders} days, outside the valid "
             f"{_MIN_READ_DAYS}-{_MAX_READ_DAYS} day range"
         )
+        result = ReadPeriodResult(None, reason)
 
-        return None, reason
+        return result
 
     periods = [_period(index, run) for run in runs]
+    result = ReadPeriodResult(periods, None)
 
-    return periods, None
+    return result
 
 
 def _segment(index, observed):
@@ -229,8 +257,9 @@ def _segment(index, observed):
             runs.append([int(pos), int(pos), rate, 1])
 
     runs = _absorb(runs)
+    spans = [(run[0], run[1]) for run in runs]
 
-    return [(run[0], run[1]) for run in runs]
+    return spans
 
 
 def _absorb(runs):
@@ -244,9 +273,13 @@ def _absorb(runs):
 
         i = 0
         while i < len(runs) - 1:
-            if _close(runs[i][2], runs[i + 1][2]):
-                merged_rate = (runs[i][2] + runs[i + 1][2]) / 2.0
-                runs[i] = [runs[i][0], runs[i + 1][1], merged_rate, runs[i][3] + runs[i + 1][3]]
+            left = runs[i]
+            right = runs[i + 1]
+
+            if _close(left[2], right[2]):
+                count = left[3] + right[3]
+                rate = (left[2] * left[3] + right[2] * right[3]) / count
+                runs[i] = [left[0], right[1], rate, count]
                 del runs[i + 1]
                 changed = True
             else:
@@ -290,16 +323,12 @@ def _closest_neighbor(runs, i):
 def _subdivide_runs(runs, median):
     """Split any run at least ``_SUBDIVIDE_RATIO`` times the median cadence into
     ``round(length / median)`` equal periods, leaving no sub-minimum sliver."""
-    if median <= 0.0:
-        return runs
-
     out = []
     for start, end in runs:
         length = end - start + 1
 
         if length >= _SUBDIVIDE_RATIO * median:
             n = int(np.floor(length / median + 0.5))
-            n = max(n, 2)
             edges = np.linspace(start, end + 1, n + 1)
             edges = np.floor(edges + 0.5).astype(int)
 
@@ -309,28 +338,6 @@ def _subdivide_runs(runs, median):
             out.append((start, end))
 
     return out
-
-
-def _periods_from_boundaries(index, boundaries):
-    """Build ``(start, end)`` periods from explicit period start datetimes, each
-    snapped to the daily row containing it. The frame start always opens the
-    first period and the frame end always closes the last."""
-    starts = {0}
-
-    for boundary in boundaries:
-        stamp = pd.Timestamp(boundary)
-        if stamp.tzinfo is None:
-            stamp = stamp.tz_localize(index.tz)
-        else:
-            stamp = stamp.tz_convert(index.tz)
-
-        pos = int(index.get_indexer([stamp.normalize()], method="ffill")[0])
-        starts.add(max(pos, 0))
-
-    starts = sorted(starts)
-    periods = _starts_to_periods(index, starts)
-
-    return periods
 
 
 def _starts_to_periods(index, starts):
@@ -365,7 +372,9 @@ def _close(a, b):
     if scale == 0.0:
         return True
 
-    return abs(a - b) <= _RATE_RTOL * scale
+    close = abs(a - b) <= _RATE_RTOL * scale
+
+    return close
 
 
 def _run_length(run):
@@ -383,8 +392,3 @@ def _period(index, run):
 
     return period
 
-
-def _frozen_length(index, start, end):
-    length = int(index.get_loc(end)) - int(index.get_loc(start)) + 1
-
-    return length

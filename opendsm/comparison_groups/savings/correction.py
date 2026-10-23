@@ -25,21 +25,25 @@ from opendsm.comparison_groups.selection import (
     COVERAGE_FREQ,
     FINENESS,
     check_model_frequency_fineness,
-    table_fingerprint,
+    coerce_window,
     window_coverage,
+    window_to_json,
 )
-from opendsm.comparison_groups.savings.model_correction import model_correction_matrix
-from opendsm.comparison_groups.savings.read_periods import derive_read_periods
+from opendsm.comparison_groups.savings.model_correction import (
+    MIN_CG_METERS,
+    MIN_CLUSTER_METERS,
+    model_correction_matrix,
+)
+from opendsm.comparison_groups.savings.read_periods import (
+    infer_read_periods,
+    periods_from_boundaries,
+)
 from opendsm.comparison_groups.savings.settings import CGCorrectionSettings
 from opendsm.eemeter.common.exceptions import EEMeterError
 
 
 
 SCHEMA_VERSION = 2
-
-# A treatment meter with fewer comparison-group meters than this is excluded
-# and recorded (mirrors the correction kernel's own M < 5 floor).
-_MIN_CG_METERS = 5
 
 _DAY_NS = 86_400_000_000_000
 
@@ -83,14 +87,15 @@ def _column_correlations(observed, modeled):
 
 
 def _clusters_used(mask, cg_label):
-    """Per timestep, the count of distinct clusters that survived (>=3 finite
-    retained meters per ``mask``) out of the clusters in ``cg_label``."""
+    """Per timestep, the count of distinct clusters that survived (at least
+    ``MIN_CLUSTER_METERS`` finite retained meters per ``mask``) out of the
+    clusters in ``cg_label``."""
     labels = np.unique(cg_label)
     labels = labels[labels >= 0]
     used = np.zeros(mask.shape[0], dtype=int)
 
     for label in labels:
-        used += mask[:, cg_label == label].sum(axis=1) >= 3
+        used += mask[:, cg_label == label].sum(axis=1) >= MIN_CLUSTER_METERS
 
     return used
 
@@ -111,29 +116,32 @@ def _active_clusters(weights_row):
 
 def _cg_membership(selection, treatment_id):
     """One treatment meter's raw comparison group as ordered ``(pool_id,
-    cluster_label)`` pairs.
+    cluster_label)`` pairs, plus the ``{cluster_label: weight}`` map of the
+    clusters it draws on.
 
     The walk goes from the meter's weights row to the clusters it draws on
     (weight > 0) to every member of those clusters, in sorted-label order, and a
     pool meter reached through a duplicated selection row is kept once. No
     usability filter is applied, so the membership covers meters the correction
     later drops. A meter absent from the selection, or with all-NaN weights, has
-    no comparison group.
+    no comparison group and no active clusters.
     """
     weights = selection.treatment_weights
+    members = []
+    active = {}
 
     if treatment_id not in weights.index:
-        return []
+        return members, active
 
     weights_row = weights.loc[treatment_id]
     if weights_row.isna().all():
-        return []
+        return members, active
 
     clusters = selection.clusters
+    active = _active_clusters(weights_row)
     seen = set()
-    members = []
 
-    for label in sorted(_active_clusters(weights_row)):
+    for label in sorted(active):
         for member in clusters.index[clusters["cluster"] == label]:
             mid = str(member)
             if mid in seen:
@@ -142,7 +150,7 @@ def _cg_membership(selection, treatment_id):
             seen.add(mid)
             members.append((mid, label))
 
-    return members
+    return members, active
 
 
 def cg_member_ids(selection, treatment_id):
@@ -156,7 +164,8 @@ def cg_member_ids(selection, treatment_id):
     Returns:
         A list of pool ids.
     """
-    ids = [mid for mid, _ in _cg_membership(selection, treatment_id)]
+    members, _ = _cg_membership(selection, treatment_id)
+    ids = [mid for mid, _ in members]
 
     return ids
 
@@ -166,7 +175,7 @@ def _cluster_weights(active, labels):
 
     A selected cluster with no surviving comparison-group column contributes no
     label, so the weights are renormalized over the clusters that ARE present to
-    keep ``sum(t_weight) == 1`` — the kernel's contract for its normalized point
+    keep ``sum(t_weight) == 1``, the kernel's contract for its normalized point
     vs. raw-weight uncertainty.
     """
     present = sorted(set(labels))
@@ -179,10 +188,12 @@ def _cluster_weights(active, labels):
 
 
 def _align_to_index(arr, row_map, present, n_rows):
+    """The rows of ``arr`` at ``row_map`` as float64, NaN where not
+    ``present``; ``None`` passes through."""
     if arr is None:
         return None
 
-    out = np.full((n_rows, arr.shape[1]), np.nan, dtype=arr.dtype)
+    out = np.full((n_rows, arr.shape[1]), np.nan, dtype=np.float64)
     out[present] = arr[row_map[present]]
 
     return out
@@ -212,13 +223,10 @@ def _restrict_to_days(codes, index, day_i8):
     return restricted
 
 
-def _reduce_to_periods(values, codes, n_periods, square):
-    """Reduce native rows to periods per the ``codes`` map (a period × native
-    reduction expressed as a per-row period index). Each period-column sums the
-    finite native rows assigned to it, with ``min_count`` of 1 EVERYWHERE: a
-    period with zero finite native rows in a column is NaN, never 0. ``square``
-    sums squares and returns their root (quadrature of per-row
-    uncertainties)."""
+def _sum_to_periods(values, codes, n_periods):
+    """Sum native rows to periods per the ``codes`` map (each row's period
+    index, -1 for none). Each period-column sums the finite native rows assigned
+    to it; a period with no finite native row in a column is NaN, never 0."""
     x = np.asarray(values, dtype=np.float64)
     single = x.ndim == 1
     if single:
@@ -226,13 +234,7 @@ def _reduce_to_periods(values, codes, n_periods, square):
 
     in_range = codes >= 0
     finite = np.isfinite(x) & in_range[:, None]
-
-    if square:
-        row_value = x * x
-    else:
-        row_value = x
-
-    contrib = np.where(finite, row_value, 0.0)
+    contrib = np.where(finite, x, 0.0)
     pid = np.where(in_range, codes, 0)
 
     n_cols = x.shape[1]
@@ -241,16 +243,47 @@ def _reduce_to_periods(values, codes, n_periods, square):
     np.add.at(sums, pid, contrib)
     np.add.at(counts, pid, finite.astype(np.float64))
 
-    if square:
-        reduced = np.sqrt(sums)
-    else:
-        reduced = sums
-
-    out = np.where(counts >= 1.0, reduced, np.nan)
+    out = np.where(counts >= 1.0, sums, np.nan)
     if single:
         out = out[:, 0]
 
     return out
+
+
+def _quadrature_to_periods(values, codes, n_periods):
+    """Combine per-row uncertainties to periods in quadrature: the root of
+    ``_sum_to_periods`` over the squared rows, NaN where that sum is NaN."""
+    x = np.asarray(values, dtype=np.float64)
+    combined = np.sqrt(_sum_to_periods(x * x, codes, n_periods))
+
+    return combined
+
+
+def _reduce_pool(p_obs, p_mod, p_mod_unc, p_obs_unc, codes, n_periods):
+    """The pool's observed and modeled matrices summed to periods and its
+    uncertainty matrices combined in quadrature, returned as ``(oCGr, mCGr,
+    mCGr_unc, oCGr_unc)``; ``oCGr_unc`` is None when ``p_obs_unc`` is."""
+    oCGr = _sum_to_periods(p_obs, codes, n_periods)
+    mCGr = _sum_to_periods(p_mod, codes, n_periods)
+    mCGr_unc = _quadrature_to_periods(p_mod_unc, codes, n_periods)
+    oCGr_unc = None
+    if p_obs_unc is not None:
+        oCGr_unc = _quadrature_to_periods(p_obs_unc, codes, n_periods)
+
+    return oCGr, mCGr, mCGr_unc, oCGr_unc
+
+
+def _cg_correlations(p_obs_unc, oCGr, mCGr):
+    """Per-member correlation between the comparison group's observed and
+    modeled rows as the kernel receives them, or None when no pool meter
+    carries observed uncertainty (the kernel reads the correlation only
+    then)."""
+    if p_obs_unc is None or not np.any(p_obs_unc != 0.0):
+        return None
+
+    corr = _column_correlations(oCGr, mCGr)
+
+    return corr
 
 
 def _native_edges(index):
@@ -306,7 +339,7 @@ def _period_mask(datetimes, period, tz):
 def _check_prior(new_corrected, prior, model_frequency):
     """Point corrections are slice-invariant, so any timestep the prior actually
     covered (finite corrected value) must reproduce that value exactly. Timesteps
-    the prior left uncovered (NaN — e.g. pool data not yet present) are treated as
+    the prior left uncovered (NaN, e.g. pool data not yet present) are treated as
     newly covered, not as mismatches. A billing extension may re-draw the prior's
     trailing read period (partial then, or extended now), so that trailing period
     is excluded while every earlier period must match exactly."""
@@ -337,7 +370,7 @@ def _check_prior(new_corrected, prior, model_frequency):
 
     current = covered["corrected"].to_numpy(dtype=np.float64)
     previous = covered["corrected_prior"].to_numpy(dtype=np.float64)
-    equal = np.isclose(current, previous, rtol=0.0, atol=0.0, equal_nan=False)
+    equal = current == previous
 
     if not equal.all():
         mismatched = covered.loc[~equal, "datetime"].tolist()
@@ -347,72 +380,85 @@ def _check_prior(new_corrected, prior, model_frequency):
         )
 
 
-def _reporting_coverage_exclusions(population, ids, ledger, window, min_window_coverage):
-    """Correction-stage reporting disqualification over the ``ids`` of
-    ``population`` that carry reporting data. Two independent drop triggers,
-    computed from ``.df`` and the data object's construction-time checks before
-    any prediction:
-
-    - enforcement: a meter whose reporting data carries an eemeter observed or
-      joint (observed-and-temperature co-missing) disqualification (e.g. non-zero
-      identical reads failing the unique-values check, or too many co-missing
-      days) is ledgered verbatim and pruned — the warning alone would leave it
-      corrected;
-    - coverage: a meter whose finite observed-and-temperature coverage over
-      ``window``, the treatment meter's reporting span, falls below
-      ``min_window_coverage`` is pruned with its coverage in ``detail`` (a pool
-      member's construction-time checks know nothing of the treatment span).
-
-    Returns the failing ids (for pruning) and the ledger. Meters without
-    reporting data, and a ``window`` of None (the treatment meter carries no
-    reporting data), are left to the prediction-usability guard. A
-    ``min_window_coverage`` of None runs the enforcement trigger only, for a
-    frozen comparison group that keeps its members regardless of coverage."""
-    failed = []
-
-    if window is None:
-        return failed, ledger
-
-    freq = COVERAGE_FREQ[population.model_frequency]
+def _prune_reporting(population, ids, ledger, failure):
+    """Keep the ``ids`` of ``population`` for which ``failure(reporting_data)``
+    returns None, in order, and ledger every other id at the correction stage
+    with the ``(origin, reason, detail)`` it returns. Meters absent from
+    ``population`` or without reporting data are kept for the
+    prediction-usability guard. Returns the kept ids and the ledger."""
+    kept = []
 
     for mid in ids:
-        rec = population._meters.get(mid)
+        rec = population.meter(mid)
         if rec is None or rec.reporting_data is None:
+            kept.append(mid)
             continue
 
+        found = failure(rec.reporting_data)
+        if found is None:
+            kept.append(mid)
+            continue
+
+        origin, reason, detail = found
+        ledger = exclusions.append(ledger, [mid], "correction", origin, reason, detail=detail)
+
+    return kept, ledger
+
+
+def _observed_dq_exclusions(population, ids, ledger):
+    """Prune the ``ids`` of ``population`` whose reporting data carries an
+    eemeter observed or joint (observed-and-temperature co-missing)
+    disqualification (e.g. non-zero identical reads failing the unique-values
+    check, or too many co-missing days), ledgering the warnings verbatim. The
+    prune runs before any prediction, since the warning alone would leave the
+    meter corrected. Returns the kept ids and the ledger."""
+
+    def failure(reporting_data):
         observed_dq = [
             warning
-            for warning in rec.reporting_data.disqualification
+            for warning in reporting_data.disqualification
             if "observed" in warning.qualified_name or "joint" in warning.qualified_name
         ]
-        if observed_dq:
-            ledger = exclusions.append(
-                ledger,
-                [mid],
-                "correction",
-                "reporting_data",
-                "reporting observed data disqualified",
-                detail=exclusions.format_warnings(observed_dq),
-            )
-            failed.append(mid)
-            continue
+        if not observed_dq:
+            return None
 
-        if min_window_coverage is None:
-            continue
+        found = (
+            "reporting_data",
+            "reporting observed data disqualified",
+            exclusions.format_warnings(observed_dq),
+        )
 
-        coverage = window_coverage(rec.reporting_data, window, freq)
-        if coverage < min_window_coverage:
-            ledger = exclusions.append(
-                ledger,
-                [mid],
-                "correction",
-                "reporting_coverage",
-                "reporting coverage below minimum over the treatment meter's reporting span",
-                detail=f"reporting span coverage {coverage:.4f} < {min_window_coverage}",
-            )
-            failed.append(mid)
+        return found
 
-    return failed, ledger
+    kept, ledger = _prune_reporting(population, ids, ledger, failure)
+
+    return kept, ledger
+
+
+def _coverage_exclusions(population, ids, ledger, window, min_reporting_coverage):
+    """Prune the ``ids`` of ``population`` whose finite observed-and-temperature
+    coverage over ``window``, the treatment meter's reporting span, falls below
+    ``min_reporting_coverage``, ledgering each with its coverage in ``detail``
+    (a pool member's construction-time checks know nothing of the treatment
+    span). Returns the kept ids and the ledger."""
+    freq = COVERAGE_FREQ[population.model_frequency]
+
+    def failure(reporting_data):
+        coverage = window_coverage(reporting_data, window, freq)
+        if coverage >= min_reporting_coverage:
+            return None
+
+        found = (
+            "reporting_coverage",
+            "reporting coverage below minimum over the treatment meter's reporting span",
+            f"reporting span coverage {coverage:.4f} < {min_reporting_coverage}",
+        )
+
+        return found
+
+    kept, ledger = _prune_reporting(population, ids, ledger, failure)
+
+    return kept, ledger
 
 
 def _reporting_span(rec):
@@ -427,18 +473,22 @@ def _reporting_span(rec):
     return span
 
 
-def _usable_reporting_ids(population, ids, ledger, missing_origin, skip=None):
-    """Which of ``ids`` have reporting data and predict over it without an
-    eemeter error, in the given order; meters that cannot are recorded on the
-    correction ledger and dropped. Ids in ``skip`` were already pruned upstream
-    (coverage or an observed disqualification) and never predict."""
-    skip = skip or set()
+def _usable_reporting_ids(population, ids, ledger, missing_origin):
+    """Which of ``ids`` are in ``population``, have reporting data and predict
+    over it without an eemeter error, in the given order; meters that cannot are
+    recorded on the correction ledger and dropped."""
     usable = []
 
     for mid in ids:
-        # a selected cluster member absent from the population contributes no column
-        rec = population._meters.get(mid)
-        if mid in skip or rec is None:
+        rec = population.meter(mid)
+        if rec is None:
+            ledger = exclusions.append(
+                ledger,
+                [mid],
+                "correction",
+                "pool_membership",
+                "comparison-group member absent from the pool population",
+            )
             continue
 
         if rec.reporting_data is None:
@@ -448,7 +498,7 @@ def _usable_reporting_ids(population, ids, ledger, missing_origin, skip=None):
             continue
 
         try:
-            population._ensure_pred("reporting", ids=[mid])
+            population.prediction_frames("reporting", ids=[mid])
         except EEMeterError as exc:
             ledger = exclusions.append(
                 ledger,
@@ -507,17 +557,15 @@ class CorrectionResult:
     ``cg_usage`` reports, per timestep, the fraction of the meter's
     comparison-group meters actually used in the correction (finite, retained,
     and in a cluster that survived the timestep; ``cg_usage_fraction``) and the
-    count of clusters that survived with at least three finite retained meters
-    (``clusters_used``). ``exclusions`` is the
+    count of clusters that survived with at least ``MIN_CLUSTER_METERS`` finite
+    retained meters (``clusters_used``). ``exclusions`` is the
     correction-stage disqualification ledger (``[id, stage, origin, reason,
     detail]``): the pool meters dropped while correcting this meter, and why.
 
     ``correction_periods`` is the ordered list of ``(start, end)`` periods the
     correction was aggregated over. It is empty for hourly/daily, whose
     corrections run at the native cadence; for billing these are the meter's
-    inferred read periods. A later billing extension freezes these confirmed
-    periods and re-infers only the trailing one, so past read boundaries never
-    shift.
+    inferred read periods.
     """
 
     def __init__(
@@ -531,15 +579,9 @@ class CorrectionResult:
         tz,
         model_frequency,
         fingerprint,
-        correction_periods=None,
-        cg_ids=None,
+        correction_periods,
+        cg_ids,
     ):
-        if correction_periods is None:
-            correction_periods = []
-
-        if cg_ids is None:
-            cg_ids = []
-
         self.meter_id = meter_id
         self.cg_ids = [str(mid) for mid in cg_ids]
         self.corrected = corrected
@@ -570,7 +612,7 @@ class CorrectionResult:
             "tz": self.tz,
             "model_frequency": self.model_frequency,
             "fingerprint": self.fingerprint,
-            "covered_window": _window_to_json(self.covered_window),
+            "covered_window": window_to_json(self.covered_window),
             "settings": self.settings,
             "cg_ids": self.cg_ids,
         }
@@ -625,7 +667,7 @@ class CorrectionResult:
             cg_usage=cg_usage,
             exclusions=ledger,
             settings=header["settings"],
-            covered_window=_window_from_json(header["covered_window"], tz),
+            covered_window=coerce_window(header["covered_window"], tz),
             tz=tz,
             model_frequency=header["model_frequency"],
             fingerprint=header["fingerprint"],
@@ -634,27 +676,6 @@ class CorrectionResult:
         )
 
         return result
-
-
-def _window_to_json(window):
-    if window is None:
-        return None
-
-    start, end = window
-    bounds = [start.isoformat(), end.isoformat()]
-
-    return bounds
-
-
-def _window_from_json(bounds, tz):
-    if bounds is None:
-        return None
-
-    start = pd.Timestamp(bounds[0]).tz_convert(tz)
-    end = pd.Timestamp(bounds[1]).tz_convert(tz)
-    window = (start, end)
-
-    return window
 
 
 def _read_table(payload, tz):
@@ -730,13 +751,11 @@ def correct_reporting(
     point corrections exactly, and a billing extension also freezes the prior's
     confirmed read periods so only the trailing period can be re-drawn.
 
-    Treatment observed uncertainty never enters the correction math; it is
-    threaded from the treatment population onto the result's ``corrected`` frame
-    as an ``observed_unc`` column (0 when the meter carries none), which
-    ``compute_savings`` reads as the default for the savings band.
+    Treatment observed uncertainty never enters the correction math.
 
-    A pool meter whose reporting prediction raises is dropped and ledgered in
-    every call that selects it.
+    A comparison-group member absent from ``pool``, and a pool meter whose
+    reporting prediction raises, are dropped and ledgered in every call that
+    selects them.
 
     Per-timestep failures never raise. Where the correction kernel's mask kills a
     timestep, ``corrected`` and ``corrected_unc`` are NaN and the row is still
@@ -749,27 +768,25 @@ def correct_reporting(
             must be same-or-finer than the treatment's.
         treatment_id: id of the treatment meter to correct.
         settings: ``CGCorrectionSettings``; defaults to the package defaults.
-        period: optional ``(start, end)`` bounds filtering the emitted rows;
-            computation and coverage always span the full reporting data.
+        period: optional ``(start, end)`` bounds filtering the emitted rows.
         prior: optional ``CorrectionResult`` for this same meter and selection
-            from a smaller reporting window; its comparison group is reused and
-            its overlapping point corrections must match.
+            from a smaller reporting window.
         read_boundaries: optional list of period start datetimes overriding
             read-period inference for a billing meter.
 
     Raises:
-        MeterCorrectionError: the meter cannot be corrected at all — absent from
+        MeterCorrectionError: the meter cannot be corrected at all: absent from
             the treatment population or from the selection, all-NaN cluster
-            weights, fewer than five usable comparison-group meters, missing
-            reporting data, a failed reporting prediction, reporting coverage
-            below ``min_window_coverage`` over its own reporting span, an
+            weights, fewer than ``MIN_CG_METERS`` usable comparison-group meters,
+            missing reporting data, a failed reporting prediction, reporting
+            coverage below ``min_reporting_coverage`` over its own reporting span, an
             eemeter observed disqualification on the reporting data, an
             unrecoverable billing read cadence, or a frozen comparison-group
             member that no longer predicts or whose reporting observed data is
             disqualified. The ledger rows recording the
             drop, including the pool-side rows behind a short comparison group,
             ride on the exception's ``exclusions`` attribute.
-        ValueError: an analysis-level problem — a timezone or fingerprint
+        ValueError: an analysis-level problem: a timezone or fingerprint
             mismatch, a comparison pool coarser than the treatment, an invalid
             period, a ``prior`` belonging to a different meter, made against a
             different selection, or carrying no comparison group, or a ``prior``
@@ -793,10 +810,7 @@ def correct_reporting(
 
     check_model_frequency_fineness(treatment, pool)
 
-    if table_fingerprint(selection._fingerprint_tables()) != selection.fingerprint:
-        raise ValueError(
-            "selection fingerprint does not match its tables; the selection has been mutated."
-        )
+    selection.verify_fingerprint()
 
     tz = treatment.tz
     model_frequency = treatment.model_frequency
@@ -823,7 +837,7 @@ def correct_reporting(
 
     ledger = exclusions.empty_ledger()
 
-    if treatment_id not in treatment._meters:
+    if treatment.meter(treatment_id) is None:
         ledger = exclusions.append(
             ledger,
             [treatment_id],
@@ -856,51 +870,45 @@ def correct_reporting(
 
         raise _meter_error(ledger, treatment_id)
 
-    active = _active_clusters(weights_row)
-    window = _reporting_span(treatment._meters[treatment_id])
+    window = _reporting_span(treatment.meter(treatment_id))
 
-    t_failed, ledger = _reporting_coverage_exclusions(
-        treatment, [treatment_id], ledger, window, settings.min_window_coverage
+    t_kept, ledger = _observed_dq_exclusions(treatment, [treatment_id], ledger)
+    t_kept, ledger = _coverage_exclusions(
+        treatment, t_kept, ledger, window, settings.min_reporting_coverage
     )
-    t_usable, ledger = _usable_reporting_ids(
-        treatment, [treatment_id], ledger, "correction_guard", skip=set(t_failed)
-    )
+    t_usable, ledger = _usable_reporting_ids(treatment, t_kept, ledger, "correction_guard")
 
     if not t_usable:
         raise _meter_error(ledger, treatment_id)
 
-    membership = _cg_membership(selection, treatment_id)
+    membership, active = _cg_membership(selection, treatment_id)
 
-    if prior is None:
-        member_ids = [mid for mid, _ in membership]
-        p_failed, ledger = _reporting_coverage_exclusions(
-            pool, member_ids, ledger, window, settings.min_window_coverage
-        )
-        p_usable, ledger = _usable_reporting_ids(
-            pool, member_ids, ledger, "reporting_data", skip=set(p_failed)
-        )
-    else:
-        # the prior's members as they are: no coverage prune and no new entrants
+    if prior is not None:
         frozen = set(prior.cg_ids)
         membership = [(mid, label) for mid, label in membership if mid in frozen]
-        member_ids = [mid for mid, _ in membership]
-        p_failed, ledger = _reporting_coverage_exclusions(pool, member_ids, ledger, window, None)
-        p_usable, ledger = _usable_reporting_ids(
-            pool, member_ids, ledger, "reporting_data", skip=set(p_failed)
+
+    member_ids = [mid for mid, _ in membership]
+    p_kept, ledger = _observed_dq_exclusions(pool, member_ids, ledger)
+
+    if prior is None:
+        p_kept, ledger = _coverage_exclusions(
+            pool, p_kept, ledger, window, settings.min_reporting_coverage
         )
 
-        if len(p_usable) < len(member_ids):
-            lost = [mid for mid in member_ids if mid not in set(p_usable)]
-            ledger = exclusions.append(
-                ledger,
-                [treatment_id],
-                "correction",
-                "correction_guard",
-                "frozen comparison group cannot be reproduced",
-                detail=f"prior members no longer available: {lost}",
-            )
+    p_usable, ledger = _usable_reporting_ids(pool, p_kept, ledger, "reporting_data")
 
-            raise _meter_error(ledger, treatment_id)
+    if prior is not None and len(p_usable) < len(member_ids):
+        lost = [mid for mid in member_ids if mid not in set(p_usable)]
+        ledger = exclusions.append(
+            ledger,
+            [treatment_id],
+            "correction",
+            "correction_guard",
+            "frozen comparison group cannot be reproduced",
+            detail=f"prior members no longer available: {lost}",
+        )
+
+        raise _meter_error(ledger, treatment_id)
 
     # the kernel's within-cluster sums are order-sensitive at the last ulp, so the
     # comparison-group columns keep their membership-walk order throughout
@@ -908,13 +916,13 @@ def correct_reporting(
     selected = [(mid, label) for mid, label in membership if mid in usable]
     cg_ids = [mid for mid, _ in selected]
 
-    if len(cg_ids) < _MIN_CG_METERS:
+    if len(cg_ids) < MIN_CG_METERS:
         ledger = exclusions.append(
             ledger,
             [treatment_id],
             "correction",
             "correction_guard",
-            "fewer than 5 comparison-group meters available",
+            f"fewer than {MIN_CG_METERS} comparison-group meters available",
             detail=f"{len(cg_ids)} comparison-group meters with reporting predictions",
         )
 
@@ -924,24 +932,17 @@ def correct_reporting(
     cg_label = np.array(labels, dtype=np.float64)
     t_weight = _cluster_weights(active, labels)
 
-    p_index, _, p_obs, p_mod, p_mod_unc, p_obs_unc = pool._prediction_matrices(
+    p_index, _, p_obs, p_mod, p_mod_unc, p_obs_unc = pool.prediction_matrices(
         "reporting", ids=cg_ids
     )
     finer_pool = FINENESS[pool.model_frequency] > FINENESS[model_frequency]
 
-    own = treatment._ensure_pred("reporting", ids=[treatment_id])[treatment_id]
-    own_obs_unc = treatment._materialize_observed_unc(treatment_id, own.index)
+    own = treatment.prediction_frames("reporting", ids=[treatment_id])[treatment_id]
+    own_obs_unc = treatment.observed_unc_at(treatment_id, own.index)
 
-    # observed uncertainty stays out of the correction math; compute_savings reads oTr_unc_out
-    oTr_unc = None
-    cg_corr = None
     correction_periods = []
-    identity = model_frequency != "billing"
 
-    if identity:
-        # non-billing treatments correct at their native cadence, so the pool is
-        # aligned to the meter's own index once — directly at the same
-        # model frequency, or binned up when finer
+    if model_frequency in ("hourly", "daily"):
         out_index = own.index.as_unit("ns")
         n_rows = len(out_index)
         oTr = own["observed"].to_numpy(dtype=np.float64)
@@ -951,36 +952,26 @@ def correct_reporting(
 
         if finer_pool:
             codes = _period_codes(_ns(p_index), _native_edges(out_index))
-            oCGr = _reduce_to_periods(p_obs, codes, n_rows, False)
-            mCGr = _reduce_to_periods(p_mod, codes, n_rows, False)
-            mCGr_unc = _reduce_to_periods(p_mod_unc, codes, n_rows, True)
-            oCGr_unc = None
-            if p_obs_unc is not None:
-                oCGr_unc = _reduce_to_periods(p_obs_unc, codes, n_rows, True)
-            corr_obs, corr_mod = oCGr, mCGr
+            oCGr, mCGr, mCGr_unc, oCGr_unc = _reduce_pool(
+                p_obs, p_mod, p_mod_unc, p_obs_unc, codes, n_rows
+            )
         else:
             row_map = p_index.get_indexer(out_index)
             present = row_map >= 0
-            oCGr = _align_to_index(p_obs, row_map, present, n_rows).astype(np.float64)
-            mCGr = _align_to_index(p_mod, row_map, present, n_rows).astype(np.float64)
-            mCGr_unc = _align_to_index(p_mod_unc, row_map, present, n_rows).astype(np.float64)
+            oCGr = _align_to_index(p_obs, row_map, present, n_rows)
+            mCGr = _align_to_index(p_mod, row_map, present, n_rows)
+            mCGr_unc = _align_to_index(p_mod_unc, row_map, present, n_rows)
             oCGr_unc = _align_to_index(p_obs_unc, row_map, present, n_rows)
-            if oCGr_unc is not None:
-                oCGr_unc = oCGr_unc.astype(np.float64)
-            corr_obs, corr_mod = p_obs, p_mod
-
-        if p_obs_unc is not None and np.any(p_obs_unc != 0.0):
-            cg_corr = _column_correlations(
-                np.asarray(corr_obs, dtype=np.float64), np.asarray(corr_mod, dtype=np.float64)
-            )
-    else:
+    elif model_frequency == "billing":
         prior_periods = None
         if prior is not None:
             prior_periods = prior.correction_periods
 
-        rp = derive_read_periods(
-            own[["observed"]], read_boundaries=read_boundaries, prior_periods=prior_periods
-        )
+        if read_boundaries is not None:
+            rp = periods_from_boundaries(own.index, read_boundaries)
+        else:
+            rp = infer_read_periods(own[["observed"]], prior_periods)
+
         if rp.periods is None:
             ledger = exclusions.append(
                 ledger, [treatment_id], "correction", "reporting_data", rp.ledger_reason
@@ -993,36 +984,29 @@ def correct_reporting(
         n_periods = len(correction_periods)
         out_index = pd.DatetimeIndex([start for start, _ in correction_periods]).as_unit("ns")
 
-        # a read's observed and modeled totals must cover the same days, so a
-        # day missing either value leaves both sums and the uncertainties, and
-        # the pool is reduced over those same days
         own_obs = own["observed"].to_numpy(dtype=np.float64)
         own_mod = own["modeled"].to_numpy(dtype=np.float64)
         own_finite = np.isfinite(own_obs) & np.isfinite(own_mod)
         own_codes = np.where(own_finite, _period_codes(_ns(own.index), edges), -1)
-        oTr = _reduce_to_periods(own_obs, own_codes, n_periods, False)
-        mTr = _reduce_to_periods(own_mod, own_codes, n_periods, False)
-        mTr_unc = _reduce_to_periods(own["modeled_unc"].to_numpy(), own_codes, n_periods, True)
-        oTr_unc_out = _reduce_to_periods(own_obs_unc, own_codes, n_periods, True)
+        oTr = _sum_to_periods(own_obs, own_codes, n_periods)
+        mTr = _sum_to_periods(own_mod, own_codes, n_periods)
+        mTr_unc = _quadrature_to_periods(own["modeled_unc"].to_numpy(), own_codes, n_periods)
+        oTr_unc_out = _quadrature_to_periods(own_obs_unc, own_codes, n_periods)
 
         own_days = _ns(own.index.normalize())[own_finite]
         pool_codes = _restrict_to_days(_period_codes(_ns(p_index), edges), p_index, own_days)
-        oCGr = _reduce_to_periods(p_obs, pool_codes, n_periods, False)
-        mCGr = _reduce_to_periods(p_mod, pool_codes, n_periods, False)
-        mCGr_unc = _reduce_to_periods(p_mod_unc, pool_codes, n_periods, True)
-        oCGr_unc = None
-        if p_obs_unc is not None:
-            oCGr_unc = _reduce_to_periods(p_obs_unc, pool_codes, n_periods, True)
+        oCGr, mCGr, mCGr_unc, oCGr_unc = _reduce_pool(
+            p_obs, p_mod, p_mod_unc, p_obs_unc, pool_codes, n_periods
+        )
+    else:
+        raise ValueError(f"Unknown model_frequency {model_frequency!r}.")
 
-        if p_obs_unc is not None and np.any(p_obs_unc != 0.0):
-            cg_corr = _column_correlations(oCGr, mCGr)
+    cg_corr = _cg_correlations(p_obs_unc, oCGr, mCGr)
 
     mTrc, mTrc_unc, mask = model_correction_matrix(
-        oTr,
         mTr,
         oCGr,
         mCGr,
-        oTr_unc,
         mTr_unc,
         oCGr_unc,
         mCGr_unc,
@@ -1059,8 +1043,7 @@ def correct_reporting(
 
     keep = _period_mask(corrected["datetime"], period, tz)
     corrected = corrected[keep].reset_index(drop=True)
-    usage_keep = _period_mask(cg_usage["datetime"], period, tz)
-    cg_usage = cg_usage[usage_keep].reset_index(drop=True)
+    cg_usage = cg_usage[keep].reset_index(drop=True)
 
     if corrected.empty:
         covered_window = None

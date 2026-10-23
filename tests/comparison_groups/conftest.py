@@ -41,8 +41,7 @@ def _hour_loadshape_data(df_baseline, meter_ids):
 
 @pytest.fixture(scope="session")
 def comstock(_comstock_daily_all, _comstock_monthly_all, _comstock_hourly_all):
-    """The ComStock frame pairs with a shared cache of the data objects built
-    from them."""
+    """The session's shared ``ComStockData``."""
     return ComStockData(_comstock_daily_all, _comstock_monthly_all, _comstock_hourly_all)
 
 

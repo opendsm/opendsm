@@ -23,20 +23,18 @@ import numpy as np
 import pandas as pd
 
 from opendsm.comparison_groups import exclusions
-from opendsm.comparison_groups.common import Data, Data_Settings
 from opendsm.comparison_groups.common import const as _const
-from opendsm.comparison_groups.population import (
-    _DEFAULT_TIME_PERIOD,
-    _LOADSHAPE_SEED,
-    _coerce_window,
-    _window_to_json,
-)
+from opendsm.comparison_groups.population import default_data_settings
 from opendsm.comparison_groups.cg_clustering.create_comparison_groups import CG_Clustering
 from opendsm.comparison_groups.cg_clustering.settings import CG_Clustering_Settings
 from opendsm.comparison_groups.individual_meter_matching.create_comparison_groups import (
     Individual_Meter_Matching,
 )
+from opendsm.comparison_groups.individual_meter_matching.settings import (
+    Settings as Individual_Meter_Matching_Settings,
+)
 from opendsm.comparison_groups.random_sampling.create_comparison_groups import Random_Sampling
+from opendsm.comparison_groups.random_sampling.settings import Settings as Random_Sampling_Settings
 from opendsm.comparison_groups.stratified_sampling.create_comparison_groups import Stratified_Sampling
 from opendsm.comparison_groups.stratified_sampling.settings import (
     DistanceStratifiedSamplingSettings,
@@ -63,8 +61,13 @@ _ALGORITHM = {
     SelectionMethod.RANDOM_SAMPLING: Random_Sampling,
 }
 
-# Default loadshape basis per method: CG clustering matches on modeling error,
-# every other method on the modeled load.
+_DEFAULT_SETTINGS = {
+    SelectionMethod.CG_CLUSTERING: CG_Clustering_Settings,
+    SelectionMethod.INDIVIDUAL_METER_MATCHING: Individual_Meter_Matching_Settings,
+    SelectionMethod.STRATIFIED_SAMPLING: DistanceStratifiedSamplingSettings,
+    SelectionMethod.RANDOM_SAMPLING: Random_Sampling_Settings,
+}
+
 _DEFAULT_BASIS = {
     SelectionMethod.CG_CLUSTERING: _const.LoadshapeType.ERROR,
     SelectionMethod.INDIVIDUAL_METER_MATCHING: _const.LoadshapeType.MODELED,
@@ -87,25 +90,59 @@ _IMM_CLUSTER_COLUMNS = ["cluster", "weight", "treatment", "distance", "duplicate
 _FINGERPRINT_SIG_DIGITS = 9
 
 
-def _default_settings(method):
-    if method == SelectionMethod.CG_CLUSTERING:
-        return CG_Clustering_Settings()
+def _default_method_settings(method):
+    """A new default settings object for ``method``.
 
-    if method == SelectionMethod.INDIVIDUAL_METER_MATCHING:
-        return Individual_Meter_Matching().settings
+    Raises:
+        ValueError: ``method`` has no default settings.
+    """
+    if method not in _DEFAULT_SETTINGS:
+        raise ValueError(f"Unknown selection method {method!r}.")
 
-    if method == SelectionMethod.STRATIFIED_SAMPLING:
-        return DistanceStratifiedSamplingSettings()
+    settings = _DEFAULT_SETTINGS[method]()
 
-    return Random_Sampling().settings
+    return settings
+
+
+def window_to_json(window):
+    """``window`` as a ``[start, end]`` pair of ISO-8601 strings, or ``None``
+    when ``window`` is ``None``."""
+    if window is None:
+        return None
+
+    start, end = window
+    bounds = [start.isoformat(), end.isoformat()]
+
+    return bounds
+
+
+def coerce_window(window, tz):
+    """Normalize a ``(start, end)`` window of datetime-likes or ISO-8601 strings
+    to a tuple of tz-aware ``Timestamp`` in ``tz``: naive bounds are localized
+    to ``tz``, aware ones converted. ``None`` passes through."""
+    if window is None:
+        return None
+
+    start, end = window
+    bounds = []
+
+    for value in (start, end):
+        ts = pd.Timestamp(value)
+        if ts.tzinfo is None:
+            ts = ts.tz_localize(tz)
+        else:
+            ts = ts.tz_convert(tz)
+        bounds.append(ts)
+
+    window = (bounds[0], bounds[1])
+
+    return window
 
 
 def _build_data(population, method, basis, data_settings, exclude):
-    """The selection input for ``population``; the ``exclude`` ids are left out of
-    its loadshapes, and its stratification features keep only the meters with a
-    loadshape, so a feature row with no meter behind it (pool-trimmed, dropped by
-    the loadshape build, or excluded) cannot be drawn. The population owns the
-    pool trim, so ``Data``'s own trim is disabled here."""
+    """The selection input for ``population`` with the ``exclude`` ids left out
+    of its loadshapes; for stratified sampling it also carries the population's
+    stratification features."""
     if method != SelectionMethod.STRATIFIED_SAMPLING:
         return population.loadshape_data(basis, data_settings, exclude=exclude)
 
@@ -115,24 +152,8 @@ def _build_data(population, method, basis, data_settings, exclude):
             "population, but none were provided."
         )
 
-    loadshape_data = population.loadshape_data(basis, data_settings, exclude=exclude)
-    loadshape = loadshape_data.loadshape
-    features = population.features.rename_axis("id").reset_index()
-    features = features[features["id"].astype(str).isin(loadshape.index.astype(str))]
-    settings = Data_Settings(
-        agg_type=None,
-        loadshape_type=None,
-        time_period=None,
-        max_pool_size=len(population),
-        seed=_LOADSHAPE_SEED,
-    )
-    data = Data(
-        loadshape_df=loadshape.reset_index(),
-        features_df=features,
-        settings=settings,
-    )
-    data._excluded_ids = pd.concat(
-        [data._excluded_ids, loadshape_data.excluded_ids], ignore_index=True
+    data = population.loadshape_data(
+        basis, data_settings, exclude=exclude, features=population.features
     )
 
     return data
@@ -140,47 +161,30 @@ def _build_data(population, method, basis, data_settings, exclude):
 
 def _finalize_clusters(flat, method):
     """Coerce a flat clusters frame (id column present) to the canonical
-    normalized schema: id-indexed, method-specific columns, pinned dtypes."""
+    normalized schema: str id index, the method's columns in order, pinned
+    dtypes. A missing ``treatment`` column is filled with NA.
+
+    Raises:
+        ValueError: ``flat`` lacks any other column the method's schema holds.
+    """
     if method == SelectionMethod.INDIVIDUAL_METER_MATCHING:
         columns = _IMM_CLUSTER_COLUMNS
     else:
         columns = _BASE_CLUSTER_COLUMNS
 
     frame = flat.copy()
+    if "treatment" not in frame.columns:
+        frame["treatment"] = pd.NA
+
+    missing = [column for column in columns if column not in frame.columns]
+    if missing:
+        raise ValueError(f"{method.value} clusters require columns {missing}.")
+
     frame["id"] = frame["id"].astype(str)
-
-    for column in columns:
-        if column not in frame.columns:
-            frame[column] = pd.NA
-
-        frame[column] = frame[column].astype(_CLUSTER_DTYPES[column])
-
-    ordered = frame[["id"] + columns]
-    ordered.columns = pd.Index(["id"] + columns)
-    clusters = ordered.set_index("id")
-
-    return clusters
-
-
-def _normalize_clusters(method, clusters_raw):
-    """Map each algorithm's clusters output onto the normalized schema the
-    correction kernel consumes. The IMM duplicate id index is preserved."""
-    if method == SelectionMethod.CG_CLUSTERING:
-        flat = clusters_raw.reset_index()
-        flat["weight"] = 1.0
-        flat["treatment"] = pd.NA
-
-    elif method == SelectionMethod.INDIVIDUAL_METER_MATCHING:
-        flat = clusters_raw.reset_index()
-
-    elif method in (SelectionMethod.RANDOM_SAMPLING, SelectionMethod.STRATIFIED_SAMPLING):
-        flat = clusters_raw.reset_index()
-        flat["treatment"] = pd.NA
-
-    else:
-        raise ValueError(f"Unknown selection method {method!r}.")
-
-    clusters = _finalize_clusters(flat, method)
+    dtypes = {column: _CLUSTER_DTYPES[column] for column in columns}
+    clusters = frame[["id"] + columns].astype(dtypes).set_index("id")
+    # Fresh labels, so the column Index dtype does not depend on the input frame's.
+    clusters.columns = pd.Index(columns)
 
     return clusters
 
@@ -233,7 +237,7 @@ def _short_baseline_exclusions(population, time_period):
     if time_period != _const.TimePeriod.MONTH:
         return ledger
 
-    for mid, months in population._short_baseline_months().items():
+    for mid, months in population.short_baseline_months().items():
         ledger = exclusions.append(
             ledger,
             [mid],
@@ -267,8 +271,6 @@ def _pool_overlap_exclusions(treatment, pool):
 # rides a daily substrate, so its window length is counted in days.
 COVERAGE_FREQ = {"hourly": "h", "daily": "D", "billing": "D"}
 
-# Higher fineness = finer native cadence. A pool must be at least as fine as
-# the treatment: fineness(pool) >= fineness(treatment).
 FINENESS = {"billing": 0, "daily": 1, "hourly": 2}
 
 
@@ -316,27 +318,23 @@ def window_coverage(data, window, freq):
     return coverage
 
 
-def _coverage_exclusions(population, ids, window, min_window_coverage):
-    """Selection-stage baseline-coverage ledger: the meters among ``ids`` whose
-    finite observed-and-temperature coverage over the group ``window`` falls
-    below ``min_window_coverage``. The computed coverage goes in ``detail``, with
-    any construction-time eemeter disqualification warnings appended verbatim.
-    Returns the failing ids (for pruning) and their ledger rows."""
+def _coverage_exclusions(population, ids, window, min_baseline_coverage):
+    """Selection-stage baseline-coverage ledger rows for the meters among ``ids``
+    whose finite observed-and-temperature coverage over the group ``window``
+    falls below ``min_baseline_coverage``. The computed coverage goes in
+    ``detail``, with any construction-time eemeter disqualification warnings
+    appended verbatim."""
     freq = COVERAGE_FREQ[population.model_frequency]
     ledger = exclusions.empty_ledger()
-    failed = []
 
     for mid in ids:
-        rec = population._meters.get(mid)
-        if rec is None:
+        baseline_data = population.meter(mid).baseline_data
+        coverage = window_coverage(baseline_data, window, freq)
+        if coverage >= min_baseline_coverage:
             continue
 
-        coverage = window_coverage(rec.baseline_data, window, freq)
-        if coverage >= min_window_coverage:
-            continue
-
-        detail = f"baseline window coverage {coverage:.4f} < {min_window_coverage}"
-        warning_text = exclusions.format_warnings(rec.baseline_data.disqualification)
+        detail = f"baseline coverage {coverage:.4f} < min_baseline_coverage {min_baseline_coverage}"
+        warning_text = exclusions.format_warnings(baseline_data.disqualification)
         if warning_text:
             detail = f"{detail}; {warning_text}"
 
@@ -348,13 +346,22 @@ def _coverage_exclusions(population, ids, window, min_window_coverage):
             "baseline coverage below minimum over the group window",
             detail=detail,
         )
-        failed.append(mid)
 
-    return failed, ledger
+    return ledger
+
+
+def _ids_outside(population, ledger):
+    """The ids of ``population`` that ``ledger`` does not name, in population order."""
+    excluded = set(ledger["id"])
+    ids = [mid for mid in population.ids if mid not in excluded]
+
+    return ids
 
 
 def _round_sig(value):
-    return float(f"{float(value):.{_FINGERPRINT_SIG_DIGITS}g}")
+    rounded = float(f"{float(value):.{_FINGERPRINT_SIG_DIGITS}g}")
+
+    return rounded
 
 
 def _canonical_value(value):
@@ -385,17 +392,10 @@ def _canonical_rows(flat):
     return records
 
 
-def table_fingerprint(tables):
-    """SHA-256 digest of the canonical form of ``tables`` (a name-to-frame
+def _table_fingerprint(tables):
+    """SHA-256 hex digest of the canonical form of ``tables`` (a name-to-frame
     mapping), with floats rounded to nine significant digits so a JSON round
-    trip reproduces it.
-
-    Args:
-        tables: Mapping of table name to frame.
-
-    Returns:
-        The hex digest.
-    """
+    trip reproduces it."""
     canonical = {name: _canonical_rows(flat) for name, flat in tables.items()}
     blob = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(blob.encode("utf-8")).hexdigest()
@@ -412,7 +412,11 @@ class ComparisonGroupSelection:
     ``distance`` and ``duplicated``. ``treatment_weights`` is id-indexed with
     ``pct_cluster_*`` columns and may contain all-NaN rows for treatment meters
     whose loadshape could not be matched (these ids are also recorded in
-    ``exclusions``, the selection-stage disqualification ledger).
+    ``exclusions``, the selection-stage disqualification ledger). The
+    constructor coerces both tables to that form: str ids, the method's columns
+    in order, pinned dtypes, and NA for an absent ``treatment`` column; a
+    ``clusters`` frame lacking any other of the method's columns raises
+    ``ValueError``.
 
     ``baseline_window`` is the tz-aware ``(start, end)`` the baseline-coverage
     check judged against, or ``None``. It records what selection used and is
@@ -433,18 +437,18 @@ class ComparisonGroupSelection:
         pool_ids,
         tz,
     ):
-        self.clusters = clusters
-        self.treatment_weights = treatment_weights
         self.method = SelectionMethod(method)
-        self.basis = _const.LoadshapeType(basis).value
+        self.basis = _const.LoadshapeType(basis)
+        self.clusters = _finalize_clusters(clusters.rename_axis("id").reset_index(), self.method)
+        self.treatment_weights = _normalize_treatment_weights(treatment_weights)
         self.method_settings = method_settings
         self.data_settings = data_settings
-        self.baseline_window = _coerce_window(baseline_window, tz)
+        self.baseline_window = coerce_window(baseline_window, tz)
         self.exclusions = exclusions
         self.treatment_ids = [str(x) for x in treatment_ids]
         self.pool_ids = [str(x) for x in pool_ids]
         self.tz = tz
-        self.fingerprint = table_fingerprint(self._fingerprint_tables())
+        self.fingerprint = _table_fingerprint(self._fingerprint_tables())
 
     # -- accessors -----------------------------------------------------------
 
@@ -465,6 +469,18 @@ class ComparisonGroupSelection:
         frames = {**self._fingerprint_tables(), "exclusions": self.exclusions.copy()}
 
         return frames
+
+    def verify_fingerprint(self):
+        """Check that ``clusters`` and ``treatment_weights`` still match
+        ``fingerprint``.
+
+        Raises:
+            ValueError: Either table changed after construction.
+        """
+        if _table_fingerprint(self._fingerprint_tables()) != self.fingerprint:
+            raise ValueError(
+                "selection fingerprint does not match its tables; the selection has been mutated."
+            )
 
     # -- serialization -------------------------------------------------------
 
@@ -492,14 +508,14 @@ class ComparisonGroupSelection:
         payload = {
             "schema_version": SCHEMA_VERSION,
             "method": self.method.value,
-            "basis": self.basis,
+            "basis": self.basis.value,
             "tz": self.tz,
             "fingerprint": self.fingerprint,
             "treatment_ids": self.treatment_ids,
             "pool_ids": self.pool_ids,
             "method_settings": self.method_settings,
             "data_settings": self.data_settings,
-            "baseline_window": _window_to_json(self.baseline_window),
+            "baseline_window": window_to_json(self.baseline_window),
             "tables": self._table_payload(),
         }
 
@@ -516,7 +532,8 @@ class ComparisonGroupSelection:
             The rebuilt ``ComparisonGroupSelection``.
 
         Raises:
-            ValueError: The payload's ``schema_version`` is not supported.
+            ValueError: The payload's ``schema_version`` is not supported, or its
+                stored fingerprint does not match its tables.
         """
         payload = json.loads(s)
 
@@ -526,26 +543,19 @@ class ComparisonGroupSelection:
                 f"expected {SCHEMA_VERSION}."
             )
 
-        method = SelectionMethod(payload["method"])
         tables = payload["tables"]
-
-        clusters_flat = pd.read_json(StringIO(tables["clusters"]), orient="table")
-        clusters = _finalize_clusters(clusters_flat, method)
-
-        weights_flat = pd.read_json(StringIO(tables["treatment_weights"]), orient="table")
-        treatment_weights = _normalize_treatment_weights(weights_flat.set_index("id"))
-
-        ledger = exclusions.read_table_json(tables["exclusions"])
+        clusters = pd.read_json(StringIO(tables["clusters"]), orient="table")
+        treatment_weights = pd.read_json(StringIO(tables["treatment_weights"]), orient="table")
 
         selection = cls(
-            clusters=clusters,
-            treatment_weights=treatment_weights,
-            method=method,
+            clusters=clusters.set_index("id"),
+            treatment_weights=treatment_weights.set_index("id"),
+            method=payload["method"],
             basis=payload["basis"],
             method_settings=payload["method_settings"],
             data_settings=payload["data_settings"],
             baseline_window=payload["baseline_window"],
-            exclusions=ledger,
+            exclusions=exclusions.read_table_json(tables["exclusions"]),
             treatment_ids=payload["treatment_ids"],
             pool_ids=payload["pool_ids"],
             tz=payload["tz"],
@@ -568,41 +578,31 @@ def select_comparison_group(
     basis=None,
     data_settings=None,
     baseline_window=None,
-    min_window_coverage=0.9,
+    min_baseline_coverage=0.9,
 ):
     """Select a comparison group for ``treatment`` from ``pool``.
 
-    A fresh algorithm instance is built per call because CG clustering mutates its
-    own settings during ``get_labels``. ``method_settings`` is captured (dumped)
-    before that mutation so the selection can be re-run deterministically.
+    ``method_settings`` is stored as dumped before the run, so the selection can
+    be re-run deterministically.
 
-    ``min_window_coverage`` is the baseline-coverage floor: each treatment meter
-    and each selected pool meter must carry finite observed and temperature over
-    at least this fraction of ``baseline_window``. Meters below it are pruned
-    (dropped from ``treatment_weights`` or ``clusters``) and recorded on the
-    selection ledger with their coverage,
-    because the correction loop skips only absent meters — a ledger-only row
-    would leave the meter corrected.
+    Before the selection algorithm runs, meters that fail any of these checks are
+    left out of it and recorded on the selection ledger; neither population is
+    changed, and an excluded meter is absent from the selection's tables:
 
-    For a ``MONTH`` loadshape time period, meters with fewer than 12 baseline
-    months are left out of selection and recorded on the selection ledger with
-    their month count; neither population is changed, so an excluded treatment
-    meter is simply absent from ``treatment_weights``.
+    - Baseline coverage: a treatment or pool meter whose finite observed and
+      temperature cover less than ``min_baseline_coverage`` of ``baseline_window``
+      gets a ``baseline_coverage`` row carrying its coverage.
+    - For a ``MONTH`` loadshape time period, a meter with fewer than 12 baseline
+      months gets a ``baseline_data`` row carrying its month count.
+    - A meter in both populations stays in the treatment and is left out of the
+      pool side, recorded once with origin ``pool_overlap``; that row supersedes
+      a short-baseline row for its pool copy. A treatment copy short of 12
+      baseline months keeps its own short-baseline row, so such a meter has one
+      row per copy.
 
-    A meter in both populations stays in the treatment and is left out of the
-    pool side for every method, recorded once on the selection ledger with
-    origin ``pool_overlap``; that row supersedes a short-baseline row for its
-    pool copy. A treatment copy short of 12 baseline months keeps its own
-    short-baseline row, so such a meter has one row per copy.
-
-    Loadshapes are always built at the TREATMENT population's model frequency: when
-    ``data_settings`` is not given, its ``time_period`` defaults per treatment
-    model frequency and that same setting is passed to both populations, so a finer
-    pool aggregates to the treatment's cadence rather than defaulting to its own
-    (mismatched loadshape lengths otherwise). The data settings actually used
-    are stored on the selection. The pool must be same-or-finer
-    than the treatment (``fineness(pool) >= fineness(treatment)``); a coarser
-    pool raises.
+    Both populations' loadshapes use the same ``data_settings``, so a finer pool
+    aggregates to the treatment's cadence (its own default would give mismatched
+    loadshape lengths); the settings used are stored on the selection.
 
     Args:
         treatment: ``TreatmentGroup`` with baseline data attached.
@@ -614,15 +614,15 @@ def select_comparison_group(
             defaults when omitted.
         basis: loadshape basis; per-method default when omitted (modeling error
             for CG clustering, modeled load otherwise).
-        data_settings: ``Data_Settings`` for loadshape construction; defaults to
-            the treatment model frequency's time period.
+        data_settings: ``Data_Settings`` for loadshape construction;
+            ``default_data_settings`` of the treatment's model frequency when
+            omitted.
         baseline_window: ``(start, end)`` the baseline-coverage check judges
             against; naive bounds are localized to the treatment timezone. When
             omitted, the union of the baseline spans of every treatment meter
-            given, including meters the check then excludes. Recorded on the
-            selection and never reapplied.
-        min_window_coverage: baseline-coverage floor over ``baseline_window``,
-            applied to treatment and selected pool meters.
+            given, including meters the checks then exclude.
+        min_baseline_coverage: baseline-coverage floor over ``baseline_window``,
+            a fraction applied to every treatment and pool meter.
 
     Returns:
         ``ComparisonGroupSelection``.
@@ -630,11 +630,12 @@ def select_comparison_group(
     Raises:
         ValueError: A meter in either population has no baseline data attached
             (every such meter is named), the populations' timezones differ, the
-            pool is coarser than the treatment, or the loadshape time period is
-            ``MONTH`` and every treatment meter has fewer than 12 baseline months.
+            pool is coarser than the treatment, the loadshape time period is
+            ``MONTH`` and every treatment meter has fewer than 12 baseline months,
+            or the checks above exclude every treatment meter or every pool meter.
     """
     missing = {
-        population.role: population._ids_without_baseline() for population in (treatment, pool)
+        population.role: population.ids_without_baseline() for population in (treatment, pool)
     }
     missing = {role: ids for role, ids in missing.items() if ids}
     if missing:
@@ -656,35 +657,58 @@ def select_comparison_group(
     basis = _const.LoadshapeType(basis)
 
     if method_settings is None:
-        method_settings = _default_settings(method)
+        method_settings = _default_method_settings(method)
 
     settings_dump = method_settings.model_dump(mode="json")
 
     if data_settings is None:
-        data_settings = Data_Settings(time_period=_DEFAULT_TIME_PERIOD[treatment.model_frequency])
+        data_settings = default_data_settings(treatment.model_frequency)
 
     data_settings_dump = data_settings.model_dump(mode="json")
 
-    treatment_excluded = _short_baseline_exclusions(treatment, data_settings.time_period)
-    pool_overlap = _pool_overlap_exclusions(treatment, pool)
-    pool_short = _short_baseline_exclusions(pool, data_settings.time_period)
-    pool_short = pool_short[~pool_short["id"].isin(pool_overlap["id"])]
-    pool_excluded = pd.concat([pool_overlap, pool_short], ignore_index=True)
+    if baseline_window is None:
+        window = treatment.baseline_span()
+    else:
+        window = coerce_window(baseline_window, treatment.tz)
 
-    if not treatment_excluded.empty and len(treatment_excluded) == len(treatment):
+    treatment_short = _short_baseline_exclusions(treatment, data_settings.time_period)
+
+    if not treatment_short.empty and len(treatment_short) == len(treatment):
         summary = ", ".join(
             f"{mid}: {detail}"
-            for mid, detail in zip(treatment_excluded["id"], treatment_excluded["detail"])
+            for mid, detail in zip(treatment_short["id"], treatment_short["detail"])
         )
         raise ValueError(
             "MONTH loadshapes require at least 12 baseline months per meter; "
             f"all treatment meters excluded ({summary})."
         )
 
+    treatment_coverage = _coverage_exclusions(
+        treatment, _ids_outside(treatment, treatment_short), window, min_baseline_coverage
+    )
+    treatment_excluded = pd.concat([treatment_short, treatment_coverage], ignore_index=True)
+
+    pool_overlap = _pool_overlap_exclusions(treatment, pool)
+    pool_short = _short_baseline_exclusions(pool, data_settings.time_period)
+    pool_short = pool_short[~pool_short["id"].isin(pool_overlap["id"])]
+    pool_excluded = pd.concat([pool_overlap, pool_short], ignore_index=True)
+    pool_coverage = _coverage_exclusions(
+        pool, _ids_outside(pool, pool_excluded), window, min_baseline_coverage
+    )
+    pool_excluded = pd.concat([pool_excluded, pool_coverage], ignore_index=True)
+
+    if len(treatment_excluded) == len(treatment):
+        raise ValueError(
+            "No treatment meters remain: every treatment meter has fewer than 12 baseline "
+            "months under a MONTH time period or baseline coverage below "
+            f"min_baseline_coverage ({min_baseline_coverage})."
+        )
+
     if len(pool_excluded) == len(pool):
         raise ValueError(
             "No comparison pool meters remain: every pool meter is also in the treatment "
-            "group or has fewer than 12 baseline months under a MONTH time period."
+            "group, has fewer than 12 baseline months under a MONTH time period, or has "
+            f"baseline coverage below min_baseline_coverage ({min_baseline_coverage})."
         )
 
     treatment_data = _build_data(
@@ -692,40 +716,22 @@ def select_comparison_group(
     )
     pool_data = _build_data(pool, method, basis, data_settings, list(pool_excluded["id"]))
 
+    # A new algorithm instance per call: CG clustering rebuilds its own settings
+    # during ``get_labels``.
     algorithm = _ALGORITHM[method](method_settings)
-    clusters_raw, treatment_weights_raw = algorithm.get_comparison_group(treatment_data, pool_data)
+    clusters, treatment_weights = algorithm.get_comparison_group(treatment_data, pool_data)
 
-    clusters = _normalize_clusters(method, clusters_raw)
-    treatment_weights = _normalize_treatment_weights(treatment_weights_raw)
-    stage_ledger = _stage_exclusions(treatment_data, pool_data, treatment_weights)
-
-    if baseline_window is None:
-        window = treatment._baseline_span()
-    else:
-        window = _coerce_window(baseline_window, treatment.tz)
-
-    pool_ids_selected = list(dict.fromkeys(clusters.index.astype(str)))
-    treatment_failed, treatment_cov_ledger = _coverage_exclusions(
-        treatment, list(treatment_weights.index), window, min_window_coverage
-    )
-    pool_failed, pool_cov_ledger = _coverage_exclusions(
-        pool, pool_ids_selected, window, min_window_coverage
-    )
-
-    treatment_weights = treatment_weights.drop(index=treatment_failed)
-    clusters = clusters.drop(index=pool_failed)
+    if method == SelectionMethod.CG_CLUSTERING:
+        clusters = clusters.assign(weight=1.0)
 
     stage_ledger = pd.concat(
         [
             treatment_excluded,
             pool_excluded,
-            stage_ledger,
-            treatment_cov_ledger,
-            pool_cov_ledger,
+            _stage_exclusions(treatment_data, pool_data, treatment_weights),
         ],
         ignore_index=True,
     )
-    stage_ledger = stage_ledger.drop_duplicates(ignore_index=True)
 
     selection = ComparisonGroupSelection(
         clusters=clusters,

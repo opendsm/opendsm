@@ -13,22 +13,22 @@
 #  limitations under the License.
 
 import copy
+import json
 import warnings
+from io import StringIO
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from opendsm.comparison_groups import exclusions
 from opendsm.comparison_groups.common import Data, Data_Settings
 from opendsm.comparison_groups.common import const as _const
 from opendsm.comparison_groups.population import ComparisonPool, TreatmentGroup
 from opendsm.comparison_groups.selection import (
     ComparisonGroupSelection,
     SelectionMethod,
-    _ALGORITHM,
     _build_data,
-    table_fingerprint,
-    _normalize_clusters,
     _stage_exclusions,
     window_coverage,
     select_comparison_group,
@@ -48,6 +48,8 @@ from opendsm.eemeter.models import (
     DailyModel,
 )
 
+from savings.equivalence_env import VARIANT_NAMES
+
 
 
 # Individual meter matching with duplicate matches allowed and more matches than
@@ -55,12 +57,33 @@ from opendsm.eemeter.models import (
 # treatments, so the normalized clusters carry a genuine duplicate id index.
 _IMM_DUPLICATE_SETTINGS = dict(allow_duplicate_matches=True, n_matches_per_treatment=8)
 
+# Fixed bins: the distance-binning search needs more treatment meters than the
+# five of ``short_baseline_env``.
+_STRATIFIED_SETTINGS = StratifiedSamplingSettings(
+    seed=42,
+    n_samples_approx=100,
+    relax_n_samples_approx_constraint=True,
+    min_n_sampled_to_n_treatment_ratio=0,
+    stratification_column=[
+        StratificationColumnSettings(
+            column_name="summer_usage", n_bins=2, min_value_allowed=0, max_value_allowed=10000
+        ),
+    ],
+)
+
+_METHOD_SETTINGS = {
+    "cg_clustering": CG_Clustering_Settings(),
+    "individual_meter_matching": IMM_Settings(**_IMM_DUPLICATE_SETTINGS),
+    "random_sampling": RS_Settings(seed=42),
+    "stratified_sampling": _STRATIFIED_SETTINGS,
+}
+
 
 @pytest.fixture(scope="module")
 def billing_meters(comstock, model_bank):
     """Pinned BillingModels for real ComStock monthly meters: 6 treatment and 40
-    pool, baseline only. The same pinned fits serve the correction tests, so
-    the selections are reproducible across machines."""
+    pool, baseline only; the pinned fits keep the selections reproducible
+    across machines."""
     ids = comstock.ids("billing")
     bundle = {
         "treatment": comstock.meters(model_bank, "billing", ids[:6], reporting=False),
@@ -101,15 +124,58 @@ def _pool_with_features(billing_meters):
     return ComparisonPool.from_fit_models(pool_meters, features=_synthetic_features(pool_meters))
 
 
-def _select(treatment, pool, method, **kwargs):
-    return select_comparison_group(treatment, pool, method=method, **kwargs)
+@pytest.fixture(scope="module")
+def featured(billing_meters):
+    """The billing treatment and pool, each carrying synthetic stratification
+    features, so every method can run on them."""
+    treatment_meters = billing_meters["treatment"]
+    populations = (
+        TreatmentGroup.from_fit_models(
+            treatment_meters, features=_synthetic_features(treatment_meters)
+        ),
+        _pool_with_features(billing_meters),
+    )
+
+    return populations
+
+
+def _hand_built_selection(clusters, treatment_weights, method="random_sampling", **fields):
+    """A selection over ``clusters`` and ``treatment_weights`` as given; ``fields``
+    override the empty settings, window and ledger."""
+    arguments = {
+        "basis": "modeled",
+        "method_settings": {},
+        "data_settings": None,
+        "baseline_window": None,
+        "exclusions": exclusions.empty_ledger(),
+        "treatment_ids": list(treatment_weights.index),
+        "pool_ids": list(dict.fromkeys(clusters.index)),
+        "tz": "UTC",
+        **fields,
+    }
+    selection = ComparisonGroupSelection(
+        clusters=clusters, treatment_weights=treatment_weights, method=method, **arguments
+    )
+
+    return selection
+
+
+def _int_id_selection(**fields):
+    """A one-cluster selection whose meter ids are ints."""
+    clusters = pd.DataFrame(
+        {"cluster": [0, 0], "weight": [1.0, 1.0]}, index=pd.Index([101, 102], name="id")
+    )
+    weights = pd.DataFrame({"pct_cluster_0": [1.0]}, index=pd.Index([7], name="id"))
+    selection = _hand_built_selection(clusters, weights, **fields)
+
+    return selection
 
 
 # -- all four methods --------------------------------------------------------
 
 
 def test_clustering_selection_has_expected_fields(treatment, pool):
-    selection = _select(treatment, pool, "cg_clustering")
+    selection = select_comparison_group(treatment, pool, "cg_clustering")
 
     assert selection.method == SelectionMethod.CG_CLUSTERING
     assert selection.basis == "error"
@@ -120,7 +186,7 @@ def test_clustering_selection_has_expected_fields(treatment, pool):
 
 
 def test_random_selection_default_basis_is_modeled(treatment, pool):
-    selection = _select(treatment, pool, "random_sampling")
+    selection = select_comparison_group(treatment, pool, "random_sampling")
 
     assert selection.method == SelectionMethod.RANDOM_SAMPLING
     assert selection.basis == "modeled"
@@ -130,7 +196,7 @@ def test_random_selection_default_basis_is_modeled(treatment, pool):
 
 
 def test_clustering_clusters_schema(treatment, pool):
-    selection = _select(treatment, pool, "cg_clustering")
+    selection = select_comparison_group(treatment, pool, "cg_clustering")
     clusters = selection.clusters
 
     assert list(clusters.columns) == ["cluster", "weight", "treatment"]
@@ -146,8 +212,11 @@ def test_clustering_clusters_schema(treatment, pool):
 
 
 def test_imm_clusters_schema_has_duplicate_index(treatment, pool):
-    selection = _select(
-        treatment, pool, "individual_meter_matching", method_settings=IMM_Settings(**_IMM_DUPLICATE_SETTINGS)
+    selection = select_comparison_group(
+        treatment,
+        pool,
+        "individual_meter_matching",
+        method_settings=IMM_Settings(**_IMM_DUPLICATE_SETTINGS),
     )
     clusters = selection.clusters
 
@@ -156,13 +225,14 @@ def test_imm_clusters_schema_has_duplicate_index(treatment, pool):
     assert clusters["distance"].dtype == np.float64
     assert clusters["duplicated"].dtype == bool
     assert str(clusters["treatment"].dtype) == "string"
-    # more match slots than distinct pool meters => at least one duplicate id
     assert clusters.index.duplicated().any()
     assert set(clusters["treatment"]) <= set(selection.treatment_ids)
 
 
 def test_random_clusters_schema(treatment, pool):
-    selection = _select(treatment, pool, "random_sampling", method_settings=RS_Settings())
+    selection = select_comparison_group(
+        treatment, pool, "random_sampling", method_settings=RS_Settings()
+    )
     clusters = selection.clusters
 
     assert list(clusters.columns) == ["cluster", "weight", "treatment"]
@@ -172,9 +242,7 @@ def test_random_clusters_schema(treatment, pool):
 
 
 def test_stratified_clusters_schema(stratified_feature_loadshape_data):
-    """The stratified DSS path runs on the synthetic feature+loadshape fixture
-    (no real dataset pairs both); the adapter must map its output to the
-    cluster-0 / weight-1 normalized schema."""
+    """The stratified DSS output maps to the cluster-0 / weight-1 normalized schema."""
     treatment_data, pool_data = stratified_feature_loadshape_data
     columns = [
         DSS_StratificationColumnSettings(column_name="summer_usage", min_value_allowed=0, max_value_allowed=10000),
@@ -189,9 +257,11 @@ def test_stratified_clusters_schema(stratified_feature_loadshape_data):
         max_n_bins=3,
         stratification_column=columns,
     )
-    clusters_raw, _ = Stratified_Sampling(settings).get_comparison_group(treatment_data, pool_data)
+    clusters_raw, weights_raw = Stratified_Sampling(settings).get_comparison_group(
+        treatment_data, pool_data
+    )
 
-    clusters = _normalize_clusters(SelectionMethod.STRATIFIED_SAMPLING, clusters_raw)
+    clusters = _hand_built_selection(clusters_raw, weights_raw, "stratified_sampling").clusters
 
     assert list(clusters.columns) == ["cluster", "weight", "treatment"]
     assert (clusters["cluster"] == 0).all()
@@ -200,23 +270,37 @@ def test_stratified_clusters_schema(stratified_feature_loadshape_data):
     assert not clusters.empty
 
 
+def test_clusters_lacking_a_method_column_raise():
+    """An individual-meter-matching clusters frame without ``distance`` and
+    ``duplicated`` is rejected, naming both."""
+    clusters = pd.DataFrame({"cluster": [0], "weight": [1.0]}, index=pd.Index(["p0"], name="id"))
+    weights = pd.DataFrame({"pct_cluster_0": [1.0]}, index=pd.Index(["t0"], name="id"))
+
+    with pytest.raises(ValueError, match=r"\['distance', 'duplicated'\]"):
+        _hand_built_selection(clusters, weights, "individual_meter_matching")
+
+
 # -- pre-mutation settings capture + determinism -----------------------------
 
 
 def test_clustering_settings_captured_before_mutation(treatment, pool):
     """CG_Clustering.get_labels rebuilds the n_cluster bounds on self.settings;
     the artifact must record the caller's pre-mutation settings."""
-    selection = _select(treatment, pool, "cg_clustering", method_settings=CG_Clustering_Settings())
+    selection = select_comparison_group(
+        treatment, pool, "cg_clustering", method_settings=CG_Clustering_Settings()
+    )
     default_bounds = CG_Clustering_Settings().model_dump(mode="json")["bisecting_kmeans"]["n_cluster"]
 
     assert selection.method_settings["bisecting_kmeans"]["n_cluster"] == default_bounds
 
 
 def test_clustering_rerun_from_deserialized_settings_is_deterministic(treatment, pool):
-    selection = _select(treatment, pool, "cg_clustering")
+    selection = select_comparison_group(treatment, pool, "cg_clustering")
     rebuilt_settings = CG_Clustering_Settings(**selection.method_settings)
 
-    rerun = _select(treatment, pool, "cg_clustering", method_settings=rebuilt_settings)
+    rerun = select_comparison_group(
+        treatment, pool, "cg_clustering", method_settings=rebuilt_settings
+    )
 
     pd.testing.assert_frame_equal(selection.clusters, rerun.clusters)
     pd.testing.assert_frame_equal(selection.treatment_weights, rerun.treatment_weights)
@@ -228,7 +312,7 @@ def test_clustering_rerun_from_deserialized_settings_is_deterministic(treatment,
 
 def test_stratified_without_features_raises(treatment, pool):
     with pytest.raises(ValueError, match="requires stratification features"):
-        _select(treatment, pool, "stratified_sampling")
+        select_comparison_group(treatment, pool, "stratified_sampling")
 
 
 def test_stratified_build_data_carries_loadshapes_and_features(billing_meters):
@@ -242,116 +326,71 @@ def test_stratified_build_data_carries_loadshapes_and_features(billing_meters):
     assert set(data.features.columns) == {"summer_usage", "winter_usage"}
 
 
-def test_stratified_build_data_disables_the_data_trim(billing_meters):
-    """The stratified ``Data`` never trims the population: its cap is the
-    population size and its seed the fixed loadshape seed."""
+def test_stratified_build_data_trims_no_meter(billing_meters):
+    """The population owns the pool trim: a caller's ``max_pool_size`` below the
+    population size leaves every meter in the stratified ``Data``."""
     pool = _pool_with_features(billing_meters)
+    settings = Data_Settings(time_period=_const.TimePeriod.MONTH, max_pool_size=5)
 
-    settings = _build_data(pool, SelectionMethod.STRATIFIED_SAMPLING, "modeled", None, ()).settings
+    data = _build_data(pool, SelectionMethod.STRATIFIED_SAMPLING, "modeled", settings, ())
 
-    assert settings.max_pool_size == len(pool)
-    assert settings.seed == 0
-
-
-class _StubPopulation:
-    role = "pool"
-
-    def __init__(self, loadshape_data, features):
-        self._loadshape_data = loadshape_data
-        self.features = features
-
-    def __len__(self):
-        return len(self.features)
-
-    def loadshape_data(self, basis, data_settings, exclude):
-        return self._loadshape_data
+    assert sorted(data.ids) == sorted(pool.ids)
+    assert sorted(data.features.index) == sorted(pool.ids)
 
 
-def test_stratified_build_data_carries_forward_loadshape_exclusions():
-    """A meter the loadshape ``Data`` drops (too few times, interpolation
-    off) must still reach the stratified ``Data``'s exclusion ledger, and must
-    not remain selectable through its surviving features row."""
-    settings = Data_Settings(
-        agg_type=_const.AggType.MEAN,
-        loadshape_type=_const.LoadshapeType.OBSERVED,
-        time_period=_const.TimePeriod.HOUR,
-        interpolate_missing=False,
-    )
-    loadshape_data = Data(
-        time_series_df=_hourly_meters({"p0": 48, "p1": 20, "p2": 48}), settings=settings
-    )
-    features = pd.DataFrame({"summer_usage": [1.0, 2.0, 3.0]}, index=["p0", "p1", "p2"])
-    population = _StubPopulation(loadshape_data, features)
+def test_stratified_build_data_drops_features_of_a_meter_the_loadshape_build_drops(
+    billing_meters,
+):
+    """A meter the loadshape build drops (all-NaN modeled baseline) is on the
+    stratified ``Data``'s exclusion ledger and has no selectable features row."""
+    pool = _pool_with_features(billing_meters)
+    victim = pool.ids[0]
+    pool.prediction_frames("baseline")[victim].loc[:, "modeled"] = np.nan
 
-    data = _build_data(population, SelectionMethod.STRATIFIED_SAMPLING, "observed", settings, ())
+    data = _build_data(pool, SelectionMethod.STRATIFIED_SAMPLING, "modeled", None, ())
 
-    assert "p1" in set(data.excluded_ids["id"])
-    assert "p1" not in set(data.features.index.astype(str))
+    assert victim in set(data.excluded_ids["id"])
+    assert victim not in set(data.features.index)
 
 
-def test_stratified_build_data_drops_excluded_ids_from_features():
+def test_stratified_build_data_drops_excluded_ids_from_features(billing_meters):
     """An id selection excludes loses its features row too, so stratified
     sampling cannot draw it."""
-    settings = Data_Settings(
-        agg_type=_const.AggType.MEAN,
-        loadshape_type=_const.LoadshapeType.OBSERVED,
-        time_period=_const.TimePeriod.HOUR,
-    )
-    loadshape_data = Data(
-        time_series_df=_hourly_meters({"p0": 48, "p2": 48}), settings=settings
-    )
-    features = pd.DataFrame({"summer_usage": [1.0, 2.0, 3.0]}, index=["p0", "p1", "p2"])
-    population = _StubPopulation(loadshape_data, features)
+    pool = _pool_with_features(billing_meters)
+    excluded = pool.ids[0]
 
-    data = _build_data(population, SelectionMethod.STRATIFIED_SAMPLING, "observed", settings, ["p1"])
+    data = _build_data(pool, SelectionMethod.STRATIFIED_SAMPLING, "modeled", None, [excluded])
 
-    assert sorted(data.features.index.astype(str)) == ["p0", "p2"]
+    assert sorted(data.features.index) == sorted(pool.ids[1:])
 
 
-def test_stratified_build_data_drops_features_without_a_meter():
-    """A features row whose id the population does not hold (a pool-trimmed
-    meter) is dropped, so stratified sampling cannot draw it."""
-    settings = Data_Settings(
-        agg_type=_const.AggType.MEAN,
-        loadshape_type=_const.LoadshapeType.OBSERVED,
-        time_period=_const.TimePeriod.HOUR,
-    )
-    loadshape_data = Data(
-        time_series_df=_hourly_meters({"p0": 48, "p2": 48}), settings=settings
-    )
-    features = pd.DataFrame({"summer_usage": [1.0, 2.0, 3.0]}, index=["p0", "trimmed", "p2"])
-    population = _StubPopulation(loadshape_data, features)
+def test_stratified_build_data_drops_features_without_a_meter(billing_meters):
+    """A features row whose id the population does not hold is dropped, so
+    stratified sampling cannot draw it."""
+    pool_meters = billing_meters["pool"]
+    features = _synthetic_features([*pool_meters, "absent"])
+    pool = ComparisonPool.from_fit_models(pool_meters, features=features)
 
-    data = _build_data(population, SelectionMethod.STRATIFIED_SAMPLING, "observed", settings, ())
+    data = _build_data(pool, SelectionMethod.STRATIFIED_SAMPLING, "modeled", None, ())
 
-    assert sorted(data.features.index.astype(str)) == ["p0", "p2"]
+    assert sorted(data.features.index) == sorted(pool.ids)
 
 
 # -- serialization roundtrip -------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "method, settings_kwargs",
-    [
-        ("cg_clustering", None),
-        ("individual_meter_matching", _IMM_DUPLICATE_SETTINGS),
-        ("random_sampling", {}),
-    ],
-)
-def test_json_roundtrip_is_exact(treatment, pool, method, settings_kwargs):
-    if method == "individual_meter_matching":
-        settings = IMM_Settings(**settings_kwargs)
-    elif method == "random_sampling":
-        settings = RS_Settings(**settings_kwargs)
-    else:
-        settings = None
+@pytest.mark.parametrize("method", list(_METHOD_SETTINGS))
+def test_json_roundtrip_is_exact(featured, method):
+    selection = select_comparison_group(
+        *featured, method, method_settings=_METHOD_SETTINGS[method]
+    )
 
-    selection = _select(treatment, pool, method, method_settings=settings)
     rebuilt = ComparisonGroupSelection.from_json(selection.to_json())
 
     pd.testing.assert_frame_equal(selection.clusters, rebuilt.clusters)
     pd.testing.assert_frame_equal(selection.treatment_weights, rebuilt.treatment_weights)
     pd.testing.assert_frame_equal(selection.exclusions, rebuilt.exclusions)
+    assert rebuilt.fingerprint == selection.fingerprint
     assert rebuilt.method == selection.method
     assert rebuilt.basis == selection.basis
     assert rebuilt.tz == selection.tz
@@ -361,18 +400,68 @@ def test_json_roundtrip_is_exact(treatment, pool, method, settings_kwargs):
     assert rebuilt.data_settings == selection.data_settings
 
 
-def test_fingerprint_is_stable_across_roundtrip(treatment, pool):
-    selection = _select(
-        treatment, pool, "individual_meter_matching", method_settings=IMM_Settings(**_IMM_DUPLICATE_SETTINGS)
-    )
+def test_int_id_selection_roundtrips_with_str_ids():
+    """A selection built with int meter ids holds them as strings and rebuilds
+    from its own JSON with equal tables and fingerprint."""
+    selection = _int_id_selection()
+
     rebuilt = ComparisonGroupSelection.from_json(selection.to_json())
 
+    assert list(selection.clusters.index) == ["101", "102"]
+    assert list(selection.treatment_weights.index) == ["7"]
+    pd.testing.assert_frame_equal(selection.clusters, rebuilt.clusters)
+    pd.testing.assert_frame_equal(selection.treatment_weights, rebuilt.treatment_weights)
     assert rebuilt.fingerprint == selection.fingerprint
-    # a corrupted table must not deserialize under the stored fingerprint
-    payload = selection.to_json().replace(selection.fingerprint, "0" * 64)
 
-    with pytest.raises(ValueError, match="fingerprint"):
-        ComparisonGroupSelection.from_json(payload)
+
+def _tamper_stored_fingerprint(payload):
+    payload["fingerprint"] = "0" * 64
+
+
+def _tamper_treatment_weight(payload):
+    tables = payload["tables"]
+    weights = pd.read_json(StringIO(tables["treatment_weights"]), orient="table")
+    weights["pct_cluster_0"] = 0.5
+    tables["treatment_weights"] = weights.to_json(orient="table", double_precision=15)
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [_tamper_stored_fingerprint, _tamper_treatment_weight],
+    ids=["stored_fingerprint", "treatment_weight"],
+)
+def test_payload_inconsistent_with_its_fingerprint_does_not_deserialize(tamper):
+    """A payload whose stored fingerprint does not match its tables raises,
+    whether the fingerprint or a table weight was edited."""
+    payload = json.loads(_int_id_selection().to_json())
+    tamper(payload)
+
+    with pytest.raises(ValueError, match="fingerprint does not match the stored value"):
+        ComparisonGroupSelection.from_json(json.dumps(payload))
+
+
+def test_verify_fingerprint_accepts_an_unchanged_selection():
+    _int_id_selection().verify_fingerprint()
+
+
+def test_verify_fingerprint_raises_after_a_table_edit():
+    selection = _int_id_selection()
+    selection.treatment_weights.iloc[0, 0] = 0.5
+
+    with pytest.raises(ValueError, match="selection fingerprint does not match its tables"):
+        selection.verify_fingerprint()
+
+
+def test_fingerprint_ignores_the_exclusions_ledger():
+    """The fingerprint covers clusters and treatment weights only: selections
+    differing only in their exclusions ledger share it."""
+    ledger = exclusions.append(
+        exclusions.empty_ledger(), ["9"], "selection", "pool_overlap", "overlap"
+    )
+
+    with_ledger = _int_id_selection(exclusions=ledger)
+
+    assert with_ledger.fingerprint == _int_id_selection().fingerprint
 
 
 # -- timezone guard ----------------------------------------------------------
@@ -383,7 +472,7 @@ def test_timezone_mismatch_raises(treatment, pool):
     mismatched.tz = "America/New_York"
 
     with pytest.raises(ValueError, match="timezone"):
-        _select(treatment, mismatched, "cg_clustering")
+        select_comparison_group(treatment, mismatched, "cg_clustering")
 
 
 # -- baseline guard ----------------------------------------------------------
@@ -400,7 +489,7 @@ def test_selection_without_baseline_raises_naming_every_meter(treatment, pool, b
     missing = {"treatment": treatment.ids, "pool": pool.ids[1:]}
 
     with pytest.raises(ValueError, match="Selection requires baseline data") as raised:
-        _select(reloaded_treatment, reloaded_pool, "random_sampling")
+        select_comparison_group(reloaded_treatment, reloaded_pool, "random_sampling")
 
     assert str(missing) in str(raised.value)
 
@@ -431,73 +520,71 @@ def test_coarser_pool_raises_fineness_error(daily_and_billing_meters):
         select_comparison_group(treatment, pool, method="random_sampling")
 
 
-def test_finer_pool_builds_both_loadshapes_at_treatment_time_period(daily_and_billing_meters):
-    """A billing (coarser) treatment against a daily (finer) pool is allowed;
-    both loadshapes build at the treatment's MONTH time period, so they come
-    out the same length."""
+def test_finer_pool_selects_at_the_treatment_time_period(daily_and_billing_meters):
+    """A billing (coarser) treatment against a daily (finer) pool is allowed:
+    both loadshapes build at the treatment's MONTH time period, so individual
+    meter matching, which needs loadshapes of equal length, matches every
+    treatment meter, and the defaulted settings are stored."""
     treatment = TreatmentGroup.from_fit_models(daily_and_billing_meters["billing"])
     pool = ComparisonPool.from_fit_models(daily_and_billing_meters["daily"])
-    settings = RS_Settings(n_meters_total=len(pool.ids), n_meters_per_treatment=None)
+    expected_settings = Data_Settings(time_period=_const.TimePeriod.MONTH).model_dump(mode="json")
 
     selection = select_comparison_group(
-        treatment, pool, method="random_sampling", method_settings=settings, basis="modeled"
-    )
-    expected_settings = Data_Settings(time_period=_const.TimePeriod.MONTH).model_dump(mode="json")
-    assert selection.data_settings == expected_settings  # the defaulted settings are stored
-
-    treatment_loadshape = _build_data(
         treatment,
-        SelectionMethod.RANDOM_SAMPLING,
-        "modeled",
-        Data_Settings(time_period=_const.TimePeriod.MONTH),
-        exclude=(),
-    ).loadshape
-    pool_loadshape = _build_data(
         pool,
-        SelectionMethod.RANDOM_SAMPLING,
-        "modeled",
-        Data_Settings(time_period=_const.TimePeriod.MONTH),
-        exclude=(),
-    ).loadshape
+        method="individual_meter_matching",
+        method_settings=IMM_Settings(n_matches_per_treatment=1),
+        basis="modeled",
+    )
 
-    assert treatment_loadshape.shape[1] == pool_loadshape.shape[1] == 12
+    assert selection.data_settings == expected_settings
+    assert sorted(selection.clusters["treatment"]) == sorted(treatment.ids)
 
 
 # -- exclusions ledger -------------------------------------------------------
 
 
-def test_data_validation_exclusion_recorded_and_pool_trim_not_duplicated(
-    billing_meters, treatment
-):
-    """A meter that ``Data`` drops during validation is recorded at the
-    selection stage with the verbatim ``Data`` reason string; pool-trim rows
-    stay on the pool population's ledger and are not duplicated here."""
+@pytest.fixture(scope="module")
+def trimmed_pool_run(billing_meters, treatment):
+    """A random selection on a pool trimmed to 35 meters, one of whose survivors
+    has an all-NaN modeled baseline, so its monthly loadshape is entirely
+    missing and ``Data`` drops it during validation."""
     pool = ComparisonPool.from_fit_models(billing_meters["pool"], max_pool_size=35, seed=0)
-    trimmed_ids = set(pool.exclusions["id"])
-
-    # NaN one surviving pool meter's cached modeled baseline so its monthly
-    # loadshape is entirely missing and Data drops it during validation
     victim = pool.ids[0]
-    pred = pool._ensure_pred("baseline")
-    pred[victim].loc[:, "modeled"] = np.nan
+    pool.prediction_frames("baseline")[victim].loc[:, "modeled"] = np.nan
 
-    selection = _select(treatment, pool, "random_sampling", method_settings=RS_Settings())
-    ledger = selection.exclusions
+    selection = select_comparison_group(
+        treatment, pool, "random_sampling", method_settings=RS_Settings()
+    )
 
-    row = ledger.set_index("id").loc[victim]
-    assert row["stage"] == "selection"
-    assert row["origin"] == "data_validation"
-    assert row["reason"] == "missing minimum number of values in loadshape_df"
-    assert victim not in set(selection.clusters.index.astype(str))
+    return {"pool": pool, "victim": victim, "selection": selection}
 
-    assert (ledger["origin"] != "pool_trim").all()
+
+def test_data_validation_exclusion_recorded_with_the_data_reason(trimmed_pool_run):
+    """A meter that ``Data`` drops during validation is recorded at the
+    selection stage with the verbatim ``Data`` reason string and is absent from
+    the clusters."""
+    selection = trimmed_pool_run["selection"]
+    victim = trimmed_pool_run["victim"]
+
+    row = selection.exclusions.set_index("id").loc[victim]
+
+    assert row[["stage", "origin", "reason"]].to_dict() == {
+        "stage": "selection",
+        "origin": "data_validation",
+        "reason": "fewer loadshape times present than min_data_pct_required",
+    }
+    assert victim not in set(selection.clusters.index)
+
+
+def test_pool_trim_rows_stay_on_the_pool_ledger(trimmed_pool_run):
+    """Pool-trim rows live on the pool population's ledger and never reach the
+    selection ledger."""
+    trimmed_ids = set(trimmed_pool_run["pool"].exclusions["id"])
+    ledger = trimmed_pool_run["selection"].exclusions
+
+    assert len(trimmed_ids) == 5
     assert set(ledger["id"]).isdisjoint(trimmed_ids)
-    assert len(pool.exclusions) == 5
-
-    # the fingerprint covers clusters and treatment weights only, never the ledger
-    fingerprinted = {k: v for k, v in selection.tables.items() if k != "exclusions"}
-    assert set(fingerprinted) == {"clusters", "treatment_weights"}
-    assert selection.fingerprint == table_fingerprint(fingerprinted)
 
 
 def test_stage_exclusions_records_nan_weight_treatments_as_treatment_fit():
@@ -541,11 +628,12 @@ def _hourly_meters(lengths):
     ],
     ids=["pool_meter", "treatment_meter"],
 )
-def test_incomplete_meter_without_interpolation_is_ledgered_and_selection_proceeds(
+def test_stage_exclusions_record_an_incomplete_meter_once(
     treatment_lengths, pool_lengths, incomplete_id
 ):
-    """With interpolation off, one incomplete meter in either population is excluded,
-    recorded once at the selection stage, and selection runs on the rest."""
+    """With interpolation off, ``Data`` drops one incomplete meter in either
+    population, and the selection-stage ledger records it once with ``Data``'s
+    reason."""
     settings = Data_Settings(
         agg_type=_const.AggType.MEAN,
         loadshape_type=_const.LoadshapeType.OBSERVED,
@@ -554,11 +642,10 @@ def test_incomplete_meter_without_interpolation_is_ledgered_and_selection_procee
     )
     treatment_data = Data(time_series_df=_hourly_meters(treatment_lengths), settings=settings)
     pool_data = Data(time_series_df=_hourly_meters(pool_lengths), settings=settings)
-    algorithm = _ALGORITHM[SelectionMethod.RANDOM_SAMPLING](
-        RS_Settings(n_meters_total=2, n_meters_per_treatment=None, seed=0)
+    treatment_weights = pd.DataFrame(
+        {"pct_cluster_0": 1.0}, index=pd.Index(treatment_data.ids, name="id")
     )
 
-    clusters, treatment_weights = algorithm.get_comparison_group(treatment_data, pool_data)
     ledger = _stage_exclusions(treatment_data, pool_data, treatment_weights)
 
     assert ledger[["id", "stage", "origin", "reason"]].to_dict("records") == [
@@ -566,12 +653,9 @@ def test_incomplete_meter_without_interpolation_is_ledgered_and_selection_procee
             "id": incomplete_id,
             "stage": "selection",
             "origin": "data_validation",
-            "reason": "Unique time counts per id don't have the minimum time counts required",
+            "reason": "missing loadshape times with interpolate_missing off",
         }
     ]
-    assert incomplete_id not in set(clusters.index.astype(str))
-    assert incomplete_id not in set(treatment_weights.index.astype(str))
-    assert len(set(clusters.index.astype(str))) == 2
 
 
 # -- short-baseline exclusion (MONTH loadshapes) -----------------------------
@@ -615,20 +699,6 @@ def short_baseline_env(billing_meters):
     return env
 
 
-# Fixed bins: the distance-binning search needs more treatment meters than the five here.
-_STRATIFIED_SETTINGS = StratifiedSamplingSettings(
-    seed=42,
-    n_samples_approx=100,
-    relax_n_samples_approx_constraint=True,
-    min_n_sampled_to_n_treatment_ratio=0,
-    stratification_column=[
-        StratificationColumnSettings(
-            column_name="summer_usage", n_bins=2, min_value_allowed=0, max_value_allowed=10000
-        ),
-    ],
-)
-
-
 @pytest.mark.parametrize(
     "method, method_settings",
     [("random_sampling", RS_Settings()), ("stratified_sampling", _STRATIFIED_SETTINGS)],
@@ -640,7 +710,7 @@ def test_month_selection_leaves_populations_unchanged(short_baseline_env, method
     populations = (short_baseline_env["treatment"], short_baseline_env["pool"])
     before = [(p.ids, p.exclusions.copy(), p.features.copy()) for p in populations]
 
-    _select(*populations, method, method_settings=method_settings)
+    select_comparison_group(*populations, method, method_settings=method_settings)
 
     for population, (ids, ledger, features) in zip(populations, before):
         assert population.ids == ids
@@ -653,7 +723,7 @@ def test_short_baseline_meters_ledgered_at_selection_with_month_counts(short_bas
     carrying its month count, and is absent from the selection's tables."""
     short_ids = [short_baseline_env["short_treatment"], short_baseline_env["short_pool"]]
 
-    selection = _select(
+    selection = select_comparison_group(
         short_baseline_env["treatment"],
         short_baseline_env["pool"],
         "random_sampling",
@@ -674,7 +744,7 @@ def test_stratified_sampling_never_draws_short_baseline_pool_meter(short_baselin
     pool = short_baseline_env["pool"]
     short_pool = str(short_baseline_env["short_pool"])
 
-    selection = _select(
+    selection = select_comparison_group(
         short_baseline_env["treatment"],
         pool,
         "stratified_sampling",
@@ -689,10 +759,10 @@ def test_stratified_sampling_never_draws_short_baseline_pool_meter(short_baselin
 def test_daily_loadshape_skips_the_baseline_month_check(short_baseline_env):
     """Only a ``MONTH`` loadshape needs 12 baseline months: under any other time
     period no meter is ledgered as ``baseline_data``, and a single-month treatment
-    meter is pruned by baseline coverage instead."""
+    meter is excluded for baseline coverage instead."""
     settings = Data_Settings(time_period=_const.TimePeriod.DAY_OF_WEEK)
 
-    selection = _select(
+    selection = select_comparison_group(
         short_baseline_env["treatment"],
         short_baseline_env["pool"],
         "random_sampling",
@@ -702,8 +772,30 @@ def test_daily_loadshape_skips_the_baseline_month_check(short_baseline_env):
 
     assert (selection.exclusions["origin"] != "baseline_data").all()
     short_treatment = str(short_baseline_env["short_treatment"])
-    origin = selection.exclusions.set_index("id").loc[short_treatment, "origin"]
-    assert origin == "baseline_coverage", f"{short_treatment} ledgered as {origin}"
+    row = selection.exclusions.set_index("id").loc[short_treatment, ["origin", "reason"]]
+    assert row.to_dict() == {
+        "origin": "baseline_coverage",
+        "reason": "baseline coverage below minimum over the group window",
+    }
+
+
+def test_select_comparison_group_raises_when_every_treatment_meter_is_short_of_12_months(
+    billing_meters, pool
+):
+    """Selection rejects a treatment population in which every meter is short of
+    12 baseline months, naming each meter, and leaves the population unchanged."""
+    treatment_meters = billing_meters["treatment"]
+    group = TreatmentGroup.from_fit_models(
+        _with_short_baselines(treatment_meters, set(treatment_meters))
+    )
+
+    with pytest.raises(ValueError, match="at least 12 baseline months") as excinfo:
+        select_comparison_group(group, pool, method="random_sampling")
+
+    for mid in treatment_meters:
+        assert f"{mid}: baseline months: 1" in str(excinfo.value)
+    assert group.ids == list(treatment_meters)
+    assert group.exclusions.empty
 
 
 # -- treatment/pool overlap --------------------------------------------------
@@ -736,30 +828,22 @@ def overlap_env(billing_meters):
     return env
 
 
-_OVERLAP_METHOD_SETTINGS = {
-    "cg_clustering": CG_Clustering_Settings(),
-    "individual_meter_matching": IMM_Settings(),
-    "random_sampling": RS_Settings(seed=42),
-    "stratified_sampling": _STRATIFIED_SETTINGS,
-}
-
-
-@pytest.fixture(scope="module", params=list(_OVERLAP_METHOD_SETTINGS))
+@pytest.fixture(scope="module", params=list(_METHOD_SETTINGS))
 def overlap_runs(request, overlap_env):
     """Per method: the selection on the overlapping pool, the selection on the
     plain pool, and each population's (ids, ledger, features) before and after
     the overlapping run."""
     method = request.param
-    settings = _OVERLAP_METHOD_SETTINGS[method]
+    settings = _METHOD_SETTINGS[method]
     populations = (overlap_env["treatment"], overlap_env["pool"])
 
     def state():
         return [(p.ids, p.exclusions.copy(), p.features.copy()) for p in populations]
 
     before = state()
-    overlapping = _select(*populations, method, method_settings=settings)
+    overlapping = select_comparison_group(*populations, method, method_settings=settings)
     after = state()
-    plain = _select(
+    plain = select_comparison_group(
         overlap_env["treatment"], overlap_env["plain_pool"], method, method_settings=settings
     )
     runs = {"overlapping": overlapping, "plain": plain, "before": before, "after": after}
@@ -773,7 +857,9 @@ def test_pool_fully_excluded_by_overlap_raises_naming_the_pool(overlap_env):
     treatment = overlap_env["treatment"]
 
     with pytest.raises(ValueError, match="No comparison pool meters remain"):
-        _select(treatment, treatment, "random_sampling", method_settings=RS_Settings())
+        select_comparison_group(
+            treatment, treatment, "random_sampling", method_settings=RS_Settings()
+        )
 
 
 def test_overlapping_ids_never_selected_into_clusters(overlap_env, overlap_runs):
@@ -811,7 +897,9 @@ def test_overlapping_id_short_in_both_copies_has_one_row_per_copy(billing_meters
     treatment = TreatmentGroup.from_fit_models(shortened)
     pool = ComparisonPool.from_fit_models({**billing_meters["pool"], mid: shortened[mid]})
 
-    selection = _select(treatment, pool, "random_sampling", method_settings=RS_Settings(seed=42))
+    selection = select_comparison_group(
+        treatment, pool, "random_sampling", method_settings=RS_Settings(seed=42)
+    )
 
     ledger = selection.exclusions
     origins = sorted(ledger.loc[ledger["id"] == str(mid), "origin"])
@@ -853,9 +941,12 @@ def test_overlap_selection_leaves_populations_unchanged(overlap_runs):
 def test_selection_tables_summary_snapshot(treatment, pool, snapshot):
     """Permutation-invariant summary of the clustering and IMM selections on
     real ComStock meters, pinned across runs."""
-    clustering = _select(treatment, pool, "cg_clustering")
-    imm = _select(
-        treatment, pool, "individual_meter_matching", method_settings=IMM_Settings(**_IMM_DUPLICATE_SETTINGS)
+    clustering = select_comparison_group(treatment, pool, "cg_clustering")
+    imm = select_comparison_group(
+        treatment,
+        pool,
+        "individual_meter_matching",
+        method_settings=IMM_Settings(**_IMM_DUPLICATE_SETTINGS),
     )
 
     cl = clustering.clusters
@@ -936,8 +1027,8 @@ def daily_model():
     return model
 
 
-def _random_selection(treatment, pool, **kwargs):
-    settings = RS_Settings(n_meters_total=len(pool.ids), n_meters_per_treatment=None)
+def _random_selection(treatment, pool, n_meters_total, **kwargs):
+    settings = RS_Settings(n_meters_total=n_meters_total, n_meters_per_treatment=None)
     selection = select_comparison_group(
         treatment,
         pool,
@@ -952,7 +1043,7 @@ def _random_selection(treatment, pool, **kwargs):
 
 @pytest.mark.parametrize(
     "interpolate_missing, expected_excluded",
-    [(True, []), (False, [("p-gap", "null values in features_df")])],
+    [(True, []), (False, [("p-gap", "only null readings in a loadshape time")])],
     ids=["interpolate_on", "interpolate_off"],
 )
 def test_selection_data_settings_interpolate_missing_reaches_data(
@@ -1026,32 +1117,131 @@ def test_window_coverage_penalizes_a_span_short_of_the_window():
     assert coverage == pytest.approx(300 / 365)
 
 
-def test_baseline_coverage_prunes_gross_hole_pool_meter(daily_model):
+@pytest.fixture(scope="module")
+def gross_hole_env(daily_model):
+    """Two treatment meters and a pool of three meters spanning the 365 days from
+    2020-01-01, plus ``p-hole``, whose 100-day observed hole leaves 265/365 = 0.7260
+    coverage."""
     pool_specs = {
         "p1": _daily_baseline(seed=1),
         "p2": _daily_baseline(seed=2),
         "p3": _daily_baseline(seed=3),
-        "p-hole": _daily_baseline(seed=9, hole=(100, 200)),  # 265/365 = 0.7260
+        "p-hole": _daily_baseline(seed=9, hole=(100, 200)),
     }
     treatment_specs = {"t0": _daily_baseline(seed=100), "t1": _daily_baseline(seed=101)}
     treatment = _daily_population(TreatmentGroup, treatment_specs, daily_model)
     pool = _daily_population(ComparisonPool, pool_specs, daily_model)
 
-    selection = _random_selection(treatment, pool)
+    return treatment, pool
 
-    assert "p-hole" not in selection.clusters.index
-    assert set(selection.clusters.index) == {"p1", "p2", "p3"}
+
+def test_gross_hole_pool_meter_ledgered_with_its_coverage(gross_hole_env):
+    selection = _random_selection(*gross_hole_env, n_meters_total=3)
 
     coverage_rows = selection.exclusions[selection.exclusions["origin"] == "baseline_coverage"]
     assert list(coverage_rows["id"]) == ["p-hole"]
     row = coverage_rows.iloc[0]
     assert row["stage"] == "selection"
     assert row["reason"] == "baseline coverage below minimum over the group window"
-    assert "baseline window coverage 0.7260 < 0.9" in row["detail"]
+    assert "baseline coverage 0.7260 < min_baseline_coverage 0.9" in row["detail"]
     assert "too_many_days_with_missing_observed_data" in row["detail"]
 
 
-def test_baseline_coverage_prunes_treatment_meter(daily_model):
+def test_random_sampling_draws_n_meters_total_from_meters_clearing_coverage(gross_hole_env):
+    """Coverage failures leave the pool before sampling, so random sampling draws
+    exactly ``n_meters_total`` meters, none of them below the floor."""
+    selection = _random_selection(*gross_hole_env, n_meters_total=3)
+
+    assert sorted(selection.clusters.index) == ["p1", "p2", "p3"]
+
+
+def test_imm_treatment_meter_keeps_a_full_match_set_around_a_coverage_failure(gross_hole_env):
+    """Coverage failures leave the pool before matching, so every treatment meter
+    keeps ``n_matches_per_treatment`` matches, none of them below the floor."""
+    settings = IMM_Settings(allow_duplicate_matches=True, n_matches_per_treatment=3)
+
+    selection = select_comparison_group(
+        *gross_hole_env,
+        "individual_meter_matching",
+        method_settings=settings,
+        basis="observed",
+    )
+
+    matches = selection.clusters.groupby("treatment").size().to_dict()
+    assert matches == {"t0": 3, "t1": 3}
+    assert "p-hole" not in selection.clusters.index
+
+
+@pytest.mark.parametrize(
+    "holed_role, message",
+    [("treatment", "No treatment meters remain"), ("pool", "No comparison pool meters remain")],
+)
+def test_coverage_excluding_every_meter_of_a_population_raises(daily_model, holed_role, message):
+    specs = {
+        "treatment": {"t0": _daily_baseline(seed=100), "t1": _daily_baseline(seed=101)},
+        "pool": {"p1": _daily_baseline(seed=1), "p2": _daily_baseline(seed=2)},
+    }
+    specs[holed_role] = {
+        mid: _daily_baseline(seed=9, hole=(100, 200)) for mid in specs[holed_role]
+    }
+    treatment = _daily_population(TreatmentGroup, specs["treatment"], daily_model)
+    pool = _daily_population(ComparisonPool, specs["pool"], daily_model)
+
+    with pytest.raises(ValueError, match=message):
+        _random_selection(treatment, pool, n_meters_total=1)
+
+
+def _with_baseline_holes(meters, hole_ids):
+    """``meters`` with the observed baselines of ``hole_ids`` NaN after their
+    first 30 days, far below the default coverage floor."""
+    holed = {}
+
+    for mid, entry in meters.items():
+        entry = dict(entry)
+        if mid in hole_ids:
+            baseline_data = copy.deepcopy(entry["baseline_data"])
+            baseline_data._df.iloc[30:, baseline_data._df.columns.get_loc("observed")] = np.nan
+            entry["baseline_data"] = baseline_data
+        holed[mid] = entry
+
+    return holed
+
+
+@pytest.fixture(scope="module")
+def coverage_hole_clustering(billing_meters, treatment):
+    """CG clustering on the billing pool with its last meter's observed baseline
+    holed, and on the same pool without that meter."""
+    pool_meters = billing_meters["pool"]
+    holed_id = list(pool_meters)[-1]
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Population includes disqualified")
+        holed_pool = ComparisonPool.from_fit_models(_with_baseline_holes(pool_meters, {holed_id}))
+
+    plain_pool = ComparisonPool.from_fit_models(
+        {mid: entry for mid, entry in pool_meters.items() if mid != holed_id}
+    )
+    runs = {
+        "holed_id": str(holed_id),
+        "holed": select_comparison_group(treatment, holed_pool, "cg_clustering"),
+        "plain": select_comparison_group(treatment, plain_pool, "cg_clustering"),
+    }
+
+    return runs
+
+
+def test_pool_meter_failing_coverage_never_reaches_the_clustering(coverage_hole_clustering):
+    """A pool meter below the coverage floor is left out before clustering: the
+    clusters and treatment weights equal those of the pool without it."""
+    holed = coverage_hole_clustering["holed"]
+    plain = coverage_hole_clustering["plain"]
+
+    coverage_rows = holed.exclusions[holed.exclusions["origin"] == "baseline_coverage"]
+    assert list(coverage_rows["id"]) == [coverage_hole_clustering["holed_id"]]
+    pd.testing.assert_frame_equal(holed.clusters, plain.clusters)
+    pd.testing.assert_frame_equal(holed.treatment_weights, plain.treatment_weights)
+
+
+def test_baseline_coverage_excludes_treatment_meter(daily_model):
     treatment_specs = {
         "t-ok": _daily_baseline(seed=1),
         "t-hole": _daily_baseline(seed=9, hole=(100, 200)),
@@ -1060,14 +1250,13 @@ def test_baseline_coverage_prunes_treatment_meter(daily_model):
     treatment = _daily_population(TreatmentGroup, treatment_specs, daily_model)
     pool = _daily_population(ComparisonPool, pool_specs, daily_model)
 
-    selection = _random_selection(treatment, pool)
+    selection = _random_selection(treatment, pool, n_meters_total=4)
 
     assert list(selection.treatment_weights.index) == ["t-ok"]
-    assert "t-hole" not in selection.treatment_weights.index
 
     coverage_rows = selection.exclusions[selection.exclusions["origin"] == "baseline_coverage"]
     assert list(coverage_rows["id"]) == ["t-hole"]
-    assert "baseline window coverage 0.7260 < 0.9" in coverage_rows.iloc[0]["detail"]
+    assert "baseline coverage 0.7260 < min_baseline_coverage 0.9" in coverage_rows.iloc[0]["detail"]
 
 
 def test_offset_meter_within_coverage_survives(daily_model):
@@ -1080,7 +1269,7 @@ def test_offset_meter_within_coverage_survives(daily_model):
     treatment = _daily_population(TreatmentGroup, treatment_specs, daily_model)
     pool = _daily_population(ComparisonPool, pool_specs, daily_model)
 
-    selection = _random_selection(treatment, pool)
+    selection = _random_selection(treatment, pool, n_meters_total=3)
 
     assert "p-offset" in selection.clusters.index
     assert selection.exclusions[selection.exclusions["origin"] == "baseline_coverage"].empty
@@ -1117,7 +1306,7 @@ def test_default_baseline_window_is_treatment_baseline_union(partial_hole_env):
         pd.Timestamp("2020-12-30", tz=_COVERAGE_TZ),
     )
 
-    selection = _random_selection(treatment, pool)
+    selection = _random_selection(treatment, pool, n_meters_total=2)
 
     assert "p-partial" not in selection.clusters.index
     assert selection.baseline_window == expected
@@ -1133,7 +1322,7 @@ def test_explicit_baseline_window_changes_coverage_verdict(partial_hole_env, nai
     if naive:
         window = tuple(bound.tz_localize(None) for bound in _NARROW_WINDOW)
 
-    selection = _random_selection(treatment, pool, baseline_window=window)
+    selection = _random_selection(treatment, pool, n_meters_total=3, baseline_window=window)
 
     assert "p-partial" in selection.clusters.index
     assert selection.exclusions[selection.exclusions["origin"] == "baseline_coverage"].empty
@@ -1145,7 +1334,9 @@ def test_json_roundtrip_restores_baseline_window(partial_hole_env):
     """A selection JSON round trip restores the recorded window as tz-aware
     bounds and leaves the fingerprint unchanged."""
     treatment, pool = partial_hole_env
-    selection = _random_selection(treatment, pool, baseline_window=_NARROW_WINDOW)
+    selection = _random_selection(
+        treatment, pool, n_meters_total=3, baseline_window=_NARROW_WINDOW
+    )
 
     rebuilt = ComparisonGroupSelection.from_json(selection.to_json())
 
@@ -1171,7 +1362,7 @@ def test_default_baseline_window_includes_short_treatment_meter(daily_model):
         pd.Timestamp("2020-12-30", tz=_COVERAGE_TZ),
     )
 
-    selection = _random_selection(treatment, pool)
+    selection = _random_selection(treatment, pool, n_meters_total=3)
 
     assert selection.baseline_window == expected
     assert list(selection.exclusions["id"]) == ["t-short"]
@@ -1179,19 +1370,21 @@ def test_default_baseline_window_includes_short_treatment_meter(daily_model):
     assert sorted(selection.clusters.index) == ["p0", "p1", "p2"]
 
 
-def test_pinned_bank_selections_load(pinned_models):
-    """Every stored selection in the pinned model bank rebuilds; real-run
-    selections record the treatment baseline union of the 2018 fixture year and
-    hand-built ones record no window."""
-    expected = (
+# Each pinned selection's recorded window: real runs record the treatment
+# baseline union of the 2018 fixture year, the hand-built mixed-frequency
+# selection none.
+_PINNED_WINDOWS = {
+    name: (
         pd.Timestamp("2018-01-01T00:00:00-06:00"),
         pd.Timestamp("2018-12-31T00:00:00-06:00"),
     )
+    for name in VARIANT_NAMES
+}
+_PINNED_WINDOWS["hourly_pool_daily_treatment"] = None
 
-    for name, stored in pinned_models["selections"].items():
-        selection = ComparisonGroupSelection.from_json(stored)
 
-        if selection.data_settings is None:
-            assert selection.baseline_window is None, name
-        else:
-            assert selection.baseline_window == expected, name
+@pytest.mark.parametrize("name", VARIANT_NAMES)
+def test_pinned_bank_selection_loads_with_its_window(pinned_models, name):
+    selection = ComparisonGroupSelection.from_json(pinned_models["selections"][name])
+
+    assert selection.baseline_window == _PINNED_WINDOWS[name]

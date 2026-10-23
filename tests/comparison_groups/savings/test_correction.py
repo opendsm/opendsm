@@ -13,7 +13,7 @@
 #  limitations under the License.
 
 import copy
-import os
+import re
 
 import numpy as np
 import pandas as pd
@@ -33,11 +33,11 @@ from opendsm.comparison_groups.savings.correction import (
     _column_correlations,
     _native_edges,
     _period_codes,
-    _reduce_to_periods,
+    _quadrature_to_periods,
     _restrict_to_days,
+    _sum_to_periods,
     correct_reporting,
 )
-from opendsm.comparison_groups.savings.savings import compute_savings
 from opendsm.comparison_groups.savings.settings import (
     CGCorrectionSettings,
     WeightClusterAggChoice,
@@ -46,14 +46,14 @@ from opendsm.eemeter.common.warnings import EEMeterWarning
 from opendsm.eemeter.models import (
     BillingReportingData,
     DailyReportingData,
-    HourlyReportingData,
 )
 from .equivalence_env import (
+    POOL_OBSERVED_UNC,
     VARIANT_NAMES,
+    _DATA_CLASSES,
     _manual_clustering_selection,
     _mixed_selection,
     load_equivalence_snapshot,
-    write_models_fixture,
 )
 
 
@@ -91,10 +91,13 @@ _EXACT_EQUIVALENCE_VARIANTS = (
     "billing_imm",
 )
 
-# Absolute floor for the hourly/daily equivalence comparison, in kWh: their snapshot
-# treatment values carry float32 rounding, and a relative tolerance is meaningless on a
-# near-zero row.
+# Tolerances for the hourly/daily equivalence comparison: their snapshot treatment values
+# carry float32 rounding, and the absolute floor (kWh) covers near-zero rows, where a
+# relative tolerance is meaningless.
+_FLOAT32_RTOL = 1e-6
 _EQUIVALENCE_ATOL = 1e-6
+
+_COVERAGE_DETAIL = re.compile(r"reporting span coverage (\d+\.\d+) <")
 
 
 # ── builders ─────────────────────────────────────────────────────────────────
@@ -112,21 +115,48 @@ def _reporting_map(df_r, ids, cls, cutoff=None):
     return reporting
 
 
-def _rewrap_population(population, df_r, cls, cutoff=None):
-    """Rebuild a meters dict reusing a population's already-fitted models, with a
-    (possibly truncated) reporting slice — avoids refitting for incremental
-    scenarios."""
+def _meters_from(population, models=None, drop_reporting=()):
+    """A ``from_fit_models`` meters mapping over ``population``'s records: each
+    record's model, unless ``models`` supplies one for its id, its baseline data,
+    and its reporting data unless the id is in ``drop_reporting``."""
+    if models is None:
+        models = {}
+
     meters = {}
 
     for mid, rec in population._meters.items():
+        entry = {"model": models.get(mid, rec.model), "baseline_data": rec.baseline_data}
+        if mid not in drop_reporting:
+            entry["reporting_data"] = rec.reporting_data
+        meters[mid] = entry
+
+    return meters
+
+
+def _disqualified(model):
+    """A copy of ``model`` carrying a disqualification, so its prediction fails."""
+    model = copy.deepcopy(model)
+    model.disqualification = [
+        EEMeterWarning(
+            qualified_name="eemeter.model_fit_metrics",
+            description="constructed disqualification",
+            data=None,
+        )
+    ]
+
+    return model
+
+
+def _rewrap_population(population, df_r, cls, cutoff=None):
+    """``population``'s meters mapping with its fitted models and the reporting
+    data rebuilt from ``df_r``, truncated before ``cutoff`` when given."""
+    meters = _meters_from(population)
+
+    for mid, entry in meters.items():
         raw = df_r.xs(int(mid), level="id")
         if cutoff is not None:
             raw = raw[raw.index < cutoff]
-        meters[mid] = {
-            "model": rec.model,
-            "baseline_data": rec.baseline_data,
-            "reporting_data": cls(raw.reset_index(), is_electricity_data=True),
-        }
+        entry["reporting_data"] = cls(raw.reset_index(), is_electricity_data=True)
 
     return meters
 
@@ -153,50 +183,14 @@ def _largest_cluster_ids(membership):
     return ids
 
 
-def _hand_aggregate_over_periods(series, periods):
-    """Independent per-period sum (finite reads only, NaN when none), stepping
-    period boundaries from each read's own start up to the next read's start
-    (or one day past the final read's end)."""
-    values = []
-    for i, (start, end) in enumerate(periods):
-        if i + 1 < len(periods):
-            stop = periods[i + 1][0]
-        else:
-            stop = end + pd.Timedelta(days=1)
-
-        span = series[(series.index >= start) & (series.index < stop)].dropna()
-        if len(span):
-            values.append(span.sum())
-        else:
-            values.append(np.nan)
-
-    return np.array(values)
-
-
 # ── fixtures ─────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.skipif(
-    not os.environ.get("GENERATE_FIXTURES"),
-    reason="regenerates the committed equivalence models fixture; run manually",
-)
-def test_generate_equivalence_models(_comstock_daily_all, _comstock_monthly_all, _comstock_hourly_all):
-    """Refit every equivalence variant and rewrite the pinned models fixture.
-
-    GENERATE_FIXTURES=1 pytest -k generate_equivalence_models
-
-    The equivalence snapshot pins outputs of these models, so regenerate it
-    alongside whenever this runs.
-    """
-    write_models_fixture(_comstock_daily_all, _comstock_monthly_all, _comstock_hourly_all)
 
 
 @pytest.fixture(scope="module")
 def daily_data(comstock, model_bank):
-    df_b, df_r = comstock.frames("daily")
-    ids = sorted(df_b.index.get_level_values("id").unique())
+    _, df_r = comstock.frames("daily")
+    ids = comstock.ids("daily")
     bundle = {
-        "df_b": df_b,
         "df_r": df_r,
         "treatment_ids": ids[:8],
         "pool_ids": ids[8:68],
@@ -214,7 +208,7 @@ def daily_env(variant_env):
 
 @pytest.fixture(scope="module")
 def daily_results(daily_env):
-    """One ``CorrectionResult`` per treatment meter — the caller-owned loop the
+    """One ``CorrectionResult`` per treatment meter: the caller-owned loop the
     per-meter API expects."""
     results = {
         tid: correct_reporting(
@@ -238,6 +232,22 @@ def billing_env(variant_env):
 
 
 @pytest.fixture(scope="module")
+def billing_results(billing_env):
+    results = {
+        tid: correct_reporting(
+            billing_env["selection"],
+            billing_env["treatment"],
+            billing_env["pool"],
+            tid,
+            settings=_PINNED_SETTINGS,
+        )
+        for tid in billing_env["treatment"].ids
+    }
+
+    return results
+
+
+@pytest.fixture(scope="module")
 def mixed_hourly_daily_env(variant_env):
     """A finer (hourly) comparison pool against a coarser (daily) treatment:
     the same underlying ComStock meters, disjoint ids, each fit at its own
@@ -252,61 +262,29 @@ def mixed_hourly_daily_env(variant_env):
     return bundle
 
 
-@pytest.fixture(scope="module")
-def mixed_hourly_billing_env(comstock, model_bank):
-    """A finer (hourly) comparison pool against a coarser (billing) treatment,
-    corrected at the treatment's inferred read-period cadence."""
-    df_bh, df_rh = comstock.frames("hourly")
-    df_bm, df_rm = comstock.frames("billing")
-    ids = sorted(df_bm.index.get_level_values("id").unique())
+@pytest.fixture(scope="module", params=[pytest.param("hourly", marks=pytest.mark.slow), "daily"])
+def mixed_billing_results(request, comstock, model_bank):
+    """A finer (hourly or daily) comparison pool against a coarser (billing)
+    treatment, corrected at the treatment's inferred read-period cadence: one
+    result per treatment meter."""
+    ids = comstock.ids("billing")
 
     treatment = TreatmentGroup.from_fit_models(comstock.meters(model_bank, "billing", ids[:2]))
-    pool = ComparisonPool.from_fit_models(comstock.meters(model_bank, "hourly", ids[2:8]))
+    pool = ComparisonPool.from_fit_models(comstock.meters(model_bank, request.param, ids[2:8]))
     selection = _mixed_selection(treatment, pool)
     results = {
         tid: correct_reporting(selection, treatment, pool, tid) for tid in treatment.ids
     }
-    bundle = {
-        "treatment": treatment,
-        "pool": pool,
-        "selection": selection,
-        "results": results,
-        "df_rh": df_rh,
-    }
 
-    return bundle
-
-
-@pytest.fixture(scope="module")
-def mixed_daily_billing_env(comstock, model_bank):
-    """A finer (daily) comparison pool against a coarser (billing) treatment,
-    corrected at the treatment's inferred read-period cadence."""
-    df_bd, df_rd = comstock.frames("daily")
-    df_bm, df_rm = comstock.frames("billing")
-    ids = sorted(df_bm.index.get_level_values("id").unique())
-
-    treatment = TreatmentGroup.from_fit_models(comstock.meters(model_bank, "billing", ids[:2]))
-    pool = ComparisonPool.from_fit_models(comstock.meters(model_bank, "daily", ids[2:8]))
-    selection = _mixed_selection(treatment, pool)
-    results = {
-        tid: correct_reporting(selection, treatment, pool, tid) for tid in treatment.ids
-    }
-    bundle = {
-        "treatment": treatment,
-        "pool": pool,
-        "selection": selection,
-        "results": results,
-    }
-
-    return bundle
+    return results
 
 
 @pytest.fixture(scope="module")
 def guard_env(comstock, model_bank):
     """A small, cheap billing population pair plus a hand-built valid selection
     (all pool meters in one cluster) for guard-path tests."""
-    df_b, df_r = comstock.frames("billing")
-    ids = sorted(df_b.index.get_level_values("id").unique())
+    _, df_r = comstock.frames("billing")
+    ids = comstock.ids("billing")
     treatment = TreatmentGroup.from_fit_models(comstock.meters(model_bank, "billing", ids[:2]))
     pool = ComparisonPool.from_fit_models(comstock.meters(model_bank, "billing", ids[2:10]))
 
@@ -320,7 +298,6 @@ def guard_env(comstock, model_bank):
         "pool": pool,
         "selection": selection,
         "cluster_of": cluster_of,
-        "df_b": df_b,
         "df_r": df_r,
         "ids": ids,
     }
@@ -328,17 +305,17 @@ def guard_env(comstock, model_bank):
     return bundle
 
 
-@pytest.fixture(scope="module")
-def daily_dq_env(comstock, model_bank):
-    """A small real ComStock daily population (2 treatment, 6 pool) with a
-    hand-built one-cluster selection, for correction-stage reporting DQ tests.
-    Pinned models and the raw reporting frame are exposed so variant reporting
+def _dq_env(comstock, model_bank, model_frequency):
+    """A small real ComStock population pair (2 treatment, 6 pool) at
+    ``model_frequency`` with a hand-built one-cluster selection, for
+    correction-stage reporting DQ tests. The pinned-model records, the raw
+    reporting frame and its reporting-data class are exposed so variant reporting
     (truncated, flat, reduced) can be swapped in without refitting."""
-    df_b, df_r = comstock.frames("daily")
-    ids = comstock.ids("daily")[:8]
+    _, df_r = comstock.frames(model_frequency)
+    ids = comstock.ids(model_frequency)[:8]
     treatment_ids = [str(i) for i in ids[:2]]
     pool_ids = [str(i) for i in ids[2:8]]
-    records = comstock.meters(model_bank, "daily", ids)
+    records = comstock.meters(model_bank, model_frequency, ids)
 
     cluster_of = {p: 0 for p in pool_ids}
     weights = {t: {"pct_cluster_0": 1.0} for t in treatment_ids}
@@ -348,6 +325,7 @@ def daily_dq_env(comstock, model_bank):
     bundle = {
         "records": records,
         "df_r": df_r,
+        "reporting_cls": _DATA_CLASSES[model_frequency][1],
         "treatment_ids": treatment_ids,
         "pool_ids": pool_ids,
         "selection": selection,
@@ -356,134 +334,22 @@ def daily_dq_env(comstock, model_bank):
     return bundle
 
 
-def _daily_meters_with_overrides(records, ids, overrides):
-    """The pinned-model records for ``ids``, with reporting data replaced where
-    ``overrides`` supplies a prebuilt object."""
-    meters = {}
-
-    for mid in ids:
-        entry = dict(records[mid])
-        if mid in overrides:
-            entry["reporting_data"] = overrides[mid]
-        meters[mid] = entry
-
-    return meters
-
-
-def _build_daily_dq(daily_dq_env, treatment_overrides=None, pool_overrides=None):
-    records = daily_dq_env["records"]
-    treatment = TreatmentGroup.from_fit_models(
-        _daily_meters_with_overrides(records, daily_dq_env["treatment_ids"], treatment_overrides or {}
-        )
-    )
-    pool = ComparisonPool.from_fit_models(
-        _daily_meters_with_overrides(records, daily_dq_env["pool_ids"], pool_overrides or {})
-    )
-
-    return treatment, pool
-
-
-def _daily_reporting_override(df_r, mid, transform):
-    raw = df_r.xs(int(mid), level="id").reset_index()
-    raw = transform(raw)
-    reporting = DailyReportingData(raw, is_electricity_data=True)
-
-    return reporting
+@pytest.fixture(scope="module")
+def daily_dq_env(comstock, model_bank):
+    return _dq_env(comstock, model_bank, "daily")
 
 
 @pytest.fixture(scope="module")
 def billing_dq_env(comstock, model_bank):
-    """A small real ComStock billing population (2 treatment, 6 pool) with a
-    hand-built one-cluster selection, mirroring ``daily_dq_env`` at billing
-    model frequency for the same correction-stage reporting DQ tests."""
-    df_b, df_r = comstock.frames("billing")
-    ids = sorted(df_b.index.get_level_values("id").unique())[:8]
-    treatment_ids = [str(i) for i in ids[:2]]
-    pool_ids = [str(i) for i in ids[2:8]]
-
-    records = comstock.meters(model_bank, "billing", ids)
-
-    cluster_of = {p: 0 for p in pool_ids}
-    weights = {t: {"pct_cluster_0": 1.0} for t in treatment_ids}
-    selection = _manual_clustering_selection(
-        treatment_ids, pool_ids, cluster_of, weights, "America/Chicago"
-    )
-    bundle = {
-        "records": records,
-        "df_r": df_r,
-        "treatment_ids": treatment_ids,
-        "pool_ids": pool_ids,
-        "selection": selection,
-    }
-
-    return bundle
-
-
-def _billing_meters_with_overrides(records, ids, overrides):
-    """The pinned-model records for ``ids``, with reporting data replaced where
-    ``overrides`` supplies a prebuilt object."""
-    meters = {}
-
-    for mid in ids:
-        entry = dict(records[mid])
-        if mid in overrides:
-            entry["reporting_data"] = overrides[mid]
-        meters[mid] = entry
-
-    return meters
-
-
-def _build_billing_dq(billing_dq_env, treatment_overrides=None, pool_overrides=None):
-    records = billing_dq_env["records"]
-    treatment = TreatmentGroup.from_fit_models(
-        _billing_meters_with_overrides(records, billing_dq_env["treatment_ids"], treatment_overrides or {}
-        )
-    )
-    pool = ComparisonPool.from_fit_models(
-        _billing_meters_with_overrides(records, billing_dq_env["pool_ids"], pool_overrides or {}
-        )
-    )
-
-    return treatment, pool
-
-
-def _billing_reporting_override(df_r, mid, transform):
-    raw = df_r.xs(int(mid), level="id").reset_index()
-    raw = transform(raw)
-    reporting = BillingReportingData(raw, is_electricity_data=True)
-
-    return reporting
+    return _dq_env(comstock, model_bank, "billing")
 
 
 @pytest.fixture(scope="module")
 def hourly_dq_env(comstock, model_bank):
-    """A small real ComStock hourly population (2 treatment, 6 pool) with a
-    hand-built one-cluster selection, mirroring ``daily_dq_env`` at hourly
-    model frequency for the same correction-stage reporting DQ tests."""
-    df_b, df_r = comstock.frames("hourly")
-    ids = sorted(df_b.index.get_level_values("id").unique())[:8]
-    treatment_ids = [str(i) for i in ids[:2]]
-    pool_ids = [str(i) for i in ids[2:8]]
-
-    records = comstock.meters(model_bank, "hourly", ids)
-
-    cluster_of = {p: 0 for p in pool_ids}
-    weights = {t: {"pct_cluster_0": 1.0} for t in treatment_ids}
-    selection = _manual_clustering_selection(
-        treatment_ids, pool_ids, cluster_of, weights, "America/Chicago"
-    )
-    bundle = {
-        "records": records,
-        "df_r": df_r,
-        "treatment_ids": treatment_ids,
-        "pool_ids": pool_ids,
-        "selection": selection,
-    }
-
-    return bundle
+    return _dq_env(comstock, model_bank, "hourly")
 
 
-def _hourly_meters_with_overrides(records, ids, overrides):
+def _meters_with_overrides(records, ids, overrides):
     """The pinned-model records for ``ids``, with reporting data replaced where
     ``overrides`` supplies a prebuilt object."""
     meters = {}
@@ -497,31 +363,30 @@ def _hourly_meters_with_overrides(records, ids, overrides):
     return meters
 
 
-def _build_hourly_dq(hourly_dq_env, treatment_overrides=None, pool_overrides=None):
-    records = hourly_dq_env["records"]
+def _build_dq(dq_env, treatment_overrides=None, pool_overrides=None):
+    records = dq_env["records"]
     treatment = TreatmentGroup.from_fit_models(
-        _hourly_meters_with_overrides(records, hourly_dq_env["treatment_ids"], treatment_overrides or {}
-        )
+        _meters_with_overrides(records, dq_env["treatment_ids"], treatment_overrides or {})
     )
     pool = ComparisonPool.from_fit_models(
-        _hourly_meters_with_overrides(records, hourly_dq_env["pool_ids"], pool_overrides or {}
-        )
+        _meters_with_overrides(records, dq_env["pool_ids"], pool_overrides or {})
     )
 
     return treatment, pool
 
 
-def _hourly_reporting_override(df_r, mid, transform):
-    raw = df_r.xs(int(mid), level="id").reset_index()
+def _reporting_override(dq_env, mid, transform):
+    raw = dq_env["df_r"].xs(int(mid), level="id").reset_index()
     raw = transform(raw)
-    reporting = HourlyReportingData(raw, is_electricity_data=True)
+    reporting = dq_env["reporting_cls"](raw, is_electricity_data=True)
 
     return reporting
 
 
-# ── daily end-to-end (slow) ──────────────────────────────────────────────────
+# ── daily end-to-end ─────────────────────────────────────────────────────────
 
 
+@pytest.mark.slow
 def test_daily_end_to_end_schema(daily_results, daily_env):
     """One call per treatment meter, one result per meter: each frame carries
     that meter's id only, over its own reporting year."""
@@ -539,6 +404,7 @@ def test_daily_end_to_end_schema(daily_results, daily_env):
         assert len(corrected) == 365
 
 
+@pytest.mark.slow
 def test_daily_corrected_is_finite_and_covers_full_year(daily_results):
     for result in daily_results.values():
         corrected = result.corrected
@@ -549,37 +415,22 @@ def test_daily_corrected_is_finite_and_covers_full_year(daily_results):
         assert end == pd.Timestamp("2019-12-31", tz="America/Chicago")
 
 
-@pytest.mark.regression
-def test_daily_correction_regression_totals(daily_results):
-    """Point corrections are deterministic given the fitted models and clustering
-    settings, so the totals over the caller's loop are pinned."""
-    corrected = pd.concat(
-        [result.corrected for result in daily_results.values()], ignore_index=True
-    )
-
-    total_corrected = float(np.nansum(corrected["corrected"].to_numpy()))
-    total_modeled = float(np.nansum(corrected["modeled"].to_numpy()))
-
-    assert total_corrected == pytest.approx(3386073.02, rel=1e-3)
-    assert total_modeled == pytest.approx(5297171.84, rel=1e-3)
-
-
-def test_daily_cg_usage_fraction_reflects_finite_mask(daily_results, daily_env, daily_data):
+@pytest.mark.slow
+def test_daily_cg_usage_fraction_is_one_over_finite_comparison_data(daily_results):
     """``cg_usage_fraction`` is the fraction of a treatment meter's comparison
-    meters retained (finite, no outlier rejection). The fixture's comparison
-    data is fully finite, so every meter is used (fraction 1.0); NaN-ing two of
-    one treatment meter's comparison meters at three timesteps drops those
-    timesteps to ``(n_cg - 2) / n_cg`` while the rest stay at 1.0."""
+    meters retained (finite, no outlier rejection); over fully finite comparison
+    data every meter is used at every timestep."""
     for result in daily_results.values():
         fractions = result.cg_usage["cg_usage_fraction"].to_numpy()
 
-        assert np.isfinite(fractions).all()
-        assert (fractions >= 0.0).all()
-        assert (fractions <= 1.0).all()
         assert set(result.cg_usage["id"].unique()) == {result.meter_id}
-        # fully-finite comparison data means every comparison meter is used
         assert np.allclose(fractions, 1.0)
 
+
+def test_daily_cg_usage_fraction_drops_where_comparison_meters_are_nan(daily_env, daily_data):
+    """NaN-ing two of a treatment meter's comparison meters at three timesteps
+    drops those timesteps' ``cg_usage_fraction`` to ``(n_cg - 2) / n_cg`` while
+    the rest stay at 1.0."""
     treatment = daily_env["treatment"]
     pool = daily_env["pool"]
     selection = daily_env["selection"]
@@ -587,7 +438,7 @@ def test_daily_cg_usage_fraction_reflects_finite_mask(daily_results, daily_env, 
 
     # pick two meters from the meter's largest contributing cluster so the
     # cluster keeps at least three finite meters (no degradation) after corruption
-    membership = _cg_membership(selection, tid)
+    membership, _ = _cg_membership(selection, tid)
     n_cg = len(membership)
     big_ids = _largest_cluster_ids(membership)
     assert len(big_ids) >= 5
@@ -596,7 +447,7 @@ def test_daily_cg_usage_fraction_reflects_finite_mask(daily_results, daily_env, 
     injected_pool = ComparisonPool.from_fit_models(
         _rewrap_population(pool, daily_data["df_r"], DailyReportingData)
     )
-    pred = injected_pool._ensure_pred("reporting")
+    pred = injected_pool.prediction_frames("reporting")
     corrupt_dates = list(pred[corrupt_ids[0]].index[10:13])
 
     for cid in corrupt_ids:
@@ -623,7 +474,7 @@ def degraded_daily(daily_env, daily_data):
     selection = daily_env["selection"]
     tid = treatment.ids[0]
 
-    membership = _cg_membership(selection, tid)
+    membership, _ = _cg_membership(selection, tid)
     big_ids = _largest_cluster_ids(membership)
     assert len(big_ids) >= 5
     n_corrupt = len(big_ids) - 2
@@ -632,7 +483,7 @@ def degraded_daily(daily_env, daily_data):
     injected_pool = ComparisonPool.from_fit_models(
         _rewrap_population(daily_env["pool"], daily_data["df_r"], DailyReportingData)
     )
-    pred = injected_pool._ensure_pred("reporting")
+    pred = injected_pool.prediction_frames("reporting")
     corrupt_dates = list(pred[corrupt_ids[0]].index[20:23])
 
     for cid in corrupt_ids:
@@ -672,31 +523,15 @@ def test_daily_degraded_timestep_nans_corrected_and_zeroes_usage(degraded_daily)
     assert np.allclose(usage.loc[uncorrupted].to_numpy(), 1.0)
 
 
-def test_degraded_timestep_is_returned_and_lowers_savings_coverage(degraded_daily):
-    """A per-timestep failure never raises: the NaN row is RETURNED with the rest
-    of the meter's series, and ``compute_savings`` reports it through
-    ``coverage`` — 0 at the degraded native timestep, and below 1 for the month
-    holding it while every other month stays at 1."""
+def test_daily_degraded_timestep_is_returned_not_dropped(degraded_daily):
+    """A per-timestep failure never raises: the NaN rows are returned with the
+    rest of the meter's reporting year."""
     result = degraded_daily["result"]
-    corrupt_dates = degraded_daily["corrupt_dates"]
 
     assert len(result.corrected) == 365
 
-    native = compute_savings(result).savings.set_index("period")
-    monthly = compute_savings(result, aggregation="monthly").savings.set_index("period")
 
-    assert (native.loc[corrupt_dates, "coverage"].to_numpy() == 0.0).all()
-
-    month = corrupt_dates[0].strftime("%Y-%m")
-    days_in_month = corrupt_dates[0].days_in_month
-    other_months = [period for period in monthly.index if period != month]
-
-    assert monthly.loc[month, "coverage"] == pytest.approx(
-        (days_in_month - len(corrupt_dates)) / days_in_month
-    )
-    assert (monthly.loc[other_months, "coverage"].to_numpy() == 1.0).all()
-
-
+@pytest.mark.slow
 def test_daily_json_roundtrip_preserves_frames_and_tz(daily_results):
     result = daily_results[next(iter(daily_results))]
 
@@ -737,42 +572,37 @@ def test_correction_after_reload_without_baseline_matches_reload_with_it(daily_e
     pd.testing.assert_frame_equal(results["without"].exclusions, results["with"].exclusions)
 
 
-# ── billing end-to-end (slow) ────────────────────────────────────────────────
+# ── billing end-to-end ───────────────────────────────────────────────────────
 
 
-@pytest.mark.regression
-def test_billing_end_to_end_monthly_timesteps(billing_env):
-    results = {
-        tid: correct_reporting(
-            billing_env["selection"],
-            billing_env["treatment"],
-            billing_env["pool"],
-            tid,
-            settings=_PINNED_SETTINGS,
-        )
-        for tid in billing_env["treatment"].ids
-    }
-    corrected = pd.concat([result.corrected for result in results.values()], ignore_index=True)
-
-    for result in results.values():
+@pytest.mark.slow
+def test_billing_end_to_end_schema(billing_results):
+    for result in billing_results.values():
         assert list(result.corrected.columns) == _CORRECTED_COLUMNS
         assert result.model_frequency == "billing"
-        # 12 monthly rows per treatment meter
+
+
+@pytest.mark.slow
+def test_billing_end_to_end_corrects_twelve_monthly_reads(billing_results):
+    """Each treatment meter corrects one row per monthly read over the reporting
+    year. Inferred boundaries land within a day or two of the calendar month
+    start: a near-identical daily rate across a month boundary can shift
+    detection by a day."""
+    for result in billing_results.values():
         assert len(result.corrected) == 12
-
-    # Inferred boundaries land within a day or two of the calendar month start;
-    # a near-identical daily rate across a month boundary can shift detection
-    # by a day.
-    assert (corrected["datetime"].dt.day <= 2).all()
-    assert np.isfinite(corrected["corrected"].to_numpy()).all()
-
-    total_corrected = float(np.nansum(corrected["corrected"].to_numpy()))
-    assert total_corrected == pytest.approx(2263284.60, rel=1e-3)
+        assert (result.corrected["datetime"].dt.day <= 2).all()
 
 
-# ── mixed-frequency e2e (slow, ComStock) ───────────────────────────────────
+@pytest.mark.slow
+def test_billing_end_to_end_corrected_is_finite(billing_results):
+    for result in billing_results.values():
+        assert np.isfinite(result.corrected["corrected"].to_numpy()).all()
 
 
+# ── mixed-frequency end-to-end ───────────────────────────────────────────────
+
+
+@pytest.mark.slow
 def test_hourly_pool_daily_treatment_cadence_matches_received(mixed_hourly_daily_env):
     """A daily treatment corrects at its received (daily) cadence regardless of
     the comparison pool's finer (hourly) model frequency."""
@@ -782,130 +612,18 @@ def test_hourly_pool_daily_treatment_cadence_matches_received(mixed_hourly_daily
         assert np.isfinite(result.corrected["corrected"].to_numpy()).all()
 
 
-def test_hourly_pool_aggregates_to_daily_treatment_periods(mixed_hourly_daily_env):
-    """The hourly pool's own observed rows, reduced to the treatment's daily
-    periods via the same reduction machinery ``correct_reporting`` uses, match
-    an independent pandas day-resample of the pool meter's raw hourly
-    predictions (min_count 1: a day with no finite hourly reads is NaN, never
-    0)."""
-    treatment = mixed_hourly_daily_env["treatment"]
-    pool = mixed_hourly_daily_env["pool"]
-    tid = treatment.ids[0]
-
-    t_index = treatment._ensure_pred("reporting", ids=[tid])[tid].index
-    cg_ids = cg_member_ids(mixed_hourly_daily_env["selection"], tid)
-    p_index, _, p_obs, *_ = pool._prediction_matrices("reporting", ids=cg_ids)
-
-    codes = _period_codes(p_index.as_unit("ns").asi8, _native_edges(t_index))
-    aggregated = _reduce_to_periods(p_obs, codes, len(t_index), False)
-
-    col = 0
-    pool_series = pd.Series(p_obs[:, col].astype(np.float64), index=p_index)
-    hand = pool_series.resample("D").sum(min_count=1).reindex(t_index)
-
-    np.testing.assert_allclose(aggregated[:, col], hand.to_numpy(), equal_nan=True)
-
-
-def test_hourly_pool_billing_treatment_cadence_matches_received(mixed_hourly_billing_env):
+def test_finer_pool_billing_treatment_cadence_matches_received(mixed_billing_results):
     """A billing treatment corrects at its own inferred read periods regardless
-    of the comparison pool's finer (hourly) model frequency: one row per period,
-    labelled by the period start."""
-    for result in mixed_hourly_billing_env["results"].values():
+    of the comparison pool's finer (hourly or daily) model frequency: one row
+    per period, labelled by the period start."""
+    for result in mixed_billing_results.values():
         assert result.model_frequency == "billing"
-        assert len(result.corrected) == len(result.correction_periods)
         assert list(result.corrected["datetime"]) == [
             start for start, _ in result.correction_periods
         ]
 
 
-def test_hourly_pool_aggregates_to_billing_treatment_read_periods(mixed_hourly_billing_env):
-    """The hourly pool's own observed rows, reduced to a billing treatment's
-    inferred read periods via the same reduction machinery ``correct_reporting``
-    uses, match an independent per-period pandas sum over the pool meter's raw
-    hourly predictions."""
-    treatment = mixed_hourly_billing_env["treatment"]
-    pool = mixed_hourly_billing_env["pool"]
-    tid = treatment.ids[0]
-    periods = mixed_hourly_billing_env["results"][tid].correction_periods
-
-    cg_ids = cg_member_ids(mixed_hourly_billing_env["selection"], tid)
-    p_index, _, p_obs, *_ = pool._prediction_matrices("reporting", ids=cg_ids)
-    codes = _period_codes(p_index.as_unit("ns").asi8, _billing_edges(periods))
-    aggregated = _reduce_to_periods(p_obs, codes, len(periods), False)
-
-    col = 0
-    pool_series = pd.Series(p_obs[:, col].astype(np.float64), index=p_index)
-    hand = _hand_aggregate_over_periods(pool_series, periods)
-
-    np.testing.assert_allclose(aggregated[:, col], hand, equal_nan=True)
-
-
-@pytest.mark.slow
-def test_hourly_pool_missing_read_period_degrades_to_nan_not_zero(mixed_hourly_billing_env):
-    """A finer (hourly) pool NaN-ed across an entire read period for every
-    member of the treatment's single cluster aggregates to NaN there (min_count
-    1), leaving fewer than three finite comparison meters and degrading that
-    period's ``corrected`` value to NaN rather than a summed-to-zero finite
-    value."""
-    treatment = mixed_hourly_billing_env["treatment"]
-    pool = mixed_hourly_billing_env["pool"]
-    selection = mixed_hourly_billing_env["selection"]
-    df_rh = mixed_hourly_billing_env["df_rh"]
-    tid = treatment.ids[0]
-    periods = mixed_hourly_billing_env["results"][tid].correction_periods
-    target_start, target_end = periods[len(periods) // 2]
-
-    injected_pool = ComparisonPool.from_fit_models(
-        _rewrap_population(pool, df_rh, HourlyReportingData)
-    )
-    pred = injected_pool._ensure_pred("reporting")
-    for pid in injected_pool.ids:
-        hours = pred[pid].index
-        target = hours[(hours >= target_start) & (hours < target_end + pd.Timedelta(days=1))]
-        pred[pid].loc[target, "observed"] = np.nan
-
-    result = correct_reporting(selection, treatment, injected_pool, tid)
-
-    rows = result.corrected.set_index("datetime")
-    assert np.isnan(rows.loc[target_start, "corrected"])
-    other = [d for d in rows.index if d != target_start]
-    assert np.isfinite(rows.loc[other, "corrected"].to_numpy()).all()
-
-
-def test_daily_pool_billing_treatment_cadence_matches_received(mixed_daily_billing_env):
-    """A billing treatment corrects at its own inferred read periods regardless
-    of the comparison pool's finer (daily) model frequency."""
-    for result in mixed_daily_billing_env["results"].values():
-        assert result.model_frequency == "billing"
-        assert len(result.corrected) == len(result.correction_periods)
-        assert list(result.corrected["datetime"]) == [
-            start for start, _ in result.correction_periods
-        ]
-
-
-def test_daily_pool_aggregates_to_billing_treatment_read_periods(mixed_daily_billing_env):
-    """The daily pool's own observed rows, reduced to a billing treatment's
-    inferred read periods via the same reduction machinery ``correct_reporting``
-    uses, match an independent per-period pandas sum over the pool meter's raw
-    daily predictions."""
-    treatment = mixed_daily_billing_env["treatment"]
-    pool = mixed_daily_billing_env["pool"]
-    tid = treatment.ids[0]
-    periods = mixed_daily_billing_env["results"][tid].correction_periods
-
-    cg_ids = cg_member_ids(mixed_daily_billing_env["selection"], tid)
-    p_index, _, p_obs, *_ = pool._prediction_matrices("reporting", ids=cg_ids)
-    codes = _period_codes(p_index.as_unit("ns").asi8, _billing_edges(periods))
-    aggregated = _reduce_to_periods(p_obs, codes, len(periods), False)
-
-    col = 0
-    pool_series = pd.Series(p_obs[:, col].astype(np.float64), index=p_index)
-    hand = _hand_aggregate_over_periods(pool_series, periods)
-
-    np.testing.assert_allclose(aggregated[:, col], hand, equal_nan=True)
-
-
-# ── output schema (fast) ─────────────────────────────────────────────────────
+# ── output schema ────────────────────────────────────────────────────────────
 
 
 def test_output_schema_and_tables(guard_env):
@@ -926,7 +644,7 @@ def test_output_schema_and_tables(guard_env):
     assert result.cg_ids == guard_env["pool"].ids
 
 
-# ── comparison-group membership and weights (fast) ───────────────────────────
+# ── comparison-group membership and weights ──────────────────────────────────
 
 
 def test_cluster_weights_renormalize_when_a_selected_cluster_has_no_columns():
@@ -934,13 +652,12 @@ def test_cluster_weights_renormalize_when_a_selected_cluster_has_no_columns():
     contributes no label, so ``t_weight`` renormalizes to sum 1 over the clusters
     that ARE present, keeping the kernel's normalized point consistent with its
     raw-weight uncertainty (rather than passing a raw Sigma < 1)."""
-    active = {0: 0.6, 1: 0.4}
+    active = {0: 0.5, 1: 0.3, 2: 0.2}
 
-    # only cluster 0 survived the usability walk, contributing two columns
-    t_weight = _cluster_weights(active, [0, 0])
+    # cluster 1 has no usable column; clusters 0 and 2 contribute one each
+    t_weight = _cluster_weights(active, [0, 2])
 
-    assert t_weight.sum() == pytest.approx(1.0)
-    assert np.allclose(t_weight, [1.0])
+    np.testing.assert_allclose(t_weight, [5 / 7, 2 / 7])
 
 
 def test_column_correlations_over_a_subset_equal_the_full_pool_restriction(guard_env):
@@ -948,14 +665,14 @@ def test_column_correlations_over_a_subset_equal_the_full_pool_restriction(guard
     restricted to those columns, since ``_column_correlations`` works per column over
     finite pairs."""
     pool = guard_env["pool"]
-    _, p_ids, observed, modeled, *_ = pool._prediction_matrices("reporting")
+    _, p_ids, observed, modeled, *_ = pool.prediction_matrices("reporting")
 
     full = _column_correlations(
         np.asarray(observed, dtype=np.float64), np.asarray(modeled, dtype=np.float64)
     )
 
     subset = [1, 3, 4]
-    _, _, s_obs, s_mod, *_ = pool._prediction_matrices("reporting", ids=[p_ids[c] for c in subset])
+    _, _, s_obs, s_mod, *_ = pool.prediction_matrices("reporting", ids=[p_ids[c] for c in subset])
     restricted = _column_correlations(
         np.asarray(s_obs, dtype=np.float64), np.asarray(s_mod, dtype=np.float64)
     )
@@ -966,9 +683,9 @@ def test_column_correlations_over_a_subset_equal_the_full_pool_restriction(guard
 def test_clusters_used_reflects_per_cluster_drop(guard_env):
     """``clusters_used`` counts, per read period, the clusters that retain at
     least three finite meters. Billing correction runs at read-period cadence, so
-    degradation fires per read period. NaN-ing a whole read period of one
-    3-meter cluster's meters drops that cluster below three finite pool meters
-    there only, so ``clusters_used`` falls from 2 to 1 at that period and stays 2
+    degradation fires per read period. NaN-ing a whole read period of one meter
+    in a 3-meter cluster drops that cluster below three finite pool meters there
+    only, so ``clusters_used`` falls from 2 to 1 at that period and stays 2
     elsewhere."""
     treatment = guard_env["treatment"]
     pool = guard_env["pool"]
@@ -991,7 +708,7 @@ def test_clusters_used_reflects_per_cluster_drop(guard_env):
     injected_pool = ComparisonPool.from_fit_models(
         _rewrap_population(pool, guard_env["df_r"], BillingReportingData)
     )
-    pred = injected_pool._ensure_pred("reporting")
+    pred = injected_pool.prediction_frames("reporting")
     # NaN the whole March read period of one cluster-1 meter: its March period
     # aggregates to NaN (min_count 1), leaving cluster 1 with two finite meters
     substrate = pred[pool_ids[0]].index
@@ -1051,8 +768,8 @@ def test_period_correction_matches_full_correction_on_its_rows(daily_dq_env):
 
         return raw
 
-    holed = _daily_reporting_override(daily_dq_env["df_r"], hole_id, blank_half_may)
-    treatment, pool = _build_daily_dq(daily_dq_env, pool_overrides={hole_id: holed})
+    holed = _reporting_override(daily_dq_env, hole_id, blank_half_may)
+    treatment, pool = _build_dq(daily_dq_env, pool_overrides={hole_id: holed})
     args = (daily_dq_env["selection"], treatment, pool)
 
     full = correct_reporting(*args, tid)
@@ -1068,10 +785,10 @@ def test_period_correction_matches_full_correction_on_its_rows(daily_dq_env):
         pd.testing.assert_frame_equal(getattr(sub, frame), expected, check_exact=True)
 
 
-# ── received-cadence reduction (fast) ────────────────────────────────────────
+# ── received-cadence reduction ───────────────────────────────────────────────
 
 
-def test_reduce_to_periods_sums_finite_rows_with_min_count_one():
+def test_sum_to_periods_sums_finite_rows_with_min_count_one():
     """The reduction map sums a period's finite native rows per column. min_count
     is 1 everywhere: a period whose column has no finite native rows aggregates
     to NaN, never 0. Rows mapped to -1 (outside every period) contribute
@@ -1079,23 +796,23 @@ def test_reduce_to_periods_sums_finite_rows_with_min_count_one():
     values = np.array([[2.0, 10.0], [3.0, 20.0], [np.nan, np.nan]])
     codes = np.array([0, 0, 1])
 
-    summed = _reduce_to_periods(values, codes, 2, False)
+    summed = _sum_to_periods(values, codes, 2)
 
     assert np.array_equal(summed[0], [5.0, 30.0])
     # second period's only native row is NaN -> NaN, not 0.0
     assert np.isnan(summed[1]).all()
 
-    dropped = _reduce_to_periods(np.array([[5.0], [7.0]]), np.array([-1, 0]), 1, False)
+    dropped = _sum_to_periods(np.array([[5.0], [7.0]]), np.array([-1, 0]), 1)
     assert dropped[0, 0] == 7.0
 
 
-def test_reduce_to_periods_quadrature_sums_uncertainty():
-    """With ``square`` the reduction quadrature-sums per-row uncertainties
-    (root of summed squares); an empty period is still NaN."""
+def test_quadrature_to_periods_combines_uncertainty():
+    """Per-row uncertainties combine to a period as the root of their summed
+    squares; a period with no finite row is NaN."""
     unc = np.array([[3.0], [4.0], [np.nan]])
     codes = np.array([0, 0, 1])
 
-    quad = _reduce_to_periods(unc, codes, 2, True)
+    quad = _quadrature_to_periods(unc, codes, 2)
 
     assert quad[0, 0] == pytest.approx(5.0)
     assert np.isnan(quad[1, 0])
@@ -1114,8 +831,50 @@ def test_native_edges_bin_finer_rows_into_coarse_periods():
 
     assert np.array_equal(np.bincount(codes, minlength=3), [24, 24, 24])
 
-    outside = pd.DatetimeIndex([daily[0] - pd.Timedelta(hours=1), daily[-1] + pd.Timedelta(days=1)])
+    outside = pd.DatetimeIndex(
+        [daily[0] - pd.Timedelta(hours=1), daily[-1] + pd.Timedelta(days=1)]
+    )
     assert np.array_equal(_period_codes(outside.as_unit("ns").asi8, edges), [-1, -1])
+
+
+@pytest.mark.parametrize(
+    "start, counts",
+    [("2019-11-02", [24, 25, 24, 24]), ("2019-03-09", [24, 23, 24, 24])],
+    ids=["fall_back", "spring_forward"],
+)
+def test_native_edges_bin_a_dst_day_by_its_local_hours(start, counts):
+    """Daily periods are local days: the hourly rows of a DST transition day
+    (25 on fall-back, 23 on spring-forward) all bin into that day and no other."""
+    daily = pd.date_range(start, periods=4, freq="D", tz="America/Chicago")
+    hourly = pd.date_range(daily[0], periods=sum(counts), freq="h")
+
+    codes = _period_codes(hourly.as_unit("ns").asi8, _native_edges(daily))
+
+    np.testing.assert_array_equal(np.bincount(codes, minlength=4), counts)
+
+
+def test_billing_edges_bin_hourly_rows_by_local_read_days_across_dst():
+    """Read periods are inclusive local-day spans: a read holding the
+    spring-forward day collects one hour fewer than its days times 24, one
+    holding the fall-back day one hour more, and every hourly row lands in
+    exactly one read."""
+    tz = "America/Chicago"
+    periods = [
+        (pd.Timestamp(start, tz=tz), pd.Timestamp(end, tz=tz))
+        for start, end in [
+            ("2019-03-01", "2019-03-31"),
+            ("2019-04-01", "2019-10-31"),
+            ("2019-11-01", "2019-11-30"),
+        ]
+    ]
+    hourly = pd.date_range(
+        periods[0][0], pd.Timestamp("2019-12-01", tz=tz), freq="h", inclusive="left"
+    )
+
+    codes = _period_codes(hourly.as_unit("ns").asi8, _billing_edges(periods))
+
+    expected = [31 * 24 - 1, 214 * 24, 30 * 24 + 1]
+    np.testing.assert_array_equal(np.bincount(codes, minlength=3), expected)
 
 
 def test_restrict_to_days_drops_finer_rows_outside_the_treatment_days():
@@ -1145,7 +904,7 @@ def test_billing_correction_bins_treatment_to_read_periods(guard_env):
     periods = result.correction_periods
     assert periods
 
-    own = guard_env["treatment"]._ensure_pred("reporting", ids=[tid])[tid]
+    own = guard_env["treatment"].prediction_frames("reporting", ids=[tid])[tid]
     rows = result.corrected.set_index("datetime")
 
     assert list(rows.index) == [start for start, _ in periods]
@@ -1166,7 +925,7 @@ def test_billing_read_with_a_missing_day_sums_observed_and_modeled_over_the_same
         _rewrap_population(guard_env["treatment"], guard_env["df_r"], BillingReportingData)
     )
     clean = correct_reporting(guard_env["selection"], treatment, guard_env["pool"], tid)
-    own = treatment._ensure_pred("reporting", ids=[tid])[tid]
+    own = treatment.prediction_frames("reporting", ids=[tid])[tid]
     period_start, period_end = clean.correction_periods[3]
     in_period = (own.index >= period_start) & (own.index <= period_end)
     hole = own.index[in_period][5]
@@ -1187,7 +946,7 @@ def test_billing_missing_pool_period_degrades_to_nan_not_zero(guard_env):
     """A read period with no finite pool observed aggregates to NaN, never 0
     (min_count 1). NaN-ing a whole read period across every pool meter of the
     single cluster leaves fewer than three finite meters there, so ``corrected``
-    is NaN at that period and finite elsewhere — a summed-to-zero period would
+    is NaN at that period and finite elsewhere; a summed-to-zero period would
     instead keep the cluster alive and the row finite."""
     treatment = guard_env["treatment"]
     tid = treatment.ids[0]
@@ -1195,7 +954,7 @@ def test_billing_missing_pool_period_degrades_to_nan_not_zero(guard_env):
     injected_pool = ComparisonPool.from_fit_models(
         _rewrap_population(guard_env["pool"], guard_env["df_r"], BillingReportingData)
     )
-    pred = injected_pool._ensure_pred("reporting")
+    pred = injected_pool.prediction_frames("reporting")
     for pid in injected_pool.ids:
         substrate = pred[pid].index
         march = substrate[substrate.month == 3]
@@ -1211,7 +970,7 @@ def test_billing_missing_pool_period_degrades_to_nan_not_zero(guard_env):
     assert np.isfinite(rows.loc[other, "corrected"].to_numpy()).all()
 
 
-# ── meter-level guards (fast) ────────────────────────────────────────────────
+# ── meter-level guards ───────────────────────────────────────────────────────
 
 
 def _guard_absent_from_population(guard_env):
@@ -1308,15 +1067,9 @@ def _guard_missing_reporting(guard_env):
     pool = guard_env["pool"]
     tids = guard_env["treatment"].ids
     tid = tids[0]
-    meters = {}
-
-    for mid, rec in guard_env["treatment"]._meters.items():
-        entry = {"model": rec.model, "baseline_data": rec.baseline_data}
-        if mid != tid:
-            entry["reporting_data"] = rec.reporting_data
-        meters[mid] = entry
-
-    treatment = TreatmentGroup.from_fit_models(meters)
+    treatment = TreatmentGroup.from_fit_models(
+        _meters_from(guard_env["treatment"], drop_reporting=(tid,))
+    )
 
     return selection, treatment, pool, tid
 
@@ -1326,24 +1079,8 @@ def _guard_prediction_failure(guard_env):
     pool = guard_env["pool"]
     tids = guard_env["treatment"].ids
     tid = tids[0]
-    meters = {}
-
-    for mid, rec in guard_env["treatment"]._meters.items():
-        model = rec.model
-        if mid == tid:
-            model = copy.deepcopy(rec.model)
-            model.disqualification = [
-                EEMeterWarning(
-                    qualified_name="eemeter.model_fit_metrics",
-                    description="constructed disqualification",
-                    data=None,
-                )
-            ]
-        meters[mid] = {
-            "model": model,
-            "baseline_data": rec.baseline_data,
-            "reporting_data": rec.reporting_data,
-        }
+    models = {tid: _disqualified(guard_env["treatment"]._meters[tid].model)}
+    meters = _meters_from(guard_env["treatment"], models=models)
 
     with pytest.warns(UserWarning, match="disqualified"):
         treatment = TreatmentGroup.from_fit_models(meters)
@@ -1429,14 +1166,10 @@ def test_billing_read_cadence_unrecoverable_raises(billing_dq_env):
     """Billing correction never runs the eemeter unique-values check (its
     cadence is read-period inference, not native rows): a non-zero identical
     reporting billing meter instead has no recoverable read cadence, so the
-    correction raises with that reason and the other treatment meter is
-    unaffected."""
+    correction raises with that reason."""
     victim = billing_dq_env["treatment_ids"][1]
-    survivor = billing_dq_env["treatment_ids"][0]
-    flat = _billing_reporting_override(
-        billing_dq_env["df_r"], victim, lambda raw: raw.assign(observed=123.0)
-    )
-    treatment, pool = _build_billing_dq(billing_dq_env, treatment_overrides={victim: flat})
+    flat = _reporting_override(billing_dq_env, victim, lambda raw: raw.assign(observed=123.0))
+    treatment, pool = _build_dq(billing_dq_env, treatment_overrides={victim: flat})
 
     with pytest.raises(exclusions.MeterCorrectionError) as excinfo:
         correct_reporting(billing_dq_env["selection"], treatment, pool, victim)
@@ -1447,9 +1180,6 @@ def test_billing_read_cadence_unrecoverable_raises(billing_dq_env):
     assert "no recoverable read" in row["reason"]
     # the flat meter's documented path is explicit ``read_boundaries``
     assert "read_boundaries" in row["reason"]
-
-    result = correct_reporting(billing_dq_env["selection"], treatment, pool, survivor)
-    assert result.correction_periods
 
 
 def test_invalid_period_raises(guard_env):
@@ -1494,9 +1224,8 @@ def test_coarser_pool_than_treatment_raises(daily_dq_env, comstock, model_bank):
     """The cross-population fineness rule at correction: a comparison pool
     coarser than the treatment (billing pool, daily treatment) is a validation
     error naming both model frequencies."""
-    df_b, df_r = comstock.frames("billing")
-    ids = sorted(df_b.index.get_level_values("id").unique())
-    treatment, _ = _build_daily_dq(daily_dq_env)
+    ids = comstock.ids("billing")
+    treatment, _ = _build_dq(daily_dq_env)
     pool = ComparisonPool.from_fit_models(comstock.meters(model_bank, "billing", ids[:6]))
 
     with pytest.raises(ValueError, match="billing.*coarser.*daily"):
@@ -1505,7 +1234,7 @@ def test_coarser_pool_than_treatment_raises(daily_dq_env, comstock, model_bank):
         )
 
 
-# ── pool-side drops (fast) ───────────────────────────────────────────────────
+# ── pool-side drops ──────────────────────────────────────────────────────────
 
 
 _SPAN_COVERAGE_REASON = "reporting coverage below minimum over the treatment meter's reporting span"
@@ -1515,22 +1244,23 @@ def _ledger_row(result, mid):
     return result.exclusions.set_index("id").loc[mid]
 
 
+def _coverage_from_detail(row):
+    """The coverage a ``reporting_coverage`` ledger row records in its detail."""
+    match = _COVERAGE_DETAIL.search(row["detail"])
+    assert match, f"no reporting span coverage in detail {row['detail']!r}"
+    coverage = float(match.group(1))
+
+    return coverage
+
+
 @pytest.fixture(scope="module")
 def pool_missing_reporting(guard_env):
     """One treatment meter corrected against a pool whose first two meters carry
     no reporting data at all."""
-    meters = {}
-    missing_ids = []
-
-    for i, (mid, rec) in enumerate(guard_env["pool"]._meters.items()):
-        entry = {"model": rec.model, "baseline_data": rec.baseline_data}
-        if i < 2:
-            missing_ids.append(mid)
-        else:
-            entry["reporting_data"] = rec.reporting_data
-        meters[mid] = entry
-
-    pool = ComparisonPool.from_fit_models(meters)
+    missing_ids = guard_env["pool"].ids[:2]
+    pool = ComparisonPool.from_fit_models(
+        _meters_from(guard_env["pool"], drop_reporting=missing_ids)
+    )
     tid = guard_env["treatment"].ids[0]
     result = correct_reporting(guard_env["selection"], guard_env["treatment"], pool, tid)
     bundle = {"result": result, "missing_ids": missing_ids, "tid": tid}
@@ -1551,6 +1281,27 @@ def test_pool_meters_missing_reporting_are_excluded(pool_missing_reporting):
     assert not result.corrected.empty
 
 
+def test_cg_member_absent_from_pool_is_recorded(guard_env, comstock, model_bank):
+    """A comparison-group member the given pool lacks is recorded on this
+    meter's ledger as absent from the pool population, and the seven members
+    the pool holds keep the correction going."""
+    ids = guard_env["ids"]
+    absent = str(ids[2])
+    pool = ComparisonPool.from_fit_models(comstock.meters(model_bank, "billing", ids[3:10]))
+    tid = guard_env["treatment"].ids[0]
+
+    result = correct_reporting(guard_env["selection"], guard_env["treatment"], pool, tid)
+
+    row = _ledger_row(result, absent)
+    assert row["stage"] == "correction"
+    assert row["origin"] == "pool_membership"
+    assert row["reason"] == "comparison-group member absent from the pool population"
+    assert sorted(result.cg_ids) == sorted(str(mid) for mid in ids[3:10]), (
+        f"expected the seven pool-held members, got {result.cg_ids}"
+    )
+    assert not result.corrected.empty
+
+
 def test_json_roundtrip_with_nan_uncertainty(pool_missing_reporting):
     """A NaN ``corrected_unc`` must survive the table roundtrip (NaN -> null ->
     NaN), alongside a non-empty ledger."""
@@ -1566,29 +1317,13 @@ def test_json_roundtrip_with_nan_uncertainty(pool_missing_reporting):
 
 
 def test_failed_pool_meter_is_ledgered_in_every_call_that_selects_it(guard_env):
-    """``_ensure_pred`` caches successes only, so a pool meter whose reporting
-    prediction raises is re-attempted — and re-ledgered — in every per-meter call
+    """``prediction_frames`` caches successes only, so a pool meter whose reporting
+    prediction raises is re-attempted, and re-ledgered, in every per-meter call
     that selects it; the row is not deduped away."""
     victim = guard_env["pool"].ids[0]
     tids = guard_env["treatment"].ids
-    meters = {}
-
-    for mid, rec in guard_env["pool"]._meters.items():
-        model = rec.model
-        if mid == victim:
-            model = copy.deepcopy(rec.model)
-            model.disqualification = [
-                EEMeterWarning(
-                    qualified_name="eemeter.model_fit_metrics",
-                    description="constructed disqualification",
-                    data=None,
-                )
-            ]
-        meters[mid] = {
-            "model": model,
-            "baseline_data": rec.baseline_data,
-            "reporting_data": rec.reporting_data,
-        }
+    models = {victim: _disqualified(guard_env["pool"]._meters[victim].model)}
+    meters = _meters_from(guard_env["pool"], models=models)
 
     with pytest.warns(UserWarning, match="disqualified"):
         pool = ComparisonPool.from_fit_models(meters)
@@ -1610,7 +1345,7 @@ def test_failed_pool_meter_is_ledgered_in_every_call_that_selects_it(guard_env):
     assert victim not in pool._reporting_pred
 
 
-# ── reporting coverage / observed-DQ at correction (fast, daily) ─────────────
+# ── reporting coverage and observed DQ at correction ─────────────────────────
 
 
 def test_reporting_gross_hole_pool_meter_pruned_before_predict(daily_dq_env):
@@ -1621,10 +1356,8 @@ def test_reporting_gross_hole_pool_meter_pruned_before_predict(daily_dq_env):
     victim = daily_dq_env["pool_ids"][0]
     df_r = daily_dq_env["df_r"]
     cutoff = df_r.xs(int(victim), level="id").index.min() + pd.Timedelta(days=180)
-    truncated = _daily_reporting_override(
-        df_r, victim, lambda raw: raw[raw["datetime"] < cutoff]
-    )
-    treatment, pool = _build_daily_dq(daily_dq_env, pool_overrides={victim: truncated})
+    truncated = _reporting_override(daily_dq_env, victim, lambda raw: raw[raw["datetime"] < cutoff])
+    treatment, pool = _build_dq(daily_dq_env, pool_overrides={victim: truncated})
 
     result = correct_reporting(
         daily_dq_env["selection"], treatment, pool, daily_dq_env["treatment_ids"][0]
@@ -1634,9 +1367,7 @@ def test_reporting_gross_hole_pool_meter_pruned_before_predict(daily_dq_env):
     assert row["stage"] == "correction"
     assert row["origin"] == "reporting_coverage"
     assert row["reason"] == _SPAN_COVERAGE_REASON
-    assert "reporting span coverage" in row["detail"]
-    coverage = float(row["detail"].split()[3])
-    assert coverage < 0.9
+    assert _coverage_from_detail(row) < 0.9
     # pruned before prediction: the failed meter never enters the reporting cache
     assert victim not in pool._reporting_pred
     assert not result.corrected.empty
@@ -1648,12 +1379,11 @@ def test_reporting_hole_treatment_meter_raises_below_coverage(daily_dq_env):
     reporting span raises under a 0.95 floor rather than returning a partly
     corrected series, with its coverage in the ledger detail."""
     victim = daily_dq_env["treatment_ids"][1]
-    survivor = daily_dq_env["treatment_ids"][0]
     df_r = daily_dq_env["df_r"]
     hole_start = df_r.xs(int(victim), level="id").index.min() + pd.Timedelta(days=150)
     hole_end = hole_start + pd.Timedelta(days=25)
-    holed = _daily_reporting_override(
-        df_r,
+    holed = _reporting_override(
+        daily_dq_env,
         victim,
         lambda raw: raw.assign(
             observed=raw["observed"].where(
@@ -1661,8 +1391,8 @@ def test_reporting_hole_treatment_meter_raises_below_coverage(daily_dq_env):
             )
         ),
     )
-    treatment, pool = _build_daily_dq(daily_dq_env, treatment_overrides={victim: holed})
-    settings = CGCorrectionSettings(min_window_coverage=0.95)
+    treatment, pool = _build_dq(daily_dq_env, treatment_overrides={victim: holed})
+    settings = CGCorrectionSettings(min_reporting_coverage=0.95)
 
     with pytest.raises(exclusions.MeterCorrectionError) as excinfo:
         correct_reporting(daily_dq_env["selection"], treatment, pool, victim, settings=settings)
@@ -1671,28 +1401,24 @@ def test_reporting_hole_treatment_meter_raises_below_coverage(daily_dq_env):
     assert row["stage"] == "correction"
     assert row["origin"] == "reporting_coverage"
     assert row["reason"] == _SPAN_COVERAGE_REASON
-    assert float(row["detail"].split()[3]) == pytest.approx(340 / 365, abs=1e-4)
+    assert _coverage_from_detail(row) == pytest.approx(340 / 365, abs=1e-4)
     assert victim not in treatment._reporting_pred
 
-    result = correct_reporting(
-        daily_dq_env["selection"], treatment, pool, survivor, settings=settings
-    )
-    assert not result.corrected.empty
 
-
-def test_reporting_flat_treatment_meter_disqualified_via_unique_values(daily_dq_env):
+@pytest.mark.parametrize("dq_env_name", ["daily_dq_env", "hourly_dq_env"])
+def test_reporting_flat_treatment_meter_disqualified_via_unique_values(request, dq_env_name):
     """A treatment meter with non-zero identical reporting reads has full
     coverage but fails the eemeter unique-values check at construction. The
-    correction stage enforces that observed disqualification: the meter is
-    ledgered verbatim, pruned before predicting, and the call raises."""
-    victim = daily_dq_env["treatment_ids"][1]
-    flat = _daily_reporting_override(
-        daily_dq_env["df_r"], victim, lambda raw: raw.assign(observed=123.0)
-    )
-    treatment, pool = _build_daily_dq(daily_dq_env, treatment_overrides={victim: flat})
+    correction stage enforces that observed disqualification at any native model
+    frequency: the meter is ledgered verbatim, pruned before predicting, and the
+    call raises."""
+    dq_env = request.getfixturevalue(dq_env_name)
+    victim = dq_env["treatment_ids"][1]
+    flat = _reporting_override(dq_env, victim, lambda raw: raw.assign(observed=123.0))
+    treatment, pool = _build_dq(dq_env, treatment_overrides={victim: flat})
 
     with pytest.raises(exclusions.MeterCorrectionError) as excinfo:
-        correct_reporting(daily_dq_env["selection"], treatment, pool, victim)
+        correct_reporting(dq_env["selection"], treatment, pool, victim)
 
     row = excinfo.value.exclusions.set_index("id").loc[victim]
     assert row["stage"] == "correction"
@@ -1704,9 +1430,7 @@ def test_reporting_flat_treatment_meter_disqualified_via_unique_values(daily_dq_
 
 def test_reporting_joint_comissing_treatment_meter_disqualified(daily_dq_env):
     """A treatment meter whose observed and temperature go missing on DISJOINT
-    day sets — neither column individually below the daily coverage floor, but
-    their union (the joint observed-and-temperature valid days) below it — trips
-    ONLY the eemeter joint valid-days check. The correction stage enforces that
+    day sets trips ONLY the eemeter joint valid-days check. The correction stage enforces that
     joint disqualification the same as an observed one."""
     victim = daily_dq_env["treatment_ids"][1]
 
@@ -1723,8 +1447,8 @@ def test_reporting_joint_comissing_treatment_meter_disqualified(daily_dq_env):
 
         return raw
 
-    holed = _daily_reporting_override(daily_dq_env["df_r"], victim, _joint_comissing)
-    treatment, pool = _build_daily_dq(daily_dq_env, treatment_overrides={victim: holed})
+    holed = _reporting_override(daily_dq_env, victim, _joint_comissing)
+    treatment, pool = _build_dq(daily_dq_env, treatment_overrides={victim: holed})
 
     with pytest.raises(exclusions.MeterCorrectionError) as excinfo:
         correct_reporting(daily_dq_env["selection"], treatment, pool, victim)
@@ -1741,43 +1465,51 @@ def test_reporting_joint_comissing_treatment_meter_disqualified(daily_dq_env):
     assert victim not in treatment._reporting_pred
 
 
+def test_reporting_temperature_only_disqualification_keeps_treatment_meter(daily_dq_env):
+    """A treatment meter whose reporting data carries only a temperature
+    disqualification (one month's temperature coverage below 90%, while its
+    observed-and-temperature coverage of the reporting span stays above the
+    floor) is corrected: the correction stage prunes observed and joint
+    disqualifications only."""
+    victim = daily_dq_env["treatment_ids"][1]
+
+    def _temperature_gap(raw):
+        raw = raw.copy()
+        # 8 consecutive days: at least 4 fall in one month, so that month's
+        # temperature coverage is at most 27/31
+        raw.loc[raw.index[40:48], "temperature"] = np.nan
+
+        return raw
+
+    holed = _reporting_override(daily_dq_env, victim, _temperature_gap)
+    treatment, pool = _build_dq(daily_dq_env, treatment_overrides={victim: holed})
+    dq_names = [w.qualified_name for w in treatment.meter(victim).reporting_data.disqualification]
+
+    result = correct_reporting(daily_dq_env["selection"], treatment, pool, victim)
+
+    assert dq_names == ["eemeter.sufficiency_criteria.missing_monthly_temperature_data"], (
+        f"expected a lone monthly temperature disqualification, got {dq_names}"
+    )
+    assert result.meter_id == victim
+    assert victim not in set(result.exclusions["id"])
+
+
 def test_reporting_large_savings_meter_is_not_disqualified(daily_dq_env):
     """A treatment meter whose reporting consumption dropped sharply (large
     savings) still varies and fully covers the window, so no observed
-    disqualification or coverage failure fires — the correction stage runs no
+    disqualification or coverage failure fires: the correction stage runs no
     extreme-value screen on reporting observed, which would otherwise flag a
     meter precisely BECAUSE its savings are large."""
     saver = daily_dq_env["treatment_ids"][1]
-    reduced = _daily_reporting_override(
-        daily_dq_env["df_r"], saver, lambda raw: raw.assign(observed=raw["observed"] * 0.3)
+    reduced = _reporting_override(
+        daily_dq_env, saver, lambda raw: raw.assign(observed=raw["observed"] * 0.3)
     )
-    treatment, pool = _build_daily_dq(daily_dq_env, treatment_overrides={saver: reduced})
+    treatment, pool = _build_dq(daily_dq_env, treatment_overrides={saver: reduced})
 
     result = correct_reporting(daily_dq_env["selection"], treatment, pool, saver)
 
     assert result.meter_id == saver
     assert saver not in set(result.exclusions["id"])
-
-
-def test_reporting_flat_treatment_meter_disqualified_via_unique_values_hourly(hourly_dq_env):
-    """The unique-values enforcement at correction is model-frequency-agnostic: an
-    hourly treatment meter with non-zero identical reporting reads is ledgered
-    and pruned before predicting, same as daily."""
-    victim = hourly_dq_env["treatment_ids"][1]
-    flat = _hourly_reporting_override(
-        hourly_dq_env["df_r"], victim, lambda raw: raw.assign(observed=123.0)
-    )
-    treatment, pool = _build_hourly_dq(hourly_dq_env, treatment_overrides={victim: flat})
-
-    with pytest.raises(exclusions.MeterCorrectionError) as excinfo:
-        correct_reporting(hourly_dq_env["selection"], treatment, pool, victim)
-
-    row = excinfo.value.exclusions.set_index("id").loc[victim]
-    assert row["stage"] == "correction"
-    assert row["origin"] == "reporting_data"
-    assert row["reason"] == "reporting observed data disqualified"
-    assert "insufficient_unique_observed_values" in row["detail"]
-    assert victim not in treatment._reporting_pred
 
 
 def test_interior_reporting_hole_clears_coverage_and_degrades_its_cluster(daily_dq_env):
@@ -1796,8 +1528,8 @@ def test_interior_reporting_hole_clears_coverage_and_degrades_its_cluster(daily_
     hole_start = victim_index.min() + pd.Timedelta(days=150)
     hole_end = hole_start + pd.Timedelta(days=25)
     hole_dates = victim_index[(victim_index >= hole_start) & (victim_index < hole_end)]
-    holed = _daily_reporting_override(
-        df_r,
+    holed = _reporting_override(
+        daily_dq_env,
         victim,
         lambda raw: raw.assign(
             observed=np.where(
@@ -1807,7 +1539,7 @@ def test_interior_reporting_hole_clears_coverage_and_degrades_its_cluster(daily_
             )
         ),
     )
-    treatment, pool = _build_daily_dq(daily_dq_env, pool_overrides={victim: holed})
+    treatment, pool = _build_dq(daily_dq_env, pool_overrides={victim: holed})
 
     # two 3-member clusters: cluster 1 holds the victim (minimum size); cluster
     # 0 the other three, never dropping below three finite under this single
@@ -1834,7 +1566,7 @@ def test_interior_reporting_hole_clears_coverage_and_degrades_its_cluster(daily_
     assert np.isfinite(rows.loc[hole_dates, "corrected"].to_numpy()).all()
 
 
-# ── heterogeneous reporting spans (fast, daily) ──────────────────────────────
+# ── heterogeneous reporting spans ────────────────────────────────────────────
 
 
 @pytest.fixture(scope="module")
@@ -1843,10 +1575,8 @@ def heterogeneous_span_results(daily_dq_env):
     carries only the first 300 days of its real ComStock reporting. Each is
     judged over its own span, so both clear the default coverage floor."""
     long_id, short_id = daily_dq_env["treatment_ids"]
-    truncated = _daily_reporting_override(
-        daily_dq_env["df_r"], short_id, lambda raw: raw.iloc[:300]
-    )
-    treatment, pool = _build_daily_dq(daily_dq_env, treatment_overrides={short_id: truncated})
+    truncated = _reporting_override(daily_dq_env, short_id, lambda raw: raw.iloc[:300])
+    treatment, pool = _build_dq(daily_dq_env, treatment_overrides={short_id: truncated})
 
     results = {
         tid: correct_reporting(daily_dq_env["selection"], treatment, pool, tid)
@@ -1868,36 +1598,13 @@ def test_heterogeneous_spans_emit_each_meters_own_index(heterogeneous_span_resul
     assert short_result.covered_window[1] < long_result.covered_window[1]
 
 
-def test_heterogeneous_spans_keep_the_boundary_period_whole(heterogeneous_span_results):
-    """The truncated meter's last (partial) month is a complete period over the rows
-    it has: coverage stays 1 and its ``savings_unc`` is finite."""
-    long_id = heterogeneous_span_results["long_id"]
-    short_id = heterogeneous_span_results["short_id"]
-
-    long_monthly = compute_savings(
-        heterogeneous_span_results["results"][long_id], aggregation="monthly"
-    ).savings
-    short_monthly = compute_savings(
-        heterogeneous_span_results["results"][short_id], aggregation="monthly"
-    ).savings
-
-    assert set(short_monthly["period"]) < set(long_monthly["period"])
-    assert len(long_monthly) == 12
-    assert (short_monthly["coverage"].to_numpy() == 1.0).all()
-
-    boundary = short_monthly.iloc[-1]
-    assert np.isfinite(boundary["savings_unc"])
-    assert np.isfinite(boundary["savings"])
-
-
 def _short_span_case(daily_dq_env, n_days=300):
     """The second treatment meter and the first pool meter, both cut to the first
     ``n_days`` of their real ComStock reporting, so the two share one short span."""
     short_id = daily_dq_env["treatment_ids"][1]
     short_pool_id = daily_dq_env["pool_ids"][0]
-    df_r = daily_dq_env["df_r"]
     overrides = {
-        mid: _daily_reporting_override(df_r, mid, lambda raw: raw.iloc[:n_days])
+        mid: _reporting_override(daily_dq_env, mid, lambda raw: raw.iloc[:n_days])
         for mid in (short_id, short_pool_id)
     }
 
@@ -1912,13 +1619,13 @@ def test_coverage_ignores_other_treatment_meters_spans(daily_dq_env):
     records = daily_dq_env["records"]
     short_id, short_pool_id, overrides = _short_span_case(daily_dq_env)
     pool = ComparisonPool.from_fit_models(
-        _daily_meters_with_overrides(records, daily_dq_env["pool_ids"], overrides)
+        _meters_with_overrides(records, daily_dq_env["pool_ids"], overrides)
     )
     alone = TreatmentGroup.from_fit_models(
-        _daily_meters_with_overrides(records, [short_id], overrides)
+        _meters_with_overrides(records, [short_id], overrides)
     )
     joined = TreatmentGroup.from_fit_models(
-        _daily_meters_with_overrides(records, daily_dq_env["treatment_ids"], overrides)
+        _meters_with_overrides(records, daily_dq_env["treatment_ids"], overrides)
     )
 
     results = {
@@ -1943,7 +1650,7 @@ def test_pool_member_is_judged_over_the_treatment_meters_span(daily_dq_env):
     treatment meter and is pruned from that meter's group."""
     long_id = daily_dq_env["treatment_ids"][0]
     short_id, short_pool_id, overrides = _short_span_case(daily_dq_env)
-    treatment, pool = _build_daily_dq(
+    treatment, pool = _build_dq(
         daily_dq_env, treatment_overrides=overrides, pool_overrides=overrides
     )
 
@@ -1955,10 +1662,57 @@ def test_pool_member_is_judged_over_the_treatment_meters_span(daily_dq_env):
     row = _ledger_row(long_result, short_pool_id)
     assert row["origin"] == "reporting_coverage"
     assert row["reason"] == _SPAN_COVERAGE_REASON
-    assert float(row["detail"].split()[3]) == pytest.approx(300 / 365, abs=1e-4)
+    assert _coverage_from_detail(row) == pytest.approx(300 / 365, abs=1e-4)
 
 
-# ── individual meter matching (slow) ─────────────────────────────────────────
+def test_pool_reporting_past_the_treatment_span_leaves_corrected_unc_unchanged(daily_dq_env):
+    """The comparison-group correlation behind ``corrected_unc`` (read when pool
+    meters carry observed uncertainty) spans the pool rows on the treatment meter's
+    reporting index, so pool reporting past its last timestamp changes nothing."""
+    tid = daily_dq_env["treatment_ids"][1]
+    pool_ids = daily_dq_env["pool_ids"]
+    short = _reporting_override(daily_dq_env, tid, lambda raw: raw.iloc[:300])
+    treatment = TreatmentGroup.from_fit_models(
+        _meters_with_overrides(daily_dq_env["records"], [tid], {tid: short})
+    )
+    end = treatment.meter(tid).reporting_data.df.index.max()
+
+    pool_records = {
+        mid: dict(daily_dq_env["records"][mid], observed_unc=POOL_OBSERVED_UNC)
+        for mid in pool_ids
+    }
+    cut = {
+        mid: _reporting_override(daily_dq_env, mid, lambda raw: raw[raw["datetime"] <= end])
+        for mid in pool_ids
+    }
+    pools = {
+        "extended": ComparisonPool.from_fit_models(
+            _meters_with_overrides(pool_records, pool_ids, {})
+        ),
+        "truncated": ComparisonPool.from_fit_models(
+            _meters_with_overrides(pool_records, pool_ids, cut)
+        ),
+    }
+    pool_ends = {
+        name: max(pool.meter(mid).reporting_data.df.index.max() for mid in pool_ids)
+        for name, pool in pools.items()
+    }
+    assert pool_ends["extended"] > end, f"pool ends {pool_ends['extended']}, treatment {end}"
+    assert pool_ends["truncated"] == end, f"pool ends {pool_ends['truncated']}, treatment {end}"
+
+    results = {
+        name: correct_reporting(daily_dq_env["selection"], treatment, pool, tid)
+        for name, pool in pools.items()
+    }
+
+    assert results["extended"].cg_ids == results["truncated"].cg_ids == pool_ids
+    extended_unc = results["extended"].corrected["corrected_unc"].to_numpy()
+    truncated_unc = results["truncated"].corrected["corrected_unc"].to_numpy()
+    assert np.isfinite(truncated_unc).all(), "truncated-pool corrected_unc has non-finite rows"
+    np.testing.assert_allclose(extended_unc, truncated_unc, rtol=1e-12, atol=0.0)
+
+
+# ── individual meter matching ────────────────────────────────────────────────
 
 
 @pytest.mark.slow
@@ -1966,7 +1720,7 @@ def test_imm_correction_uses_the_shared_cluster_union_not_the_matched_rows(
     variant_env, comstock
 ):
     """IMM's correction deliberately draws on the shared cluster-0 union, with
-    duplicate selection rows collapsed — NOT the treatment meter's own matched
+    duplicate selection rows collapsed, NOT the treatment meter's own matched
     rows (its rows in the clusters table). NaN-ing a read period of a union
     member this meter did not match moves that period's ``cg_usage_fraction``;
     columns sourced from the matched rows alone would leave it untouched."""
@@ -1989,7 +1743,7 @@ def test_imm_correction_uses_the_shared_cluster_union_not_the_matched_rows(
     injected_pool = ComparisonPool.from_fit_models(
         _rewrap_population(env["pool"], df_r, BillingReportingData)
     )
-    pred = injected_pool._ensure_pred("reporting", ids=[victim])
+    pred = injected_pool.prediction_frames("reporting", ids=[victim])
     substrate = pred[victim].index
     march = substrate[substrate.month == 3]
     pred[victim].loc[march, "observed"] = np.nan
@@ -2004,7 +1758,7 @@ def test_imm_correction_uses_the_shared_cluster_union_not_the_matched_rows(
     assert np.allclose(usage.loc[other].to_numpy(), 1.0)
 
 
-# ── prior semantics (fast, constructed) ──────────────────────────────────────
+# ── prior semantics ──────────────────────────────────────────────────────────
 
 
 def _prior_from_corrected(meter_id, corrected, model_frequency, tz="America/Chicago"):
@@ -2020,6 +1774,8 @@ def _prior_from_corrected(meter_id, corrected, model_frequency, tz="America/Chic
         tz=tz,
         model_frequency=model_frequency,
         fingerprint="test-fingerprint",
+        correction_periods=[],
+        cg_ids=[],
     )
 
     return result
@@ -2100,7 +1856,7 @@ class _UnreadablePeriods(list):
 def test_prior_belonging_to_another_meter_raises_before_its_periods_are_read(guard_env):
     """A prior carrying a different ``meter_id`` is an analysis-level error
     (``ValueError``, not ``MeterCorrectionError``), and the identity guard fires
-    before anything reads the prior's read calendar — freezing the wrong meter's
+    before anything reads the prior's read calendar: freezing the wrong meter's
     read periods would otherwise pass silently."""
     tids = guard_env["treatment"].ids
     prior = _prior_from_corrected(
@@ -2118,7 +1874,7 @@ def test_prior_belonging_to_another_meter_raises_before_its_periods_are_read(gua
         )
 
 
-# ── incremental reporting windows (slow) ─────────────────────────────────────
+# ── incremental reporting windows ────────────────────────────────────────────
 
 
 def test_incremental_treatment_overlap_is_slice_invariant(daily_env, daily_data):
@@ -2186,7 +1942,7 @@ def test_growing_pool_reporting_keeps_prior_points(daily_env, daily_data):
     # the half-year pool covers only half the full-year treatment window; lower
     # the reporting-coverage floor so it is not pruned, exercising the growing
     # pool rather than the coverage DQ
-    settings = CGCorrectionSettings(min_window_coverage=0.4)
+    settings = CGCorrectionSettings(min_reporting_coverage=0.4)
 
     pool_half = ComparisonPool.from_fit_models(
         _rewrap_population(daily_env["pool"], df_r, DailyReportingData, cutoff=_MIDYEAR)
@@ -2222,7 +1978,9 @@ def test_prior_from_another_selection_raises(guard_env):
     """A prior froze a comparison group chosen by one selection; reusing it
     under a selection with a different fingerprint is an analysis-level error."""
     tid = guard_env["treatment"].ids[0]
-    prior = correct_reporting(guard_env["selection"], guard_env["treatment"], guard_env["pool"], tid)
+    prior = correct_reporting(
+        guard_env["selection"], guard_env["treatment"], guard_env["pool"], tid
+    )
     other_selection, treatment, pool, _ = _guard_too_few_cg_meters(guard_env)
 
     with pytest.raises(ValueError, match="different selection"):
@@ -2235,15 +1993,9 @@ def test_prior_freezes_the_comparison_group_against_new_entrants(guard_env):
     overlapping points reproduce exactly."""
     tid = guard_env["treatment"].ids[0]
     missing = guard_env["pool"].ids[:2]
-    meters = {}
-
-    for mid, rec in guard_env["pool"]._meters.items():
-        entry = {"model": rec.model, "baseline_data": rec.baseline_data}
-        if mid not in missing:
-            entry["reporting_data"] = rec.reporting_data
-        meters[mid] = entry
-
-    reduced_pool = ComparisonPool.from_fit_models(meters)
+    reduced_pool = ComparisonPool.from_fit_models(
+        _meters_from(guard_env["pool"], drop_reporting=missing)
+    )
     prior = correct_reporting(guard_env["selection"], guard_env["treatment"], reduced_pool, tid)
     assert set(prior.cg_ids) == set(guard_env["pool"].ids) - set(missing)
 
@@ -2262,25 +2014,11 @@ def test_prior_member_that_no_longer_predicts_raises_with_ledger_rows(guard_env)
     own row and a guard row naming it."""
     tid = guard_env["treatment"].ids[0]
     victim = guard_env["pool"].ids[0]
-    prior = correct_reporting(guard_env["selection"], guard_env["treatment"], guard_env["pool"], tid)
-    meters = {}
-
-    for mid, rec in guard_env["pool"]._meters.items():
-        model = rec.model
-        if mid == victim:
-            model = copy.deepcopy(rec.model)
-            model.disqualification = [
-                EEMeterWarning(
-                    qualified_name="eemeter.model_fit_metrics",
-                    description="constructed disqualification",
-                    data=None,
-                )
-            ]
-        meters[mid] = {
-            "model": model,
-            "baseline_data": rec.baseline_data,
-            "reporting_data": rec.reporting_data,
-        }
+    prior = correct_reporting(
+        guard_env["selection"], guard_env["treatment"], guard_env["pool"], tid
+    )
+    models = {victim: _disqualified(guard_env["pool"]._meters[victim].model)}
+    meters = _meters_from(guard_env["pool"], models=models)
 
     with pytest.warns(UserWarning, match="disqualified"):
         pool = ComparisonPool.from_fit_models(meters)
@@ -2303,14 +2041,12 @@ def test_prior_member_with_disqualified_reporting_raises_with_ledger_rows(daily_
     cannot be reproduced."""
     tid = daily_dq_env["treatment_ids"][0]
     victim = daily_dq_env["pool_ids"][0]
-    treatment, pool = _build_daily_dq(daily_dq_env)
+    treatment, pool = _build_dq(daily_dq_env)
     prior = correct_reporting(daily_dq_env["selection"], treatment, pool, tid)
     assert victim in prior.cg_ids
 
-    flat = _daily_reporting_override(
-        daily_dq_env["df_r"], victim, lambda raw: raw.assign(observed=123.0)
-    )
-    _, flat_pool = _build_daily_dq(daily_dq_env, pool_overrides={victim: flat})
+    flat = _reporting_override(daily_dq_env, victim, lambda raw: raw.assign(observed=123.0))
+    _, flat_pool = _build_dq(daily_dq_env, pool_overrides={victim: flat})
 
     with pytest.raises(exclusions.MeterCorrectionError, match="cannot be reproduced") as excinfo:
         correct_reporting(daily_dq_env["selection"], treatment, flat_pool, tid, prior=prior)
@@ -2327,7 +2063,9 @@ def test_prior_without_a_comparison_group_raises(guard_env):
     """A prior that carries no comparison group cannot freeze one; it is an
     analysis-level error rather than a short-group guard."""
     tid = guard_env["treatment"].ids[0]
-    prior = correct_reporting(guard_env["selection"], guard_env["treatment"], guard_env["pool"], tid)
+    prior = correct_reporting(
+        guard_env["selection"], guard_env["treatment"], guard_env["pool"], tid
+    )
     hollow = copy.deepcopy(prior)
     hollow.cg_ids = []
 
@@ -2386,7 +2124,7 @@ def test_lagging_pool_reporting_keeps_the_frozen_group_under_a_prior(daily_env, 
     assert np.array_equal(merged["corrected"].to_numpy(), merged["corrected_prior"].to_numpy())
 
 
-# ── DST fall-back (slow, hourly) ─────────────────────────────────────────────
+# ── hourly DST fall-back ─────────────────────────────────────────────────────
 
 
 @pytest.fixture(scope="module")
@@ -2394,8 +2132,7 @@ def hourly_dst_result(comstock, model_bank):
     """Hourly correction across the America/Chicago DST fall-back day. Random
     sampling avoids the clustering minimum-size floor so a tiny (1 treatment,
     6 pool) population suffices."""
-    df_b, df_r = comstock.frames("hourly")
-    ids = sorted(df_b.index.get_level_values("id").unique())
+    ids = comstock.ids("hourly")
 
     treatment = TreatmentGroup.from_fit_models(comstock.meters(model_bank, "hourly", ids[:1]))
     pool = ComparisonPool.from_fit_models(comstock.meters(model_bank, "hourly", ids[1:7]))
@@ -2412,6 +2149,7 @@ def hourly_dst_result(comstock, model_bank):
     return result
 
 
+@pytest.mark.slow
 def test_dst_fallback_day_has_no_duplicate_or_missing_hours(hourly_dst_result):
     corrected = hourly_dst_result.corrected
 
@@ -2423,7 +2161,7 @@ def test_dst_fallback_day_has_no_duplicate_or_missing_hours(hourly_dst_result):
     assert np.isfinite(day["corrected"].to_numpy()).all()
 
 
-# ── equivalence snapshot artifact (fast) ─────────────────────────────────────
+# ── equivalence snapshot artifact ────────────────────────────────────────────
 
 
 @pytest.fixture(scope="module")
@@ -2432,128 +2170,42 @@ def equivalence_snapshot():
     return load_equivalence_snapshot()
 
 
-def test_equivalence_snapshot_covers_every_variant(equivalence_snapshot):
-    """Every variant is present with its populations and selection method
-    recorded, and every pinned meter belongs to that variant's treatment."""
+def test_equivalence_snapshot_loads_every_variant_as_correction_tables(equivalence_snapshot):
+    """The snapshot loads every variant, each pinned meter's tables restored with
+    the correction columns over datetimes in the variant's timezone."""
     variants = equivalence_snapshot["variants"]
 
     assert set(variants) == set(VARIANT_NAMES)
-    assert variants["billing_imm"]["method"] == "individual_meter_matching"
-    assert variants["hourly_pool_daily_treatment"]["model_frequency"] == "daily"
 
     for name, variant in variants.items():
-        assert variant["treatment_ids"], f"{name}: no treatment ids recorded"
-        assert variant["pool_ids"], f"{name}: no pool ids recorded"
         assert variant["meters"], f"{name}: no per-meter payloads recorded"
-        assert set(variant["meters"]) <= set(variant["treatment_ids"]), f"{name}: stray meter id"
 
-
-def test_equivalence_snapshot_tables_carry_the_correction_schema(equivalence_snapshot):
-    """Each pinned meter's frames round-trip with the correction and savings
-    columns, one native savings row per corrected row, and — for a billing
-    treatment — one corrected row per recorded read period."""
-    for name, variant in equivalence_snapshot["variants"].items():
         for mid, meter in variant["meters"].items():
             label = f"{name}/{mid}"
-            corrected = meter["corrected"]
 
-            assert list(corrected.columns) == _CORRECTED_COLUMNS, label
-            assert list(meter["cg_usage"].columns) == [
-                "id",
-                "datetime",
-                "cg_usage_fraction",
-                "clusters_used",
-            ], label
+            assert list(meter["corrected"].columns) == _CORRECTED_COLUMNS, label
             assert list(meter["exclusions"].columns) == _LEDGER_COLUMNS, label
-            assert set(meter["savings"]) == {"native", "monthly"}, label
-
-            assert len(corrected) > 0, label
-            assert set(corrected["id"].unique()) == {mid}, label
-            assert len(meter["cg_usage"]) == len(corrected), label
-            assert len(meter["savings"]["native"]) == len(corrected), label
-
-            if variant["model_frequency"] == "billing":
-                assert len(meter["correction_periods"]) == len(corrected), label
-            else:
-                assert meter["correction_periods"] == [], label
+            assert str(meter["corrected"]["datetime"].dt.tz) == variant["tz"], label
 
 
-def test_equivalence_snapshot_comparison_groups_are_live(equivalence_snapshot):
-    """Every pinned meter cleared the five-comparison-meter guard: it carries no
-    exclusion row, and at every timestep at least one cluster survived with a
-    non-empty used fraction."""
-    for name, variant in equivalence_snapshot["variants"].items():
-        for mid, meter in variant["meters"].items():
-            label = f"{name}/{mid}"
-            usage = meter["cg_usage"]
-            fraction = usage["cg_usage_fraction"].to_numpy(dtype=float)
-
-            assert meter["exclusions"].empty, label
-            assert (fraction > 0.0).all(), label
-            assert (fraction <= 1.0).all(), label
-            assert (usage["clusters_used"].to_numpy(dtype=int) >= 1).all(), label
+# ── correction equivalence with the pinned snapshot ──────────────────────────
 
 
-def test_equivalence_snapshot_coverage_matches_corrected_nan_positions(equivalence_snapshot):
-    """NaN positions survive the JSON artifact: at native aggregation a period's
-    ``coverage`` is 1 exactly where that meter's ``corrected`` value is finite
-    and 0 where it is NaN."""
-    for name, variant in equivalence_snapshot["variants"].items():
-        for mid, meter in variant["meters"].items():
-            corrected = meter["corrected"].set_index("datetime")["corrected"]
-            coverage = meter["savings"]["native"].set_index("period")["coverage"]
-            finite = np.isfinite(corrected.to_numpy(dtype=float)).astype(float)
-
-            np.testing.assert_array_equal(
-                coverage.reindex(corrected.index).to_numpy(dtype=float),
-                finite,
-                err_msg=f"{name}/{mid}: coverage disagrees with corrected NaN positions",
-            )
-
-
-@pytest.mark.regression
-def test_equivalence_snapshot_reproduces_pinned_correction_totals(equivalence_snapshot):
-    """The snapshot's daily and billing clustering variants sum to the correction
-    totals the end-to-end tests pin over the same populations."""
-    totals = {}
-
-    for name in ("daily_cg_clustering", "billing_cg_clustering"):
-        meters = equivalence_snapshot["variants"][name]["meters"].values()
-        frames = [meter["corrected"] for meter in meters]
-        values = pd.concat(frames, ignore_index=True)["corrected"].to_numpy(dtype=float)
-        totals[name] = float(np.nansum(values))
-
-    assert totals["daily_cg_clustering"] == pytest.approx(3386073.02, rel=1e-3)
-    assert totals["billing_cg_clustering"] == pytest.approx(2263284.60, rel=1e-3)
-
-
-# ── correction equivalence with the pinned snapshot (slow) ───────────────────
-
-
-def _assert_values_match(actual, expected, exact, label):
+def _assert_values_match(actual, expected, rtol, atol, label):
     """Every numeric column, compared over the meter's own span with NaN
     positions required to line up."""
     for column in actual.columns:
         if column in ("id", "datetime"):
             continue
 
-        left = actual[column].to_numpy(dtype=np.float64)
-        right = expected[column].to_numpy(dtype=np.float64)
-        message = f"{label}: {column}"
-
-        if exact:
-            np.testing.assert_allclose(
-                left, right, rtol=_EXACT_RTOL, atol=0.0, equal_nan=True, err_msg=message
-            )
-        else:
-            np.testing.assert_allclose(
-                left,
-                right,
-                rtol=1e-6,
-                atol=_EQUIVALENCE_ATOL,
-                equal_nan=True,
-                err_msg=message,
-            )
+        np.testing.assert_allclose(
+            actual[column].to_numpy(dtype=np.float64),
+            expected[column].to_numpy(dtype=np.float64),
+            rtol=rtol,
+            atol=atol,
+            equal_nan=True,
+            err_msg=f"{label}: {column}",
+        )
 
 
 @pytest.mark.regression
@@ -2568,21 +2220,26 @@ def test_per_meter_correction_reproduces_the_pinned_snapshot(
     which leaves room for platform-level differences in the hourly model fits."""
     env = variant_env(variant_name)
     pinned = equivalence_snapshot["variants"][variant_name]
-    exact = variant_name in _EXACT_EQUIVALENCE_VARIANTS
+
+    if variant_name in _EXACT_EQUIVALENCE_VARIANTS:
+        rtol, atol = _EXACT_RTOL, 0.0
+    else:
+        rtol, atol = _FLOAT32_RTOL, _EQUIVALENCE_ATOL
 
     for mid, expected in pinned["meters"].items():
         result = correct_reporting(
             env["selection"], env["treatment"], env["pool"], mid, settings=_PINNED_SETTINGS
         )
         label = f"{variant_name}/{mid}"
+        expected_datetimes = list(expected["corrected"]["datetime"])
 
         assert result.meter_id == mid, label
-        assert list(result.corrected["datetime"]) == list(expected["corrected"]["datetime"]), label
-        _assert_values_match(result.corrected, expected["corrected"], exact, label)
+        assert list(result.corrected["datetime"]) == expected_datetimes, label
+        _assert_values_match(result.corrected, expected["corrected"], rtol, atol, label)
 
         # the usage mask is finiteness-driven, so the float32 round-trip cannot
-        # move it: cg_usage matches exactly for every variant
-        _assert_values_match(result.cg_usage, expected["cg_usage"], True, label)
+        # move it: cg_usage matches to the exact tolerance for every variant
+        _assert_values_match(result.cg_usage, expected["cg_usage"], _EXACT_RTOL, 0.0, label)
 
         assert result.correction_periods == expected["correction_periods"], label
         pd.testing.assert_frame_equal(

@@ -14,8 +14,12 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 
-from opendsm.comparison_groups.savings.read_periods import derive_read_periods
+from opendsm.comparison_groups.savings.read_periods import (
+    infer_read_periods,
+    periods_from_boundaries,
+)
 
 
 
@@ -64,12 +68,10 @@ def _lengths(daily, periods):
     return values
 
 
-def test_explicit_boundaries_win_over_inference():
+def test_boundaries_open_each_period_at_its_row():
     daily = _build_daily([(10.0, 90)])
 
-    result = derive_read_periods(
-        daily, read_boundaries=[daily.index[30], daily.index[60]]
-    )
+    result = periods_from_boundaries(daily.index, [daily.index[60], daily.index[30]])
 
     assert result.ledger_reason is None
     starts = [period[0] for period in result.periods]
@@ -78,44 +80,60 @@ def test_explicit_boundaries_win_over_inference():
     assert ends == [daily.index[29], daily.index[59], daily.index[89]]
 
 
-def test_regular_monthly_cycle_detected():
-    specs = [(float(10 + i), 30) for i in range(12)]
+def test_boundary_before_the_first_row_adds_no_period():
+    daily = _build_daily([(10.0, 90)])
+
+    result = periods_from_boundaries(daily.index, [pd.Timestamp("2020-06-01")])
+
+    assert result.ledger_reason is None
+    assert result.periods == [(daily.index[0], daily.index[89])]
+
+
+def test_boundary_after_the_last_row_adds_no_period():
+    daily = _build_daily([(10.0, 90)])
+
+    result = periods_from_boundaries(
+        daily.index, [daily.index[30], pd.Timestamp("2021-06-01")]
+    )
+
+    assert result.ledger_reason is None
+    assert result.periods == [
+        (daily.index[0], daily.index[29]),
+        (daily.index[30], daily.index[89]),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("specs", "expected"),
+    [
+        pytest.param([(float(10 + i), 30) for i in range(12)], [30] * 12, id="monthly"),
+        pytest.param([(float(10 + i), 60) for i in range(6)], [60] * 6, id="bimonthly"),
+        pytest.param(
+            [(10.0, 28), (20.0, 35), (30.0, 42), (40.0, 30), (50.0, 38)],
+            [28, 35, 42, 30, 38],
+            id="irregular_within_median_tolerance",
+        ),
+        pytest.param([(10.0, 45)], [45], id="single_valid_read"),
+        pytest.param(
+            [(10.0, 30), (20.0, 30), (30.0, 30), (40.0, 30), (40.0, 30)],
+            [30, 30, 30, 30, 30],
+            id="merged_identical_reads_subdivided",
+        ),
+        pytest.param([(1.0, 2), (2.0, 30), (3.0, 30)], [32, 30], id="leading_blip_joins_neighbor"),
+        pytest.param(
+            [(2.0, 30), (2.9, 3), (3.0, 30)], [30, 33], id="interior_blip_joins_closer_rate"
+        ),
+    ],
+)
+def test_inferred_period_lengths(specs, expected):
+    """Inference recovers each read's length from per-read constant spreads; a
+    sub-guard run joins its only neighbor, or the neighbor with the closer rate."""
     daily = _build_daily(specs)
 
-    result = derive_read_periods(daily)
+    result = infer_read_periods(daily)
 
     assert result.ledger_reason is None
-    assert _lengths(daily, result.periods) == [30] * 12
-
-
-def test_bimonthly_cycle_detected():
-    specs = [(float(10 + i), 60) for i in range(6)]
-    daily = _build_daily(specs)
-
-    result = derive_read_periods(daily)
-
-    assert result.ledger_reason is None
-    assert _lengths(daily, result.periods) == [60] * 6
-
-
-def test_irregular_cycles_within_median_tolerance_detected():
-    specs = [(10.0, 28), (20.0, 35), (30.0, 42), (40.0, 30), (50.0, 38)]
-    daily = _build_daily(specs)
-
-    result = derive_read_periods(daily)
-
-    assert result.ledger_reason is None
-    assert _lengths(daily, result.periods) == [28, 35, 42, 30, 38]
-
-
-def test_single_valid_read_returns_one_period():
-    daily = _build_daily([(10.0, 45)])
-
-    result = derive_read_periods(daily)
-
-    assert result.ledger_reason is None
-    assert len(result.periods) == 1
-    assert _length(daily, result.periods[0]) == 45
+    assert _lengths(daily, result.periods) == expected
 
 
 def test_dst_spanning_reads_have_no_spurious_boundaries():
@@ -133,7 +151,7 @@ def test_dst_spanning_reads_have_no_spurious_boundaries():
     assert hours.min() < 23.5  # spring-forward day (interior to read 1) is exercised
     assert hours.max() > 24.5  # fall-back day (opening the final read) is exercised
 
-    result = derive_read_periods(daily)
+    result = infer_read_periods(daily)
 
     assert result.ledger_reason is None
     assert _lengths(daily, result.periods) == [45, 46, 46, 46, 46, 46, 46]
@@ -143,7 +161,7 @@ def test_nan_gap_between_reads_yields_no_extra_period():
     daily = _build_daily([(10.0, 34), (20.0, 30)])
     daily.iloc[30:34, 0] = np.nan
 
-    result = derive_read_periods(daily)
+    result = infer_read_periods(daily)
 
     assert result.ledger_reason is None
     assert len(result.periods) == 2
@@ -155,7 +173,7 @@ def test_nan_gap_within_a_read_stays_one_period():
     daily = _build_daily([(10.0, 40)])
     daily.iloc[18:23, 0] = np.nan
 
-    result = derive_read_periods(daily)
+    result = infer_read_periods(daily)
 
     assert result.ledger_reason is None
     assert len(result.periods) == 1
@@ -166,7 +184,7 @@ def test_single_day_spread_blip_is_absorbed():
     daily = _build_daily([(10.0, 40)])
     daily.iloc[20, 0] = 3.0
 
-    result = derive_read_periods(daily)
+    result = infer_read_periods(daily)
 
     assert result.ledger_reason is None
     assert len(result.periods) == 1
@@ -177,92 +195,66 @@ def test_median_backup_subdivides_merged_identical_reads_into_equal_periods():
     specs = [(10.0, 30), (20.0, 30), (30.0, 30), (40.0, 30), (40.0, 30)]
     daily = _build_daily(specs)
 
-    result = derive_read_periods(daily)
+    result = infer_read_periods(daily)
 
     assert result.ledger_reason is None
     assert len(result.periods) == 5
     assert _lengths(daily, result.periods) == [30, 30, 30, 30, 30]
 
 
-def test_flat_reporting_reads_ledger():
-    daily = _build_daily([(10.0, 90)])
-
-    result = derive_read_periods(daily)
-
-    assert result.periods is None
-    assert "cadence" in result.ledger_reason
-
-
-def test_single_day_frame_ledgers_as_too_short():
+def _single_day_frame():
     index = pd.date_range("2021-01-01", periods=1, freq="D", tz=_TZ)
-    daily = pd.DataFrame({"observed": [10.0]}, index=index)
+    frame = pd.DataFrame({"observed": [10.0]}, index=index)
 
-    result = derive_read_periods(daily)
-
-    assert result.periods is None
-    assert "spans 1 days" in result.ledger_reason
+    return frame
 
 
-def test_leading_blip_is_absorbed_into_its_only_neighbour():
-    """A sub-guard run at the start of the series has one neighbour, so it joins
-    the following read rather than becoming a period of its own."""
-    daily = _build_daily([(1.0, 2), (2.0, 30), (3.0, 30)])
+def _all_nan_frame():
+    frame = _build_daily([(10.0, 60)])
+    frame["observed"] = np.nan
 
-    result = derive_read_periods(daily)
-
-    lengths = [(end - start).days + 1 for start, end in result.periods]
-    assert lengths == [32, 30]
+    return frame
 
 
-def test_interior_blip_joins_the_closer_rate_neighbour():
-    """A sub-guard run between two reads joins the neighbour whose rate is
-    nearer: here the right one."""
-    daily = _build_daily([(2.0, 30), (2.9, 3), (3.0, 30)])
-
-    result = derive_read_periods(daily)
-
-    lengths = [(end - start).days + 1 for start, end in result.periods]
-    assert lengths == [30, 33]
-
-
-def test_truncated_final_period_ledgers():
-    specs = [(10.0, 30), (20.0, 30), (30.0, 30), (40.0, 15)]
-    daily = _build_daily(specs)
-
-    result = derive_read_periods(daily)
-
-    assert result.periods is None
-    assert "25-70" in result.ledger_reason
-
-
-def test_observed_all_nan_ledgers():
-    daily = _build_daily([(10.0, 60)])
-    daily["observed"] = np.nan
-
-    result = derive_read_periods(daily)
-
-    assert result.periods is None
-    assert "absent or all NaN" in result.ledger_reason
-
-
-def test_empty_frame_ledgers():
+def _empty_frame():
     index = pd.DatetimeIndex([], tz=_TZ, name="datetime")
-    daily = pd.DataFrame({"observed": pd.Series([], dtype=np.float64)}, index=index)
+    frame = pd.DataFrame({"observed": pd.Series([], dtype=np.float64)}, index=index)
 
-    result = derive_read_periods(daily)
+    return frame
+
+
+@pytest.mark.parametrize(
+    ("make_daily", "reason"),
+    [
+        pytest.param(lambda: _build_daily([(10.0, 90)]), "no recoverable read cadence", id="flat"),
+        pytest.param(_single_day_frame, "span [1] days", id="single_day"),
+        pytest.param(
+            lambda: _build_daily([(10.0, 30), (20.0, 30), (30.0, 30), (40.0, 15)]),
+            "span [15] days, outside the valid 25-70 day range",
+            id="truncated_final_period",
+        ),
+        pytest.param(_all_nan_frame, "absent or all NaN", id="all_nan"),
+        pytest.param(_empty_frame, "absent or all NaN", id="empty"),
+    ],
+)
+def test_uncredible_input_ledgers(make_daily, reason):
+    """Input with no credible read periods yields no periods and a ledger reason."""
+    daily = make_daily()
+
+    result = infer_read_periods(daily)
 
     assert result.periods is None
-    assert "absent or all NaN" in result.ledger_reason
+    assert reason in result.ledger_reason
 
 
 def test_extension_with_prior_redraws_only_trailing_period():
     prior_daily = _build_daily([(10.0, 30), (20.0, 30), (30.0, 26)])
-    prior = derive_read_periods(prior_daily)
+    prior = infer_read_periods(prior_daily)
     assert prior.ledger_reason is None
     assert _lengths(prior_daily, prior.periods) == [30, 30, 26]
 
     extended = _build_daily([(10.0, 30), (20.0, 30), (30.0, 30), (40.0, 30)])
-    result = derive_read_periods(extended, prior_periods=prior.periods)
+    result = infer_read_periods(extended, prior.periods)
 
     assert result.ledger_reason is None
     assert len(result.periods) == 4
@@ -276,7 +268,7 @@ def test_extension_with_prior_redraws_only_trailing_period():
 
 def test_freeze_prevents_earlier_period_redraw_on_extension():
     prior_daily = _build_daily([(10.0, 60), (20.0, 30), (30.0, 30)])
-    prior = derive_read_periods(prior_daily)
+    prior = infer_read_periods(prior_daily)
     assert prior.ledger_reason is None
     # the merged 60-day span was subdivided into two 30-day periods
     assert _lengths(prior_daily, prior.periods) == [30, 30, 30, 30]
@@ -287,14 +279,38 @@ def test_freeze_prevents_earlier_period_redraw_on_extension():
 
     # a global-median recompute over the extended data leaves the leading span
     # as ONE 60-day period (its median rises above the 1.5x subdivide trigger)
-    naive = derive_read_periods(extended)
+    naive = infer_read_periods(extended)
     assert naive.ledger_reason is None
     assert _length(extended, naive.periods[0]) == 60
 
     # freezing the prior keeps the leading span as its two 30-day periods
-    frozen = derive_read_periods(extended, prior_periods=prior.periods)
+    frozen = infer_read_periods(extended, prior.periods)
     assert frozen.ledger_reason is None
     assert _length(extended, frozen.periods[0]) == 30
     assert _length(extended, frozen.periods[1]) == 30
     assert frozen.periods[0] == prior.periods[0]
     assert frozen.periods[1] == prior.periods[1]
+
+
+def test_one_period_prior_infers_like_no_prior():
+    """With a single prior period nothing is kept, so the extension subdivides at
+    its own median cadence."""
+    prior_daily = _build_daily([(10.0, 30)])
+    prior = infer_read_periods(prior_daily)
+    extended = _build_daily([(10.0, 30), (20.0, 30), (30.0, 30), (30.0, 30)])
+
+    result = infer_read_periods(extended, prior.periods)
+
+    assert result.ledger_reason is None
+    assert _lengths(extended, result.periods) == [30, 30, 30, 30]
+
+
+def test_one_period_prior_over_a_constant_spread_ledgers():
+    prior_daily = _build_daily([(10.0, 30)])
+    prior = infer_read_periods(prior_daily)
+    extended = _build_daily([(10.0, 90)])
+
+    result = infer_read_periods(extended, prior.periods)
+
+    assert result.periods is None
+    assert "no recoverable read cadence" in result.ledger_reason

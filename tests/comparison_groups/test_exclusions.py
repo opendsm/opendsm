@@ -132,7 +132,7 @@ def test_meter_correction_error_is_catchable_as_an_eemeter_error():
     )
 
     with pytest.raises(EEMeterError, match="cannot be corrected"):
-        raise exclusions.MeterCorrectionError("treatment meter m1 cannot be corrected", ledger)
+        raise MeterCorrectionError("treatment meter m1 cannot be corrected", ledger)
 
 
 def test_meter_correction_error_carries_the_ledger_rows_explaining_the_drop():
@@ -152,12 +152,6 @@ def test_meter_correction_error_carries_the_ledger_rows_explaining_the_drop():
     assert list(error.exclusions.columns) == ["id", "stage", "origin", "reason", "detail"]
     assert list(error.exclusions["id"]) == ["m1", "p3"]
     pd.testing.assert_frame_equal(error.exclusions, ledger)
-
-
-def test_meter_correction_error_is_exported_from_the_package_root():
-    """``MeterCorrectionError`` imported from ``opendsm.comparison_groups`` is the
-    class defined in the exclusions module, not a copy."""
-    assert MeterCorrectionError is exclusions.MeterCorrectionError
 
 
 def test_table_json_roundtrip_of_empty_ledger():

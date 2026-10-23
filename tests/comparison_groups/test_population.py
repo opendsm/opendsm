@@ -13,20 +13,25 @@
 #  limitations under the License.
 
 import copy
+import hashlib
 import json
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from opendsm.comparison_groups import exclusions
 from opendsm.comparison_groups.common import Data_Settings
 from opendsm.comparison_groups.common import const as _const
 from opendsm.comparison_groups.population import (
     ComparisonPool,
     TreatmentGroup,
+    default_data_settings,
 )
-from opendsm.comparison_groups.selection import select_comparison_group
-from opendsm.eemeter.common.exceptions import DataSufficiencyError
+from opendsm.eemeter.common.exceptions import (
+    DataSufficiencyError,
+    DisqualifiedModelError,
+)
 from opendsm.eemeter.common.warnings import EEMeterWarning
 from opendsm.eemeter.models import (
     DailyBaselineData,
@@ -107,26 +112,36 @@ def test_model_frequency_dispatch_daily_not_billing(daily_meters):
 
 
 def test_model_frequency_dispatch_billing_not_daily(billing_pair):
-    # BillingModel subclasses DailyModel, so isinstance would misclassify; the
-    # exact-type check must resolve to billing when the model frequency comes
-    # from the instances.
+    """A BillingModel, though a DailyModel subclass, resolves to billing."""
     group = TreatmentGroup.from_fit_models(billing_pair)
 
     assert group.model_frequency == "billing"
 
 
-@pytest.mark.parametrize("serialize", ["to_dict", "to_json"])
-def test_from_fit_models_requires_model_frequency_for_payloads(daily_meters, serialize):
+def _payload_meters(daily_meters, serialize):
+    """One pinned daily meter whose model is a ``to_dict``/``to_json`` payload."""
     mid = list(daily_meters)[0]
-    payload = {
+    meters = {
         mid: {
             "model": getattr(daily_meters[mid]["model"], serialize)(),
             "baseline_data": daily_meters[mid]["baseline_data"],
         }
     }
 
+    return meters
+
+
+@pytest.mark.parametrize("serialize", ["to_dict", "to_json"])
+def test_from_fit_models_requires_model_frequency_for_payloads(daily_meters, serialize):
+    payload = _payload_meters(daily_meters, serialize)
+
     with pytest.raises(ValueError, match="model_frequency is required"):
         TreatmentGroup.from_fit_models(payload)
+
+
+@pytest.mark.parametrize("serialize", ["to_dict", "to_json"])
+def test_from_fit_models_builds_payloads_at_the_given_model_frequency(daily_meters, serialize):
+    payload = _payload_meters(daily_meters, serialize)
 
     rebuilt = TreatmentGroup.from_fit_models(payload, model_frequency="daily")
 
@@ -220,19 +235,29 @@ def _without_ghi(model):
     return non_solar
 
 
-def _hourly_baseline_meters(hourly_fit, model_of=lambda model: model):
-    meters = {
-        mid: {"model": model_of(model), "baseline_data": hourly_fit["baseline"][mid]}
-        for mid, model in hourly_fit["models"].items()
-    }
+def _hourly_meters(hourly_fit, reporting=None, model_of=lambda model: model):
+    """The pinned hourly meters with baseline data, plus ``reporting`` (a mapping
+    of id to reporting data) when given; ``model_of`` maps each model."""
+    meters = {}
+
+    for mid, model in hourly_fit["models"].items():
+        meters[mid] = {"model": model_of(model), "baseline_data": hourly_fit["baseline"][mid]}
+        if reporting is not None:
+            meters[mid]["reporting_data"] = reporting[mid]
 
     return meters
+
+
+@pytest.fixture(scope="module")
+def hourly_meters(hourly_fit):
+    """The pinned hourly meters with baseline data only."""
+    return _hourly_meters(hourly_fit)
 
 
 def test_solar_mix_raises_for_a_model_ignoring_its_ghi_data(hourly_fit):
     """Solar is whether a model uses ghi: a model that ignores the ghi column its
     baseline data carries does not pool with models that use ghi."""
-    meters = _hourly_baseline_meters(hourly_fit)
+    meters = _hourly_meters(hourly_fit)
     mid = next(iter(meters))
     meters[mid]["model"] = _without_ghi(meters[mid]["model"])
 
@@ -245,39 +270,61 @@ def test_solar_mix_raises_for_a_model_ignoring_its_ghi_data(hourly_fit):
 def test_partial_reload_of_models_not_using_ghi_is_not_a_solar_mix(hourly_fit):
     """Hourly meters whose models omit ghi reload as one non-solar population
     whether or not their ghi-carrying baseline data is re-attached."""
-    meters = _hourly_baseline_meters(hourly_fit, model_of=_without_ghi)
+    meters = _hourly_meters(hourly_fit, model_of=_without_ghi)
     payload = TreatmentGroup.from_fit_models(meters, model_frequency="hourly").to_json()
     mid = next(iter(meters))
 
     rebuilt = TreatmentGroup.from_json(payload, baseline={mid: meters[mid]["baseline_data"]})
 
     assert rebuilt.ids == list(meters)
-    assert rebuilt._ids_without_baseline() == list(meters)[1:]
+    assert rebuilt.ids_without_baseline() == list(meters)[1:]
 
 
 # -- predictions -------------------------------------------------------------
 
 
-def test_predictions_long_frame_schema(daily_meters):
+def _assert_matrices_equal(actual, expected):
+    """Two ``prediction_matrices`` results hold the same index, ids and arrays."""
+    index, ids, *arrays = actual
+    expected_index, expected_ids, *expected_arrays = expected
+
+    pd.testing.assert_index_equal(index, expected_index)
+    assert ids == expected_ids
+    for name, array, expected_array in zip(
+        ["observed", "modeled", "modeled_unc", "observed_unc"], arrays, expected_arrays
+    ):
+        np.testing.assert_array_equal(array, expected_array, err_msg=name)
+
+
+def test_prediction_frames_schema(daily_meters):
+    """Every meter has a frame of ``observed``, ``modeled`` and ``modeled_unc``
+    on a tz-aware ``datetime`` index."""
     group = TreatmentGroup.from_fit_models(daily_meters)
-    frame = group.predictions("baseline")
 
-    assert list(frame.columns) == [
-        "id",
-        "datetime",
-        "observed",
-        "modeled",
-        "modeled_unc",
-        "observed_unc",
-    ]
-    assert set(frame["id"].unique()) == set(group.ids)
-    assert (frame["observed_unc"] == 0.0).all()
+    frames = group.prediction_frames("baseline")
+
+    assert list(frames) == group.ids
+    for mid, frame in frames.items():
+        assert list(frame.columns) == ["observed", "modeled", "modeled_unc"], mid
+        assert frame.index.name == "datetime"
+        assert str(frame.index.tz) == group.tz
 
 
-def test_predictions_matches_prediction_matrices(daily_meters):
+def test_observed_unc_defaults_to_zero(daily_meters):
     group = TreatmentGroup.from_fit_models(daily_meters)
-    long = group.predictions("baseline")
-    index, ids, observed, modeled, modeled_unc, observed_unc = group._prediction_matrices("baseline")
+    mid = group.ids[0]
+    index = group.prediction_frames("baseline", ids=[mid])[mid].index
+
+    values = group.observed_unc_at(mid, index)
+
+    np.testing.assert_array_equal(values, np.zeros(len(index)))
+
+
+def test_prediction_matrices_match_prediction_frames(daily_meters):
+    group = TreatmentGroup.from_fit_models(daily_meters)
+    frames = group.prediction_frames("baseline")
+
+    index, ids, observed, modeled, modeled_unc, observed_unc = group.prediction_matrices("baseline")
 
     assert observed.dtype == np.float32
     assert modeled.dtype == np.float32
@@ -285,25 +332,25 @@ def test_predictions_matches_prediction_matrices(daily_meters):
     assert observed_unc is None
 
     for col, mid in enumerate(ids):
-        sub = long[long["id"] == mid].set_index("datetime")
-        rows = index.get_indexer(sub.index)
+        frame = frames[mid]
+        rows = index.get_indexer(frame.index)
         np.testing.assert_allclose(
-            observed[rows, col], sub["observed"].to_numpy(dtype=np.float32), rtol=1e-5
+            observed[rows, col], frame["observed"].to_numpy(dtype=np.float32), rtol=1e-5
         )
         np.testing.assert_allclose(
-            modeled[rows, col], sub["modeled"].to_numpy(dtype=np.float32), rtol=1e-5
+            modeled[rows, col], frame["modeled"].to_numpy(dtype=np.float32), rtol=1e-5
         )
         np.testing.assert_allclose(
-            modeled_unc[rows, col], sub["modeled_unc"].to_numpy(dtype=np.float32), rtol=1e-5
+            modeled_unc[rows, col], frame["modeled_unc"].to_numpy(dtype=np.float32), rtol=1e-5
         )
 
 
 def test_billing_predictions_ride_daily_substrate(billing_pair):
     group = TreatmentGroup.from_fit_models(billing_pair)
-    frame = group.predictions("baseline")
+    frames = group.prediction_frames("baseline")
 
     for mid in group.ids:
-        n_rows = len(frame[frame["id"] == mid])
+        n_rows = len(frames[mid])
         n_days = len(billing_pair[mid]["baseline_data"].df)
         n_months = billing_pair[mid]["baseline_data"].df.index.tz_localize(None).to_period(
             "M"
@@ -319,7 +366,7 @@ def test_prediction_matrices_observed_unc_present_when_set(daily_meters):
         meters[mid] = {**entry, "observed_unc": 3.0}
     group = TreatmentGroup.from_fit_models(meters, model_frequency="daily")
 
-    _, _, _, _, _, observed_unc = group._prediction_matrices("baseline")
+    _, _, _, _, _, observed_unc = group.prediction_matrices("baseline")
 
     assert observed_unc is not None
     assert observed_unc.dtype == np.float32
@@ -335,23 +382,10 @@ def test_observed_unc_series_not_covering_window_raises(daily_meters):
     group = TreatmentGroup.from_fit_models(meters, model_frequency="daily")
 
     with pytest.raises(ValueError, match="does not cover the requested window"):
-        group._prediction_matrices("baseline")
+        group.prediction_matrices("baseline")
 
 
 # -- reporting attach --------------------------------------------------------
-
-
-def _hourly_meters(hourly_fit, reporting):
-    meters = {
-        mid: {
-            "model": model,
-            "baseline_data": hourly_fit["baseline"][mid],
-            "reporting_data": reporting[mid],
-        }
-        for mid, model in hourly_fit["models"].items()
-    }
-
-    return meters
 
 
 @pytest.mark.slow
@@ -361,20 +395,20 @@ def test_reload_with_cumulative_reporting_matches_full_repredict(hourly_fit):
     half = TreatmentGroup.from_fit_models(
         _hourly_meters(hourly_fit, hourly_fit["half_reporting"]), model_frequency="hourly"
     )
-    half_predictions = half.predictions("reporting")
+    half_index = half.prediction_matrices("reporting")[0]
 
     extended = TreatmentGroup.from_json(
         half.to_json(), baseline=hourly_fit["baseline"], reporting=hourly_fit["full_reporting"]
     )
-    extended_predictions = extended.predictions("reporting")
+    extended_predictions = extended.prediction_matrices("reporting")
 
     fresh = TreatmentGroup.from_fit_models(
         _hourly_meters(hourly_fit, hourly_fit["full_reporting"]), model_frequency="hourly"
     )
-    fresh_predictions = fresh.predictions("reporting")
+    fresh_predictions = fresh.prediction_matrices("reporting")
 
-    assert len(half_predictions) < len(extended_predictions)
-    pd.testing.assert_frame_equal(extended_predictions, fresh_predictions)
+    assert len(half_index) < len(extended_predictions[0])
+    _assert_matrices_equal(extended_predictions, fresh_predictions)
 
 
 def _new_york_reporting(comstock, mid):
@@ -415,13 +449,38 @@ def test_from_json_reporting_timezone_mismatch_raises(comstock, daily_meters):
 # -- loadshape data ----------------------------------------------------------
 
 
-def test_loadshape_default_time_period_daily(daily_meters):
-    group = TreatmentGroup.from_fit_models(daily_meters)
+@pytest.mark.parametrize(
+    "meters_fixture, time_period",
+    [
+        ("daily_meters", _const.TimePeriod.SEASONAL_DAY_OF_WEEK),
+        ("billing_pair", _const.TimePeriod.MONTH),
+        ("hourly_meters", _const.TimePeriod.SEASONAL_HOURLY_DAY_OF_WEEK),
+    ],
+    ids=["daily", "billing", "hourly"],
+)
+def test_loadshape_default_time_period(request, meters_fixture, time_period):
+    """Without data settings, loadshapes use the model frequency's time period."""
+    group = TreatmentGroup.from_fit_models(request.getfixturevalue(meters_fixture))
+
     data = group.loadshape_data("modeled")
 
-    assert data.settings.time_period == _const.TimePeriod.SEASONAL_DAY_OF_WEEK
-    assert data.settings.loadshape_type == _const.LoadshapeType.MODELED
-    assert data.settings.max_pool_size == len(group.ids)
+    assert data.settings.time_period == time_period
+
+
+def test_default_data_settings_leave_interpolation_off():
+    """The default loadshape settings take ``Data_Settings``'s own defaults
+    beyond the time period, so a meter missing a time is not filled."""
+    settings = default_data_settings("daily")
+
+    assert settings.interpolate_missing is False
+    assert settings.model_dump() == Data_Settings(
+        time_period=_const.TimePeriod.SEASONAL_DAY_OF_WEEK
+    ).model_dump()
+
+
+def test_default_data_settings_unknown_model_frequency_raises():
+    with pytest.raises(ValueError, match="model_frequency must be one of"):
+        default_data_settings("weekly")
 
 
 def test_loadshape_data_carries_caller_data_settings(daily_meters):
@@ -431,7 +490,8 @@ def test_loadshape_data_carries_caller_data_settings(daily_meters):
     caller = Data_Settings(
         agg_type=_const.AggType.MEDIAN,
         time_period=_const.TimePeriod.SEASONAL_DAY_OF_WEEK,
-        interpolate_missing=False,
+        interpolate_missing=True,
+        min_data_pct_required=0.6,
         season={"june": "shoulder", "september": "shoulder"},
         weekday_weekend={"friday": "weekend"},
         max_pool_size=1,
@@ -441,8 +501,8 @@ def test_loadshape_data_carries_caller_data_settings(daily_meters):
     settings = group.loadshape_data("modeled", caller).settings
 
     assert settings.agg_type == _const.AggType.MEDIAN
-    assert settings.interpolate_missing is False
-    assert settings.min_data_pct_required is None
+    assert settings.interpolate_missing is True
+    assert settings.min_data_pct_required == 0.6
     assert settings.season.model_dump() == caller.season.model_dump()
     assert settings.weekday_weekend.model_dump() == caller.weekday_weekend.model_dump()
     assert settings.loadshape_type == _const.LoadshapeType.MODELED
@@ -461,24 +521,6 @@ def test_loadshape_data_carries_min_data_pct_required(daily_meters):
     assert settings.min_data_pct_required == 0.5
 
 
-def test_loadshape_default_time_period_billing(billing_pair):
-    group = TreatmentGroup.from_fit_models(billing_pair)
-    data = group.loadshape_data("modeled")
-
-    assert data.settings.time_period == _const.TimePeriod.MONTH
-
-
-def test_loadshape_default_time_period_hourly(hourly_fit):
-    meters = {
-        mid: {"model": model, "baseline_data": hourly_fit["baseline"][mid]}
-        for mid, model in hourly_fit["models"].items()
-    }
-    group = TreatmentGroup.from_fit_models(meters, model_frequency="hourly")
-    data = group.loadshape_data("modeled")
-
-    assert data.settings.time_period == _const.TimePeriod.SEASONAL_HOURLY_DAY_OF_WEEK
-
-
 def test_loadshape_observed_basis_skips_predict(daily_meters):
     group = TreatmentGroup.from_fit_models(daily_meters)
 
@@ -491,7 +533,7 @@ def test_loadshape_observed_basis_skips_predict(daily_meters):
 
 def test_loadshape_error_basis_guards_zero_modeled(daily_meters):
     group = TreatmentGroup.from_fit_models(daily_meters)
-    group._ensure_pred("baseline")
+    group.prediction_frames("baseline")
     first = list(group._baseline_pred)[0]
     modeled_col = group._baseline_pred[first].columns.get_loc("modeled")
     group._baseline_pred[first].iloc[0, modeled_col] = 0.0
@@ -511,41 +553,30 @@ def _short_baseline(entry):
     return short
 
 
-def test_billing_loadshape_requires_full_year(billing_pair):
-    """Selection, not ``loadshape_data``, rejects a treatment population in which
-    every meter is short of 12 baseline months, naming each meter; the
-    population is left unchanged."""
-    truncated = {mid: _short_baseline(entry) for mid, entry in billing_pair.items()}
-    group = TreatmentGroup.from_fit_models(truncated, model_frequency="billing")
-    pool = ComparisonPool.from_fit_models(billing_pair, model_frequency="billing")
-
-    with pytest.raises(ValueError, match="at least 12 baseline months") as excinfo:
-        select_comparison_group(group, pool, method="random_sampling")
-
-    for mid in billing_pair:
-        assert f"{mid}: baseline months: 1" in str(excinfo.value)
-    assert group.ids == list(billing_pair)
-    assert group.exclusions.empty
-
-
-def test_billing_pool_short_baseline_excluded_not_raised(billing_pair):
-    """The short-baseline helper reports the offender and its month count
-    without touching the pool, and ``loadshape_data(exclude=)`` leaves the
-    offender out of the loadshapes and the pool size."""
+def test_short_baseline_months_reports_only_the_short_meter(billing_pair):
+    """A meter spanning one baseline month is reported with its month count; a
+    full-year meter is not, and the pool keeps both meters and an empty ledger."""
     good_mid, good_entry = list(billing_pair.items())[0]
     bad_mid, bad_entry = list(billing_pair.items())[1]
     meters = {good_mid: good_entry, bad_mid: _short_baseline(bad_entry)}
     pool = ComparisonPool.from_fit_models(meters, model_frequency="billing")
 
-    short = pool._short_baseline_months()
-    data = pool.loadshape_data("modeled", exclude=list(short))
+    short = pool.short_baseline_months()
 
     assert short == {bad_mid: 1}
     assert pool.ids == [good_mid, bad_mid]
     assert pool.exclusions.empty
+
+
+def test_loadshape_data_exclude_leaves_the_meter_out_of_loadshapes_and_pool_size(billing_pair):
+    good_mid, bad_mid = list(billing_pair)
+    pool = ComparisonPool.from_fit_models(billing_pair, model_frequency="billing")
+
+    data = pool.loadshape_data("modeled", exclude=[bad_mid])
+
     assert list(data.loadshape.index.astype(str)) == [str(good_mid)]
-    assert data.settings.time_period == _const.TimePeriod.MONTH
     assert data.settings.max_pool_size == 1
+    assert pool.ids == [good_mid, bad_mid]
 
 
 # -- serialization -----------------------------------------------------------
@@ -567,8 +598,10 @@ def test_json_roundtrip_reattaches_data_and_preserves_tz(daily_meters):
     assert rebuilt.model_frequency == "daily"
     assert rebuilt.tz == group.tz
     assert rebuilt.ids == group.ids
-    assert (rebuilt.predictions("baseline")["observed_unc"] == 1.5).all()
-    pd.testing.assert_frame_equal(group.predictions("baseline"), rebuilt.predictions("baseline"))
+    rebuilt_predictions = rebuilt.prediction_matrices("baseline")
+    _, _, _, modeled, _, observed_unc = rebuilt_predictions
+    assert (observed_unc[np.isfinite(modeled)] == 1.5).all()
+    _assert_matrices_equal(rebuilt_predictions, group.prediction_matrices("baseline"))
 
 
 def test_json_header_carries_no_window_fields(daily_meters):
@@ -593,7 +626,9 @@ def test_ndjson_roundtrip(daily_meters):
     )
 
     assert len(text.splitlines()) == len(group.ids) + 1
-    pd.testing.assert_frame_equal(group.predictions("reporting"), rebuilt.predictions("reporting"))
+    _assert_matrices_equal(
+        rebuilt.prediction_matrices("reporting"), group.prediction_matrices("reporting")
+    )
 
 
 def test_observed_unc_series_roundtrip_preserves_index_tz(daily_meters):
@@ -621,6 +656,11 @@ def test_to_json_refuses_above_ceiling(daily_meters, monkeypatch):
     with pytest.raises(ValueError, match="ceiling"):
         group.to_json()
 
+
+def test_to_ndjson_has_no_model_ceiling(daily_meters, monkeypatch):
+    group = TreatmentGroup.from_fit_models(daily_meters)
+    monkeypatch.setattr("opendsm.comparison_groups.population._MAX_JSON_MODELS", 1)
+
     text = group.to_ndjson()
 
     assert len(text.splitlines()) == len(group.ids) + 1
@@ -644,20 +684,27 @@ def test_reload_without_baseline_predicts_reporting_as_with_it(daily_meters):
     rebuilt = TreatmentGroup.from_json(group.to_json(), reporting=_reporting_map(daily_meters))
 
     assert (rebuilt.tz, rebuilt.is_electricity_data) == (group.tz, group.is_electricity_data)
-    pd.testing.assert_frame_equal(rebuilt.predictions("reporting"), group.predictions("reporting"))
+    _assert_matrices_equal(
+        rebuilt.prediction_matrices("reporting"), group.prediction_matrices("reporting")
+    )
 
 
-def test_reload_without_baseline_refuses_baseline_work(daily_meters):
+@pytest.mark.parametrize(
+    "work, message",
+    [
+        (lambda population: population.prediction_frames("baseline"), "no baseline data attached"),
+        (lambda population: population.loadshape_data("modeled"), "Loadshapes require baseline"),
+    ],
+    ids=["baseline_predictions", "loadshapes"],
+)
+def test_reload_without_baseline_refuses_baseline_work(daily_meters, work, message):
     """Baseline predictions and loadshapes need the baseline data a reload
     may omit, and say so rather than failing on a missing frame."""
     group = TreatmentGroup.from_fit_models(daily_meters)
     rebuilt = TreatmentGroup.from_ndjson(group.to_ndjson())
 
-    with pytest.raises(ValueError, match="no baseline data attached"):
-        rebuilt.predictions("baseline")
-
-    with pytest.raises(ValueError, match="Loadshapes require baseline data"):
-        rebuilt.loadshape_data("modeled")
+    with pytest.raises(ValueError, match=message):
+        work(rebuilt)
 
 
 def test_from_fit_models_requires_baseline(daily_meters):
@@ -705,12 +752,15 @@ def test_comparison_pool_trim_records_excluded(daily_meters):
     ).all()
 
 
-def test_comparison_pool_trim_is_deterministic(daily_meters):
-    first = ComparisonPool.from_fit_models(daily_meters, max_pool_size=2, seed=42)
-    second = ComparisonPool.from_fit_models(daily_meters, max_pool_size=2, seed=42)
+def test_comparison_pool_trim_keeps_the_lowest_seeded_sha256_ids(daily_meters):
+    """For seed 42 the pool keeps the two ids with the smallest SHA-256 of
+    ``"42:<id>"``, a ranking that is the same in every process."""
+    ranked = sorted(daily_meters, key=lambda mid: hashlib.sha256(f"42:{mid}".encode()).digest())
 
-    assert first.ids == second.ids
-    assert list(first.exclusions["id"]) == list(second.exclusions["id"])
+    pool = ComparisonPool.from_fit_models(daily_meters, max_pool_size=2, seed=42)
+
+    assert set(pool.ids) == set(ranked[:2])
+    assert set(pool.exclusions["id"]) == set(ranked[2:])
 
 
 def test_comparison_pool_trim_ignores_input_order(daily_meters):
@@ -735,18 +785,14 @@ def test_comparison_pool_trim_ignores_removing_a_trimmed_meter(daily_meters):
     assert smaller.ids == full.ids
 
 
-def test_comparison_pool_omitted_cap_reads_the_module_default(daily_meters, monkeypatch):
-    monkeypatch.setattr("opendsm.comparison_groups.population._MAX_POOL_SIZE", 2)
-
+def test_comparison_pool_omitted_cap_is_the_data_settings_default(daily_meters):
     pool = ComparisonPool.from_fit_models(daily_meters)
 
-    assert len(pool) == 2
-    assert pool.max_pool_size == 2
+    assert pool.max_pool_size == 10000
+    assert pool.ids == list(daily_meters)
 
 
-def test_comparison_pool_cap_none_keeps_every_meter(daily_meters, monkeypatch):
-    monkeypatch.setattr("opendsm.comparison_groups.population._MAX_POOL_SIZE", 2)
-
+def test_comparison_pool_cap_none_keeps_every_meter(daily_meters):
     pool = ComparisonPool.from_fit_models(daily_meters, max_pool_size=None)
 
     assert pool.ids == list(daily_meters)
@@ -755,14 +801,11 @@ def test_comparison_pool_cap_none_keeps_every_meter(daily_meters, monkeypatch):
 
 
 @pytest.mark.parametrize("fmt", ["json", "ndjson"])
-def test_reload_above_the_cap_keeps_every_meter_and_the_recorded_trim(
-    daily_meters, monkeypatch, fmt
-):
-    """A reload restores the saved meters, ledger, cap and seed and never trims,
-    even when the saved pool exceeds the current default cap."""
+def test_reload_restores_the_saved_meters_ledger_cap_and_seed(daily_meters, fmt):
+    """A reload of a trimmed pool keeps every saved meter, the recorded trim
+    rows, the cap and the seed."""
     pool = ComparisonPool.from_fit_models(daily_meters, max_pool_size=3, seed=5)
     payload = getattr(pool, f"to_{fmt}")()
-    monkeypatch.setattr("opendsm.comparison_groups.population._MAX_POOL_SIZE", 1)
 
     rebuilt = getattr(ComparisonPool, f"from_{fmt}")(payload)
 
@@ -771,13 +814,17 @@ def test_reload_above_the_cap_keeps_every_meter_and_the_recorded_trim(
     assert (rebuilt.max_pool_size, rebuilt.seed) == (3, 5)
 
 
-@pytest.mark.parametrize("fmt", ["json", "ndjson"])
-@pytest.mark.parametrize("kwarg", [{"max_pool_size": 2}, {"seed": 1}])
-def test_reload_rejects_trim_arguments(daily_meters, fmt, kwarg):
-    payload = getattr(ComparisonPool.from_fit_models(daily_meters), f"to_{fmt}")()
+def test_constructor_ledger_precedes_the_trim_rows(daily_meters):
+    """A ledger given to the constructor is kept, with the pool's trim rows
+    appended after it."""
+    prior = exclusions.append(
+        exclusions.empty_ledger(), ["m0"], "population", "baseline_data", "too short"
+    )
 
-    with pytest.raises(TypeError, match=next(iter(kwarg))):
-        getattr(ComparisonPool, f"from_{fmt}")(payload, **kwarg)
+    pool = ComparisonPool.from_fit_models(daily_meters, ledger=prior, max_pool_size=2, seed=0)
+
+    assert list(pool.exclusions["origin"]) == ["baseline_data", "pool_trim", "pool_trim"]
+    assert pool.exclusions["id"].iloc[0] == "m0"
 
 
 def test_exclusions_roundtrip_through_json(daily_meters):
@@ -790,24 +837,6 @@ def test_exclusions_roundtrip_through_json(daily_meters):
 
 
 # -- from_data serial fit ----------------------------------------------------
-
-
-@pytest.mark.slow
-def test_from_data_fits_serially(_comstock_daily_all):
-    df_b, _ = _comstock_daily_all
-    ids = sorted(df_b.index.get_level_values("id").unique())[:2]
-    baseline = {
-        str(mid): DailyBaselineData(
-            df_b.xs(mid, level="id").reset_index(), is_electricity_data=True
-        )
-        for mid in ids
-    }
-
-    group = TreatmentGroup.from_data(baseline, "daily")
-
-    assert group.model_frequency == "daily"
-    assert set(group.ids) == set(baseline)
-    assert len(group.predictions("baseline")) > 0
 
 
 @pytest.mark.slow
@@ -835,7 +864,6 @@ def test_from_data_excludes_meter_failing_baseline_sufficiency(_comstock_daily_a
     assert row["origin"] == "baseline_data"
     assert row["reason"] == "baseline data insufficient to fit a model"
     assert "eemeter.sufficiency_criteria" in row["detail"]
-    assert len(group.predictions("baseline")) > 0
 
 
 @pytest.mark.slow
@@ -861,41 +889,15 @@ def test_from_data_attaches_reporting_and_ignores_unfit_meters(_comstock_daily_a
     assert set(group.ids) == {str(mid) for mid in ids[:2]}
     for mid in group.ids:
         assert group._meters[mid].reporting_data is reporting[mid]
-    predicted = group.predictions("reporting")
-    assert set(predicted["id"]) == set(group.ids)
+    assert list(group.prediction_frames("reporting")) == group.ids
 
 
-def test_from_data_unknown_reporting_id_raises_before_fitting(_comstock_daily_all):
-    df_b, df_r = _comstock_daily_all
-    mid = sorted(df_b.index.get_level_values("id").unique())[0]
-    baseline = {
-        str(mid): DailyBaselineData(df_b.xs(mid, level="id").reset_index(), is_electricity_data=True)
-    }
-    stray = DailyReportingData(df_r.xs(mid, level="id").reset_index(), is_electricity_data=True)
-
-    with pytest.raises(KeyError, match="not in baseline: \\['does-not-exist'\\]"):
-        TreatmentGroup.from_data(baseline, "daily", reporting={"does-not-exist": stray})
-
-
-@pytest.mark.slow
-def test_from_data_reporting_timezone_mismatch_raises(comstock, _comstock_daily_all):
-    df_b, _ = _comstock_daily_all
-    mid = sorted(df_b.index.get_level_values("id").unique())[0]
-    baseline = {
-        str(mid): DailyBaselineData(df_b.xs(mid, level="id").reset_index(), is_electricity_data=True)
-    }
-    reporting = {str(mid): _new_york_reporting(comstock, mid)}
-
-    with pytest.raises(
-        ValueError, match=f"Meter {mid}: reporting data timezone America/New_York"
-    ):
-        TreatmentGroup.from_data(baseline, "daily", reporting=reporting)
-
-
-def _pinned_fit(monkeypatch, meters, fail=()):
+def _pinned_fit(monkeypatch, meters, fail=(), disqualify=()):
     """Replace ``DailyModel.fit`` with a copy of each meter's pinned model, so
     ``from_data`` runs without fitting. Returns the ids fit, in call order;
-    meters in ``fail`` raise ``DataSufficiencyError``."""
+    meters in ``fail`` raise ``DataSufficiencyError``, and meters in
+    ``disqualify`` raise ``DisqualifiedModelError`` with one disqualification
+    warning on the model."""
     by_baseline = {id(entry["baseline_data"]): mid for mid, entry in meters.items()}
     fitted = []
 
@@ -907,11 +909,60 @@ def _pinned_fit(monkeypatch, meters, fail=()):
 
         vars(self).update(vars(meters[mid]["model"]))
 
+        if mid in disqualify:
+            self.disqualification = [
+                EEMeterWarning(qualified_name="eemeter.test", description="flagged", data=None)
+            ]
+            raise DisqualifiedModelError("model disqualified")
+
         return self
 
     monkeypatch.setattr(DailyModel, "fit", fit)
 
     return fitted
+
+
+def test_from_data_unknown_reporting_id_raises_before_fitting(daily_meters, monkeypatch):
+    fitted = _pinned_fit(monkeypatch, daily_meters)
+    stray = next(iter(daily_meters.values()))["reporting_data"]
+
+    with pytest.raises(KeyError, match="not in baseline: \\['does-not-exist'\\]"):
+        TreatmentGroup.from_data(
+            _baseline_map(daily_meters), "daily", reporting={"does-not-exist": stray}
+        )
+
+    assert fitted == []
+
+
+def test_from_data_reporting_timezone_mismatch_raises(comstock, daily_meters, monkeypatch):
+    _pinned_fit(monkeypatch, daily_meters)
+    mid = list(daily_meters)[0]
+    reporting = {mid: _new_york_reporting(comstock, mid)}
+
+    with pytest.raises(
+        ValueError, match=f"Meter {mid}: reporting data timezone America/New_York"
+    ):
+        TreatmentGroup.from_data(_baseline_map(daily_meters), "daily", reporting=reporting)
+
+
+def test_from_data_ledgers_a_disqualified_model_and_keeps_the_rest(daily_meters, monkeypatch):
+    """A meter whose fit raises ``DisqualifiedModelError`` is one population-stage
+    ``model`` row carrying the model's warnings; the other meters fit."""
+    disqualified = list(daily_meters)[1]
+    _pinned_fit(monkeypatch, daily_meters, disqualify={disqualified})
+
+    group = TreatmentGroup.from_data(_baseline_map(daily_meters), "daily")
+
+    assert group.ids == [mid for mid in daily_meters if mid != disqualified]
+    assert group.exclusions.to_dict("records") == [
+        {
+            "id": disqualified,
+            "stage": "population",
+            "origin": "model",
+            "reason": "fitted model disqualified",
+            "detail": "eemeter.test: flagged",
+        }
+    ]
 
 
 @pytest.mark.parametrize("max_pool_size, n_fit", [(2, 2), (4, 4), (10, 4)])
@@ -957,14 +1008,13 @@ def test_pool_from_data_does_not_replace_a_kept_meter_failing_to_fit(daily_meter
     assert sorted(origins[origins == "pool_trim"].index) == sorted(set(daily_meters) - set(kept))
 
 
-def test_pool_from_data_omitted_cap_reads_the_module_default(daily_meters, monkeypatch):
+def test_pool_from_data_omitted_cap_is_the_data_settings_default(daily_meters, monkeypatch):
     fitted = _pinned_fit(monkeypatch, daily_meters)
-    monkeypatch.setattr("opendsm.comparison_groups.population._MAX_POOL_SIZE", 2)
 
     pool = ComparisonPool.from_data(_baseline_map(daily_meters), "daily")
 
-    assert len(fitted) == 2
-    assert pool.max_pool_size == 2
+    assert pool.max_pool_size == 10000
+    assert fitted == list(daily_meters)
 
 
 def test_pool_from_data_drops_reporting_of_trimmed_meters(daily_meters, monkeypatch):

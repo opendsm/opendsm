@@ -13,10 +13,13 @@
 #  limitations under the License.
 
 
+import importlib
+
 import numpy as np
 import pytest
 
 from opendsm.comparison_groups.savings.model_correction import (
+    MIN_CG_METERS,
     model_correction,
     model_correction_matrix,
 )
@@ -28,6 +31,11 @@ from opendsm.comparison_groups.savings.settings import (
 
 
 
+# the package re-exports a function under the module's name, so attribute lookup
+# would not reach the module
+_MODEL_CORRECTION_MODULE = importlib.import_module(
+    "opendsm.comparison_groups.savings.model_correction"
+)
 
 
 def _settings(**overrides):
@@ -85,8 +93,9 @@ def _scalar_oracle(stack, settings, with_unc):
     """Run the scalar kernel per timestep as the equivalence oracle.
 
     Returns (mTrc[T], mTrc_unc[T], mask[T, M]) with NaN rows where the scalar
-    kernel raises (too few finite comparison meters) — those rows are the matrix
-    kernel's documented degradation and are excluded from equivalence checks.
+    kernel raises because a cluster has too few finite comparison meters; those
+    rows are the matrix kernel's documented degradation and are excluded from
+    equivalence checks. Any other scalar error propagates.
     """
     T = stack["mTr"].shape[0]
     M = stack["oCGr"].shape[1]
@@ -115,7 +124,10 @@ def _scalar_oracle(stack, settings, with_unc):
                 None, mTr_unc_t, oCGr_unc_t, mCGr_unc_t, CGr_corr,
                 stack["CG_label"], stack["T_weight"], settings,
             )
-        except ValueError:
+        except ValueError as e:
+            if "insufficient length" not in str(e):
+                raise
+
             continue
 
         mTrc[t] = _mTrc
@@ -138,15 +150,49 @@ def _matrix(stack, settings, with_unc):
         CGr_corr = stack.get("CGr_corr")
 
     result = model_correction_matrix(
-        stack["oTr"], stack["mTr"], stack["oCGr"], stack["mCGr"],
-        None, mTr_unc, oCGr_unc, mCGr_unc, CGr_corr,
+        stack["mTr"], stack["oCGr"], stack["mCGr"],
+        mTr_unc, oCGr_unc, mCGr_unc, CGr_corr,
         stack["CG_label"], stack["T_weight"], settings,
     )
 
     return result
 
 
-# ── (a) scalar-vs-matrix equivalence on well-populated timesteps ─────────────
+def _assert_matches_oracle(stack, settings, with_unc, atol=1e-9):
+    """Assert the matrix kernel reproduces the scalar oracle on every row the
+    oracle populates: point, uncertainty finiteness and value, and usage mask.
+    Returns the matrix and oracle results."""
+    matrix = _matrix(stack, settings, with_unc)
+    oracle = _scalar_oracle(stack, settings, with_unc)
+    m_mTrc, m_unc, m_mask = matrix
+    s_mTrc, s_unc, s_mask = oracle
+
+    populated = np.isfinite(s_mTrc)
+    assert populated.any(), "the stack produced no timestep the scalar kernel accepts"
+
+    np.testing.assert_allclose(
+        m_mTrc[populated], s_mTrc[populated], rtol=1e-9, atol=atol,
+        err_msg="matrix point correction diverged from the scalar oracle",
+    )
+
+    for t in np.flatnonzero(populated):
+        assert np.isnan(s_unc[t]) == np.isnan(m_unc[t]), (
+            f"unc finiteness mismatch at t={t}: scalar={s_unc[t]} matrix={m_unc[t]}"
+        )
+        assert (m_mask[t] == s_mask[t]).all(), (
+            f"mask mismatch at t={t}: scalar={s_mask[t]} matrix={m_mask[t]}"
+        )
+
+    unc_finite = populated & np.isfinite(s_unc)
+    np.testing.assert_allclose(
+        m_unc[unc_finite], s_unc[unc_finite], rtol=1e-9, atol=atol,
+        err_msg="matrix uncertainty diverged from the scalar oracle",
+    )
+
+    return matrix, oracle
+
+
+# ── scalar-vs-matrix equivalence ──
 
 @pytest.mark.parametrize("model_frequency", ["hourly", "daily", "billing"])
 @pytest.mark.parametrize(
@@ -173,41 +219,7 @@ def test_matrix_matches_scalar_on_populated_timesteps(
 
     stack = _tile_fixture(model_correction_inputs[model_frequency], n_timesteps=6, perturb=0.15, seed=1)
 
-    s_mTrc, s_unc, s_mask = _scalar_oracle(stack, settings, with_unc)
-    m_mTrc, m_unc, m_mask = _matrix(stack, settings, with_unc)
-
-    populated = np.isfinite(s_mTrc)
-    assert populated.any(), "fixture stack produced no well-populated timesteps"
-
-    np.testing.assert_allclose(
-        m_mTrc[populated], s_mTrc[populated], rtol=1e-9, atol=1e-6,
-        err_msg="matrix point correction diverged from scalar on populated rows",
-    )
-
-    for t in np.flatnonzero(populated):
-        assert np.isnan(s_unc[t]) == np.isnan(m_unc[t]), (
-            f"unc finiteness mismatch at t={t}: scalar={s_unc[t]} matrix={m_unc[t]}"
-        )
-        assert (m_mask[t] == s_mask[t]).all(), f"mask mismatch at t={t}"
-
-    unc_finite = populated & np.isfinite(s_unc)
-    if unc_finite.any():
-        np.testing.assert_allclose(
-            m_unc[unc_finite], s_unc[unc_finite], rtol=1e-9, atol=1e-6,
-            err_msg="matrix uncertainty diverged from scalar on populated rows",
-        )
-
-
-def test_matrix_reproduces_committed_fixture_value_on_row_zero(model_correction_inputs):
-    """Row 0 of the tiled stack is the untouched committed fixture, so the matrix
-    kernel's row-0 output pins the same real-data value the scalar snapshot pins."""
-    settings = _settings(algorithm=CorrectionAlgorithm.PCTDID, weight_cluster_aggregation=None)
-    stack = _tile_fixture(model_correction_inputs["daily"], n_timesteps=3, perturb=0.15, seed=2)
-
-    m_mTrc, m_unc, _ = _matrix(stack, settings, with_unc=True)
-
-    assert m_mTrc[0] == pytest.approx(774513.8, rel=1e-4)
-    assert m_unc[0] == pytest.approx(98120.7, rel=1e-4)
+    _assert_matches_oracle(stack, settings, with_unc, atol=1e-6)
 
 
 def test_matrix_matches_scalar_dropped_absent_cluster_renormalized():
@@ -230,16 +242,9 @@ def test_matrix_matches_scalar_dropped_absent_cluster_renormalized():
     stack["oCGr"] = stack["mCGr"] + 3.0 * rng.standard_normal((4, 9))
     stack["mCGr_unc"] = np.full((4, 9), 2.0)
 
-    m_mTrc, m_unc, _ = _matrix(stack, settings, with_unc=True)
-    s_mTrc, s_unc, _ = _scalar_oracle(stack, settings, with_unc=True)
+    (_, m_unc, _), _ = _assert_matches_oracle(stack, settings, with_unc=True)
 
-    populated = np.isfinite(s_mTrc)
-    assert populated.any()
-    np.testing.assert_allclose(m_mTrc[populated], s_mTrc[populated], rtol=1e-9, atol=1e-9)
-
-    unc_finite = populated & np.isfinite(s_unc)
-    assert unc_finite.any()
-    np.testing.assert_allclose(m_unc[unc_finite], s_unc[unc_finite], rtol=1e-9, atol=1e-9)
+    assert np.isfinite(m_unc).any(), "no finite uncertainty to compare"
 
 
 def test_weighted_std_branch_matches_scalar():
@@ -254,12 +259,9 @@ def test_weighted_std_branch_matches_scalar():
     )
     stack = _constructed_stack(n_timesteps=5, seed=1)
 
-    _, m_unc, _ = _matrix(stack, settings, with_unc=True)
-    _, s_unc, _ = _scalar_oracle(stack, settings, with_unc=True)
+    (_, m_unc, _), _ = _assert_matches_oracle(stack, settings, with_unc=True)
 
-    # the weighted-std path yields finite uncertainties here
-    assert np.isfinite(m_unc).all()
-    np.testing.assert_allclose(m_unc, s_unc, rtol=1e-9, atol=1e-9)
+    assert np.isfinite(m_unc).all(), f"weighted-std path left a non-finite band: {m_unc}"
 
 
 @pytest.mark.parametrize(
@@ -280,22 +282,15 @@ def test_matrix_matches_scalar_with_observed_uncertainty_covariance(corr_sign):
     stack["oCGr_unc"] = np.tile(np.linspace(1.0, 3.0, M), (5, 1))
     stack["CGr_corr"] = np.full(M, corr_sign * 0.6)
 
-    m_mTrc, m_unc, _ = _matrix(stack, settings, with_unc=True)
-    s_mTrc, s_unc, _ = _scalar_oracle(stack, settings, with_unc=True)
+    (_, m_unc, _), _ = _assert_matches_oracle(stack, settings, with_unc=True)
 
-    populated = np.isfinite(s_mTrc)
-    assert populated.any()
-    np.testing.assert_allclose(m_mTrc[populated], s_mTrc[populated], rtol=1e-9, atol=1e-9)
-
-    unc_finite = populated & np.isfinite(s_unc)
-    assert unc_finite.any(), "covariance test produced no finite uncertainties to compare"
-    np.testing.assert_allclose(m_unc[unc_finite], s_unc[unc_finite], rtol=1e-9, atol=1e-9)
+    assert np.isfinite(m_unc).any(), "covariance test produced no finite uncertainties to compare"
 
 
-# ── constructed scenarios (unit tests of the aggregation math) ───────────────
+# ── constructed scenarios ──
 
-# Two clusters of four meters each. Constructed inputs (no real paired savings
-# data exists) exercising the aggregation and degradation math directly.
+# Two clusters of four meters each, constructed so each test can place NaNs and
+# magnitudes in a chosen cluster and timestep.
 _LABEL = np.array([0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0])
 _TWEIGHT = np.array([0.5, 0.5])
 
@@ -321,7 +316,7 @@ def _constructed_stack(n_timesteps=4, seed=0):
     return stack
 
 
-# ── (b) degradation semantics — scalar raises, so it cannot be the oracle ────
+# ── degradation semantics ──
 
 def test_sparse_cluster_drops_and_survivor_renormalizes():
     """A cluster with <3 finite meters drops from that timestep and the
@@ -373,28 +368,44 @@ def test_all_clusters_degenerate_yields_nan():
 
 
 def test_degraded_cluster_meters_leave_the_usage_mask():
-    """The mask reports the meters that entered the point: a cluster that drops
-    below three finite meters at a timestep has every column cleared there, its
-    finite members included; the surviving cluster keeps its finite columns; and
-    a row with no survivor is all False."""
+    """A cluster that drops below three finite meters at a timestep has every
+    column cleared from the usage mask there, its finite members included, while
+    the surviving cluster keeps its finite columns."""
     settings = _settings(algorithm=CorrectionAlgorithm.ODID)
-    stack = _constructed_stack(n_timesteps=3, seed=7)
-
-    # t=0: cluster 0 (columns 0-3) falls to 2 finite meters; cluster 1 survives
-    stack["oCGr"][0, 0] = np.nan
-    stack["oCGr"][0, 1] = np.nan
-    # t=1: both clusters degenerate
-    stack["oCGr"][1, 0:2] = np.nan
-    stack["oCGr"][1, 4:6] = np.nan
+    stack = _constructed_stack(n_timesteps=1, seed=7)
+    # cluster 0 (columns 0-3) falls to 2 finite meters; cluster 1 survives
+    stack["oCGr"][0, 0:2] = np.nan
 
     m_mTrc, _, mask = _matrix(stack, settings, with_unc=True)
 
     assert np.isfinite(m_mTrc[0])
-    assert not mask[0, 0:4].any()
-    assert mask[0, 4:8].all()
-    assert np.isnan(m_mTrc[1])
-    assert not mask[1].any()
-    assert mask[2].all()
+    assert not mask[0, 0:4].any(), f"dropped cluster still marked used: {mask[0, 0:4]}"
+    assert mask[0, 4:8].all(), f"surviving cluster not marked used: {mask[0, 4:8]}"
+
+
+def test_row_with_no_surviving_cluster_uses_no_meters():
+    """A timestep where every cluster drops below three finite meters is NaN and
+    marks no comparison meter as used."""
+    settings = _settings(algorithm=CorrectionAlgorithm.ODID)
+    stack = _constructed_stack(n_timesteps=1, seed=7)
+    stack["oCGr"][0, 0:2] = np.nan
+    stack["oCGr"][0, 4:6] = np.nan
+
+    m_mTrc, _, mask = _matrix(stack, settings, with_unc=True)
+
+    assert np.isnan(m_mTrc[0])
+    assert not mask[0].any(), f"no-survivor row marks meters used: {mask[0]}"
+
+
+def test_fully_finite_row_uses_every_meter():
+    """With every meter finite and every cluster weighted, the usage mask marks
+    every comparison meter."""
+    settings = _settings(algorithm=CorrectionAlgorithm.ODID)
+    stack = _constructed_stack(n_timesteps=2, seed=7)
+
+    _, _, mask = _matrix(stack, settings, with_unc=True)
+
+    assert mask.all(), f"fully finite stack left meters unused: {mask}"
 
 
 def test_ess_fallback_finite_unc_matches_scalar():
@@ -410,11 +421,8 @@ def test_ess_fallback_finite_unc_matches_scalar():
     )
     stack = _constructed_stack(n_timesteps=3, seed=4)
 
-    # t=1: cluster 1 (meters 4-7) is dominated by one huge-magnitude meter, so its
-    # magnitude weight carries ~99% -> Kish effective sample size below 2. The cap
-    # is disabled (weight_cap=1.0) so the concentration survives to the fallback;
-    # at the default 0.5 cap the water-fill would hold the ESS at or above 2 and
-    # the fallback branch would never fire.
+    # t=1: one 1e6-magnitude meter carries ~99% of cluster 1's weight; weight_cap=1.0
+    # keeps the default 0.5 cap's water-fill from lifting the ESS back to 2
     stack["mCGr"][1, 4] = 1.0e6
 
     # the concentration must actually drive the uncapped Kish ESS below 2, or the
@@ -423,15 +431,10 @@ def test_ess_fallback_finite_unc_matches_scalar():
     cluster1_w = cluster1_mag / cluster1_mag.sum()
     assert 1.0 / np.sum(cluster1_w**2) < 2.0
 
-    m_mTrc, m_unc, _ = _matrix(stack, settings, with_unc=True)
-    s_mTrc, s_unc, _ = _scalar_oracle(stack, settings, with_unc=True)
+    (m_mTrc, m_unc, _), _ = _assert_matches_oracle(stack, settings, with_unc=True)
 
     assert np.isfinite(m_mTrc[1])
-    assert np.isfinite(m_unc[1]) and m_unc[1] > 0
-    assert np.isfinite(s_unc[1])
-
-    np.testing.assert_allclose(m_mTrc, s_mTrc, rtol=1e-9, atol=1e-9)
-    np.testing.assert_allclose(m_unc, s_unc, rtol=1e-9, atol=1e-9)
+    assert np.isfinite(m_unc[1]) and m_unc[1] > 0, f"fallback band at t=1: {m_unc[1]}"
 
 
 def test_infeasible_weight_cap_uniform_fallback_matches_scalar():
@@ -447,16 +450,9 @@ def test_infeasible_weight_cap_uniform_fallback_matches_scalar():
     )
     stack = _constructed_stack(n_timesteps=5, seed=24)
 
-    m_mTrc, m_unc, _ = _matrix(stack, settings, with_unc=True)
-    s_mTrc, s_unc, _ = _scalar_oracle(stack, settings, with_unc=True)
+    (_, m_unc, _), _ = _assert_matches_oracle(stack, settings, with_unc=True)
 
-    populated = np.isfinite(s_mTrc)
-    assert populated.any()
-    np.testing.assert_allclose(m_mTrc[populated], s_mTrc[populated], rtol=1e-9, atol=1e-9)
-
-    unc_finite = populated & np.isfinite(s_unc)
-    assert unc_finite.any()
-    np.testing.assert_allclose(m_unc[unc_finite], s_unc[unc_finite], rtol=1e-9, atol=1e-9)
+    assert np.isfinite(m_unc).any(), "no finite uncertainty to compare"
 
 
 def test_weight_cap_magnitude_floor_matches_scalar():
@@ -474,11 +470,7 @@ def test_weight_cap_magnitude_floor_matches_scalar():
     stack["mCGr"][1, 4:8] = [150.0, 0.02, 0.01, 0.03]
     stack["oCGr"][1, 4:8] = [140.0, 0.05, 0.0, 0.01]
 
-    m_mTrc, m_unc, _ = _matrix(stack, settings, with_unc=True)
-    s_mTrc, s_unc, _ = _scalar_oracle(stack, settings, with_unc=True)
-
-    np.testing.assert_allclose(m_mTrc, s_mTrc, rtol=1e-9, atol=1e-9)
-    np.testing.assert_allclose(m_unc, s_unc, rtol=1e-9, atol=1e-9)
+    (m_mTrc, _, _), _ = _assert_matches_oracle(stack, settings, with_unc=True)
 
     # the floor must bind here, or this test exercises nothing: without it the
     # cap hands the near-zero meters half the cluster and the point moves
@@ -546,7 +538,7 @@ def test_cluster_with_nonfinite_unc_omitted_from_quadrature():
     np.testing.assert_allclose(u_omit ** 2 - mtu2, 0.5 * (u_full ** 2 - mtu2), rtol=1e-9)
 
 
-# ── (c) edge cases ───────────────────────────────────────────────────────────
+# ── edge cases ──
 
 def test_zero_weight_cluster_excluded_and_masked_out():
     """A zero-weight cluster contributes nothing to the correction and its meters
@@ -565,15 +557,9 @@ def test_zero_weight_cluster_excluded_and_masked_out():
     stack["oCGr"] = stack["mCGr"] + 3.0 * rng.standard_normal((3, 9))
     stack["mCGr_unc"] = np.full((3, 9), 2.0)
 
-    m_mTrc, m_unc, m_mask = _matrix(stack, settings, with_unc=True)
-    s_mTrc, s_unc, s_mask = _scalar_oracle(stack, settings, with_unc=True)
+    (_, _, m_mask), _ = _assert_matches_oracle(stack, settings, with_unc=True)
 
     assert not m_mask[:, label == 0.0].any(), "zero-weight cluster meters must be masked out"
-
-    populated = np.isfinite(s_mTrc)
-    np.testing.assert_allclose(m_mTrc[populated], s_mTrc[populated], rtol=1e-9, atol=1e-9)
-    for t in np.flatnonzero(populated):
-        assert (m_mask[t] == s_mask[t]).all()
 
 
 def test_noncontiguous_labels_indexed_by_position():
@@ -584,11 +570,7 @@ def test_noncontiguous_labels_indexed_by_position():
     stack = _constructed_stack(n_timesteps=3, seed=8)
     stack["CG_label"] = np.array([0.0, 0.0, 0.0, 0.0, 2.0, 2.0, 2.0, 2.0])
 
-    m_mTrc, _, _ = _matrix(stack, settings, with_unc=False)
-    s_mTrc, _, _ = _scalar_oracle(stack, settings, with_unc=False)
-
-    populated = np.isfinite(s_mTrc)
-    np.testing.assert_allclose(m_mTrc[populated], s_mTrc[populated], rtol=1e-9, atol=1e-9)
+    _assert_matches_oracle(stack, settings, with_unc=False)
 
 
 def test_zero_model_magnitude_meter_stays_finite():
@@ -600,11 +582,9 @@ def test_zero_model_magnitude_meter_stays_finite():
     stack = _constructed_stack(n_timesteps=3, seed=9)
     stack["mCGr"][0, 0] = 0.0  # zero model magnitude at t=0
 
-    m_mTrc, _, _ = _matrix(stack, settings, with_unc=True)
-    s_mTrc, _, _ = _scalar_oracle(stack, settings, with_unc=True)
+    (m_mTrc, _, _), _ = _assert_matches_oracle(stack, settings, with_unc=True)
 
     assert np.isfinite(m_mTrc[0])
-    np.testing.assert_allclose(m_mTrc, s_mTrc, rtol=1e-9, atol=1e-9)
 
 
 def test_solar_cap_matches_scalar():
@@ -619,11 +599,7 @@ def test_solar_cap_matches_scalar():
     # push some comparison meters below the solar threshold so the cap engages
     stack["mCGr"][:, :2] = 0.1
 
-    m_mTrc, _, _ = _matrix(stack, settings, with_unc=False)
-    s_mTrc, _, _ = _scalar_oracle(stack, settings, with_unc=False)
-
-    populated = np.isfinite(s_mTrc)
-    np.testing.assert_allclose(m_mTrc[populated], s_mTrc[populated], rtol=1e-9, atol=1e-9)
+    _assert_matches_oracle(stack, settings, with_unc=False)
 
 
 def test_algorithm_none_returns_passthrough():
@@ -660,44 +636,72 @@ def test_outlier_rejection_fallback_matches_scalar(model_correction_inputs):
     )
     stack = _tile_fixture(model_correction_inputs["daily"], n_timesteps=5, perturb=0.15, seed=13)
 
-    m_mTrc, m_unc, m_mask = _matrix(stack, settings, with_unc=True)
-    s_mTrc, s_unc, s_mask = _scalar_oracle(stack, settings, with_unc=True)
-
-    populated = np.isfinite(s_mTrc)
-    assert populated.any()
-    np.testing.assert_allclose(m_mTrc[populated], s_mTrc[populated], rtol=1e-9, atol=1e-6)
-    for t in np.flatnonzero(populated):
-        assert (m_mask[t] == s_mask[t]).all()
-        assert np.isnan(s_unc[t]) == np.isnan(m_unc[t])
+    _assert_matches_oracle(stack, settings, with_unc=True, atol=1e-6)
 
 
 def test_outlier_rejection_fallback_drops_sparse_cluster():
-    """The fallback path drops a cluster that falls below 3 finite meters and
-    lets the surviving cluster carry the timestep; the row is NaN only when no
-    cluster survives."""
+    """The fallback path drops a cluster that falls below 3 finite meters, clears
+    its meters from the usage mask, and lets the surviving cluster carry the
+    timestep with a finite point and band."""
     settings = _settings(
         algorithm=CorrectionAlgorithm.ODID,
         outlier_rejection={"enabled": True},
     )
-    stack = _constructed_stack(n_timesteps=3, seed=14)
-    # t=1: cluster 0 -> 2 finite meters (dropped); cluster 1 survives
-    stack["oCGr"][1, 0] = np.nan
-    stack["mCGr"][1, 1] = np.nan
-    # t=2: both clusters -> 2 finite meters (no survivor -> NaN)
-    stack["oCGr"][2, 0] = np.nan
-    stack["oCGr"][2, 1] = np.nan
-    stack["oCGr"][2, 4] = np.nan
-    stack["oCGr"][2, 5] = np.nan
+    stack = _constructed_stack(n_timesteps=1, seed=14)
+    # cluster 0 falls to 2 finite meters; cluster 1 survives
+    stack["oCGr"][0, 0] = np.nan
+    stack["mCGr"][0, 1] = np.nan
 
     m_mTrc, m_unc, mask = _matrix(stack, settings, with_unc=True)
 
-    assert np.isfinite(m_mTrc[1]) and np.isfinite(m_unc[1])
-    assert np.isnan(m_mTrc[2]) and np.isnan(m_unc[2])
-    assert np.isfinite(m_mTrc[0])
-    # the dropped cluster leaves the usage mask; the survivor's finite members stay
-    assert not mask[1, 0:4].any()
-    assert mask[1, 4:8].sum() >= 3
-    assert not mask[2].any()
+    assert np.isfinite(m_mTrc[0]) and np.isfinite(m_unc[0])
+    assert not mask[0, 0:4].any(), f"dropped cluster still marked used: {mask[0, 0:4]}"
+    assert mask[0, 4:8].sum() >= 3, f"survivor marks too few meters: {mask[0, 4:8]}"
+
+
+def test_outlier_rejection_fallback_drops_cluster_rejection_leaves_sparse(monkeypatch):
+    """A cluster with 4 finite meters that outlier rejection cuts to 2 is dropped
+    from the timestep and cleared from the usage mask; the surviving cluster alone
+    carries the row, matching the row where that cluster is sparse before rejection."""
+
+    def reject_large(x, weights=None, sigma_threshold=3, quantile=0.25, transform=None):
+        keep = np.abs(x) <= 1e3
+
+        return x[keep], np.flatnonzero(keep)
+
+    monkeypatch.setattr(_MODEL_CORRECTION_MODULE, "remove_outliers", reject_large)
+    settings = _settings(
+        algorithm=CorrectionAlgorithm.ODID,
+        outlier_rejection={"enabled": True},
+    )
+    stack = _constructed_stack(n_timesteps=1, seed=14)
+    reference = _constructed_stack(n_timesteps=1, seed=14)
+    stack["oCGr"][0, 0:2] += 1e6
+    reference["oCGr"][0, 0:2] = np.nan
+
+    m_mTrc, m_unc, mask = _matrix(stack, settings, with_unc=True)
+    r_mTrc, r_unc, _ = _matrix(reference, settings, with_unc=True)
+
+    assert not mask[0, 0:4].any(), f"rejected cluster still marked used: {mask[0, 0:4]}"
+    assert mask[0, 4:8].all(), f"survivor meters not all marked used: {mask[0, 4:8]}"
+    np.testing.assert_allclose([m_mTrc[0], m_unc[0]], [r_mTrc[0], r_unc[0]], rtol=1e-12)
+
+
+def test_outlier_rejection_fallback_row_with_no_survivor_is_nan():
+    """On the fallback path a timestep where every cluster falls below 3 finite
+    meters is NaN in point and band and marks no comparison meter as used."""
+    settings = _settings(
+        algorithm=CorrectionAlgorithm.ODID,
+        outlier_rejection={"enabled": True},
+    )
+    stack = _constructed_stack(n_timesteps=1, seed=14)
+    stack["oCGr"][0, 0:2] = np.nan
+    stack["oCGr"][0, 4:6] = np.nan
+
+    m_mTrc, m_unc, mask = _matrix(stack, settings, with_unc=True)
+
+    assert np.isnan(m_mTrc[0]) and np.isnan(m_unc[0])
+    assert not mask[0].any(), f"no-survivor row marks meters used: {mask[0]}"
 
 
 def test_outlier_rejection_fallback_nan_treatment_row_uses_no_meters():
@@ -717,7 +721,7 @@ def test_outlier_rejection_fallback_nan_treatment_row_uses_no_meters():
     assert not mask[1].any()
 
 
-# ── (d) float32 input -> float64 math tolerance pin ──────────────────────────
+# ── float32 input ──
 
 def test_float32_input_promoted_to_float64_math(model_correction_inputs):
     """float32 inputs are cast to float64 for the math; the result matches the
@@ -730,14 +734,14 @@ def test_float32_input_promoted_to_float64_math(model_correction_inputs):
     stack = _tile_fixture(model_correction_inputs["daily"], n_timesteps=6, perturb=0.15, seed=15)
 
     m64, u64, _ = model_correction_matrix(
-        stack["oTr"], stack["mTr"], stack["oCGr"], stack["mCGr"],
-        None, stack["mTr_unc"], None, stack["mCGr_unc"], None,
+        stack["mTr"], stack["oCGr"], stack["mCGr"],
+        stack["mTr_unc"], None, stack["mCGr_unc"], None,
         stack["CG_label"], stack["T_weight"], settings,
     )
     m32, u32, _ = model_correction_matrix(
-        stack["oTr"].astype(np.float32), stack["mTr"].astype(np.float32),
+        stack["mTr"].astype(np.float32),
         stack["oCGr"].astype(np.float32), stack["mCGr"].astype(np.float32),
-        None, stack["mTr_unc"].astype(np.float32), None,
+        stack["mTr_unc"].astype(np.float32), None,
         stack["mCGr_unc"].astype(np.float32), None,
         stack["CG_label"], stack["T_weight"], settings,
     )
@@ -749,18 +753,36 @@ def test_float32_input_promoted_to_float64_math(model_correction_inputs):
     np.testing.assert_allclose(m32[populated], m64[populated], rtol=1e-5, atol=1e-2)
 
 
-# ── validation ───────────────────────────────────────────────────────────────
+# ── validation ──
 
-def test_fewer_than_five_meters_is_hard_error():
-    """M < 5 is a hard error even in the degrade-friendly matrix kernel."""
+def test_fewer_than_min_cg_meters_is_hard_error():
+    """Fewer than `MIN_CG_METERS` comparison meters is a hard error even in the
+    degrade-friendly matrix kernel."""
     settings = _settings(algorithm=CorrectionAlgorithm.ODID)
-    oCGr = np.ones((3, 4))
-    with pytest.raises(ValueError, match="fewer than 5"):
+    M = MIN_CG_METERS - 1
+    oCGr = np.ones((3, M))
+    with pytest.raises(ValueError, match=f"fewer than {MIN_CG_METERS}"):
         model_correction_matrix(
-            np.ones(3), np.ones(3), oCGr, oCGr,
-            None, None, None, None, None,
-            np.array([0.0, 0.0, 1.0, 1.0]), np.array([0.5, 0.5]), settings,
+            np.ones(3), oCGr, oCGr,
+            None, None, None, None,
+            np.zeros(M), np.array([1.0]), settings,
         )
+
+
+def test_min_cg_meters_is_accepted():
+    """Exactly `MIN_CG_METERS` comparison meters in one cluster form a finite
+    correction."""
+    settings = _settings(algorithm=CorrectionAlgorithm.ODID)
+    M = MIN_CG_METERS
+    oCGr = np.ones((3, M))
+
+    mTrc, _, _ = model_correction_matrix(
+        np.full(3, 2.0), oCGr, oCGr + 0.5,
+        None, None, None, None,
+        np.zeros(M), np.array([1.0]), settings,
+    )
+
+    np.testing.assert_allclose(mTrc, np.full(3, 1.5), rtol=0, atol=1e-12)
 
 
 def test_t_weight_length_must_match_cluster_count():
@@ -768,8 +790,8 @@ def test_t_weight_length_must_match_cluster_count():
     stack = _constructed_stack(n_timesteps=3, seed=16)
     with pytest.raises(ValueError, match="T_weight"):
         model_correction_matrix(
-            stack["oTr"], stack["mTr"], stack["oCGr"], stack["mCGr"],
-            None, None, None, None, None,
+            stack["mTr"], stack["oCGr"], stack["mCGr"],
+            None, None, None, None,
             stack["CG_label"], np.array([1.0]), settings,
         )
 
@@ -779,7 +801,7 @@ def test_all_zero_weight_clusters_is_error():
     stack = _constructed_stack(n_timesteps=3, seed=17)
     with pytest.raises(ValueError, match="zero weight"):
         model_correction_matrix(
-            stack["oTr"], stack["mTr"], stack["oCGr"], stack["mCGr"],
-            None, None, None, None, None,
+            stack["mTr"], stack["oCGr"], stack["mCGr"],
+            None, None, None, None,
             stack["CG_label"], np.array([0.0, 0.0]), settings,
         )

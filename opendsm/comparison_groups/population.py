@@ -45,19 +45,12 @@ from opendsm.eemeter.models import (
 
 SCHEMA_VERSION = 1
 
-# Above this many models, JSON serialization is refused in favor of the
-# streamed one-record-per-line NDJSON path (pool-scale persistence).
+# Above this many models to_json() raises and points to to_ndjson().
 _MAX_JSON_MODELS = 2000
 
 _LOADSHAPE_SEED = 0
 
-# Pool meters kept when the caller names no cap; ``Data_Settings.max_pool_size``'s
-# default.
-_MAX_POOL_SIZE = 10000
-
-# Stands in for an omitted ``max_pool_size`` so ``_MAX_POOL_SIZE`` is read at call
-# time; ``None`` already means no cap.
-_DEFAULT_POOL_SIZE = object()
+_MAX_POOL_SIZE = Data_Settings.model_fields["max_pool_size"].default
 
 _MODEL_CLASSES = {
     model_cls.model_frequency.value: model_cls
@@ -112,44 +105,91 @@ def _model_from_payload(model_cls, payload):
     raise TypeError(f"Model payload must be a dict or JSON string, got {type(payload).__name__}")
 
 
-def _window_to_json(window):
-    if window is None:
-        return None
+def default_data_settings(model_frequency):
+    """The ``Data_Settings`` a population's loadshapes use when the caller gives
+    none: the model frequency's time period (``SEASONAL_HOURLY_DAY_OF_WEEK``,
+    ``SEASONAL_DAY_OF_WEEK`` or ``MONTH``) and ``Data_Settings``'s defaults for
+    every other field.
 
-    start, end = window
-    bounds = [start.isoformat(), end.isoformat()]
+    Args:
+        model_frequency: ``"hourly"``, ``"daily"`` or ``"billing"``.
 
-    return bounds
+    Raises:
+        ValueError: ``model_frequency`` is not one of the three.
+    """
+    if model_frequency not in _DEFAULT_TIME_PERIOD:
+        raise ValueError(
+            f"model_frequency must be one of {list(_DEFAULT_TIME_PERIOD)}, got {model_frequency!r}"
+        )
 
+    settings = Data_Settings(time_period=_DEFAULT_TIME_PERIOD[model_frequency])
 
-def _coerce_window(window, tz):
-    """Normalize a ``(start, end)`` window (datetime-likes or serialized ISO
-    strings) to a tuple of tz-aware ``Timestamp`` in ``tz``. ``None`` passes
-    through."""
-    if window is None:
-        return None
-
-    start, end = window
-    bounds = []
-
-    for value in (start, end):
-        ts = pd.Timestamp(value)
-        if ts.tzinfo is None:
-            ts = ts.tz_localize(tz)
-        else:
-            ts = ts.tz_convert(tz)
-        bounds.append(ts)
-
-    window = (bounds[0], bounds[1])
-
-    return window
+    return settings
 
 
-def _resolve_max_pool_size(max_pool_size):
-    if max_pool_size is _DEFAULT_POOL_SIZE:
-        return _MAX_POOL_SIZE
+def _fit_meters(baseline, model_frequency, settings, ignore_disqualification, reporting):
+    """Fit one model per meter, serially. Returns ``(records, ledger)``: a record
+    per meter that fits, carrying its ``reporting`` entry, and a population-stage
+    ledger row per meter whose fit raises a data-sufficiency or
+    model-disqualification error."""
+    if model_frequency not in _MODEL_CLASSES:
+        raise ValueError(
+            f"model_frequency must be one of {list(_MODEL_CLASSES)}, got {model_frequency!r}"
+        )
 
-    return max_pool_size
+    reporting = {str(k): v for k, v in (reporting or {}).items()}
+    unknown = set(reporting) - {str(mid) for mid in baseline}
+    if unknown:
+        raise KeyError(f"Reporting data for meters not in baseline: {sorted(unknown)}.")
+
+    baseline_cls = _BASELINE_TYPES[model_frequency]
+    model_cls = _MODEL_CLASSES[model_frequency]
+    records = {}
+    ledger = exclusions.empty_ledger()
+
+    for mid, bdata in baseline.items():
+        if not isinstance(bdata, baseline_cls):
+            raise TypeError(f"Meter {mid}: baseline data must be {baseline_cls.__name__}.")
+
+        model = model_cls(settings=settings)
+
+        try:
+            model.fit(bdata, ignore_disqualification=ignore_disqualification)
+        except DataSufficiencyError as exc:
+            detail = exclusions.format_warnings(bdata.disqualification) or str(exc)
+            ledger = exclusions.append(
+                ledger,
+                [mid],
+                "population",
+                "baseline_data",
+                "baseline data insufficient to fit a model",
+                detail=detail,
+            )
+            continue
+        except DisqualifiedModelError as exc:
+            detail = exclusions.format_warnings(model.disqualification) or str(exc)
+            ledger = exclusions.append(
+                ledger,
+                [mid],
+                "population",
+                "model",
+                "fitted model disqualified",
+                detail=detail,
+            )
+            continue
+
+        records[str(mid)] = _MeterRecord(
+            id=mid,
+            model=model,
+            baseline_data=bdata,
+            reporting_data=reporting.get(str(mid)),
+        )
+
+    if not records:
+        summary = "; ".join(f"{row.id}: {row.reason}" for row in ledger.itertuples())
+        raise ValueError(f"All meters failed to fit: {summary}")
+
+    return records, ledger
 
 
 def _pool_trim(ids, max_pool_size, seed):
@@ -231,7 +271,8 @@ class MeterPopulation:
 
     ``is_electricity_data`` is the fuel flag of meters without baseline data, as a
     serialized header records it; when omitted, every meter must carry baseline
-    data.
+    data. ``ledger`` is the population's initial exclusions ledger, in the shared
+    ledger schema; empty when omitted.
     """
 
     _role = "population"
@@ -242,6 +283,7 @@ class MeterPopulation:
         model_frequency,
         features=None,
         is_electricity_data=None,
+        ledger=None,
     ):
         if not meters:
             raise ValueError("A population must contain at least one meter.")
@@ -254,7 +296,11 @@ class MeterPopulation:
         self.model_frequency = model_frequency
         self._meters = {str(k): v for k, v in meters.items()}
         self.features = self._validate_features(features)
-        self._exclusions = exclusions.empty_ledger()
+
+        if ledger is None:
+            ledger = exclusions.empty_ledger()
+
+        self._exclusions = ledger
         self._baseline_pred = {}
         self._reporting_pred = {}
 
@@ -324,13 +370,12 @@ class MeterPopulation:
         ignore_disqualification=False,
         features=None,
         reporting=None,
-        **kwargs,
     ):
-        """Fit one model per meter serially (never in parallel).
+        """Fit one model per meter, serially.
 
         A meter whose fit raises a data-sufficiency or model-disqualification
         error is excluded and recorded on the population's exclusions ledger
-        while the loop continues; raises only when every meter fails.
+        while the loop continues.
 
         Args:
             baseline: ``{id: BaselineData}`` for the requested model frequency.
@@ -339,70 +384,14 @@ class MeterPopulation:
                 that is excluded is ignored.
 
         Raises:
+            ValueError: ``model_frequency`` is unknown, or every meter fails to fit.
+            TypeError: A baseline value is not the frequency's baseline-data class.
             KeyError: A ``reporting`` id is not in ``baseline``.
         """
-        if model_frequency not in _MODEL_CLASSES:
-            raise ValueError(
-                f"model_frequency must be one of {list(_MODEL_CLASSES)}, got {model_frequency!r}"
-            )
-
-        reporting = {str(k): v for k, v in (reporting or {}).items()}
-        unknown = set(reporting) - {str(mid) for mid in baseline}
-        if unknown:
-            raise KeyError(f"Reporting data for meters not in baseline: {sorted(unknown)}.")
-
-        baseline_cls = _BASELINE_TYPES[model_frequency]
-        model_cls = _MODEL_CLASSES[model_frequency]
-        records = {}
-        dropped = exclusions.empty_ledger()
-
-        for mid, bdata in baseline.items():
-            if not isinstance(bdata, baseline_cls):
-                raise TypeError(f"Meter {mid}: baseline data must be {baseline_cls.__name__}.")
-
-            model = model_cls(settings=settings)
-
-            try:
-                model.fit(bdata, ignore_disqualification=ignore_disqualification)
-            except DataSufficiencyError as exc:
-                detail = exclusions.format_warnings(bdata.disqualification) or str(exc)
-                dropped = exclusions.append(
-                    dropped,
-                    [mid],
-                    "population",
-                    "baseline_data",
-                    "baseline data insufficient to fit a model",
-                    detail=detail,
-                )
-                continue
-            except DisqualifiedModelError as exc:
-                detail = exclusions.format_warnings(model.disqualification) or str(exc)
-                dropped = exclusions.append(
-                    dropped,
-                    [mid],
-                    "population",
-                    "model",
-                    "fitted model disqualified",
-                    detail=detail,
-                )
-                continue
-
-            records[str(mid)] = _MeterRecord(
-                id=mid,
-                model=model,
-                baseline_data=bdata,
-                reporting_data=reporting.get(str(mid)),
-            )
-
-        if not records:
-            summary = "; ".join(f"{row.id}: {row.reason}" for row in dropped.itertuples())
-            raise ValueError(f"All meters failed to fit: {summary}")
-
-        population = cls(records, model_frequency, features=features, **kwargs)
-        if not dropped.empty:
-            population._exclusions = pd.concat(
-                [dropped, population._exclusions], ignore_index=True
-            )
+        records, ledger = _fit_meters(
+            baseline, model_frequency, settings, ignore_disqualification, reporting
+        )
+        population = cls(records, model_frequency, features=features, ledger=ledger)
 
         return population
 
@@ -472,11 +461,10 @@ class MeterPopulation:
                     )
 
             # an hourly model fit with train_features omitting ghi ignores a ghi
-            # column its data carries, so solar is what the model uses
+            # column its data carries, so solar is what the model uses; daily and
+            # billing models and data carry no ghi
             if self.model_frequency == "hourly":
                 ghi_flags.add("ghi" in rec.model._ts_features)
-            elif baseline is not None:
-                ghi_flags.add("ghi" in baseline.df.columns)
 
             timezones.add(tz)
 
@@ -505,7 +493,7 @@ class MeterPopulation:
 
         return tz, is_electricity_data
 
-    def _baseline_span(self):
+    def baseline_span(self):
         """The union of the meters' baseline spans as ``(min start, max end)``
         over the meters that carry baseline data, or ``None`` when none do."""
         starts = []
@@ -526,7 +514,8 @@ class MeterPopulation:
 
         return window
 
-    def _ids_without_baseline(self):
+    def ids_without_baseline(self):
+        """Ids of the meters carrying no baseline data, in ``ids`` order."""
         ids = [mid for mid, rec in self._meters.items() if rec.baseline_data is None]
 
         return ids
@@ -537,6 +526,13 @@ class MeterPopulation:
     def ids(self):
         """Meter ids, in the order the meters were added."""
         return list(self._meters.keys())
+
+    def meter(self, mid):
+        """The record of meter ``mid`` (compared as a string), with ``id``,
+        ``model``, ``baseline_data``, ``reporting_data`` and ``observed_unc``
+        attributes, or ``None`` when the population holds no such meter. The
+        record is the population's own: callers must not modify it."""
+        return self._meters.get(str(mid))
 
     @property
     def role(self):
@@ -586,9 +582,22 @@ class MeterPopulation:
 
         return frame
 
-    def _ensure_pred(self, period, ids=None):
-        """Per-meter prediction frames for ``ids`` (default: all meters),
-        predicting and caching any meter not yet cached."""
+    def prediction_frames(self, period, ids=None):
+        """Per-meter prediction frames ``{id: frame}``, each indexed by tz-aware
+        ``datetime`` with columns ``observed``, ``modeled`` and ``modeled_unc``. A
+        meter not yet predicted for ``period`` is predicted and cached; a model
+        prediction error propagates and caches nothing for that meter. The
+        frames are the cached objects: callers must not modify them.
+
+        Args:
+            period: ``"baseline"`` or ``"reporting"``.
+            ids: Meter ids to return, in the given order; every meter when omitted.
+
+        Raises:
+            ValueError: ``period`` is neither ``"baseline"`` nor ``"reporting"``, or a
+                requested meter has no ``period`` data attached.
+            KeyError: An id is not in the population.
+        """
         if period == "baseline":
             cache = self._baseline_pred
         elif period == "reporting":
@@ -607,57 +616,54 @@ class MeterPopulation:
 
         return preds
 
-    def _materialize_observed_unc(self, mid, index):
+    def observed_unc_at(self, mid, index):
+        """Meter ``mid``'s observed uncertainty at each timestamp of ``index``, as
+        a float array: zeros when the meter carries none, its scalar repeated, or
+        its series read at ``index``.
+
+        Raises:
+            ValueError: The meter's observed-uncertainty series does not cover
+                every timestamp of ``index``.
+        """
         unc = self._meters[mid].observed_unc
 
         if unc is None:
-            return np.zeros(len(index), dtype=float)
-
-        if isinstance(unc, pd.Series):
+            values = np.zeros(len(index), dtype=float)
+        elif isinstance(unc, pd.Series):
             if not index.isin(unc.index).all():
                 raise ValueError(
                     f"observed_unc series for meter {mid} does not cover the requested "
                     f"window {index[0]} to {index[-1]}."
                 )
 
-            return unc.reindex(index).to_numpy(dtype=float)
+            values = unc.reindex(index).to_numpy(dtype=float)
+        else:
+            values = np.full(len(index), float(unc))
 
-        return np.full(len(index), float(unc))
+        return values
 
-    def predictions(self, period):
-        """Long frame ``[id, datetime, observed, modeled, modeled_unc,
-        observed_unc]`` at treatment scale. Datetimes are tz-aware.
+    def prediction_matrices(self, period, ids=None):
+        """Predictions as dense arrays over the union of the meters' timestamps:
+        ``(index, ids, observed, modeled, modeled_unc, observed_unc)``, each array
+        float32 ``[T, M]`` with NaN where a meter has no row (``observed_unc``: 0).
+        The arrays are new on every call; predictions come from
+        ``prediction_frames``.
 
         Args:
             period: ``"baseline"`` or ``"reporting"``.
+            ids: Meter ids for the columns, in the given order; every meter when
+                omitted.
 
         Returns:
-            One row per meter and timestep.
+            The sorted union ``DatetimeIndex``, the column ids, and the four
+            arrays; ``observed_unc`` is None when no included meter carries
+            observed uncertainty.
 
         Raises:
-            ValueError: ``period`` is neither ``"baseline"`` nor ``"reporting"``.
+            ValueError: As ``prediction_frames``, or a meter's observed-uncertainty
+                series does not cover its prediction index.
         """
-        preds = self._ensure_pred(period)
-        frames = []
-
-        for mid, frame in preds.items():
-            long = frame.reset_index()
-            long.insert(0, "id", mid)
-            long["observed_unc"] = self._materialize_observed_unc(mid, frame.index)
-            frames.append(long)
-
-        result = pd.concat(frames, ignore_index=True)
-        result = result[["id", "datetime", "observed", "modeled", "modeled_unc", "observed_unc"]]
-
-        return result
-
-    def _prediction_matrices(self, period, ids=None):
-        """``(index, ids, observed, modeled, modeled_unc, observed_unc)`` where
-        the arrays are float32 ``[T, M]`` written per meter into preallocated
-        buffers. ``ids`` optionally restricts the columns to a meter subset (in
-        the given order). ``observed_unc`` is None when no included meter
-        carries observed uncertainty."""
-        preds = self._ensure_pred(period, ids)
+        preds = self.prediction_frames(period, ids)
         ids = list(preds)
 
         index = None
@@ -688,17 +694,17 @@ class MeterPopulation:
             modeled_unc[rows, col] = frame["modeled_unc"].to_numpy(dtype=np.float32)
 
             if observed_unc is not None:
-                values = self._materialize_observed_unc(mid, frame.index)
+                values = self.observed_unc_at(mid, frame.index)
                 observed_unc[rows, col] = values.astype(np.float32)
 
         return index, ids, observed, modeled, modeled_unc, observed_unc
 
     # -- loadshape data ------------------------------------------------------
 
-    def _short_baseline_months(self):
+    def short_baseline_months(self):
         """Baseline month counts, as ``{id: months}``, of the meters with fewer
-        than 12 baseline months, which cannot support a ``MONTH`` loadshape.
-        Reads only; the population is unchanged."""
+        than 12 baseline months, which cannot support a ``MONTH`` loadshape. Every
+        meter must carry baseline data."""
         short = {}
 
         for mid, rec in self._meters.items():
@@ -726,7 +732,7 @@ class MeterPopulation:
 
             return frames
 
-        preds = self._ensure_pred("baseline", ids)
+        preds = self.prediction_frames("baseline", ids)
 
         for mid, pred in preds.items():
             observed = pred["observed"].to_numpy().copy()
@@ -749,20 +755,25 @@ class MeterPopulation:
 
         return frames
 
-    def loadshape_data(self, basis, data_settings=None, exclude=()):
+    def loadshape_data(self, basis, data_settings=None, exclude=(), features=None):
         """Build a ``common.Data`` from baseline predictions. Datetimes are made
         tz-naive (local clock) so ``Data`` bins on local time. ``data_settings``
         supplies the aggregation, time period, interpolation, minimum data
         fraction, season and weekday/weekend definitions; the loadshape type is
-        ``basis``. This population owns no pool trim, so ``Data``'s own trim is
-        disabled here.
+        ``basis``. Pool trimming happens at ``ComparisonPool`` construction, so
+        ``Data``'s own trim is disabled here.
 
         Args:
             basis: Loadshape type: ``"observed"``, ``"modeled"`` or ``"error"``.
-            data_settings: Optional ``Data_Settings`` supplying the fields above; the
-                defaults suit the population's model frequency.
+            data_settings: Optional ``Data_Settings`` supplying the fields above;
+                ``default_data_settings`` of the population's model frequency when
+                omitted.
             exclude: Meter ids left out of the loadshapes, compared as strings. The
                 population itself is unchanged.
+            features: Optional stratification features indexed by meter id, compared
+                as strings. Only the rows of meters with a loadshape are kept, so a
+                row with no meter behind it (absent, excluded, or dropped by the
+                loadshape build) cannot be drawn.
 
         Returns:
             The ``common.Data`` built from the baseline predictions.
@@ -770,33 +781,36 @@ class MeterPopulation:
         Raises:
             ValueError: A meter has no baseline data attached.
         """
-        missing = self._ids_without_baseline()
+        missing = self.ids_without_baseline()
         if missing:
             raise ValueError(f"Loadshapes require baseline data; none attached for {missing}.")
 
         basis = _const.LoadshapeType(basis)
 
         if data_settings is None:
-            caller_settings = {
-                "agg_type": _const.AggType.MEAN,
-                "time_period": _DEFAULT_TIME_PERIOD[self.model_frequency],
+            data_settings = default_data_settings(self.model_frequency)
+
+        caller_settings = data_settings.model_dump(
+            include={
+                "agg_type",
+                "time_period",
+                "interpolate_missing",
+                "min_data_pct_required",
+                "season",
+                "weekday_weekend",
             }
-        else:
-            caller_settings = data_settings.model_dump(
-                include={
-                    "agg_type",
-                    "time_period",
-                    "interpolate_missing",
-                    "min_data_pct_required",
-                    "season",
-                    "weekday_weekend",
-                }
-            )
+        )
 
         exclude = {str(mid) for mid in exclude}
         ids = [mid for mid in self._meters if str(mid) not in exclude]
         frames = self._loadshape_frames(basis, ids)
         time_series = pd.concat(frames, ignore_index=True)
+
+        features_df = None
+        if features is not None:
+            features_df = features.rename_axis("id").reset_index()
+            features_df["id"] = features_df["id"].astype(str)
+            features_df = features_df[features_df["id"].isin(ids)]
 
         settings = Data_Settings(
             **caller_settings,
@@ -804,7 +818,7 @@ class MeterPopulation:
             max_pool_size=len(ids),
             seed=_LOADSHAPE_SEED,
         )
-        data = Data(time_series_df=time_series, settings=settings)
+        data = Data(time_series_df=time_series, features_df=features_df, settings=settings)
 
         return data
 
@@ -849,7 +863,7 @@ class MeterPopulation:
 
     def to_ndjson(self):
         """One JSON object per line: the header first, then one meter record per
-        line, for streamed pool-scale persistence."""
+        line; no model-count ceiling."""
         lines = [json.dumps({"header": self._header()}, allow_nan=False)]
 
         for rec in self._meters.values():
@@ -892,21 +906,21 @@ class MeterPopulation:
                 observed_unc=observed_unc,
             )
 
-        population = cls._restored(records, model_frequency, features, header)
-        population._exclusions = exclusions.read_table_json(header["exclusions"])
-
-        return population
-
-    @classmethod
-    def _restored(cls, records, model_frequency, features, header):
         population = cls(
             records,
             model_frequency,
             features=features,
             is_electricity_data=header["is_electricity_data"],
+            ledger=exclusions.read_table_json(header["exclusions"]),
+            **cls._header_settings(header),
         )
 
         return population
+
+    @classmethod
+    def _header_settings(cls, header):
+        """Constructor arguments a subclass restores from its serialized header."""
+        return {}
 
     @classmethod
     def from_json(cls, s, baseline=None, reporting=None, features=None):
@@ -974,9 +988,11 @@ class ComparisonPool(MeterPopulation):
     ``max_pool_size`` caps the pool's meters: omitted, it is 10000; ``None``
     means no cap. For a given ``seed`` the same meters are kept whatever the
     input order and whether the pool is built by ``from_data`` or
-    ``from_fit_models``; ``ids`` keeps the input order. A
-    ``from_json``/``from_ndjson`` reload never trims: it restores the saved
-    meters, ledger, ``max_pool_size`` and ``seed``.
+    ``from_fit_models``; ``ids`` keeps the input order. The trimmed meters are
+    appended to ``ledger``. A ``from_json``/``from_ndjson`` reload restores the
+    saved meters, ledger, ``max_pool_size`` and ``seed``; a payload written by
+    ``to_json``/``to_ndjson`` holds no more meters than its cap, so the reload
+    trims none.
     """
 
     _role = "pool"
@@ -987,7 +1003,8 @@ class ComparisonPool(MeterPopulation):
         model_frequency,
         features=None,
         is_electricity_data=None,
-        max_pool_size=_DEFAULT_POOL_SIZE,
+        ledger=None,
+        max_pool_size=_MAX_POOL_SIZE,
         seed=0,
     ):
         super().__init__(
@@ -995,11 +1012,12 @@ class ComparisonPool(MeterPopulation):
             model_frequency,
             features=features,
             is_electricity_data=is_electricity_data,
+            ledger=ledger,
         )
-        self.max_pool_size = _resolve_max_pool_size(max_pool_size)
+        self.max_pool_size = max_pool_size
         self.seed = seed
 
-        _, trimmed = _pool_trim(self._meters, self.max_pool_size, seed)
+        _, trimmed = _pool_trim(self._meters, max_pool_size, seed)
         for mid in trimmed:
             del self._meters[mid]
 
@@ -1010,35 +1028,39 @@ class ComparisonPool(MeterPopulation):
         cls,
         baseline,
         model_frequency,
-        max_pool_size=_DEFAULT_POOL_SIZE,
-        seed=0,
+        settings=None,
+        ignore_disqualification=False,
+        features=None,
         reporting=None,
-        **kwargs,
+        max_pool_size=_MAX_POOL_SIZE,
+        seed=0,
     ):
         """``MeterPopulation.from_data`` fitting only the meters the
         ``max_pool_size`` trim keeps; the others are ledgered as ``pool_trim``
         without a fit. A kept meter that fails to fit is not replaced, so the
         pool can end below the cap."""
-        max_pool_size = _resolve_max_pool_size(max_pool_size)
         _, trimmed = _pool_trim(baseline, max_pool_size, seed)
         trimmed_set = set(trimmed)
         kept_baseline = {
             mid: bdata for mid, bdata in baseline.items() if str(mid) not in trimmed_set
         }
-        # reporting for an id outside ``baseline`` still reaches the parent's KeyError
+        # reporting for an id outside ``baseline`` still reaches the fit's KeyError
         kept_reporting = {
             mid: data for mid, data in (reporting or {}).items() if str(mid) not in trimmed_set
         }
 
-        pool = super().from_data(
-            kept_baseline,
+        records, ledger = _fit_meters(
+            kept_baseline, model_frequency, settings, ignore_disqualification, kept_reporting
+        )
+        ledger = _record_pool_trim(ledger, trimmed)
+        pool = cls(
+            records,
             model_frequency,
-            reporting=kept_reporting,
+            features=features,
+            ledger=ledger,
             max_pool_size=max_pool_size,
             seed=seed,
-            **kwargs,
         )
-        pool._exclusions = _record_pool_trim(pool._exclusions, trimmed)
 
         return pool
 
@@ -1050,17 +1072,7 @@ class ComparisonPool(MeterPopulation):
         return header
 
     @classmethod
-    def _restored(cls, records, model_frequency, features, header):
-        # built uncapped so a reload keeps every saved meter; the saved cap is
-        # restored afterwards as the record of the original trim
-        pool = cls(
-            records,
-            model_frequency,
-            features=features,
-            is_electricity_data=header["is_electricity_data"],
-            max_pool_size=None,
-            seed=header["seed"],
-        )
-        pool.max_pool_size = header["max_pool_size"]
+    def _header_settings(cls, header):
+        settings = {"max_pool_size": header["max_pool_size"], "seed": header["seed"]}
 
-        return pool
+        return settings

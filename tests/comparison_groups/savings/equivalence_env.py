@@ -31,17 +31,19 @@ import gzip
 import json
 import pathlib
 import subprocess
-from io import StringIO
 
 import pandas as pd
 
+from opendsm.common.test_data import load_test_data
 from opendsm.comparison_groups import exclusions
 from opendsm.comparison_groups.population import ComparisonPool, TreatmentGroup
+from opendsm.comparison_groups.savings.correction import (
+    _correction_periods_from_json,
+    _read_table,
+)
+from opendsm.comparison_groups.savings.savings import _read_frame as _read_savings_table
 from opendsm.comparison_groups.selection import (
     ComparisonGroupSelection,
-    SelectionMethod,
-    _finalize_clusters,
-    _normalize_treatment_weights,
     select_comparison_group,
 )
 from opendsm.eemeter.models import (
@@ -101,7 +103,7 @@ _DATA_CLASSES = {
 class ComStockData:
     """The ComStock ``(baseline, reporting)`` frame pairs per model frequency, with a
     cache of the data objects built from them, so every population shares one
-    baseline and one reporting object per meter instead of rebuilding them."""
+    baseline and one reporting object per meter."""
 
     def __init__(self, daily, monthly, hourly):
         self._frames = {"daily": daily, "billing": monthly, "hourly": hourly}
@@ -126,9 +128,11 @@ class ComStockData:
             if role == "baseline":
                 raw = df_b.xs(int(mid), level="id").reset_index()
                 self._cache[key] = baseline_cls(raw, is_electricity_data=True)
-            else:
+            elif role == "reporting":
                 raw = df_r.xs(int(mid), level="id").reset_index()
                 self._cache[key] = reporting_cls(raw, is_electricity_data=True)
+            else:
+                raise ValueError(f"Unknown data role {role!r}.")
 
         return self._cache[key]
 
@@ -160,8 +164,7 @@ class ComStockData:
 
 def fit_bank(comstock):
     """Fit the first ``BANK_SIZES`` meters of each model frequency and return their
-    serialized models. Generator only: fits converge to different optima on
-    different machines, so the suite never fits these."""
+    serialized models. Called only by ``write_models_fixture``."""
     bank = {}
 
     for model_frequency, size in BANK_SIZES.items():
@@ -193,23 +196,18 @@ def load_models_fixture():
 def _manual_clustering_selection(treatment_ids, pool_ids, cluster_of, weights, tz):
     """A hand-built clustering selection so guard behavior can be exercised
     without depending on the clustering algorithm's data-driven output."""
-    clusters_flat = pd.DataFrame(
+    clusters = pd.DataFrame(
         {
-            "id": [str(p) for p in pool_ids],
             "cluster": [cluster_of[str(p)] for p in pool_ids],
             "weight": 1.0,
             "treatment": pd.NA,
-        }
+        },
+        index=[str(p) for p in pool_ids],
     )
-    clusters = _finalize_clusters(clusters_flat, SelectionMethod.CG_CLUSTERING)
-
-    weights_frame = pd.DataFrame(weights).T
-    weights_frame.index.name = "id"
-    treatment_weights = _normalize_treatment_weights(weights_frame)
 
     selection = ComparisonGroupSelection(
         clusters=clusters,
-        treatment_weights=treatment_weights,
+        treatment_weights=pd.DataFrame(weights).T,
         method="cg_clustering",
         basis="error",
         method_settings={},
@@ -257,13 +255,10 @@ _VARIANT_SPECS = {
 }
 
 
-def variant_populations(name, comstock, bank, cache=None):
+def variant_populations(name, comstock, bank, cache):
     """The treatment and pool populations of a variant from the pinned bank.
     Populations with the same specification are shared through ``cache`` across
     variants, so each is predicted once."""
-    if cache is None:
-        cache = {}
-
     treatment_spec, pool_spec, _ = _VARIANT_SPECS[name]
     treatment_key = ("treatment",) + treatment_spec
     pool_key = ("pool",) + pool_spec
@@ -285,7 +280,7 @@ def variant_populations(name, comstock, bank, cache=None):
     return cache[treatment_key], cache[pool_key]
 
 
-def fit_variant(name, comstock, bank, cache=None):
+def fit_variant(name, comstock, bank, cache):
     """A variant with its selection computed live. Generator only."""
     treatment, pool = variant_populations(name, comstock, bank, cache)
     method = _VARIANT_SPECS[name][2]
@@ -300,7 +295,7 @@ def fit_variant(name, comstock, bank, cache=None):
     return env
 
 
-def build_variant(name, comstock, models, cache=None):
+def build_variant(name, comstock, models, cache):
     """A variant from the pinned models fixture: populations from the bank with
     the real ComStock data attached, and the pinned selection."""
     treatment, pool = variant_populations(name, comstock, models["bank"], cache)
@@ -312,7 +307,7 @@ def build_variant(name, comstock, models, cache=None):
 
 def write_models_fixture(daily, monthly, hourly):
     """Fit the model bank and the six selections and write the pinned models
-    fixture. Run manually through the guarded ``test_generate_equivalence_models``;
+    fixture. Run as ``python tests/comparison_groups/savings/equivalence_env.py``;
     regenerate the equivalence snapshot alongside whenever the fits change."""
     comstock = ComStockData(daily, monthly, hourly)
     bank = fit_bank(comstock)
@@ -336,25 +331,6 @@ def write_models_fixture(daily, monthly, hourly):
 # ── snapshot artifact ────────────────────────────────────────────────────────
 
 
-def _read_frame(payload, tz, datetime_columns):
-    frame = pd.read_json(StringIO(payload), orient="table")
-    frame["id"] = frame["id"].astype(str)
-
-    for column in datetime_columns:
-        frame[column] = pd.to_datetime(frame[column], utc=True).dt.tz_convert(tz)
-
-    return frame
-
-
-def _read_periods(payload, tz):
-    periods = [
-        (pd.Timestamp(start).tz_convert(tz), pd.Timestamp(end).tz_convert(tz))
-        for start, end in payload
-    ]
-
-    return periods
-
-
 def load_equivalence_snapshot():
     """The pinned correction/savings output, per variant and treatment meter,
     with every table restored as a DataFrame (NaN preserved) and every read
@@ -375,19 +351,17 @@ def load_equivalence_snapshot():
         meters = {}
 
         for mid, meter in variant["meters"].items():
-            savings = {}
-
-            for aggregation, table in meter["savings"].items():
-                if aggregation == "native":
-                    savings[aggregation] = _read_frame(table, tz, ["period"])
-                else:
-                    savings[aggregation] = _read_frame(table, tz, [])
-
+            savings = {
+                aggregation: _read_savings_table(table, tz, aggregation)
+                for aggregation, table in meter["savings"].items()
+            }
             meters[mid] = {
-                "corrected": _read_frame(meter["corrected"], tz, ["datetime"]),
-                "cg_usage": _read_frame(meter["cg_usage"], tz, ["datetime"]),
-                "exclusions": _read_frame(meter["exclusions"], tz, []),
-                "correction_periods": _read_periods(meter["correction_periods"], tz),
+                "corrected": _read_table(meter["corrected"], tz),
+                "cg_usage": _read_table(meter["cg_usage"], tz),
+                "exclusions": _read_table(meter["exclusions"], tz),
+                "correction_periods": _correction_periods_from_json(
+                    meter["correction_periods"], tz
+                ),
                 "savings": savings,
             }
 
@@ -403,3 +377,11 @@ def load_equivalence_snapshot():
     snapshot = {"git_sha": payload["git_sha"], "variants": variants}
 
     return snapshot
+
+
+if __name__ == "__main__":
+    write_models_fixture(
+        load_test_data("daily_treatment_data"),
+        load_test_data("monthly_treatment_data"),
+        load_test_data("hourly_treatment_data"),
+    )

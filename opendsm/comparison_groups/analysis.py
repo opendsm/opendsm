@@ -20,7 +20,6 @@ from opendsm.comparison_groups.savings.correction import (
     correct_reporting,
 )
 from opendsm.comparison_groups.savings.savings import compute_savings
-from opendsm.comparison_groups.savings.settings import CGCorrectionSettings
 
 
 
@@ -38,28 +37,26 @@ class MeterAnalysis:
     ``select_comparison_group`` is the group-level entry point and runs once for
     the whole treatment population; the selection it returns is passed here per
     meter. The stages run in order: ``correct()`` corrects this meter's
-    reporting-period model with its comparison group, ``savings()`` reduces the
-    correction to avoided energy, and ``run()`` chains both. Each stage stores
-    its result and returns ``self`` so calls chain; a ``correct()`` that raises
-    clears both stored results first, so nothing stale survives a failure.
+    reporting-period model with its comparison group, then ``savings()`` reduces
+    the correction to avoided energy. Each stage stores its result and returns
+    ``self`` so calls chain. A stage clears its own result and every later
+    stage's before it runs, so a stage that raises leaves no stale result.
 
     A meter that cannot be corrected at all raises ``MeterCorrectionError``;
     individual timesteps that cannot be corrected come back as NaN rows instead.
 
-    Reporting coverage is judged over this meter's own reporting span against
-    ``correction_settings.min_window_coverage``, the package default when no
-    settings are supplied.
+    ``correction_settings`` defaults to the package defaults.
     """
 
     def __init__(self, selection, treatment, pool, treatment_id, correction_settings=None):
-        if correction_settings is None:
-            correction_settings = CGCorrectionSettings()
-
         self.selection = selection
         self.treatment = treatment
         self.pool = pool
         self.treatment_id = str(treatment_id)
         self.correction_settings = correction_settings
+        self._clear_results()
+
+    def _clear_results(self):
         self.correction = None
         self.savings_result = None
         self.guard_exclusions = exclusions.empty_ledger()
@@ -81,9 +78,7 @@ class MeterAnalysis:
             MeterCorrectionError: the meter cannot be corrected; its ledger rows
                 are kept for ``meter_log()``.
         """
-        self.correction = None
-        self.savings_result = None
-        self.guard_exclusions = exclusions.empty_ledger()
+        self._clear_results()
 
         try:
             correction = correct_reporting(
@@ -97,7 +92,7 @@ class MeterAnalysis:
             )
         except exclusions.MeterCorrectionError as error:
             # A raising guard leaves no CorrectionResult, so its rows would be
-            # unreachable from meter_log() — the one place that explains the failure.
+            # unreachable from meter_log(), the one place that explains the failure.
             self.guard_exclusions = error.exclusions
             raise
 
@@ -122,6 +117,7 @@ class MeterAnalysis:
         if self.correction is None:
             raise RuntimeError("run correct() first before savings().")
 
+        self.savings_result = None
         savings = compute_savings(
             self.correction,
             observed_unc=observed_unc,
@@ -132,24 +128,6 @@ class MeterAnalysis:
 
         return self
 
-    def run(self, period=None, prior=None, observed_unc=None, aggregation="native", season_def=None):
-        """Run ``correct()`` then ``savings()`` with the same arguments.
-
-        Args:
-            period: As in ``correct()``.
-            prior: As in ``correct()``.
-            observed_unc: As in ``savings()``.
-            aggregation: As in ``savings()``.
-            season_def: As in ``savings()``.
-
-        Returns:
-            This analysis, for chaining.
-        """
-        self.correct(period=period, prior=prior)
-        self.savings(observed_unc=observed_unc, aggregation=aggregation, season_def=season_def)
-
-        return self
-
     def meter_log(self):
         """The merged disqualification ledger for this meter and its comparison-
         group members, in the shared ``[id, stage, origin, reason, detail]``
@@ -157,10 +135,10 @@ class MeterAnalysis:
 
         Scope is this analysis: the treatment meter's own rows plus pool-side
         rows for the meters in its comparison group, so a drop that starved the
-        group is visible without dragging in unrelated pool meters. The
-        population-wide ledgers remain readable off the population objects.
+        group is visible without dragging in unrelated pool meters.
+        Population-wide ledgers are on each population's ``exclusions``.
         Membership is the raw selection walk, which still covers meters the
-        correction dropped — those are exactly the rows this log is for.
+        correction dropped; those are exactly the rows this log is for.
         Correction rows appear once ``correct()`` has run, including when it
         raised.
         """

@@ -25,9 +25,6 @@ from opendsm.comparison_groups.random_sampling.settings import Settings as RS_Se
 from opendsm.comparison_groups.savings.settings import CGCorrectionSettings
 from opendsm.comparison_groups.selection import (
     ComparisonGroupSelection,
-    SelectionMethod,
-    _finalize_clusters,
-    _normalize_treatment_weights,
     select_comparison_group,
 )
 from opendsm.eemeter.models import (
@@ -49,15 +46,21 @@ def billing_env(variant_env):
 
 def _analysis(env, treatment=None, treatment_id=None, selection=None):
     """A MeterAnalysis over the env's first treatment meter unless told otherwise."""
-    treatment = treatment or env["treatment"]
-    selection = selection or env["selection"]
-    treatment_id = treatment_id or treatment.ids[0]
+    if treatment is None:
+        treatment = env["treatment"]
+
+    if selection is None:
+        selection = env["selection"]
+
+    if treatment_id is None:
+        treatment_id = treatment.ids[0]
+
     built = MeterAnalysis(selection, treatment, env["pool"], treatment_id)
 
     return built
 
 
-# ── correction_settings.min_window_coverage across both stages ──────────────
+# ── coverage floors ──────────────────────────────────────────────────────────
 
 
 @pytest.fixture(scope="module")
@@ -125,16 +128,16 @@ def _coverage_population(
     return population
 
 
-def _build_coverage_case(coverage_env, min_window_coverage):
+@pytest.fixture(scope="module")
+def coverage_case(coverage_env):
     """Treatment/pool with one baseline-hole and one reporting-hole pool meter,
-    plus the selection produced at ``min_window_coverage``."""
+    each covering ~0.92 of its period."""
     records = coverage_env["records"]
     df_b, df_r = coverage_env["df_b"], coverage_env["df_r"]
-    treatment_ids = coverage_env["treatment_ids"]
     pool_ids = coverage_env["pool_ids"]
     base_hole_id, report_hole_id = pool_ids[0], pool_ids[1]
 
-    treatment = _coverage_population(TreatmentGroup, records, df_r, treatment_ids)
+    treatment = _coverage_population(TreatmentGroup, records, df_r, coverage_env["treatment_ids"])
     pool = _coverage_population(
         ComparisonPool,
         records,
@@ -143,21 +146,9 @@ def _build_coverage_case(coverage_env, min_window_coverage):
         baseline_overrides={base_hole_id: _truncated_baseline(df_b, base_hole_id, 336)},
         reporting_overrides={report_hole_id: _truncated_reporting(df_r, report_hole_id, 336)},
     )
-    method_settings = RS_Settings(n_meters_total=len(pool_ids), n_meters_per_treatment=None)
-    selection = select_comparison_group(
-        treatment,
-        pool,
-        method="random_sampling",
-        method_settings=method_settings,
-        basis="observed",
-        min_window_coverage=min_window_coverage,
-    )
-    settings = CGCorrectionSettings(min_window_coverage=min_window_coverage)
     case = {
         "treatment": treatment,
         "pool": pool,
-        "selection": selection,
-        "settings": settings,
         "base_hole_id": base_hole_id,
         "report_hole_id": report_hole_id,
     }
@@ -165,78 +156,118 @@ def _build_coverage_case(coverage_env, min_window_coverage):
     return case
 
 
-def test_default_coverage_survives_a_partial_meter(coverage_env):
-    """At the CGCorrectionSettings default (0.9), a pool meter covering ~0.92 of
-    the baseline window and of the treatment meter's reporting span survives
+def _coverage_selection(case, n_cg_meters, **floor):
+    """A random-sampling selection drawing ``n_cg_meters`` pool meters: every
+    pool meter that clears the baseline floor."""
+    method_settings = RS_Settings(n_meters_total=n_cg_meters, n_meters_per_treatment=None)
+    selection = select_comparison_group(
+        case["treatment"],
+        case["pool"],
+        method="random_sampling",
+        method_settings=method_settings,
+        basis="observed",
+        **floor,
+    )
+
+    return selection
+
+
+def _stage_rows(ledger, origin):
+    rows = ledger[ledger["origin"] == origin]
+
+    return rows
+
+
+@pytest.fixture(scope="module")
+def default_selection(coverage_case):
+    selection = _coverage_selection(coverage_case, n_cg_meters=8)
+
+    return selection
+
+
+@pytest.fixture(scope="module")
+def reporting_floor_analysis(coverage_case, default_selection):
+    """The first treatment meter corrected with ``min_reporting_coverage=0.95``
+    against the default-floor selection."""
+    analysis = MeterAnalysis(
+        default_selection,
+        coverage_case["treatment"],
+        coverage_case["pool"],
+        coverage_case["treatment"].ids[0],
+        correction_settings=CGCorrectionSettings(min_reporting_coverage=0.95),
+    )
+    analysis.correct()
+
+    return analysis
+
+
+@pytest.mark.slow
+def test_default_coverage_survives_a_partial_meter(coverage_case, default_selection):
+    """At the default floors, a pool meter covering ~0.92 of the baseline window
+    and one covering ~0.92 of the treatment meter's reporting span survive
     selection and correction."""
-    case = _build_coverage_case(coverage_env, min_window_coverage=0.9)
-
-    assert case["base_hole_id"] in case["selection"].clusters.index
-    assert case["selection"].exclusions[
-        case["selection"].exclusions["origin"] == "baseline_coverage"
-    ].empty
+    assert coverage_case["base_hole_id"] in default_selection.clusters.index
+    assert _stage_rows(default_selection.exclusions, "baseline_coverage").empty
 
     analysis = MeterAnalysis(
-        case["selection"],
-        case["treatment"],
-        case["pool"],
-        case["treatment"].ids[0],
-        correction_settings=case["settings"],
+        default_selection,
+        coverage_case["treatment"],
+        coverage_case["pool"],
+        coverage_case["treatment"].ids[0],
     )
     analysis.correct()
 
-    assert analysis.correction.exclusions[
-        analysis.correction.exclusions["origin"] == "reporting_coverage"
-    ].empty
+    assert _stage_rows(analysis.correction.exclusions, "reporting_coverage").empty
+    assert coverage_case["report_hole_id"] in analysis.correction.cg_ids
 
 
-def test_min_window_coverage_reaches_selection_and_correction_prune(coverage_env):
-    """A single ``min_window_coverage`` reaches both stage inputs: raised to 0.95
-    it prunes the ~0.92-coverage pool meter at selection (baseline) AND a
-    different ~0.92-coverage pool meter at correction (reporting), neither of
-    which is pruned at the 0.9 default."""
-    case = _build_coverage_case(coverage_env, min_window_coverage=0.95)
+@pytest.mark.slow
+def test_baseline_floor_prunes_at_selection_only(coverage_case):
+    """``min_baseline_coverage=0.95`` prunes the ~0.92-baseline pool meter at
+    selection; correction at its default floor keeps the ~0.92-reporting one."""
+    selection = _coverage_selection(coverage_case, n_cg_meters=7, min_baseline_coverage=0.95)
+    selection_rows = _stage_rows(selection.exclusions, "baseline_coverage")
 
-    assert case["base_hole_id"] not in case["selection"].clusters.index
-    selection_rows = case["selection"].exclusions[
-        case["selection"].exclusions["origin"] == "baseline_coverage"
-    ]
-    assert list(selection_rows["id"]) == [case["base_hole_id"]]
+    assert coverage_case["base_hole_id"] not in selection.clusters.index
+    assert list(selection_rows["id"]) == [coverage_case["base_hole_id"]]
 
     analysis = MeterAnalysis(
-        case["selection"],
-        case["treatment"],
-        case["pool"],
-        case["treatment"].ids[0],
-        correction_settings=case["settings"],
+        selection,
+        coverage_case["treatment"],
+        coverage_case["pool"],
+        coverage_case["treatment"].ids[0],
     )
     analysis.correct()
 
-    correction_rows = analysis.correction.exclusions[
-        analysis.correction.exclusions["origin"] == "reporting_coverage"
-    ]
-    assert list(correction_rows["id"]) == [case["report_hole_id"]]
+    assert _stage_rows(analysis.correction.exclusions, "reporting_coverage").empty
+    assert coverage_case["report_hole_id"] in analysis.correction.cg_ids
 
 
-def test_pruned_cg_member_row_is_in_this_meters_log(coverage_env):
+@pytest.mark.slow
+def test_reporting_floor_prunes_at_correction_only(
+    coverage_case, default_selection, reporting_floor_analysis
+):
+    """``min_reporting_coverage=0.95`` prunes the ~0.92-reporting pool meter at
+    correction; the ~0.92-baseline one, selected at the default floor, stays in
+    the comparison group."""
+    correction = reporting_floor_analysis.correction
+    correction_rows = _stage_rows(correction.exclusions, "reporting_coverage")
+
+    assert list(correction_rows["id"]) == [coverage_case["report_hole_id"]]
+    assert coverage_case["base_hole_id"] in correction.cg_ids
+
+
+@pytest.mark.slow
+def test_pruned_cg_member_row_is_in_this_meters_log(coverage_case, reporting_floor_analysis):
     """A pool meter pruned at correction is a member of this meter's comparison
     group, so its reporting_coverage row appears in the meter's own log."""
-    case = _build_coverage_case(coverage_env, min_window_coverage=0.95)
-    analysis = MeterAnalysis(
-        case["selection"],
-        case["treatment"],
-        case["pool"],
-        case["treatment"].ids[0],
-        correction_settings=case["settings"],
-    )
-    analysis.correct()
+    log = reporting_floor_analysis.meter_log()
+    pruned = _stage_rows(log, "reporting_coverage")
 
-    log = analysis.meter_log()
-    pruned = log[log["origin"] == "reporting_coverage"]
-
-    assert list(pruned["id"]) == [case["report_hole_id"]]
+    assert list(pruned["id"]) == [coverage_case["report_hole_id"]]
 
 
+@pytest.mark.slow
 def test_pool_member_matching_a_short_treatment_span_survives(coverage_env):
     """Reporting coverage is judged over the corrected meter's own span. A pool
     meter truncated to the same 200 days as the corrected treatment meter covers
@@ -278,20 +309,7 @@ def test_pool_member_matching_a_short_treatment_span_survives(coverage_env):
     assert len(analysis.correction.corrected) == 200
 
 
-# ── staged == run ────────────────────────────────────────────────────────────
-
-
-def test_staged_pipeline_equals_run(billing_env):
-    """Calling the stages individually yields the same savings as ``run()``."""
-    staged = _analysis(billing_env)
-    staged.correct().savings()
-
-    combined = _analysis(billing_env).run()
-
-    pd.testing.assert_frame_equal(staged.correction.corrected, combined.correction.corrected)
-    pd.testing.assert_frame_equal(
-        staged.savings_result.savings, combined.savings_result.savings
-    )
+# ── stages ───────────────────────────────────────────────────────────────────
 
 
 def test_stages_return_self_for_chaining(billing_env):
@@ -380,8 +398,7 @@ def test_unset_observed_unc_leaves_corrected_column_zero(billing_env):
 
 def test_explicit_observed_unc_kwarg_overrides_corrected_column(billing_env):
     """An explicit observed_unc passed to savings() wins over the population's
-    threaded column (the 4.0 treatment value is ignored in favor of the 3.0
-    kwarg)."""
+    threaded column."""
     treatment = _treatment_with_observed_unc(billing_env, unc=4.0)
     analysis = _analysis(billing_env, treatment=treatment)
     analysis.correct()
@@ -416,6 +433,7 @@ def test_savings_before_correct_raises(billing_env):
         analysis.savings()
 
 
+@pytest.mark.slow
 def test_correct_without_reporting_data_raises_meter_error(comstock, model_bank):
     """A population built from baseline only can still be selected on, but
     correcting a meter with no reporting data raises MeterCorrectionError."""
@@ -471,21 +489,10 @@ def _rewrap_meters(population):
 def _manual_selection(treatment, pool, nan_weight_id):
     """A single-cluster clustering selection over the pool with one treatment
     meter's weights all-NaN, carrying the matching selection-stage ledger row."""
-    clusters_flat = pd.DataFrame(
-        {
-            "id": [str(p) for p in pool.ids],
-            "cluster": 0,
-            "weight": 1.0,
-            "treatment": pd.NA,
-        }
-    )
-    clusters = _finalize_clusters(clusters_flat, SelectionMethod.CG_CLUSTERING)
-
+    clusters = pd.DataFrame({"cluster": 0, "weight": 1.0}, index=pd.Index(pool.ids, name="id"))
     weights = {t: {"pct_cluster_0": 1.0} for t in treatment.ids}
     weights[nan_weight_id] = {"pct_cluster_0": np.nan}
-    weights_frame = pd.DataFrame(weights).T
-    weights_frame.index.name = "id"
-    treatment_weights = _normalize_treatment_weights(weights_frame)
+    treatment_weights = pd.DataFrame(weights).T
 
     ledger = exclusions.append(
         exclusions.empty_ledger(),
@@ -548,7 +555,7 @@ def test_failed_correct_clears_the_previous_results(billing_env):
     treatment = billing_env["treatment"]
     pool = billing_env["pool"]
     tid = treatment.ids[0]
-    analysis = MeterAnalysis(billing_env["selection"], treatment, pool, tid).run()
+    analysis = MeterAnalysis(billing_env["selection"], treatment, pool, tid).correct().savings()
     assert analysis.correction is not None
     assert analysis.savings_result is not None
 
@@ -562,6 +569,19 @@ def test_failed_correct_clears_the_previous_results(billing_env):
 
     with pytest.raises(RuntimeError, match="run correct"):
         analysis.savings()
+
+
+def test_failed_savings_clears_the_previous_savings(billing_env):
+    """A savings() that raises leaves no stale savings_result behind and keeps
+    the correction it reads."""
+    analysis = _analysis(billing_env).correct().savings()
+    correction = analysis.correction
+
+    with pytest.raises(ValueError, match="not-an-aggregation"):
+        analysis.savings(aggregation="not-an-aggregation")
+
+    assert analysis.savings_result is None
+    assert analysis.correction is correction
 
 
 def test_meter_log_excludes_pool_meters_outside_this_comparison_group(billing_env):

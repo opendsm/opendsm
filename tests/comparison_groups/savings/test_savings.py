@@ -20,12 +20,8 @@ from opendsm.comparison_groups import exclusions
 from opendsm.comparison_groups.population import ComparisonPool, TreatmentGroup
 from opendsm.comparison_groups.savings.correction import CorrectionResult, correct_reporting
 from opendsm.comparison_groups.savings.savings import SavingsResult, compute_savings
-from opendsm.comparison_groups.selection import (
-    ComparisonGroupSelection,
-    SelectionMethod,
-    _finalize_clusters,
-    _normalize_treatment_weights,
-)
+
+from .equivalence_env import _mixed_selection
 
 
 
@@ -79,7 +75,7 @@ def _empty_corrected():
     return frame
 
 
-def _correction(corrected, tz=_TZ, model_frequency="hourly", correction_periods=None, meter_id="m1"):
+def _correction(corrected, tz=_TZ, model_frequency="hourly", correction_periods=(), meter_id="m1"):
     result = CorrectionResult(
         meter_id=meter_id,
         corrected=corrected,
@@ -90,7 +86,8 @@ def _correction(corrected, tz=_TZ, model_frequency="hourly", correction_periods=
         tz=tz,
         model_frequency=model_frequency,
         fingerprint="test-fingerprint",
-        correction_periods=correction_periods,
+        correction_periods=list(correction_periods),
+        cg_ids=[],
     )
 
     return result
@@ -118,23 +115,24 @@ def _row(frame, mid, period):
 # ── sign convention & closed-form uncertainty ────────────────────────────────
 
 
-def test_savings_sign_is_corrected_minus_observed():
-    corrected = _meter_frame("m1", _index(3), observed=10.0, corrected=12.0, corrected_unc=0.0)
-    result = compute_savings(_correction(corrected))
+@pytest.mark.parametrize(
+    ("observed", "corrected", "expected"),
+    [(10.0, 12.0, 2.0), (12.0, 10.0, -2.0)],
+    ids=["positive", "negative"],
+)
+def test_savings_sign_is_corrected_minus_observed(observed, corrected, expected):
+    frame = _meter_frame("m1", _index(3), observed=observed, corrected=corrected, corrected_unc=0.0)
+    result = compute_savings(_correction(frame))
 
-    assert np.allclose(result.savings["savings"].to_numpy(), 2.0)
-
-
-def test_negative_savings_when_corrected_below_observed():
-    corrected = _meter_frame("m1", _index(3), observed=12.0, corrected=10.0, corrected_unc=0.0)
-    result = compute_savings(_correction(corrected))
-
-    assert np.allclose(result.savings["savings"].to_numpy(), -2.0)
+    np.testing.assert_allclose(result.savings["savings"].to_numpy(), expected)
 
 
-def test_savings_unc_matches_quadrature_closed_form():
+@pytest.mark.parametrize(
+    "observed_unc", [{"m1": 4.0}, pd.Series({"m1": 4.0})], ids=["dict", "series"]
+)
+def test_savings_unc_matches_quadrature_closed_form(observed_unc):
     corrected = _meter_frame("m1", _index(1), observed=0.0, corrected=10.0, corrected_unc=3.0)
-    result = compute_savings(_correction(corrected), observed_unc={"m1": 4.0})
+    result = compute_savings(_correction(corrected), observed_unc=observed_unc)
 
     assert result.savings["savings_unc"].to_numpy()[0] == pytest.approx(5.0)
 
@@ -146,11 +144,29 @@ def test_observed_unc_defaults_to_zero_when_not_supplied():
     assert result.savings["savings_unc"].to_numpy()[0] == pytest.approx(3.0)
 
 
-def test_observed_unc_missing_id_defaults_to_zero():
+@pytest.mark.parametrize(
+    ("observed_unc", "match"),
+    [
+        ({"other": 100.0}, "no entry for meter 'm1'"),
+        (pd.Series({"other": 100.0}), "no entry for meter 'm1'"),
+        (
+            pd.DataFrame(
+                {
+                    "id": ["other"],
+                    "datetime": [pd.Timestamp("2019-01-01", tz=_TZ)],
+                    "observed_unc": [100.0],
+                }
+            ),
+            "no rows for meter 'm1'",
+        ),
+    ],
+    ids=["dict", "series", "frame"],
+)
+def test_observed_unc_lacking_the_meter_raises(observed_unc, match):
     corrected = _meter_frame("m1", _index(1), observed=0.0, corrected=10.0, corrected_unc=3.0)
-    result = compute_savings(_correction(corrected), observed_unc={"some_other_meter": 100.0})
 
-    assert result.savings["savings_unc"].to_numpy()[0] == pytest.approx(3.0)
+    with pytest.raises(ValueError, match=match):
+        compute_savings(_correction(corrected), observed_unc=observed_unc)
 
 
 # ── per-timestep DataFrame observed_unc alignment ────────────────────────────
@@ -175,9 +191,7 @@ def test_dataframe_observed_unc_unmatched_rows_default_to_zero():
     """Timesteps absent from the observed_unc frame contribute 0 uncertainty."""
     index = _index(3, freq="D")
     frame = _meter_frame("m1", index, observed=0.0, corrected=10.0, corrected_unc=0.0)
-    observed_unc = pd.DataFrame(
-        {"id": ["m1"], "datetime": [index[1]], "observed_unc": [4.0]}
-    )
+    observed_unc = pd.DataFrame({"id": ["m1"], "datetime": [index[1]], "observed_unc": [4.0]})
     result = compute_savings(_correction(frame), observed_unc=observed_unc, aggregation="native")
 
     savings_rows = result.savings.sort_values("period").reset_index(drop=True)
@@ -243,8 +257,8 @@ def test_time_rollup_accumulates_in_float64_not_float32():
     result = compute_savings(_correction(frame), aggregation="total")
 
     total_savings = result.savings["savings"].to_numpy()[0]
-    # A naive float32 accumulator drifts by ~2e-3 over this many additions;
-    # float64 accumulation stays within a few parts in 1e4.
+    # A float32 sum of these inputs misses by ~2e-3; a float64 sum misses by ~3e-4, the float32
+    # rounding of 0.1.
     assert total_savings == pytest.approx(n * 0.1, abs=5e-4)
 
 
@@ -319,6 +333,38 @@ def test_nan_unc_timestep_propagates_nan_to_aggregate_unc_even_with_full_coverag
     assert np.isnan(row["savings_unc"])
 
 
+def test_nan_corrected_timesteps_lower_only_their_own_months_coverage():
+    """Native timesteps whose correction is NaN lower their month's coverage to
+    the finite fraction of that month's timesteps; every other month stays at 1."""
+    corrected = np.full(365, 10.0)
+    corrected[20:23] = np.nan
+    frame = _meter_frame(
+        "m1", _index(365, freq="D"), observed=0.0, corrected=corrected, corrected_unc=1.0
+    )
+    correction = _correction(frame, model_frequency="daily")
+
+    monthly = compute_savings(correction, aggregation="monthly").savings.set_index("period")
+
+    assert monthly.loc["2019-01", "coverage"] == pytest.approx(28 / 31)
+    assert (monthly.drop("2019-01")["coverage"] == 1.0).all()
+
+
+def test_partial_final_month_is_a_complete_period_over_its_rows():
+    """A series ending mid-month reports that month over the rows it has: full
+    coverage, with savings and band summed over those rows."""
+    # 300 days from 2019-01-01 end on 2019-10-27
+    frame = _meter_frame(
+        "m1", _index(300, freq="D"), observed=8.0, corrected=10.0, corrected_unc=1.0
+    )
+    correction = _correction(frame, model_frequency="daily")
+
+    october = _row(compute_savings(correction, aggregation="monthly").savings, "m1", "2019-10")
+
+    assert october["coverage"] == pytest.approx(1.0)
+    assert october["savings"] == pytest.approx(27 * 2.0)
+    assert october["savings_unc"] == pytest.approx(np.sqrt(27.0))
+
+
 # ── aggregation boundaries ────────────────────────────────────────────────────
 
 
@@ -331,7 +377,11 @@ def test_monthly_aggregation_groups_by_calendar_month():
         ]
     )
     frame = _meter_frame(
-        "m1", index, observed=np.zeros(3), corrected=np.array([10.0, 10.0, 5.0]), corrected_unc=np.zeros(3)
+        "m1",
+        index,
+        observed=np.zeros(3),
+        corrected=np.array([10.0, 10.0, 5.0]),
+        corrected_unc=np.zeros(3),
     )
     result = compute_savings(_correction(frame), aggregation="monthly")
 
@@ -348,7 +398,11 @@ def test_seasonal_aggregation_uses_default_season_definition():
         ]
     )
     frame = _meter_frame(
-        "m1", index, observed=np.zeros(3), corrected=np.array([10.0, 30.0, 20.0]), corrected_unc=np.zeros(3)
+        "m1",
+        index,
+        observed=np.zeros(3),
+        corrected=np.array([10.0, 30.0, 20.0]),
+        corrected_unc=np.zeros(3),
     )
     result = compute_savings(_correction(frame), aggregation="seasonal")
 
@@ -364,7 +418,11 @@ def test_annual_aggregation_groups_by_calendar_year():
         ]
     )
     frame = _meter_frame(
-        "m1", index, observed=np.zeros(2), corrected=np.array([10.0, 5.0]), corrected_unc=np.zeros(2)
+        "m1",
+        index,
+        observed=np.zeros(2),
+        corrected=np.array([10.0, 5.0]),
+        corrected_unc=np.zeros(2),
     )
     result = compute_savings(_correction(frame), aggregation="annual")
 
@@ -374,7 +432,11 @@ def test_annual_aggregation_groups_by_calendar_year():
 
 def test_total_aggregation_collapses_to_a_single_period_per_meter():
     frame = _meter_frame(
-        "m1", _index(5, freq="D"), observed=np.zeros(5), corrected=np.full(5, 2.0), corrected_unc=np.zeros(5)
+        "m1",
+        _index(5, freq="D"),
+        observed=np.zeros(5),
+        corrected=np.full(5, 2.0),
+        corrected_unc=np.zeros(5),
     )
     result = compute_savings(_correction(frame), aggregation="total")
 
@@ -397,7 +459,7 @@ def test_tables_exposes_the_savings_frame_as_a_copy():
 def test_invalid_aggregation_raises():
     frame = _meter_frame("m1", _index(1), observed=0.0, corrected=1.0, corrected_unc=0.0)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="not a valid SavingsAggregation"):
         compute_savings(_correction(frame), aggregation="not_a_real_aggregation")
 
 
@@ -427,7 +489,12 @@ def test_billing_straddling_read_prorated_into_monthly_buckets():
     spread uniformly, so each month's band is the day-count share of the read's
     variance; coverage is full because every expanded day is finite."""
     frame, period = _billing_read(
-        "m1", "2019-01-20", "2019-02-08", observed=60.0, corrected=100.0, corrected_unc=np.sqrt(20.0)
+        "m1",
+        "2019-01-20",
+        "2019-02-08",
+        observed=60.0,
+        corrected=100.0,
+        corrected_unc=np.sqrt(20.0),
     )
     correction = _correction(frame, model_frequency="billing", correction_periods=period)
     result = compute_savings(correction, aggregation="monthly")
@@ -453,16 +520,17 @@ def test_billing_calendar_rollup_preserves_read_total_and_variance():
     single read's variance, and a full-span total reproduces the read's own
     savings and band exactly (no pro-ration when nothing straddles the bucket)."""
     frame, period = _billing_read(
-        "m1", "2019-01-20", "2019-02-08", observed=60.0, corrected=100.0, corrected_unc=np.sqrt(20.0)
+        "m1",
+        "2019-01-20",
+        "2019-02-08",
+        observed=60.0,
+        corrected=100.0,
+        corrected_unc=np.sqrt(20.0),
     )
-    correction_periods = period
+    correction = _correction(frame, model_frequency="billing", correction_periods=period)
 
-    monthly = compute_savings(
-        _correction(frame, model_frequency="billing", correction_periods=correction_periods), aggregation="monthly"
-    ).savings
-    total = compute_savings(
-        _correction(frame, model_frequency="billing", correction_periods=correction_periods), aggregation="total"
-    ).savings
+    monthly = compute_savings(correction, aggregation="monthly").savings
+    total = compute_savings(correction, aggregation="total").savings
 
     bucket_var = np.sum(monthly["savings_unc"].to_numpy() ** 2)
     assert bucket_var == pytest.approx(20.0)
@@ -478,9 +546,8 @@ def test_billing_read_within_single_month_is_exact():
     frame, period = _billing_read(
         "m1", "2019-02-01", "2019-02-28", observed=50.0, corrected=80.0, corrected_unc=3.0
     )
-    result = compute_savings(
-        _correction(frame, model_frequency="billing", correction_periods=period), aggregation="monthly"
-    )
+    correction = _correction(frame, model_frequency="billing", correction_periods=period)
+    result = compute_savings(correction, aggregation="monthly")
     feb = _row(result.savings, "m1", "2019-02")
 
     assert feb["savings"] == pytest.approx(30.0)
@@ -489,15 +556,16 @@ def test_billing_read_within_single_month_is_exact():
 
 
 def test_billing_multiple_reads_in_bucket_combine_variance_in_quadrature():
-    """Two finite reads landing in the same month sum their savings and combine
-    their variances in quadrature (variances add additively across reads)."""
+    """Two finite reads landing in the same month sum their savings and add
+    their variances."""
     frame1, period1 = _billing_read("m1", "2019-01-01", "2019-01-15", 0.0, 15.0, 3.0)
     frame2, period2 = _billing_read("m1", "2019-01-16", "2019-01-31", 0.0, 16.0, 4.0)
     frame = pd.concat([frame1, frame2], ignore_index=True)
     correction_periods = period1 + period2
-    result = compute_savings(
-        _correction(frame, model_frequency="billing", correction_periods=correction_periods), aggregation="monthly"
+    correction = _correction(
+        frame, model_frequency="billing", correction_periods=correction_periods
     )
+    result = compute_savings(correction, aggregation="monthly")
     jan = _row(result.savings, "m1", "2019-01")
 
     assert jan["savings"] == pytest.approx(31.0)
@@ -513,9 +581,10 @@ def test_billing_nan_read_lowers_day_grain_coverage_and_leaves_the_band_to_the_f
     frame2, period2 = _billing_read("m1", "2019-01-16", "2019-01-31", 0.0, np.nan, np.nan)
     frame = pd.concat([frame1, frame2], ignore_index=True)
     correction_periods = period1 + period2
-    result = compute_savings(
-        _correction(frame, model_frequency="billing", correction_periods=correction_periods), aggregation="monthly"
+    correction = _correction(
+        frame, model_frequency="billing", correction_periods=correction_periods
     )
+    result = compute_savings(correction, aggregation="monthly")
     jan = _row(result.savings, "m1", "2019-01")
 
     assert jan["coverage"] == pytest.approx(15.0 / 31.0)
@@ -523,39 +592,7 @@ def test_billing_nan_read_lowers_day_grain_coverage_and_leaves_the_band_to_the_f
     assert jan["savings_unc"] == pytest.approx(1.0)
 
 
-# ── calendar-rollup day-distribution, end to end (slow, ComStock) ────────────
-
-
-def _one_cluster_selection(treatment, pool):
-    """A hand-built one-cluster selection (all pool meters, equal weight) so
-    the fixture doesn't depend on the clustering algorithm's minimum sample
-    size."""
-    clusters_flat = pd.DataFrame(
-        {"id": pool.ids, "cluster": 0, "weight": 1.0, "treatment": pd.NA}
-    )
-    clusters = _finalize_clusters(clusters_flat, SelectionMethod.CG_CLUSTERING)
-
-    weights_frame = pd.DataFrame(
-        {tid: {"pct_cluster_0": 1.0} for tid in treatment.ids}
-    ).T
-    weights_frame.index.name = "id"
-    treatment_weights = _normalize_treatment_weights(weights_frame)
-
-    selection = ComparisonGroupSelection(
-        clusters=clusters,
-        treatment_weights=treatment_weights,
-        method="cg_clustering",
-        basis="error",
-        method_settings={},
-        data_settings=None,
-        baseline_window=None,
-        exclusions=exclusions.empty_ledger(),
-        treatment_ids=list(treatment.ids),
-        pool_ids=list(pool.ids),
-        tz=treatment.tz,
-    )
-
-    return selection
+# ── calendar-rollup day-distribution, end to end ─────────────────────────────
 
 
 @pytest.fixture(scope="module")
@@ -568,7 +605,7 @@ def billing_rollup_result(comstock, model_bank):
 
     treatment = TreatmentGroup.from_fit_models(comstock.meters(model_bank, "billing", ids[:2]))
     pool = ComparisonPool.from_fit_models(comstock.meters(model_bank, "billing", ids[2:8]))
-    selection = _one_cluster_selection(treatment, pool)
+    selection = _mixed_selection(treatment, pool)
 
     boundaries = [pd.Timestamp(f"2019-{month:02d}-15", tz=treatment.tz) for month in range(1, 13)]
     correction = correct_reporting(
@@ -578,6 +615,7 @@ def billing_rollup_result(comstock, model_bank):
     return correction
 
 
+@pytest.mark.slow
 def test_billing_native_cadence_equals_correction_cadence(billing_rollup_result):
     """Native aggregation carries one row per read period of the corrected
     meter, matching the correction's received cadence exactly."""
@@ -587,19 +625,24 @@ def test_billing_native_cadence_equals_correction_cadence(billing_rollup_result)
     assert len(native[native["id"] == meter_id]) == len(billing_rollup_result.correction_periods)
 
 
+@pytest.mark.slow
+def test_billing_calendar_rollup_has_twelve_monthly_buckets_per_meter(billing_rollup_result):
+    """Reads whose boundaries never fall on a calendar-month start still roll up
+    to exactly one calendar year of monthly buckets per meter."""
+    monthly = compute_savings(billing_rollup_result, aggregation="monthly").savings
+    bucket_counts = monthly.groupby("id").size()
+
+    assert (bucket_counts == 12).all(), f"monthly buckets per meter: {bucket_counts.to_dict()}"
+
+
+@pytest.mark.slow
 def test_billing_calendar_rollup_reproduces_native_total_end_to_end(billing_rollup_result):
-    """A real correction whose reads straddle calendar months: the monthly
-    calendar rollup pro-rates each read across buckets, but every treatment
-    meter's monthly savings sum back to its native (per-read) total and its
-    single ``total`` aggregation, exactly as the day-distribution's additivity
-    guarantees."""
+    """A real correction whose reads straddle calendar months: every treatment
+    meter's monthly savings sum back to its native (per-read) total and to its
+    single ``total`` aggregation."""
     native = compute_savings(billing_rollup_result, aggregation="native").savings
     monthly = compute_savings(billing_rollup_result, aggregation="monthly").savings
     total = compute_savings(billing_rollup_result, aggregation="total").savings
-
-    # exactly one calendar year of monthly buckets per meter, despite the
-    # read boundaries never falling on a calendar-month start
-    assert (monthly.groupby("id").size() == 12).all()
 
     for tid in billing_rollup_result.corrected["id"].unique():
         native_total = native.loc[native["id"] == tid, "savings"].sum()
@@ -608,6 +651,11 @@ def test_billing_calendar_rollup_reproduces_native_total_end_to_end(billing_roll
 
         assert monthly_total == pytest.approx(native_total, rel=1e-6)
         assert monthly_total == pytest.approx(expected_total, rel=1e-6)
+
+
+@pytest.mark.slow
+def test_billing_calendar_rollup_coverage_is_a_fraction(billing_rollup_result):
+    monthly = compute_savings(billing_rollup_result, aggregation="monthly").savings
 
     assert monthly["coverage"].between(0.0, 1.0).all()
 
@@ -640,7 +688,11 @@ def test_json_roundtrip_preserves_tables(aggregation):
         [pd.Timestamp("2019-01-15", tz=_TZ), pd.Timestamp("2019-06-15", tz=_TZ)]
     )
     frame = _meter_frame(
-        "m1", index, observed=np.array([1.0, 2.0]), corrected=np.array([3.0, 5.0]), corrected_unc=np.array([0.5, np.nan])
+        "m1",
+        index,
+        observed=np.array([1.0, 2.0]),
+        corrected=np.array([3.0, 5.0]),
+        corrected_unc=np.array([0.5, np.nan]),
     )
     result = compute_savings(_correction(frame), aggregation=aggregation)
 

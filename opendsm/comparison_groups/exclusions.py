@@ -64,12 +64,8 @@ def append(ledger, ids, stage, origin, reason, detail=""):
     ``reason``/``detail``.
 
     Args:
-        ledger: Ledger frame to extend.
         ids: Meter ids to record, each stored as a string.
         stage: Pipeline stage that dropped the meters, one of ``STAGES``.
-        origin: Key naming the rule that dropped them.
-        reason: Human-readable reason.
-        detail: Optional free-text detail.
 
     Returns:
         The extended ledger, or ``ledger`` itself when ``ids`` is empty.

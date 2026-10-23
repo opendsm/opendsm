@@ -25,6 +25,12 @@ import opendsm.comparison_groups.savings.settings as _settings
 
 
 
+# fewest comparison-group meters `model_correction_matrix` accepts
+MIN_CG_METERS = 5
+# fewest finite meters a cluster needs to enter a timestep's correction
+MIN_CLUSTER_METERS = 3
+
+
 def _unit_correction_unc(
     oTr, 
     mTr,
@@ -185,6 +191,10 @@ def _update_mask(global_mask, mask=None, idx_valid=None, idx_invalid=None):
     return global_mask & mask
 
 
+class _InsufficientMetersError(ValueError):
+    """Masking left fewer than `MIN_CLUSTER_METERS` meters in a cluster."""
+
+
 def _apply_mask(mask, *arrays):
     res = []
     for arr in arrays:
@@ -192,8 +202,10 @@ def _apply_mask(mask, *arrays):
         if arr is not None:
             arr_updated = arr[mask]
 
-            if len(arr_updated) < 3:
-                raise ValueError("After applying mask, array has insufficient length.")
+            if len(arr_updated) < MIN_CLUSTER_METERS:
+                raise _InsufficientMetersError(
+                    "After applying mask, array has insufficient length."
+                )
 
         res.append(arr_updated)
 
@@ -547,18 +559,27 @@ def model_correction(
     return mTrc, mTrc_unc, global_mask
 
 
-def _cluster_reduce(correct_c, correct_unc_c, valid_c, mag_c, calculate_unc, settings):
+def _cluster_labels(CG_label):
+    """Sorted unique cluster labels, excluding non-finite and negative (outlier) labels."""
+    labels = np.unique(CG_label)
+    labels = labels[np.isfinite(labels)]
+    labels = labels[labels >= 0]
+
+    return labels
+
+
+def _cluster_reduce(correct_c, correct_unc_c, valid_c, mag_c, settings):
     """Vectorized single-cluster aggregation over timesteps.
 
-    Reproduces the per-hour aggregation of `_cluster_correction` (default path,
-    no outlier rejection) for one cluster across all T timesteps at once.
+    Reproduces the per-timestep aggregation of `_cluster_correction` (no outlier
+    rejection) for one cluster across all T timesteps at once.
 
     Args:
         correct_c: per-meter corrections for the cluster, shape (T, m)
-        correct_unc_c: per-meter correction uncertainties, shape (T, m) or None
+        correct_unc_c: per-meter correction uncertainties, shape (T, m), or None
+            to skip uncertainty
         valid_c: finite/usable mask for the cluster's meters, shape (T, m)
         mag_c: comparison-group model magnitudes for the cluster, shape (T, m)
-        calculate_unc: whether uncertainty is propagated
 
     Returns:
         cluster_mean: weighted cluster correction per timestep, shape (T,)
@@ -623,17 +644,16 @@ def _cluster_reduce(correct_c, correct_unc_c, valid_c, mag_c, calculate_unc, set
         wn0 = wn[np.arange(T), idx0]
         uniform = np.where(valid_c, np.abs(wn - wn0[:, None]), 0.0).max(axis=1) <= 1e-8
 
-        # a Kish effective sample size below 2 cannot support a weighted interval,
-        # so weighted spread is used only where the sample supports it; uniform,
-        # zero-magnitude, or concentrated timesteps fall back to the unweighted
-        # spread over the finite meters while the point correction stays weighted.
+        # weighted spread needs a Kish effective sample size of at least 2; uniform,
+        # zero-magnitude or concentrated timesteps take the unweighted spread over
+        # finite meters, and the point stays weighted.
         weighted_path = ~zero_total & ~uniform & np.isfinite(n_eff_model) & (n_eff_model >= 2)
         n_unc = np.where(weighted_path, n_eff_model, nc.astype(np.float64))
 
     std = np.where(weighted_path, std_w, std_unw)
 
     cluster_unc = np.full(T, np.nan)
-    if calculate_unc:
+    if correct_unc_c is not None:
         xu = np.where(valid_c, correct_unc_c, 0.0)
 
         with np.errstate(invalid="ignore", divide="ignore"):
@@ -655,11 +675,9 @@ def _cluster_reduce(correct_c, correct_unc_c, valid_c, mag_c, calculate_unc, set
 
 
 def model_correction_matrix(
-    oTr: np.ndarray,
     mTr: np.ndarray,
     oCGr: np.ndarray,
     mCGr: np.ndarray,
-    oTr_unc: Optional[np.ndarray],
     mTr_unc: Optional[np.ndarray],
     oCGr_unc: Optional[np.ndarray],
     mCGr_unc: Optional[np.ndarray],
@@ -672,30 +690,29 @@ def model_correction_matrix(
 
     Applies the same per-timestep correction math as the scalar
     `model_correction` to a stack of T timesteps at once. All math is done in
-    float64 regardless of the input dtype (float32 inputs are cast up). `oTr`
-    is accepted for parity with the scalar kernel's signature and does not
-    enter the math.
+    float64 regardless of the input dtype (float32 inputs are cast up).
 
     This kernel degrades per cluster, not per timestep: at each timestep a
-    nonzero-weight cluster with fewer than 3 finite comparison-group meters is
-    dropped and the surviving clusters are averaged with their weights
-    renormalized over the survivors, so a sparse cluster does not abort the whole
-    timestep. `mTrc[t]` is NaN only when no cluster survives (all degenerate) or
-    `mTr[t]` is non-finite. This is a deliberate divergence from the scalar
+    nonzero-weight cluster with fewer than `MIN_CLUSTER_METERS` finite
+    comparison-group meters is dropped and the surviving clusters are averaged
+    with their weights renormalized over the survivors, so a sparse cluster does
+    not abort the whole timestep. `mTrc[t]` is NaN only when no cluster survives
+    (all degenerate), `mTr[t]` is non-finite, or a surviving cluster's point is
+    non-finite (float overflow in the percent scale or the comparison-group
+    difference). This is a deliberate divergence from the scalar
     `model_correction`, which raises when any cluster has too few finite meters.
     Uncertainty is a quadrature over the surviving clusters that carry a finite
     uncertainty, using the same survivor-renormalized weights; a surviving
     cluster with a non-finite uncertainty stays in the point but is omitted from
     the band, understating it. The quadrature treats the comparison-group
     meters as independent, so the band is a heuristic rather than a calibrated
-    interval. `mTrc_unc[t]` is NaN
-    only when `mTr_unc[t]` is non-finite or no surviving cluster contributes a
-    finite uncertainty. The global `M < 5` check is a hard error.
+    interval. `mTrc_unc[t]` is NaN only when `mTrc[t]` or `mTr_unc[t]` is
+    non-finite or no surviving cluster contributes a finite uncertainty.
 
     Args:
-        oTr, mTr: treatment observed/model, shape (T,)
+        mTr: treatment model, shape (T,)
         oCGr, mCGr: comparison-group observed/model, shape (T, M)
-        oTr_unc, mTr_unc: treatment uncertainties, shape (T,) or None
+        mTr_unc: treatment model uncertainty, shape (T,) or None
         oCGr_unc, mCGr_unc: comparison-group uncertainties, shape (T, M) or None
         CGr_corr: per-meter observed-vs-model correlation, shape (M,) or None
         CG_label: per-meter cluster label, shape (M,)
@@ -707,9 +724,14 @@ def model_correction_matrix(
         mTrc_unc: corrected uncertainty (heuristic band), shape (T,)
         mask: per-timestep per-meter usage mask, shape (T, M): a meter is
             marked where it is finite, in a nonzero-weight cluster, and that
-            cluster survived the timestep; a NaN row is all False, and with
-            `algorithm` None no comparison meter enters the point, so the mask
-            is all False everywhere
+            cluster survived the timestep; a row with no surviving cluster or a
+            non-finite `mTr[t]` is all False, and with `algorithm` None no
+            comparison meter enters the point, so the mask is all False
+            everywhere
+
+    Raises:
+        ValueError: when M is below `MIN_CG_METERS`, an input shape does not
+            match, or every cluster has zero weight.
     """
     mTr = np.asarray(mTr, dtype=np.float64)
     oCGr = np.asarray(oCGr, dtype=np.float64)
@@ -733,8 +755,10 @@ def model_correction_matrix(
 
         return mTrc, mTrc_unc, mask
 
-    if M < 5:
-        raise ValueError("`oCGr` cannot have fewer than 5 comparison-group meters")
+    if M < MIN_CG_METERS:
+        raise ValueError(
+            f"`oCGr` cannot have fewer than {MIN_CG_METERS} comparison-group meters"
+        )
 
     if mCGr.shape != (T, M) or oCGr.shape != (T, M):
         raise ValueError("`oCGr` and `mCGr` must both have shape (T, M)")
@@ -742,8 +766,8 @@ def model_correction_matrix(
     if CG_label.shape != (M,):
         raise ValueError("`CG_label` must have shape (M,)")
 
-    n_clusters = int(np.sum(np.unique(CG_label) >= 0))
-    if T_weight.shape[0] != n_clusters:
+    unique_labels = _cluster_labels(CG_label)
+    if T_weight.shape[0] != unique_labels.shape[0]:
         raise ValueError(
             "`T_weight` must have the same number of elements as the unique number of "
             "non-negative labels in `CG_label`"
@@ -780,11 +804,6 @@ def model_correction_matrix(
     if calculate_unc:
         finite = finite & np.isfinite(mCGr_unc) & np.isfinite(oCGr_unc) & np.isfinite(CGr_corr)[None, :]
 
-    unique_labels = np.unique(CG_label)
-    unique_labels = unique_labels[np.isfinite(unique_labels)]
-    unique_labels = unique_labels[unique_labels >= 0]
-
-    # meters in zero-weight clusters are never usable, mirroring the scalar kernel
     mask_base = finite.copy()
     for i, label in enumerate(unique_labels):
         if T_weight[i] == 0:
@@ -792,9 +811,8 @@ def model_correction_matrix(
 
     if settings.outlier_rejection.enabled:
         mTrc, mTrc_unc, mask = _matrix_correction_loop(
-            oTr, mTr, oCGr, mCGr,
-            oTr_unc, mTr_unc, oCGr_unc, mCGr_unc, CGr_corr,
-            CG_label, T_weight, settings, mask_base,
+            mTr, oCGr, mCGr, mTr_unc, oCGr_unc, mCGr_unc, CGr_corr,
+            CG_label, unique_labels, T_weight, calculate_unc, settings, mask_base,
         )
 
         return mTrc, mTrc_unc, mask
@@ -832,7 +850,6 @@ def model_correction_matrix(
         with np.errstate(invalid="ignore"):
             correct_unc = np.sqrt(correction_var)
 
-    # elementwise correction caps
     if settings.correction_cap.enabled:
         cap = np.abs(mTr)[:, None] * settings.correction_cap.value
 
@@ -841,6 +858,8 @@ def model_correction_matrix(
         elif settings.correction_cap.type == _settings.CorrectionCapChoice.SOLAR:
             solar_mask = np.abs(mCGr) < settings.correction_cap.solar_threshold
             correct = np.where(solar_mask, np.clip(correct, -cap, cap), correct)
+        else:
+            raise ValueError(f"unknown correction_cap type: {settings.correction_cap.type}")
 
     cluster_means = []
     cluster_uncs = []
@@ -853,17 +872,14 @@ def model_correction_matrix(
 
         cols = CG_label == label
         valid_c = finite[:, cols]
-        # a cluster with fewer than 3 finite meters is degenerate at that
-        # timestep and drops from the combination there
-        deg_c = valid_c.sum(axis=1) < 3
+        deg_c = valid_c.sum(axis=1) < MIN_CLUSTER_METERS
 
+        correct_unc_c = None
         if calculate_unc:
             correct_unc_c = correct_unc[:, cols]
-        else:
-            correct_unc_c = None
 
         mean_c, unc_c = _cluster_reduce(
-            correct[:, cols], correct_unc_c, valid_c, mCGr[:, cols], calculate_unc, settings
+            correct[:, cols], correct_unc_c, valid_c, mCGr[:, cols], settings
         )
 
         cluster_means.append(np.where(deg_c, np.nan, mean_c))
@@ -879,8 +895,6 @@ def model_correction_matrix(
     cu = np.stack(cluster_uncs, axis=1)
     cw = np.asarray(comb_weights)
 
-    # a survivor whose point is itself non-finite propagates NaN into the row, as in the
-    # scalar kernel
     surv = ~np.stack(cluster_deg, axis=1)
     w = cw[None, :] * surv
     wsum = w.sum(axis=1)
@@ -893,16 +907,12 @@ def model_correction_matrix(
     no_survivor = (wsum <= 0) | ~np.isfinite(mTr)
     mTrc = np.where(no_survivor, np.nan, mTrc)
 
-    # the usage mask reports the meters that entered the point: a dropped
-    # cluster's members leave it at that timestep, and a NaN row uses none
     mask = mask_base.copy()
     for j, cols in enumerate(comb_cols):
         mask[:, cols] &= surv[:, j][:, None]
     mask[no_survivor] = False
 
     if calculate_unc:
-        # a survivor with a non-finite uncertainty keeps its weight but contributes
-        # nothing, so the band understates
         unc_contrib = surv & np.isfinite(cu)
 
         with np.errstate(invalid="ignore"):
@@ -918,31 +928,18 @@ def model_correction_matrix(
 
 
 def _matrix_correction_loop(
-    oTr, mTr, oCGr, mCGr,
-    oTr_unc, mTr_unc, oCGr_unc, mCGr_unc, CGr_corr,
-    CG_label, T_weight, settings, mask_base,
+    mTr, oCGr, mCGr, mTr_unc, oCGr_unc, mCGr_unc, CGr_corr,
+    CG_label, unique_labels, T_weight, calculate_unc, settings, mask_base,
 ):
     """Per-timestep fallback for the outlier-rejection path.
 
     Outlier rejection depends on the joint distribution of a cluster's meters at
-    each timestep, so the vectorized aggregation does not apply. This runs the
-    per-cluster reduction (`_cluster_correction`, which rejects outliers) for
-    each cluster at each timestep and applies the same per-cluster degradation
-    as the vectorized path: a cluster with fewer than 3 finite meters (or that
-    outlier rejection drives below 3) is dropped, the surviving clusters are
-    averaged with their weights renormalized over the survivors, and the row is
-    NaN only when no cluster survives. Uncertainty is a quadrature over the
-    survivors that carry a finite uncertainty, using those renormalized weights;
-    a survivor with a non-finite uncertainty stays in the point but is omitted
-    from the band, understating it. A dropped cluster's meters are cleared from
-    the usage mask at that timestep, and a NaN row uses none.
+    each timestep, so the vectorized aggregation does not apply. Runs
+    `_cluster_correction` per cluster per timestep under the degradation, band
+    and mask rules of `model_correction_matrix`; a cluster that outlier rejection
+    drives below `MIN_CLUSTER_METERS` meters is also dropped.
     """
     T = oCGr.shape[0]
-    calculate_unc = mTr_unc is not None and mCGr_unc is not None
-
-    unique_labels = np.unique(CG_label)
-    unique_labels = unique_labels[np.isfinite(unique_labels)]
-    unique_labels = unique_labels[unique_labels >= 0]
 
     mTrc = np.full(T, np.nan)
     mTrc_unc = np.full(T, np.nan)
@@ -951,10 +948,6 @@ def _matrix_correction_loop(
         if not np.isfinite(mTr[t]):
             mask[t] = False
             continue
-
-        oTr_unc_t = None
-        if oTr_unc is not None:
-            oTr_unc_t = float(oTr_unc[t])
 
         mTr_unc_t = None
         if mTr_unc is not None:
@@ -971,8 +964,7 @@ def _matrix_correction_loop(
 
             cluster_mask = global_mask_t & (CG_label == label)
 
-            if cluster_mask.sum() < 3:
-                # degenerate cluster: drop from this timestep
+            if cluster_mask.sum() < MIN_CLUSTER_METERS:
                 global_mask_t[cluster_mask] = False
                 continue
 
@@ -988,20 +980,17 @@ def _matrix_correction_loop(
             if CGr_corr is not None:
                 CGr_corr_c = CGr_corr[cluster_mask]
 
+            # `_cluster_correction` reads neither treatment observed argument
             try:
                 _correct, _correct_unc, _mask = _cluster_correction(
-                    float(oTr[t]), float(mTr[t]),
+                    None, float(mTr[t]),
                     oCGr[t][cluster_mask], mCGr[t][cluster_mask],
-                    oTr_unc_t, mTr_unc_t, oCGr_unc_c, mCGr_unc_c, CGr_corr_c,
+                    None, mTr_unc_t, oCGr_unc_c, mCGr_unc_c, CGr_corr_c,
                     calculate_unc, settings,
                 )
-            except ValueError as e:
-                if "insufficient length" in str(e):
-                    # outlier rejection drove this cluster below 3 meters: drop it
-                    global_mask_t[cluster_mask] = False
-                    continue
-
-                raise
+            except _InsufficientMetersError:
+                global_mask_t[cluster_mask] = False
+                continue
 
             global_mask_t[cluster_mask] = _update_mask(global_mask_t[cluster_mask], mask=_mask)
 
@@ -1012,7 +1001,6 @@ def _matrix_correction_loop(
         mask[t] = global_mask_t
 
         if not surv_weight:
-            # every cluster degenerate at this timestep: row stays NaN
             continue
 
         w = np.asarray(surv_weight, dtype=np.float64)
