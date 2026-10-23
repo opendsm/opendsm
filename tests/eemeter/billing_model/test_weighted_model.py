@@ -36,9 +36,13 @@ def _predict(model, df, **kwargs):
 def test_predict_returns_finite_predictions_with_the_load_columns(
     weighted_model, baseline_data_billing
 ):
+    """Predict returns finite predictions with the load columns, one row per billing period
+    after the first, which has no previous period start to measure its length from."""
+    n_periods = int(baseline_data_billing["observed"].notna().sum())
+
     result = _predict(weighted_model, baseline_data_billing)
 
-    assert 0 < len(result) <= len(baseline_data_billing)
+    assert len(result) == n_periods - 1
     assert {"observed", "predicted", "predicted_unc", "heating_load", "cooling_load"} <= set(
         result.columns
     )

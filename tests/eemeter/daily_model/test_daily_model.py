@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from opendsm.eemeter import DailyModel
-from opendsm.eemeter.models.daily.data import DailyBaselineData, DailyReportingData
+from opendsm.eemeter.models.daily.data import DailyBaselineData
 from opendsm.eemeter.common.data_settings import DailyDataSettings
 from opendsm.eemeter.models.daily.utilities.settings import DailySettings
 from opendsm.eemeter.common.exceptions import (
@@ -28,16 +28,11 @@ from opendsm.eemeter.common.exceptions import (
     DisqualifiedModelError,
 )
 
-from ..helpers import nonstandard_settings_warnings
+from ..helpers import (
+    meter_temperature_frame,
+    nonstandard_settings_warnings,
+)
 
-
-
-def _daily_frame(meter, temperature):
-    """Combine a meter frame (column 'value') and a temperature series into a model input frame."""
-    meter = meter.rename(columns={"value": "observed"})
-    temperature = temperature.tz_convert(meter.index.tz).rename("temperature")
-
-    return pd.concat([meter, temperature], axis=1, sort=True)
 
 
 @pytest.fixture
@@ -65,14 +60,14 @@ def missing_daily_data(bad_daily_series) -> pd.DataFrame:
     meter, temp = bad_daily_series
     meter = meter[:-90]
 
-    return _daily_frame(meter, temp)
+    return meter_temperature_frame(meter, temp)
 
 
 @pytest.fixture
 def bad_daily_data(bad_daily_series) -> pd.DataFrame:
     meter, temp = bad_daily_series
 
-    return _daily_frame(meter, temp)
+    return meter_temperature_frame(meter, temp)
 
 
 @pytest.mark.slow
@@ -94,6 +89,7 @@ def test_model_cvrmse_error(bad_daily_data):
     model.predict(bad_daily_data, enforce_compliance=False)
 
 
+@pytest.mark.slow
 def test_timezone_behavior(daily_series):
     # TODO probably move some of this to dataclass tests
     meter, temp = daily_series
@@ -101,7 +97,7 @@ def test_timezone_behavior(daily_series):
     assert str(meter.index.tz) == "America/Los_Angeles"
     assert str(temp.index.tz) == "UTC"
 
-    baseline_df = _daily_frame(meter, temp)
+    baseline_df = meter_temperature_frame(meter, temp)
     model = DailyModel().fit(baseline_df, is_electricity_data=True)
 
     # fail when attempting to predict on data with different timezone from baseline
@@ -110,7 +106,7 @@ def test_timezone_behavior(daily_series):
     with pytest.raises(ValueError):
         model.predict(reporting_no_meter_utc)
 
-    reporting_df = _daily_frame(meter, temp)
+    reporting_df = meter_temperature_frame(meter, temp)
     res1 = model.predict(reporting_df)
     reporting_no_meter = pd.DataFrame({"temperature": temp.tz_convert(meter.index.tz)})
     res2 = model.predict(reporting_no_meter)
@@ -118,14 +114,15 @@ def test_timezone_behavior(daily_series):
     assert round((res1["predicted"] - res2["predicted"]).sum(), 2) == 0
 
 
+@pytest.mark.slow
 def test_predict_df_matches_input_index(daily_series):
     meter, temp = daily_series
-    baseline_df = _daily_frame(meter, temp)
+    baseline_df = meter_temperature_frame(meter, temp)
     model = DailyModel().fit(baseline_df, is_electricity_data=True)
 
     temp = temp.copy()
     temp[temp.index.day > 20] = np.nan
-    reporting_df = _daily_frame(meter, temp)
+    reporting_df = meter_temperature_frame(meter, temp)
     res = model.predict(reporting_df)
     assert len(res) == len(reporting_df)
 
@@ -133,60 +130,59 @@ def test_predict_df_matches_input_index(daily_series):
 def test_daily_predict_before_fit_raises(daily_series):
     """Predicting on an unfitted DailyModel raises RuntimeError, not AttributeError."""
     meter, temp = daily_series
-    df = _daily_frame(meter, temp)
+    df = meter_temperature_frame(meter, temp)
 
     with pytest.raises(RuntimeError, match="must be fit"):
         DailyModel().predict(df)
 
 
+@pytest.mark.slow
 def test_fit_with_dataframe_and_is_electricity_data_fits(daily_series):
+    """A model fit on a frame predicts a finite value for every baseline day with a temperature."""
     meter, temp = daily_series
-    df = _daily_frame(meter, temp)
+    df = meter_temperature_frame(meter, temp)
 
     model = DailyModel().fit(df, is_electricity_data=True)
 
-    assert model.is_fitted
+    prediction = model.predict(df)
+    has_temperature = prediction["temperature"].notna()
+    assert has_temperature.any()
+    assert np.isfinite(prediction.loc[has_temperature, "predicted"]).all()
 
 
-def test_fit_rejects_data_class_instance(daily_series):
-    meter, temp = daily_series
-    df = _daily_frame(meter, temp)
-    data = DailyBaselineData(df, is_electricity_data=True)
+def _constant_daily_frame():
+    """Thirty days of constant usage and temperature: enough to build a data object."""
+    index = pd.date_range("2020-01-01", periods=30, freq="D", tz="UTC")
 
-    with pytest.raises(TypeError, match="Expected a pandas DataFrame"):
-        DailyModel().fit(data, is_electricity_data=True)
+    return pd.DataFrame({"observed": 1.0, "temperature": 50.0}, index=index)
 
 
-def test_fit_rejects_positional_is_electricity_data(daily_series):
-    meter, temp = daily_series
-    df = _daily_frame(meter, temp)
+@pytest.mark.parametrize(
+    "make_value,type_name",
+    [
+        (
+            lambda: DailyBaselineData(_constant_daily_frame(), is_electricity_data=True),
+            "DailyBaselineData",
+        ),
+        (lambda: None, "NoneType"),
+        (lambda: {"observed": [1.0]}, "dict"),
+        (lambda: pd.Series([1.0]), "Series"),
+    ],
+    ids=["data_object", "none", "dict", "series"],
+)
+@pytest.mark.parametrize("method", ["fit", "predict"])
+def test_non_dataframe_input_raises_type_error(method, make_value, type_name):
+    """fit and predict on an unfitted model reject anything that is not a DataFrame."""
+    kwargs = {"fit": {"is_electricity_data": True}, "predict": {}}[method]
 
-    with pytest.raises(TypeError):
-        DailyModel().fit(df, True)
-
-
-def test_predict_frame_matches_predict_on_built_reporting_data(daily_series):
-    """predict(df) reproduces predicting on a separately constructed reporting data object."""
-    meter, temp = daily_series
-    baseline_df = _daily_frame(meter, temp)
-    model = DailyModel().fit(baseline_df, is_electricity_data=True)
-
-    reporting_df = _daily_frame(meter, temp)
-    reporting_data = DailyReportingData(
-        reporting_df, True, settings=DailyDataSettings()
-    )
-    expected = model._predict_data(reporting_data)
-
-    result = model.predict(reporting_df)
-
-    np.testing.assert_allclose(
-        result["predicted"].values, expected["predicted"].values, atol=1e-9
-    )
+    with pytest.raises(TypeError, match=f"df must be a pandas DataFrame, got {type_name}"):
+        getattr(DailyModel(), method)(make_value(), **kwargs)
 
 
+@pytest.mark.slow
 def test_predict_without_observed_column_works(daily_series):
     meter, temp = daily_series
-    baseline_df = _daily_frame(meter, temp)
+    baseline_df = meter_temperature_frame(meter, temp)
     model = DailyModel().fit(baseline_df, is_electricity_data=True)
 
     reporting_df = pd.DataFrame({"temperature": temp.tz_convert(meter.index.tz)})
@@ -196,9 +192,10 @@ def test_predict_without_observed_column_works(daily_series):
     assert "observed" not in result.columns or result["observed"].isna().all()
 
 
+@pytest.mark.slow
 def test_predict_does_not_trim_edge_nan_rows(daily_series):
     meter, temp = daily_series
-    df = _daily_frame(meter, temp)
+    df = meter_temperature_frame(meter, temp)
     model = DailyModel().fit(df, is_electricity_data=True)
 
     padded_temp = temp.tz_convert(meter.index.tz)
@@ -211,10 +208,11 @@ def test_predict_does_not_trim_edge_nan_rows(daily_series):
     assert len(result) == len(reporting_df)
 
 
+@pytest.mark.slow
 def test_edge_trimmed_frame_fits_same_coefficients_with_warning(daily_series):
     """A baseline frame padded with all-NaN edge rows fits identically and logs one trim warning."""
     meter, temp = daily_series
-    df = _daily_frame(meter, temp)
+    df = meter_temperature_frame(meter, temp)
     unpadded_model = DailyModel().fit(df, is_electricity_data=True)
 
     n_leading, n_trailing = 4, 6
@@ -238,27 +236,80 @@ def test_edge_trimmed_frame_fits_same_coefficients_with_warning(daily_series):
     assert len(trim_warnings) == 1
     assert trim_warnings[0].data == {"leading": n_leading, "trailing": n_trailing}
 
-    for key, submodel in unpadded_model.params.submodels.items():
-        padded_submodel = padded_model.params.submodels[key]
-        assert padded_submodel.coefficients.intercept == pytest.approx(
-            submodel.coefficients.intercept
-        )
+    assert padded_model.to_dict()["submodels"] == unpadded_model.to_dict()["submodels"]
 
 
-def test_fit_disqualified_frame_raises_with_matching_disqualification_list():
-    """A disqualified baseline frame raises DataSufficiencyError carrying the disqualifications."""
-    idx = pd.date_range("2020-01-01", periods=30, freq="D", tz="UTC")
+def _disqualified_daily_frame(tz="UTC"):
+    """A 30-day frame, too short for a daily baseline."""
+    idx = pd.date_range("2020-01-01", periods=30, freq="D", tz=tz)
     df = pd.DataFrame(
         {"observed": np.linspace(10, 20, 30), "temperature": np.linspace(30, 90, 30)},
         index=idx,
     )
 
-    model = DailyModel()
-    with pytest.raises(DataSufficiencyError) as exc_info:
-        model.fit(df, is_electricity_data=True)
+    return df
 
-    assert len(exc_info.value.disqualification) > 0
-    assert exc_info.value.disqualification == model.disqualification
+
+def test_fit_disqualified_frame_raises_with_matching_disqualification_list():
+    """A disqualified baseline frame raises DataSufficiencyError carrying the disqualifications
+    its baseline data object reports."""
+    df = _disqualified_daily_frame()
+    expected = [
+        dq.qualified_name
+        for dq in DailyBaselineData(df.copy(), True).disqualification
+    ]
+
+    with pytest.raises(DataSufficiencyError) as exc_info:
+        DailyModel().fit(df, is_electricity_data=True)
+
+    raised = [dq.qualified_name for dq in exc_info.value.disqualification]
+    assert expected, "the frame was expected to be disqualified"
+    assert raised == expected, f"expected {expected}, got {raised}"
+
+
+def test_fit_disqualified_frame_leaves_fresh_model_unfitted():
+    """A fit that raises DataSufficiencyError leaves a fresh model without fit state."""
+    model = DailyModel()
+
+    with pytest.raises(DataSufficiencyError):
+        model.fit(_disqualified_daily_frame(), is_electricity_data=True)
+
+    assert not model.is_fitted, "a rejected fit marked the model fitted"
+    assert model.is_electricity_data is None, (
+        f"a rejected fit set is_electricity_data to {model.is_electricity_data}"
+    )
+
+
+@pytest.mark.slow
+def test_rejected_refit_leaves_fitted_model_unchanged(comstock_daily):
+    """Refitting a fitted model on disqualified data raises and keeps every piece of the prior
+    fit: params, fuel flag, timezone, warnings and disqualification."""
+    df_b, _ = comstock_daily
+    model = DailyModel().fit(df_b, is_electricity_data=True, enforce_compliance=False)
+    params = model.to_dict()
+    timezone = model.baseline_timezone
+    warnings = list(model.warnings)
+    disqualification = list(model.disqualification)
+
+    with pytest.raises(DataSufficiencyError):
+        model.fit(
+            _disqualified_daily_frame(tz="America/Denver"),
+            is_electricity_data=False,
+            enforce_compliance=True,
+        )
+
+    assert model.is_fitted, "a rejected refit unfitted the model"
+    assert model.to_dict() == params, "a rejected refit changed the params"
+    assert model.is_electricity_data is True, (
+        f"expected is_electricity_data True, got {model.is_electricity_data}"
+    )
+    assert model.baseline_timezone == timezone, (
+        f"expected timezone {timezone}, got {model.baseline_timezone}"
+    )
+    assert model.warnings == warnings, "a rejected refit changed the warnings"
+    assert model.disqualification == disqualification, (
+        "a rejected refit changed the disqualification"
+    )
 
 
 def test_json_daily(comstock_daily, baseline_model_daily):
@@ -476,37 +527,58 @@ def test_legacy_deserialization_daily(comstock_daily, snapshot):
     assert round(float(total_metered_savings), 2) == snapshot(name="total_metered_savings")
 
 
+def test_is_electricity_data_is_none_before_fit():
+    assert DailyModel().is_electricity_data is None
+
+
 def test_meter_fact_round_trips_through_to_dict_from_dict(default_fitted_daily_model):
     model_dict = default_fitted_daily_model.to_dict()
     rebuilt = DailyModel.from_dict(model_dict)
 
-    assert rebuilt._is_electricity_data == default_fitted_daily_model._is_electricity_data
+    assert rebuilt.is_electricity_data == default_fitted_daily_model.is_electricity_data
 
 
-def test_from_dict_requires_keyword_when_payload_lacks_meter_fact(
-    default_fitted_daily_model, comstock_daily
-):
+@pytest.fixture
+def payload_without_meter_fact(default_fitted_daily_model):
     model_dict = default_fitted_daily_model.to_dict()
     del model_dict["info"]["is_electricity_data"]
 
-    with pytest.raises(ValueError):
-        DailyModel.from_dict(model_dict)
+    return model_dict
 
-    rebuilt = DailyModel.from_dict(model_dict, is_electricity_data=True)
+
+def test_from_dict_requires_keyword_when_payload_lacks_meter_fact(payload_without_meter_fact):
+    with pytest.raises(ValueError, match="does not store 'is_electricity_data'"):
+        DailyModel.from_dict(payload_without_meter_fact)
+
+
+def test_from_dict_with_keyword_warns_prior_format_when_payload_lacks_meter_fact(
+    payload_without_meter_fact,
+):
+    rebuilt = DailyModel.from_dict(payload_without_meter_fact, is_electricity_data=True)
+
     prior_format = [
         w for w in rebuilt.warnings if w.qualified_name == "eemeter.serialization.prior_format"
     ]
     assert len(prior_format) == 1
 
+
+def test_from_dict_with_keyword_predicts_as_fitted_when_payload_lacks_meter_fact(
+    payload_without_meter_fact, default_fitted_daily_model, comstock_daily
+):
     _, df_r = comstock_daily
-    result = rebuilt.predict(df_r.reset_index())
-    assert "predicted" in result.columns
+    reporting_df = df_r.reset_index()
+
+    rebuilt = DailyModel.from_dict(payload_without_meter_fact, is_electricity_data=True)
+
+    pd.testing.assert_frame_equal(
+        rebuilt.predict(reporting_df), default_fitted_daily_model.predict(reporting_df)
+    )
 
 
 def test_from_dict_rejects_keyword_when_payload_carries_meter_fact(default_fitted_daily_model):
     model_dict = default_fitted_daily_model.to_dict()
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="cannot be supplied here"):
         DailyModel.from_dict(model_dict, is_electricity_data=True)
 
 
@@ -550,19 +622,6 @@ def test_changed_requested_start_does_not_fire_nonstandard_settings_warning(coms
     ).fit(df_b.reset_index(), is_electricity_data=True, enforce_compliance=False)
 
     assert nonstandard_settings_warnings(model.warnings) == []
-
-
-def test_baseline_df_is_none_before_fit(daily_series):
-    assert DailyModel().baseline_df is None
-
-
-def test_baseline_df_is_dataframe_after_fit(daily_series):
-    meter, temp = daily_series
-    df = _daily_frame(meter, temp)
-
-    model = DailyModel().fit(df, is_electricity_data=True)
-
-    assert isinstance(model.baseline_df, pd.DataFrame)
 
 
 @pytest.mark.slow

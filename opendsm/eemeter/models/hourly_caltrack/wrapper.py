@@ -18,6 +18,10 @@ import numpy as np
 import pandas as pd
 
 from opendsm.common.stats.basic import t_stat
+from opendsm.eemeter.common.data_processor_utilities import (
+    require_dataframe,
+    resolve_is_electricity_data,
+)
 from opendsm.eemeter.common.features import (
     estimate_hour_of_week_occupancy,
     fit_temperature_bins,
@@ -72,8 +76,7 @@ class HourlyModel:
         self.alpha = 0.1
 
     def fit(self, df, *, is_electricity_data):
-        if isinstance(df, (_HourlyBaselineData, _HourlyReportingData)):
-            raise TypeError("fit expects a raw DataFrame, not a data class instance.")
+        require_dataframe(df, "df")
 
         self._is_electricity_data = is_electricity_data
         data = _HourlyBaselineData(df, is_electricity_data)
@@ -174,8 +177,7 @@ class HourlyModel:
         return self
 
     def predict(self, df):
-        if isinstance(df, (_HourlyBaselineData, _HourlyReportingData)):
-            raise TypeError("predict expects a raw DataFrame, not a data class instance.")
+        require_dataframe(df, "df")
 
         if not self.is_fit:
             raise RuntimeError("Model must be fit before predictions can be made.")
@@ -236,25 +238,15 @@ class HourlyModel:
     def from_dict(cls, data, *, is_electricity_data=None):
         """Rebuild a fitted model. ``is_electricity_data`` is required only when the payload
         does not carry the fuel flag, and rejected when it does."""
-        stored = data["model"].get("is_electricity_data")
-        if stored is not None and is_electricity_data is not None:
-            raise ValueError(
-                "This model stores 'is_electricity_data'; it cannot be supplied here."
-            )
-
-        if stored is None and is_electricity_data is None:
-            raise ValueError(
-                "This model does not store 'is_electricity_data'; supply it as a keyword argument."
-            )
-
-        if stored is None:
-            stored = is_electricity_data
+        is_electricity_data, _ = resolve_is_electricity_data(
+            data["model"].get("is_electricity_data"), is_electricity_data
+        )
 
         hourly_model = cls()
         hourly_model.model = CalTRACKHourlyModelResults.from_json(data)
         hourly_model._autocorr_unc_vars = data["model"]["unc_vars"]
         hourly_model.is_fit = True
-        hourly_model._is_electricity_data = stored
+        hourly_model._is_electricity_data = is_electricity_data
 
         return hourly_model
 

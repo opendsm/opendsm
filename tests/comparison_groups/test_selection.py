@@ -46,7 +46,10 @@ from opendsm.comparison_groups.stratified_sampling.settings import (
 from opendsm.eemeter.models import DailyModel
 from opendsm.eemeter.models.daily.data import DailyBaselineData
 
-from savings.equivalence_env import VARIANT_NAMES
+from savings.equivalence_env import (
+    VARIANT_NAMES,
+    shorten_baselines,
+)
 
 
 
@@ -659,15 +662,6 @@ def test_stage_exclusions_record_an_incomplete_meter_once(
 # -- short-baseline exclusion (MONTH loadshapes) -----------------------------
 
 
-def _shorten_baselines(population, short_ids):
-    """Cut the attached baselines of ``short_ids`` to their first six daily rows,
-    so each spans a single month; done after construction so the cut is not
-    itself a construction-time sufficiency failure."""
-    for mid in short_ids:
-        baseline_data = population._meters[mid].baseline_data
-        baseline_data._df = baseline_data._df.head(6)
-
-
 @pytest.fixture
 def short_baseline_env(billing_meters):
     """Billing populations, both carrying stratification features, in which one
@@ -680,8 +674,8 @@ def short_baseline_env(billing_meters):
     pool = ComparisonPool.from_fit_models(
         billing_meters["pool"], features=_synthetic_features(billing_meters["pool"])
     )
-    _shorten_baselines(treatment, {short_treatment})
-    _shorten_baselines(pool, {short_pool})
+    shorten_baselines(treatment, {short_treatment})
+    shorten_baselines(pool, {short_pool})
     env = {
         "treatment": treatment,
         "pool": pool,
@@ -779,7 +773,7 @@ def test_select_comparison_group_raises_when_every_treatment_meter_is_short_of_1
     12 baseline months, naming each meter, and leaves the population unchanged."""
     treatment_meters = billing_meters["treatment"]
     group = TreatmentGroup.from_fit_models(treatment_meters)
-    _shorten_baselines(group, group.ids)
+    shorten_baselines(group, group.ids)
 
     with pytest.raises(ValueError, match="at least 12 baseline months") as excinfo:
         select_comparison_group(group, pool, method="random_sampling")
@@ -807,7 +801,7 @@ def overlap_env(billing_meters):
     pool = ComparisonPool.from_fit_models(
         {**plain_meters, **overlap_meters}, features=overlap_features
     )
-    _shorten_baselines(pool, {overlap[1]})
+    shorten_baselines(pool, {overlap[1]})
     env = {
         "treatment": TreatmentGroup.from_fit_models(
             treatment_meters, features=_synthetic_features(treatment_meters)
@@ -887,8 +881,8 @@ def test_overlapping_id_short_in_both_copies_has_one_row_per_copy(billing_meters
     mid = list(treatment_meters)[0]
     treatment = TreatmentGroup.from_fit_models(treatment_meters)
     pool = ComparisonPool.from_fit_models({**billing_meters["pool"], mid: treatment_meters[mid]})
-    _shorten_baselines(treatment, {mid})
-    _shorten_baselines(pool, {mid})
+    shorten_baselines(treatment, {mid})
+    shorten_baselines(pool, {mid})
 
     selection = select_comparison_group(
         treatment, pool, "random_sampling", method_settings=RS_Settings(seed=42)

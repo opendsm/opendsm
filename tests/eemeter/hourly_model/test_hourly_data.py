@@ -598,21 +598,38 @@ class TestHourlyDataProcessing:
         assert data.df.iloc[-5:]["observed"].notna().all()
         assert (data.df.iloc[-5:]["observed"] == last_valid_value).all()
 
-    def test_to_be_interpolated_columns_fixed(self):
-        """Interpolated columns are always temperature and observed"""
+    def test_interpolated_flags_cover_temperature_and_observed(self):
+        """Without GHI the frame carries interpolation flags for temperature and observed only"""
         df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        assert data._to_be_interpolated_columns == ["temperature", "observed"]
+        flags = [c for c in data.df.columns if c.startswith("interpolated_")]
+        assert flags == ["interpolated_temperature", "interpolated_observed"]
 
-    def test_to_be_interpolated_columns_includes_ghi_when_present(self):
-        """GHI added to the fixed interpolated columns when the column exists"""
+    def test_interpolated_flags_include_ghi_when_present(self):
+        """A GHI column adds an interpolated_ghi flag after the temperature and observed flags"""
         df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31", include_ghi=True)
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        assert data._to_be_interpolated_columns == ["temperature", "observed", "ghi"]
+        flags = [c for c in data.df.columns if c.startswith("interpolated_")]
+        assert flags == ["interpolated_temperature", "interpolated_observed", "interpolated_ghi"]
+
+    @pytest.mark.parametrize("column", ["temperature", "observed", "ghi"])
+    def test_gap_sets_only_its_own_interpolated_flag(self, column):
+        """A one-hour gap in a column sets that column's flag at that hour and no other flag"""
+        df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31", include_ghi=True)
+        gap_hour = df.index[100]
+        df.loc[gap_hour, column] = np.nan
+
+        data = HourlyBaselineData(df=df, is_electricity_data=True)
+
+        flags = data.df.loc[
+            gap_hour, ["interpolated_temperature", "interpolated_observed", "interpolated_ghi"]
+        ]
+        expected = {f"interpolated_{c}": c == column for c in ["temperature", "observed", "ghi"]}
+        assert flags.to_dict() == expected
 
     def test_outputs_fixed_list(self):
         """_outputs is the fixed list of columns plus their interpolated flags"""

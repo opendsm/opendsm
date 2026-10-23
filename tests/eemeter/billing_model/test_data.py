@@ -21,6 +21,7 @@ from pandas import Timestamp, DatetimeIndex, DataFrame
 import pytest
 
 from ..constants import METER_SEED, NUM_DAYS_IN_YEAR, TEMPERATURE_SEED
+from ..helpers import meter_temperature_frame
 
 
 
@@ -307,7 +308,7 @@ def test_billing_baseline_data_with_specific_hourly_input(comstock_hourly, snaps
     df_b, _ = comstock_hourly
     meter, temperature = _meter_temp(df_b)
 
-    cls = BillingBaselineData(pd.concat([meter, temperature], axis=1, sort=True), is_electricity_data=True)
+    cls = BillingBaselineData(meter_temperature_frame(meter, temperature), is_electricity_data=True)
 
     assert cls.df is not None
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
@@ -324,7 +325,7 @@ def test_billing_baseline_data_with_specific_daily_input(comstock_daily, comstoc
     meter = sub_daily[["observed"]]
     _, temperature = _meter_temp(df_hourly)
 
-    cls = BillingBaselineData(pd.concat([meter, temperature], axis=1, sort=True), is_electricity_data=True)
+    cls = BillingBaselineData(meter_temperature_frame(meter, temperature), is_electricity_data=True)
 
     assert cls.df is not None
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
@@ -343,7 +344,7 @@ def test_billing_baseline_data_with_specific_missing_daily_input(comstock_daily,
     meter.loc[meter.index.month == 4] = np.nan
     _, temperature = _meter_temp(df_hourly)
 
-    cls = BillingBaselineData(pd.concat([meter, temperature], axis=1, sort=True), is_electricity_data=True)
+    cls = BillingBaselineData(meter_temperature_frame(meter, temperature), is_electricity_data=True)
 
     assert cls.df is not None
     assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
@@ -351,6 +352,9 @@ def test_billing_baseline_data_with_specific_missing_daily_input(comstock_daily,
 
 
 def test_billing_baseline_data_with_specific_monthly_input(comstock_monthly, comstock_hourly, snapshot):
+    """Monthly reads over a year of hourly temperature keep every read: the temperature rows
+    after the last read have no 'observed' value, and the frame's last row closes the last
+    period, so the daily frame spans the year and sums to the sum of the reads."""
     df_monthly, _ = comstock_monthly
     df_hourly, _ = comstock_hourly
 
@@ -359,12 +363,53 @@ def test_billing_baseline_data_with_specific_monthly_input(comstock_monthly, com
     meter = sub_monthly[["observed"]].dropna()
     _, temperature = _meter_temp(df_hourly)
 
-    cls = BillingBaselineData(pd.concat([meter, temperature], axis=1, sort=True), is_electricity_data=True)
+    cls = BillingBaselineData(meter_temperature_frame(meter, temperature), is_electricity_data=True)
 
     assert cls.df is not None
+    assert len(cls.df) == 365
+    assert cls.df.observed.sum() == pytest.approx(meter.observed.sum(), rel=1e-12)
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
     assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
     assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
+
+
+def test_billing_baseline_data_last_row_without_observed_closes_the_last_period(
+    comstock_monthly, comstock_hourly
+):
+    """A frame ending on a row with no 'observed' value at the last read's timestamp closes
+    the period before it: the daily frame sums to the reads before that row."""
+    df_monthly, _ = comstock_monthly
+    df_hourly, _ = comstock_hourly
+    # local time keeps every read at midnight, so each read's days are whole days
+    meter = df_monthly[["observed"]].dropna()
+    closing = meter.index[-1]
+    meter.loc[closing, "observed"] = np.nan
+    temperature = df_hourly["temperature"]
+
+    cls = BillingBaselineData(
+        meter_temperature_frame(meter, temperature[temperature.index < closing]),
+        is_electricity_data=True,
+    )
+
+    assert cls.df.observed.sum() == pytest.approx(meter.observed.sum(), rel=1e-12)
+    assert round(float(cls.df.observed.sum()), 2) == 308105.12
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("data_class", [BillingBaselineData, BillingReportingData])
+def test_billing_data_disqualifies_reads_outside_the_temperature_span(data_class):
+    """Monthly reads that share no day with the temperature disqualify the data as missing
+    joint data, with no day holding both a read and a temperature."""
+    meter_index = pd.date_range("2003-01-01", freq="MS", periods=13, tz="UTC")
+    meter = pd.Series(1.0, index=meter_index)
+    temperature_index = pd.date_range("2019-01-01", "2019-03-01", freq="h", tz="UTC")
+    temperature = pd.Series(50.0, index=temperature_index)
+
+    data = data_class(meter_temperature_frame(meter, temperature), is_electricity_data=True)
+
+    disqualification = {d.qualified_name for d in data.disqualification}
+    assert "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data" in disqualification
+    assert not (data.df.observed.notna() & data.df.temperature.notna()).any()
 
 
 @pytest.mark.parametrize(

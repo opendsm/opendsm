@@ -49,6 +49,7 @@ from .equivalence_env import (
     _manual_clustering_selection,
     _mixed_selection,
     load_equivalence_snapshot,
+    shorten_baselines,
 )
 
 
@@ -110,29 +111,6 @@ def _reporting_map(df_r, ids, cutoff=None):
     return reporting
 
 
-def _meters_from(comstock, population, models=None, drop_reporting=()):
-    """A ``from_fit_models`` meters mapping over ``population``'s records, so a
-    variant population is rebuilt without refitting: each record's model, unless
-    ``models`` supplies one for its id, with the ComStock baseline frame behind it
-    and its reporting frame unless the id is in ``drop_reporting``."""
-    if models is None:
-        models = {}
-
-    model_frequency = population.model_frequency
-    meters = {}
-
-    for mid, rec in population._meters.items():
-        entry = {
-            "model": models.get(mid, rec.model),
-            "baseline_df": comstock.baseline(model_frequency, mid),
-        }
-        if mid not in drop_reporting:
-            entry["reporting_df"] = comstock.reporting(model_frequency, mid)
-        meters[mid] = entry
-
-    return meters
-
-
 def _disqualified(model):
     """A copy of ``model`` carrying a disqualification, so its prediction fails."""
     model = copy.deepcopy(model)
@@ -150,7 +128,7 @@ def _disqualified(model):
 def _rewrap_population(comstock, population, df_r, cutoff=None):
     """``population``'s meters mapping with its fitted models and the reporting
     frame taken from ``df_r``, truncated before ``cutoff`` when given."""
-    meters = _meters_from(comstock, population)
+    meters = comstock.population_meters(population)
 
     for mid, entry in meters.items():
         raw = df_r.xs(int(mid), level="id")
@@ -556,7 +534,7 @@ def test_correction_after_reload_without_baseline_matches_reload_with_it(daily_e
     tid = daily_env["treatment"].ids[0]
     reloads = {"with": [], "without": []}
     for population in (daily_env["treatment"], daily_env["pool"]):
-        frames = _meters_from(comstock, population)
+        frames = comstock.population_meters(population)
         baseline = {mid: entry["baseline_df"] for mid, entry in frames.items()}
         reporting = {mid: entry["reporting_df"] for mid, entry in frames.items()}
         reloads["with"].append(_reload_with_reporting(population, reporting, baseline=baseline))
@@ -1007,12 +985,9 @@ def _guard_short_baseline_excluded_at_selection(guard_env):
     pool = guard_env["pool"]
     tid = guard_env["treatment"].ids[1]
     treatment = TreatmentGroup.from_fit_models(
-        _meters_from(guard_env["comstock"], guard_env["treatment"])
+        guard_env["comstock"].population_meters(guard_env["treatment"])
     )
-    # cut after construction so the single month is not a construction-time
-    # sufficiency failure
-    baseline_data = treatment._meters[tid].baseline_data
-    baseline_data._df = baseline_data._df.head(6)
+    shorten_baselines(treatment, [tid])
     selection = select_comparison_group(
         treatment,
         pool,
@@ -1065,7 +1040,7 @@ def _guard_missing_reporting(guard_env):
     tids = guard_env["treatment"].ids
     tid = tids[0]
     treatment = TreatmentGroup.from_fit_models(
-        _meters_from(guard_env["comstock"], guard_env["treatment"], drop_reporting=(tid,))
+        guard_env["comstock"].population_meters(guard_env["treatment"], drop_reporting=(tid,))
     )
 
     return selection, treatment, pool, tid
@@ -1077,7 +1052,7 @@ def _guard_prediction_failure(guard_env):
     tids = guard_env["treatment"].ids
     tid = tids[0]
     models = {tid: _disqualified(guard_env["treatment"]._meters[tid].model)}
-    meters = _meters_from(guard_env["comstock"], guard_env["treatment"], models=models)
+    meters = guard_env["comstock"].population_meters(guard_env["treatment"], models=models)
 
     with pytest.warns(UserWarning, match="disqualified"):
         treatment = TreatmentGroup.from_fit_models(meters)
@@ -1256,7 +1231,7 @@ def pool_missing_reporting(guard_env):
     no reporting data at all."""
     missing_ids = guard_env["pool"].ids[:2]
     pool = ComparisonPool.from_fit_models(
-        _meters_from(guard_env["comstock"], guard_env["pool"], drop_reporting=missing_ids)
+        guard_env["comstock"].population_meters(guard_env["pool"], drop_reporting=missing_ids)
     )
     tid = guard_env["treatment"].ids[0]
     result = correct_reporting(guard_env["selection"], guard_env["treatment"], pool, tid)
@@ -1320,7 +1295,7 @@ def test_failed_pool_meter_is_ledgered_in_every_call_that_selects_it(guard_env):
     victim = guard_env["pool"].ids[0]
     tids = guard_env["treatment"].ids
     models = {victim: _disqualified(guard_env["pool"]._meters[victim].model)}
-    meters = _meters_from(guard_env["comstock"], guard_env["pool"], models=models)
+    meters = guard_env["comstock"].population_meters(guard_env["pool"], models=models)
 
     with pytest.warns(UserWarning, match="disqualified"):
         pool = ComparisonPool.from_fit_models(meters)
@@ -1989,7 +1964,7 @@ def test_prior_freezes_the_comparison_group_against_new_entrants(guard_env):
     tid = guard_env["treatment"].ids[0]
     missing = guard_env["pool"].ids[:2]
     reduced_pool = ComparisonPool.from_fit_models(
-        _meters_from(guard_env["comstock"], guard_env["pool"], drop_reporting=missing)
+        guard_env["comstock"].population_meters(guard_env["pool"], drop_reporting=missing)
     )
     prior = correct_reporting(guard_env["selection"], guard_env["treatment"], reduced_pool, tid)
     assert set(prior.cg_ids) == set(guard_env["pool"].ids) - set(missing)
@@ -2013,7 +1988,7 @@ def test_prior_member_that_no_longer_predicts_raises_with_ledger_rows(guard_env)
         guard_env["selection"], guard_env["treatment"], guard_env["pool"], tid
     )
     models = {victim: _disqualified(guard_env["pool"]._meters[victim].model)}
-    meters = _meters_from(guard_env["comstock"], guard_env["pool"], models=models)
+    meters = guard_env["comstock"].population_meters(guard_env["pool"], models=models)
 
     with pytest.warns(UserWarning, match="disqualified"):
         pool = ComparisonPool.from_fit_models(meters)

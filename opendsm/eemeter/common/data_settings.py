@@ -232,21 +232,17 @@ class HourlyDataSufficiencySettings(BaseSufficiencySettings):
     )
 
 
-class BaseDataSettings(BaseSettings):
-    pass
-
-
-class DailyDataSettings(BaseDataSettings):
+class DailyDataSettings(BaseSettings):
     sufficiency: DailyDataSufficiencySettings = pydantic.Field(
         default_factory=DailyDataSufficiencySettings,
     )
 
-class BillingDataSettings(BaseDataSettings):
+class BillingDataSettings(BaseSettings):
     sufficiency: BillingDataSufficiencySettings = pydantic.Field(
         default_factory=BillingDataSufficiencySettings,
     )
 
-class HourlyDataSettings(BaseDataSettings):
+class HourlyDataSettings(BaseSettings):
     sufficiency: HourlyDataSufficiencySettings = pydantic.Field(
         default_factory=HourlyDataSufficiencySettings,
     )

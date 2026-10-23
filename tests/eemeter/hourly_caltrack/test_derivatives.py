@@ -40,6 +40,8 @@ from opendsm.eemeter.models.billing.model import BillingModel
 from regression_metrics import regression_block
 from syrupy_extensions import TolerantJSONSnapshotExtension
 
+from ..helpers import meter_temperature_frame
+
 
 
 # DailyModel-derived tests (metered/modeled_savings_*_daily) pin a Windows-
@@ -76,25 +78,6 @@ def reporting_temperature_data():
     return pd.Series(np.arange(30.0, 90.0), index=index).asfreq("h").ffill()
 
 
-def _reporting_df(meter_data, temperature_data):
-    """Build an observed/temperature frame from separate meter and temperature inputs."""
-    if isinstance(temperature_data, pd.Series):
-        temperature_data = temperature_data.to_frame("temperature")
-    else:
-        temperature_data = temperature_data.rename(
-            columns={temperature_data.columns[0]: "temperature"}
-        )
-
-    if meter_data is None:
-        return temperature_data
-
-    if isinstance(meter_data, pd.Series):
-        meter_data = meter_data.to_frame()
-    meter_data = meter_data.rename(columns={meter_data.columns[0]: "observed"})
-
-    return pd.concat([meter_data, temperature_data], axis=1, sort=True)
-
-
 @pytest.mark.regression
 def test_metered_savings_cdd_hdd_daily(
     baseline_model_daily,
@@ -102,7 +85,7 @@ def test_metered_savings_cdd_hdd_daily(
     reporting_temperature_data,
     snapshot,
 ):
-    reporting_data = _reporting_df(reporting_meter_data_daily, reporting_temperature_data)
+    reporting_data = meter_temperature_frame(reporting_meter_data_daily, reporting_temperature_data)
     results = baseline_model_daily.predict(reporting_data)
 
     assert regression_block(results, freq="daily") == snapshot(
@@ -115,14 +98,18 @@ def reporting_model_billing(comstock_monthly):
     df_b, _ = comstock_monthly
     df_shifted = df_b.copy()
     df_shifted["observed"] = df_shifted["observed"] - 50
-    return BillingModel().fit(
+    model = BillingModel().fit(
         df_shifted.reset_index(), is_electricity_data=True, enforce_compliance=False
     )
+
+    return model
 
 
 @pytest.fixture
 def reporting_meter_data_billing():
-    index = pd.date_range("2019-01-01", freq="MS", periods=13, tz="America/Chicago")
+    # the two monthly reads inside reporting_temperature_data's span; the last temperature
+    # row has no read and closes the second period
+    index = pd.date_range("2019-01-01", freq="MS", periods=2, tz="America/Chicago")
     return pd.DataFrame({"value": 1}, index=index)
 
 
@@ -133,7 +120,7 @@ def test_metered_savings_cdd_hdd_billing(
     reporting_temperature_data,
     snapshot,
 ):
-    reporting_data = _reporting_df(reporting_meter_data_billing, reporting_temperature_data.iloc[:-1])
+    reporting_data = meter_temperature_frame(reporting_meter_data_billing, reporting_temperature_data)
     results = baseline_model_billing.predict(reporting_data)
 
     assert regression_block(results, freq="daily") == snapshot(name="regression")
@@ -148,13 +135,40 @@ def test_metered_savings_cdd_hdd_billing_no_reporting_data(
 ):
     # TODO test makes less sense without the use of derivatives functions. can just be merged with other predict() tests
     results = baseline_model_billing.predict(
-        _reporting_df(None, reporting_temperature_data)
+        meter_temperature_frame(None, reporting_temperature_data)
     )
     assert list(results.columns) == [
         "season",
         "day_of_week",
         "weekday_weekend",
         "temperature",
+        "predicted",
+        "predicted_unc",
+        "heating_load",
+        "cooling_load",
+        "model_split",
+        "model_type",
+    ]
+
+    assert regression_block(results, freq="daily") == snapshot(name="regression")
+
+
+@pytest.mark.regression
+def test_metered_savings_cdd_hdd_billing_single_record_reporting_data(
+    baseline_model_billing,
+    reporting_meter_data_billing,
+    reporting_temperature_data,
+    snapshot,
+):
+    results = baseline_model_billing.predict(
+        meter_temperature_frame(reporting_meter_data_billing[:1], reporting_temperature_data)
+    )
+    assert list(results.columns) == [
+        "season",
+        "day_of_week",
+        "weekday_weekend",
+        "temperature",
+        "observed",
         "predicted",
         "predicted_unc",
         "heating_load",
@@ -210,7 +224,7 @@ def test_metered_savings_cdd_hdd_billing_single_record_baseline_data(
     snapshot,
 ):
     results = baseline_model_billing_single_record_baseline_data.predict(
-        _reporting_df(reporting_meter_data_billing, reporting_temperature_data.iloc[:-1]),
+        meter_temperature_frame(reporting_meter_data_billing, reporting_temperature_data),
         enforce_compliance=False,
     )
     assert list(results.columns) == [
@@ -239,7 +253,7 @@ def test_modeled_savings_cdd_hdd_daily(
     reporting_temperature_data,
     snapshot,
 ):
-    reporting_data = _reporting_df(reporting_meter_data_daily, reporting_temperature_data)
+    reporting_data = meter_temperature_frame(reporting_meter_data_daily, reporting_temperature_data)
     baseline_model_result = baseline_model_daily.predict(reporting_data)
     reporting_model_result = reporting_model_daily.predict(reporting_data)
     modeled_savings_df = pd.DataFrame(
@@ -402,7 +416,7 @@ def test_modeled_savings_cdd_hdd_billing(
         {"observed": np.nan}, index=normal_year_temperature_data.index
     )
     results = baseline_model_billing.predict(
-        _reporting_df(meter_data, normal_year_temperature_data)
+        meter_temperature_frame(meter_data, normal_year_temperature_data)
     )
 
     assert list(results.columns) == [
@@ -450,7 +464,7 @@ def test_metered_savings_model_single_record(
     snapshot,
 ):
     results = baseline_model_billing_single_record.predict(
-        _reporting_df(reporting_meter_data_billing, reporting_temperature_data.iloc[:-1]),
+        meter_temperature_frame(reporting_meter_data_billing, reporting_temperature_data),
         enforce_compliance=False,
     )
     assert list(results.columns) == [

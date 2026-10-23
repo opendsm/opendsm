@@ -23,6 +23,62 @@ from pandas.tseries.offsets import Day, MonthBegin, MonthEnd, Tick
 from opendsm.eemeter.common.warnings import EEMeterWarning
 
 
+def require_dataframe(value, name: str) -> None:
+    """Raise unless `value` is a pandas DataFrame.
+
+    Args:
+        value: The object to check.
+        name: How the error message names the argument.
+
+    Raises:
+        TypeError: If value is not a pandas DataFrame; the message names `name` and the type
+            received.
+    """
+    if not isinstance(value, pd.DataFrame):
+        raise TypeError(f"{name} must be a pandas DataFrame, got {type(value).__name__}.")
+
+
+def resolve_is_electricity_data(
+    stored: bool | None, supplied: bool | None
+) -> tuple[bool, EEMeterWarning | None]:
+    """The fuel flag a deserialized model carries.
+
+    Args:
+        stored: The payload's `is_electricity_data`, or None when the payload stores none.
+        supplied: The caller's `is_electricity_data`, or None when the caller gives none.
+
+    Returns:
+        The flag and, when the supplied value is used, an `eemeter.serialization.prior_format`
+        warning carrying it; the warning is None when the payload stores the flag.
+
+    Raises:
+        ValueError: If both or neither of `stored` and `supplied` are given.
+    """
+    if stored is not None and supplied is not None:
+        raise ValueError("This model stores 'is_electricity_data'; it cannot be supplied here.")
+
+    if stored is None and supplied is None:
+        raise ValueError(
+            "This model does not store 'is_electricity_data'; supply it as a keyword argument."
+        )
+
+    if stored is not None:
+        value = bool(stored)
+
+        return value, None
+
+    value = bool(supplied)
+    prior_format = EEMeterWarning(
+        qualified_name="eemeter.serialization.prior_format",
+        description=(
+            "Model payload does not store 'is_electricity_data', so the supplied value was used."
+        ),
+        data={"is_electricity_data": value},
+    )
+
+    return value, prior_format
+
+
 def remove_duplicates(df_or_series):
     """Remove duplicate rows or values by keeping the first of each duplicate.
 
@@ -68,19 +124,20 @@ def day_counts(index):
 
 def trim_edge_rows(df, trailing_columns):
     """Trim leading rows missing observed or temperature, and trailing rows missing any of
-    ``trailing_columns``. Interior rows are never dropped.
+    ``trailing_columns``, with rows taken in time order. Interior rows are never dropped.
 
     Args:
-        df: Frame with ``observed`` and ``temperature`` columns.
+        df: Frame with ``observed`` and ``temperature`` columns, timed by its ``datetime``
+            column when it has one and by its index otherwise.
         trailing_columns: Columns a trailing row must have to be kept. An empty sequence
             leaves the trailing edge untouched, since billing frames end with a row that only
             marks the close of the last period.
 
     Returns:
-        The trimmed frame (the input itself when nothing is dropped, otherwise a copy of the
-        kept rows), the number of leading rows removed, and the number of trailing rows
-        removed. The frame is returned untouched when it lacks a required column or when no
-        row qualifies, so that the caller's own validation reports the unusable data.
+        A copy of the kept rows sorted by time, the number of leading rows removed, and the
+        number of trailing rows removed. The input frame itself is returned, with zero
+        counts, when it lacks a required column or when no row qualifies, so that the
+        caller's own validation reports the unusable data.
     """
     n = len(df)
 
@@ -88,7 +145,12 @@ def trim_edge_rows(df, trailing_columns):
     if not required_columns.issubset(df.columns):
         return df, 0, 0
 
-    valid_leading = ~df[["observed", "temperature"]].isna().any(axis=1)
+    if "datetime" in df.columns:
+        df_sorted = df.sort_values("datetime", kind="stable")
+    else:
+        df_sorted = df.sort_index(kind="stable")
+
+    valid_leading = ~df_sorted[["observed", "temperature"]].isna().any(axis=1)
     valid_leading_arr = valid_leading.to_numpy()
     if valid_leading_arr.any():
         first_valid_pos = np.argmax(valid_leading_arr)
@@ -98,7 +160,7 @@ def trim_edge_rows(df, trailing_columns):
     if not trailing_columns:
         last_valid_pos = n - 1
     else:
-        valid_trailing = ~df[list(trailing_columns)].isna().any(axis=1)
+        valid_trailing = ~df_sorted[list(trailing_columns)].isna().any(axis=1)
         valid_trailing_arr = valid_trailing.to_numpy()
         if valid_trailing_arr.any():
             last_valid_pos = n - 1 - np.argmax(valid_trailing_arr[::-1])
@@ -110,7 +172,7 @@ def trim_edge_rows(df, trailing_columns):
 
     n_leading = first_valid_pos
     n_trailing = n - 1 - last_valid_pos
-    trimmed_df = df.iloc[first_valid_pos : last_valid_pos + 1].copy()
+    trimmed_df = df_sorted.iloc[first_valid_pos : last_valid_pos + 1].copy()
 
     return trimmed_df, n_leading, n_trailing
 

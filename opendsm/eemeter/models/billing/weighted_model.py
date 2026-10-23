@@ -17,6 +17,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from opendsm.eemeter.common.data_processor_utilities import require_dataframe
 from opendsm.eemeter.models.billing.data import (
     BillingBaselineData,
     BillingReportingData,
@@ -158,7 +159,7 @@ class BillingWeightedModel(DailyModel):
             df: Reporting data indexed by a tz-aware DatetimeIndex, or containing a tz-aware
                 'datetime' column, with a 'temperature' column. Rows are period starts.
             aggregation: The aggregation level for the prediction. One of [None, 'none', 'monthly', 'bimonthly'].
-            enforce_compliance: Whether to enforce model disqualification. Defaults to True.
+            enforce_compliance: Whether to enforce model disqualification.
 
         Returns:
             Dataframe with input data along with predicted energy consumption.
@@ -166,10 +167,11 @@ class BillingWeightedModel(DailyModel):
         Raises:
             RuntimeError: If the model is not fitted.
             DisqualifiedModelError: If the model is disqualified and enforce_compliance is True.
-            TypeError: If df is not a dataframe.
+            TypeError: If df is not a pandas DataFrame.
             ValueError: If the aggregation is not one of [None, 'none', 'monthly', 'bimonthly'].
         """
-        self._reject_data_object(df)
+        require_dataframe(df, "df")
+
         if not self.is_fitted:
             raise RuntimeError("Model must be fit before predictions can be made.")
 

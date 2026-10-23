@@ -1123,18 +1123,38 @@ def test_predict_labels_unseen_combinations_for_that_prediction_only(baseline, r
     pd.testing.assert_frame_equal(hm._df_temporal_clusters, fitted)
 
 
+def _constant_hourly_frame():
+    """Two days of constant hourly usage and temperature: enough to build a data object."""
+    index = pd.date_range("2020-01-01", periods=48, freq="h", tz="UTC")
+
+    return pd.DataFrame({"observed": 1.0, "temperature": 50.0}, index=index)
+
+
+@pytest.mark.parametrize(
+    "make_value,type_name",
+    [
+        (
+            lambda: HourlyBaselineData(_constant_hourly_frame(), is_electricity_data=True),
+            "HourlyBaselineData",
+        ),
+        (lambda: None, "NoneType"),
+        (lambda: {"observed": [1.0]}, "dict"),
+        (lambda: pd.Series([1.0]), "Series"),
+    ],
+    ids=["data_object", "none", "dict", "series"],
+)
+@pytest.mark.parametrize("method", ["fit", "predict"])
+def test_non_dataframe_input_raises_type_error(method, make_value, type_name):
+    """fit and predict on an unfitted model reject anything that is not a DataFrame."""
+    kwargs = {"fit": {"is_electricity_data": True}, "predict": {}}[method]
+
+    with pytest.raises(TypeError, match=f"df must be a pandas DataFrame, got {type_name}"):
+        getattr(HourlyModel(), method)(make_value(), **kwargs)
+
+
 class TestFrameAPI:
     """fit/predict on plain dataframes: the argument contract, trimming, refusal,
     and serialization behavior that the frame API adds on top of the data classes."""
-
-    def test_fit_rejects_data_object(self, baseline):
-        baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
-        with pytest.raises(TypeError):
-            HourlyModel().fit(baseline_data, is_electricity_data=True)
-
-    def test_fit_rejects_positional_is_electricity_data(self, baseline):
-        with pytest.raises(TypeError):
-            HourlyModel().fit(baseline, True)
 
     def test_fit_with_pv_start(self, baseline):
         pv_start = baseline.index[len(baseline) // 2].date()
@@ -1143,26 +1163,20 @@ class TestFrameAPI:
         )
         assert hm._pv_start == pv_start
 
-        # pv_start must reach the baseline data object and split has_pv accordingly,
-        # not just be stored on the model
-        expected_has_pv = (hm.baseline_df.index.date >= pv_start).sum()
-        assert hm.baseline_df["has_pv"].sum() == expected_has_pv
+        # pv_start must reach the baseline data object, not just be stored on the model
+        baseline_data, _, _ = hm._baseline_data(baseline)
+        expected_has_pv = (baseline_data.df.index.date >= pv_start).sum()
+        assert baseline_data.df["has_pv"].sum() == expected_has_pv > 0
 
+    @pytest.mark.slow
     def test_predict_without_observed_column_works(self, baseline, reporting):
         hm = HourlyModel().fit(baseline, is_electricity_data=True)
         reporting_no_observed = reporting.drop(columns=["observed"])
 
         prediction = hm.predict(reporting_no_observed)
 
-        assert "predicted" in prediction.columns
-
-    def test_baseline_df_is_none_before_fit_and_a_dataframe_after(self, baseline):
-        hm = HourlyModel()
-        assert hm.baseline_df is None
-
-        hm.fit(baseline, is_electricity_data=True)
-
-        assert isinstance(hm.baseline_df, pd.DataFrame)
+        expected = hm.predict(reporting)
+        pd.testing.assert_series_equal(prediction["predicted"], expected["predicted"])
 
     def test_padded_baseline_trims_to_the_same_fit_and_warns_once(self, baseline):
         pad = pd.DataFrame(
@@ -1214,15 +1228,47 @@ class TestFrameAPI:
         assert prediction.index.min() <= pad_start
 
     def test_disqualified_frame_raises_with_matching_disqualification(self, baseline):
+        """A disqualified baseline frame raises DataSufficiencyError carrying the
+        disqualifications its baseline data object reports."""
         baseline["observed"] = 0
-        hm = HourlyModel()
+        expected = [
+            dq.qualified_name
+            for dq in HourlyBaselineData(baseline.copy(), True).disqualification
+        ]
 
         with pytest.raises(DataSufficiencyError) as exc_info:
-            hm.fit(baseline, is_electricity_data=True)
+            HourlyModel().fit(baseline, is_electricity_data=True)
 
-        assert exc_info.value.disqualification
-        assert exc_info.value.disqualification == hm.disqualification
+        raised = [dq.qualified_name for dq in exc_info.value.disqualification]
+        assert expected, "the frame was expected to be disqualified"
+        assert raised == expected, f"expected {expected}, got {raised}"
 
+    @pytest.mark.slow
+    def test_rejected_refit_leaves_fitted_model_unchanged(self, baseline):
+        """Refitting a fitted model on disqualified data raises and keeps every piece of the
+        prior fit: predictions, fuel flag, PV start, warnings and disqualification."""
+        pv_start = baseline.index[len(baseline) // 2].date()
+        hm = HourlyModel().fit(baseline, is_electricity_data=True, pv_start=pv_start)
+        params = hm.to_dict()
+        warnings = list(hm.warnings)
+        disqualification = list(hm.disqualification)
+        disqualified = baseline.copy()
+        disqualified["observed"] = 0
+
+        with pytest.raises(DataSufficiencyError):
+            hm.fit(disqualified, is_electricity_data=False, enforce_compliance=True)
+
+        assert hm.to_dict() == params, "a rejected refit changed the serialized model"
+        assert hm.is_electricity_data is True, (
+            f"expected is_electricity_data True, got {hm.is_electricity_data}"
+        )
+        assert hm._pv_start == pv_start, f"expected pv_start {pv_start}, got {hm._pv_start}"
+        assert hm.warnings == warnings, "a rejected refit changed the warnings"
+        assert hm.disqualification == disqualification, (
+            "a rejected refit changed the disqualification"
+        )
+
+    @pytest.mark.slow
     def test_is_electricity_data_and_pv_start_round_trip_dict(self, baseline):
         pv_start = baseline.index[len(baseline) // 2].date()
         hm = HourlyModel(settings=HourlySolarSettings()).fit(
@@ -1231,27 +1277,21 @@ class TestFrameAPI:
 
         rebuilt = HourlyModel.from_dict(hm.to_dict())
 
-        assert rebuilt._is_electricity_data is False
+        assert rebuilt.is_electricity_data is False
         assert rebuilt._pv_start == pv_start
 
-    def test_deserialized_model_predicts_on_a_frame(self, baseline, reporting):
-        hm = HourlyModel().fit(baseline, is_electricity_data=True)
-        rebuilt = HourlyModel.from_dict(hm.to_dict())
-
-        prediction = rebuilt.predict(reporting)
-
-        assert "predicted" in prediction.columns
-
+    @pytest.mark.slow
     def test_prior_format_payload_requires_is_electricity_data(self, baseline):
         hm = HourlyModel().fit(baseline, is_electricity_data=True)
         payload = hm.to_dict()
         del payload["info"]["is_electricity_data"]
         del payload["info"]["pv_start"]
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="does not store 'is_electricity_data'"):
             HourlyModel.from_dict(payload)
 
-    def test_prior_format_payload_loads_with_is_electricity_data_and_warns(self, baseline, reporting):
+    @pytest.mark.slow
+    def test_prior_format_payload_loads_with_is_electricity_data_and_warns(self, baseline):
         hm = HourlyModel().fit(baseline, is_electricity_data=True)
         payload = hm.to_dict()
         del payload["info"]["is_electricity_data"]
@@ -1266,14 +1306,25 @@ class TestFrameAPI:
         ]
         assert len(prior_format_warnings) == 1
 
-        prediction = rebuilt.predict(reporting)
-        assert "predicted" in prediction.columns
+    @pytest.mark.slow
+    def test_prior_format_payload_loads_with_is_electricity_data_predicts_as_fitted(
+        self, baseline, reporting
+    ):
+        hm = HourlyModel().fit(baseline, is_electricity_data=True)
+        payload = hm.to_dict()
+        del payload["info"]["is_electricity_data"]
+        del payload["info"]["pv_start"]
 
+        rebuilt = HourlyModel.from_dict(payload, is_electricity_data=True)
+
+        pd.testing.assert_frame_equal(rebuilt.predict(reporting), hm.predict(reporting))
+
+    @pytest.mark.slow
     def test_is_electricity_data_rejected_when_payload_already_carries_it(self, baseline):
         hm = HourlyModel().fit(baseline, is_electricity_data=True)
         payload = hm.to_dict()
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="cannot be supplied here"):
             HourlyModel.from_dict(payload, is_electricity_data=True)
 
 
@@ -1289,3 +1340,7 @@ def test_settings_deviations_property_is_empty_for_default_hourly_settings():
     model = HourlyModel()
 
     assert model.settings_deviations == {}
+
+
+def test_is_electricity_data_is_none_before_fit():
+    assert HourlyModel().is_electricity_data is None

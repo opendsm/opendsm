@@ -25,6 +25,7 @@ import pandas as pd
 from opendsm.comparison_groups import exclusions
 from opendsm.comparison_groups.common import Data, Data_Settings
 from opendsm.comparison_groups.common import const as _const
+from opendsm.eemeter.common.data_processor_utilities import require_dataframe
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
     DisqualifiedModelError,
@@ -87,25 +88,6 @@ def _model_from_payload(model_cls, payload):
     raise TypeError(f"Model payload must be a dict or JSON string, got {type(payload).__name__}")
 
 
-def _require_frame(mid, name, value):
-    """Reject a data object where a dataframe is expected."""
-    if not isinstance(value, pd.DataFrame) and hasattr(value, "df"):
-        raise TypeError(
-            f"Meter {mid}: {name} must be a pandas DataFrame, got a "
-            f"{type(value).__name__}. Populations build the data objects themselves."
-        )
-
-
-def _payload_has_is_electricity_data(payload):
-    """Whether a dict/JSON model payload already stores its own fuel flag."""
-    if isinstance(payload, str):
-        payload = json.loads(payload)
-
-    info = payload.get("info") or {}
-
-    return "is_electricity_data" in info
-
-
 def default_data_settings(model_frequency):
     """The ``Data_Settings`` a population's loadshapes use when the caller gives
     none: the model frequency's time period (``SEASONAL_HOURLY_DAY_OF_WEEK``,
@@ -150,15 +132,20 @@ def _fit_meters(
     ledger = exclusions.empty_ledger()
 
     for mid, df in baseline.items():
-        _require_frame(mid, "baseline data", df)
+        require_dataframe(df, f"Meter {mid}: baseline data")
 
         model = model_cls(settings=settings)
 
         try:
-            model.fit(
-                df,
-                is_electricity_data=is_electricity_data,
-                enforce_compliance=enforce_compliance,
+            baseline_data, n_leading, n_trailing = model._build_baseline_data(
+                df, bool(is_electricity_data)
+            )
+            model._fit_baseline(
+                baseline_data,
+                n_leading,
+                n_trailing,
+                bool(is_electricity_data),
+                enforce_compliance,
             )
         except DataSufficiencyError as exc:
             detail = exclusions.format_warnings(exc.disqualification) or str(exc)
@@ -183,11 +170,11 @@ def _fit_meters(
             )
             continue
 
-        record = _MeterRecord(id=mid, model=model, baseline_data=model._baseline_data(df))
+        record = _MeterRecord(id=mid, model=model, baseline_data=baseline_data)
 
         reporting_df = reporting.get(str(mid))
         if reporting_df is not None:
-            _require_frame(mid, "reporting data", reporting_df)
+            require_dataframe(reporting_df, f"Meter {mid}: reporting data")
             record.reporting_data = model._reporting_data(reporting_df)
 
         records[str(mid)] = record
@@ -324,7 +311,8 @@ class MeterPopulation:
                 lacks ``is_electricity_data`` raises ``ValueError``; load it with its
                 model's ``from_dict(payload, is_electricity_data=...)`` and pass the
                 instance. ``baseline_df`` and ``reporting_df`` are the meter's
-                dataframes; the model builds the data objects from them.
+                dataframes; the model builds the data objects from them. An entry
+                without ``baseline_df`` raises ``ValueError``.
             model_frequency: Inferred from each fitted instance's type, so optional
                 for instances, and validated against it when supplied (mismatch
                 raises ``TypeError``). Required when models are passed as payloads.
@@ -356,19 +344,23 @@ class MeterPopulation:
             if resolved is None:
                 resolved = inferred
 
+            if "baseline_df" not in entry:
+                raise ValueError(f"Meter {mid}: baseline_df is required.")
+
             baseline_df = entry["baseline_df"]
-            _require_frame(mid, "baseline_df", baseline_df)
+            require_dataframe(baseline_df, f"Meter {mid}: baseline_df")
+            baseline_data, _, _ = model._baseline_data(baseline_df)
             reporting_df = entry.get("reporting_df")
 
             record = _MeterRecord(
                 id=mid,
                 model=model,
-                baseline_data=model._baseline_data(baseline_df),
+                baseline_data=baseline_data,
                 observed_unc=entry.get("observed_unc"),
             )
 
             if reporting_df is not None:
-                _require_frame(mid, "reporting_df", reporting_df)
+                require_dataframe(reporting_df, f"Meter {mid}: reporting_df")
                 record.reporting_data = model._reporting_data(reporting_df)
 
             records[str(mid)] = record
@@ -453,7 +445,7 @@ class MeterPopulation:
 
             # the model builds its meter's data objects, so its own fuel flag is
             # every meter's, with or without baseline data
-            fuels.add(bool(rec.model._is_electricity_data))
+            fuels.add(bool(rec.model.is_electricity_data))
 
             if baseline is not None:
                 if tz != str(baseline.tz):
@@ -562,8 +554,8 @@ class MeterPopulation:
     # -- predictions ---------------------------------------------------------
 
     def _predict_record(self, rec, period):
-        """Predict ``period`` data for one meter. Billing predictions ride the
-        daily substrate (``aggregation=None``): a billing meter's ``MONTH``
+        """Predict ``period`` data for one meter. A billing model predicts
+        unaggregated, on its daily substrate: a billing meter's ``MONTH``
         loadshape is therefore a daily-mean per calendar month, not a monthly
         total. That reshaping only touches selection features (loadshapes),
         never a corrected savings number."""
@@ -575,10 +567,7 @@ class MeterPopulation:
         if data is None:
             raise ValueError(f"Meter {rec.id}: no {period} data attached.")
 
-        if self.model_frequency == "billing":
-            pred = rec.model._predict_data(data, aggregation=None)
-        else:
-            pred = rec.model._predict_data(data)
+        pred = rec.model._predict_data(data)
 
         frame = pd.DataFrame(
             {
@@ -907,11 +896,13 @@ class MeterPopulation:
         for meter in meter_dicts:
             mid = str(meter["id"])
 
-            if _payload_has_is_electricity_data(meter["model"]):
-                model = model_cls.from_json(meter["model"])
+            # from_dict rejects a supplied flag when the payload stores one
+            payload = json.loads(meter["model"])
+            if (payload.get("info") or {}).get("is_electricity_data") is not None:
+                model = model_cls.from_dict(payload)
             else:
-                model = model_cls.from_json(
-                    meter["model"], is_electricity_data=header["is_electricity_data"]
+                model = model_cls.from_dict(
+                    payload, is_electricity_data=header["is_electricity_data"]
                 )
 
             record = _MeterRecord(
@@ -922,12 +913,12 @@ class MeterPopulation:
 
             baseline_df = baseline.get(mid)
             if baseline_df is not None:
-                _require_frame(mid, "baseline data", baseline_df)
-                record.baseline_data = model._baseline_data(baseline_df)
+                require_dataframe(baseline_df, f"Meter {mid}: baseline data")
+                record.baseline_data, _, _ = model._baseline_data(baseline_df)
 
             reporting_df = reporting.get(mid)
             if reporting_df is not None:
-                _require_frame(mid, "reporting data", reporting_df)
+                require_dataframe(reporting_df, f"Meter {mid}: reporting data")
                 record.reporting_data = model._reporting_data(reporting_df)
 
             records[mid] = record

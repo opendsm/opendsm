@@ -18,11 +18,8 @@ import pytest
 
 from opendsm.eemeter import DailyModel
 
+from ..helpers import meter_temperature_frame
 
-
-def _daily_frame(meter, temperature):
-    """Combine a daily meter series and an hourly temperature series into a model input frame."""
-    return pd.concat([meter.rename("observed"), temperature.rename("temperature")], axis=1, sort=True)
 
 
 def _seasonal_temperature(year=2020, seed=1):
@@ -54,7 +51,7 @@ def heating_baseline(temperature):
     days = pd.date_range("2020-01-01", periods=365, freq="D", tz="America/Chicago")
     daily_temp = temperature.resample("D").mean().reindex(days)
     meter = pd.Series(_heating_load(daily_temp, seed=2), index=days)
-    df = _daily_frame(meter, temperature)
+    df = meter_temperature_frame(meter, temperature)
     model = DailyModel().fit(df, is_electricity_data=True, enforce_compliance=False)
 
     return model, df
@@ -71,7 +68,7 @@ def test_flat_load_does_not_fabricate_temperature_response(temperature):
     rng = np.random.default_rng(0)
     days = pd.date_range("2020-01-01", periods=365, freq="D", tz="America/Chicago")
     meter = pd.Series(40.0 + rng.normal(0, 1.0, 365), index=days)
-    df = _daily_frame(meter, temperature)
+    df = meter_temperature_frame(meter, temperature)
 
     model = DailyModel().fit(df, is_electricity_data=True, enforce_compliance=False)
 
@@ -115,7 +112,7 @@ def test_known_reduction_recovers_as_savings(heating_baseline, temperature):
     reporting_meter = pd.Series(
         _heating_load(daily_temp, seed=4) - reduction_per_day, index=days
     )
-    reporting_df = _daily_frame(reporting_meter, temperature)
+    reporting_df = meter_temperature_frame(reporting_meter, temperature)
 
     result = model.predict(reporting_df)
     recovered = (result["predicted"] - result["observed"]).sum()

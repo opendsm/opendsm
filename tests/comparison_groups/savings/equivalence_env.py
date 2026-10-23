@@ -144,6 +144,38 @@ class ComStockData:
 
         return meters
 
+    def population_meters(self, population, models=None, drop_reporting=()):
+        """A ``from_fit_models`` meters mapping over ``population``'s records, so a
+        variant population is rebuilt without refitting: each record's model, unless
+        ``models`` supplies one for its id, with the cached baseline frame behind it
+        and its reporting frame unless the id is in ``drop_reporting``."""
+        if models is None:
+            models = {}
+
+        model_frequency = population.model_frequency
+        meters = {}
+
+        for mid, rec in population._meters.items():
+            entry = {
+                "model": models.get(mid, rec.model),
+                "baseline_df": self.baseline(model_frequency, mid),
+            }
+            if mid not in drop_reporting:
+                entry["reporting_df"] = self.reporting(model_frequency, mid)
+            meters[mid] = entry
+
+        return meters
+
+
+def shorten_baselines(population, ids):
+    """Cut the attached baselines of ``ids`` in ``population`` to their first six
+    daily rows, so each spans a single month. Mutates ``population`` after
+    construction, so the cut is not itself a construction-time sufficiency
+    failure."""
+    for mid in ids:
+        baseline_data = population._meters[mid].baseline_data
+        baseline_data._df = baseline_data._df.head(6)
+
 
 def fit_bank(comstock):
     """Fit the first ``BANK_SIZES`` meters of each model frequency and return their

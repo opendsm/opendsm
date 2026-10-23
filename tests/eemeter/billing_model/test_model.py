@@ -155,12 +155,29 @@ def test_predict_before_fit_raises(baseline_df):
         BillingModel().predict(baseline_df)
 
 
-def test_predict_wrong_type_raises(fitted_model, baseline_df):
-    """Passing a data-class instance where predict expects a dataframe raises TypeError."""
-    stale_data_object = BillingBaselineData(baseline_df, is_electricity_data=True)
+@pytest.mark.parametrize(
+    "make_value,type_name",
+    [
+        (
+            lambda df: BillingBaselineData(df, is_electricity_data=True),
+            "BillingBaselineData",
+        ),
+        (lambda df: None, "NoneType"),
+        (lambda df: {"observed": [1.0]}, "dict"),
+        (lambda df: df["observed"], "Series"),
+    ],
+    ids=["data_object", "none", "dict", "series"],
+)
+@pytest.mark.parametrize("method", ["fit", "predict"])
+@pytest.mark.parametrize("model_class", [BillingModel, BillingWeightedModel])
+def test_non_dataframe_input_raises_type_error(
+    model_class, method, make_value, type_name, baseline_df
+):
+    """fit and predict on an unfitted billing model reject anything that is not a DataFrame."""
+    kwargs = {"fit": {"is_electricity_data": True}, "predict": {}}[method]
 
-    with pytest.raises(TypeError, match="Expected a pandas DataFrame"):
-        fitted_model.predict(stale_data_object)
+    with pytest.raises(TypeError, match=f"df must be a pandas DataFrame, got {type_name}"):
+        getattr(model_class(), method)(make_value(baseline_df), **kwargs)
 
 
 def test_predict_bad_aggregation_raises(fitted_model, baseline_df):
@@ -169,16 +186,13 @@ def test_predict_bad_aggregation_raises(fitted_model, baseline_df):
         fitted_model.predict(baseline_df, aggregation="weekly")
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("model_fixture", ["fitted_model", "fitted_weighted_model"])
 def test_predict_enforce_compliance_never_binds_to_aggregation(
     model_fixture, baseline_df, request
 ):
-    """Both billing models forward enforce_compliance past their aggregation parameter.
-
-    Billing is the only family whose predict takes `aggregation` between the frame and
-    `enforce_compliance`. The flag must travel by keyword; bound positionally it lands
-    in `aggregation` and predict raises.
-    """
+    """On both billing models, predict(df, enforce_compliance=False) returns the same
+    unaggregated prediction as predict(df)."""
     model = request.getfixturevalue(model_fixture)
 
     native = model.predict(baseline_df)
@@ -192,44 +206,12 @@ def test_predict_enforce_compliance_never_binds_to_aggregation(
     )
 
 
-def test_fit_rejects_positional_is_electricity_data(baseline_df):
-    """is_electricity_data must be passed as a keyword; a positional call is rejected."""
-    with pytest.raises(TypeError):
-        BillingModel().fit(baseline_df, True)
-
-
-def test_fit_with_keyword_is_electricity_data_succeeds(baseline_df):
-    """Passing is_electricity_data as a keyword fits the model."""
-    model = BillingModel().fit(
-        baseline_df, is_electricity_data=True, enforce_compliance=False
-    )
-
-    assert model.is_fitted
-
-
-# ---------------------------------------------------------------------------
-# baseline_df
-# ---------------------------------------------------------------------------
-
-@pytest.mark.parametrize("model_class", [BillingModel, BillingWeightedModel])
-def test_baseline_df_is_none_before_fit(model_class):
-    """baseline_df is None before the model has been fit."""
-    assert model_class().baseline_df is None
-
-
-def test_baseline_df_after_fit_is_the_daily_frame(baseline_df, fitted_model):
-    """BillingModel.baseline_df is the daily-resolution frame ('df') the model fit on."""
-    expected = BillingBaselineData(baseline_df, is_electricity_data=True).df
-
-    pd.testing.assert_frame_equal(fitted_model.baseline_df, expected)
-
-
-def test_baseline_df_after_fit_is_the_billing_frame(baseline_df, fitted_weighted_model):
-    """BillingWeightedModel.baseline_df is the period-level frame ('billing_df') the
-    model fit on."""
-    expected = BillingBaselineData(baseline_df, is_electricity_data=True).billing_df
-
-    pd.testing.assert_frame_equal(fitted_weighted_model.baseline_df, expected)
+def test_fit_records_is_electricity_data_and_baseline_metrics(fitted_model):
+    """A fit records the is_electricity_data it was given and the fitted combination's
+    baseline error metrics."""
+    assert fitted_model.is_fitted
+    assert fitted_model.is_electricity_data is True
+    assert np.isfinite(fitted_model.baseline_metrics.cvrmse_adj)
 
 
 # ---------------------------------------------------------------------------

@@ -36,6 +36,8 @@ from opendsm.eemeter.common.warnings import EEMeterWarning
 from opendsm.eemeter.models import DailyModel
 from opendsm.eemeter.models.daily.data import DailyBaselineData
 
+from savings.equivalence_env import shorten_baselines
+
 
 
 def _subset(meters, n):
@@ -474,6 +476,19 @@ def test_from_fit_models_rejects_a_data_object_where_a_frame_belongs(daily_meter
         TreatmentGroup.from_fit_models(meters, model_frequency="daily")
 
 
+@pytest.mark.parametrize(
+    "value,type_name",
+    [(None, "NoneType"), ({"observed": [1.0]}, "dict"), (pd.Series([1.0]), "Series")],
+    ids=["none", "dict", "series"],
+)
+def test_from_data_rejects_a_non_frame_baseline_naming_the_meter(value, type_name):
+    """A baseline entry that is not a DataFrame is a TypeError naming the meter and the type."""
+    with pytest.raises(
+        TypeError, match=f"Meter m1: baseline data must be a pandas DataFrame, got {type_name}"
+    ):
+        TreatmentGroup.from_data({"m1": value}, "daily", is_electricity_data=True)
+
+
 # -- loadshape data ----------------------------------------------------------
 
 
@@ -571,20 +586,12 @@ def test_loadshape_error_basis_guards_zero_modeled(daily_meters):
     assert not np.isinf(data.loadshape.to_numpy()).any()
 
 
-def _truncate_baseline_months(population, ids, n_months=6):
-    """Cut each named meter's attached billing baseline down to ``n_months``,
-    after construction so the truncation is not itself a sufficiency failure."""
-    for mid in ids:
-        baseline_data = population._meters[mid].baseline_data
-        baseline_data._df = baseline_data._df.head(n_months)
-
-
 def test_short_baseline_months_reports_only_the_short_meter(billing_pair):
     """A meter spanning one baseline month is reported with its month count; a
     full-year meter is not, and the pool keeps both meters and an empty ledger."""
     good_mid, bad_mid = list(billing_pair)
     pool = ComparisonPool.from_fit_models(billing_pair, model_frequency="billing")
-    _truncate_baseline_months(pool, [bad_mid])
+    shorten_baselines(pool, [bad_mid])
 
     short = pool.short_baseline_months()
 
@@ -640,15 +647,19 @@ def test_json_header_carries_no_window_fields(daily_meters):
     assert window_keys == [], f"header carries window fields {window_keys}"
 
 
-def test_from_json_rebuilds_model_payload_missing_fuel_flag(daily_meters):
-    """A model payload without the fuel flag rebuilds using the population header's
-    is_electricity_data, and the rebuilt model records that."""
+@pytest.mark.parametrize("stored", ["absent", "null"])
+def test_from_json_rebuilds_model_payload_missing_fuel_flag(daily_meters, stored):
+    """A model payload whose fuel flag is absent or null rebuilds using the population
+    header's is_electricity_data, and the rebuilt model records that."""
     subset = _subset(daily_meters, 2)
     group = TreatmentGroup.from_fit_models(subset, model_frequency="daily")
     payload = json.loads(group.to_json())
     for meter in payload["meters"]:
         model_payload = json.loads(meter["model"])
-        del model_payload["info"]["is_electricity_data"]
+        if stored == "absent":
+            del model_payload["info"]["is_electricity_data"]
+        else:
+            model_payload["info"]["is_electricity_data"] = None
         meter["model"] = json.dumps(model_payload)
 
     rebuilt = TreatmentGroup.from_json(json.dumps(payload), baseline=_baseline_map(subset))
@@ -758,12 +769,38 @@ def test_reload_without_baseline_refuses_baseline_work(daily_meters, work, messa
 
 
 def test_from_fit_models_requires_baseline(daily_meters):
-    """Only a reload may omit baseline data."""
+    """``from_fit_models`` rejects a meter without baseline data, with an error naming the
+    meter."""
     mid = next(iter(daily_meters))
     meters = {mid: {"model": daily_meters[mid]["model"]}}
 
-    with pytest.raises(KeyError, match="baseline_df"):
+    with pytest.raises(ValueError, match=f"Meter {mid}: baseline_df is required"):
         TreatmentGroup.from_fit_models(meters)
+
+
+def test_from_fit_models_leaves_caller_model_unchanged(daily_meters):
+    """Building a meter's data objects from a caller's fitted model leaves every
+    attribute of that model as it was."""
+    mid = next(iter(daily_meters))
+    model = copy.deepcopy(daily_meters[mid]["model"])
+    before = dict(vars(model))
+    meters = {
+        mid: {
+            "model": model,
+            "baseline_df": daily_meters[mid]["baseline_df"],
+            "reporting_df": daily_meters[mid]["reporting_df"],
+        }
+    }
+
+    TreatmentGroup.from_fit_models(meters)
+
+    after = vars(model)
+    assert after.keys() == before.keys(), (
+        f"attributes added {sorted(after.keys() - before.keys())}, "
+        f"removed {sorted(before.keys() - after.keys())}"
+    )
+    rebound = sorted(name for name, value in before.items() if after[name] is not value)
+    assert rebound == [], f"attributes rebound: {rebound}"
 
 
 @pytest.mark.parametrize("fmt", ["json", "ndjson"])
@@ -889,11 +926,28 @@ def test_exclusions_roundtrip_through_json(daily_meters):
 # -- from_data serial fit ----------------------------------------------------
 
 
-def test_from_data_requires_is_electricity_data_as_keyword():
-    """is_electricity_data is keyword-only, so a positional third argument
-    (such as a settings object) cannot silently bind to it instead."""
-    with pytest.raises(TypeError):
-        TreatmentGroup.from_data({}, "daily", True)
+def test_from_data_records_the_baseline_data_fit_built(daily_meters, monkeypatch):
+    """Each meter's record carries the baseline data object the real ``fit``
+    built, and the baseline data is built once per meter."""
+    subset = _subset(daily_meters, 2)
+    built = []
+    build_baseline_data = DailyModel._build_baseline_data
+
+    def counting_build_baseline_data(self, df, is_electricity_data):
+        result = build_baseline_data(self, df, is_electricity_data)
+        built.append(result[0])
+
+        return result
+
+    monkeypatch.setattr(DailyModel, "_build_baseline_data", counting_build_baseline_data)
+    monkeypatch.setattr(DailyModel, "_fit", lambda self, meter_data: None)
+    monkeypatch.setattr(DailyModel, "_check_model_fit", lambda self: None)
+
+    group = TreatmentGroup.from_data(_baseline_map(subset), "daily", is_electricity_data=True)
+
+    assert len(built) == len(subset), f"built {len(built)} baselines for {len(subset)} meters"
+    for mid, data in zip(group.ids, built):
+        assert group.meter(mid).baseline_data is data, f"meter {mid} carries a rebuilt baseline"
 
 
 @pytest.mark.slow
@@ -948,16 +1002,26 @@ def test_from_data_attaches_reporting_and_ignores_unfit_meters(_comstock_daily_a
 
 
 def _pinned_fit(monkeypatch, meters, fail=(), disqualify=()):
-    """Replace ``DailyModel.fit`` with a copy of each meter's pinned model, so
-    ``from_data`` runs without fitting. Returns the ids fit, in call order;
-    meters in ``fail`` raise ``DataSufficiencyError``, and meters in
-    ``disqualify`` raise ``DisqualifiedModelError`` with one disqualification
-    warning on the model."""
+    """Replace ``DailyModel._fit_baseline`` with a copy of each meter's pinned model, so
+    ``from_data`` builds real baseline data but runs without fitting. Returns the ids fit, in
+    call order; meters in ``fail`` raise ``DataSufficiencyError``, and meters in
+    ``disqualify`` raise ``DisqualifiedModelError`` with one disqualification warning on the
+    model."""
     by_baseline = {id(entry["baseline_df"]): mid for mid, entry in meters.items()}
+    by_data = {}
     fitted = []
+    build = DailyModel._build_baseline_data
 
-    def fit(self, df, **kwargs):
-        mid = by_baseline[id(df)]
+    def build_baseline_data(self, df, is_electricity_data):
+        built = build(self, df, is_electricity_data)
+        by_data[id(built[0])] = by_baseline[id(df)]
+
+        return built
+
+    def fit_baseline(
+        self, baseline, n_leading, n_trailing, is_electricity_data, enforce_compliance
+    ):
+        mid = by_data[id(baseline)]
         fitted.append(mid)
         if mid in fail:
             raise DataSufficiencyError("baseline too short")
@@ -970,9 +1034,8 @@ def _pinned_fit(monkeypatch, meters, fail=(), disqualify=()):
             ]
             raise DisqualifiedModelError("model disqualified")
 
-        return self
-
-    monkeypatch.setattr(DailyModel, "fit", fit)
+    monkeypatch.setattr(DailyModel, "_build_baseline_data", build_baseline_data)
+    monkeypatch.setattr(DailyModel, "_fit_baseline", fit_baseline)
 
     return fitted
 

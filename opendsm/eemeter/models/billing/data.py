@@ -343,7 +343,7 @@ class BillingBaselineData(_BillingData):
     Only baseline data should go into the dataframe input, no blackout data should be input.
     Checks sufficiency for the data provided as input depending on OpenEEMeter specifications and populates disqualifications and warnings based on it.
 
-    Billing data should have an extra month's data appended at the to denote end of period. (Do not append NaN, any other value would work.)
+    Billing data ends with a row that closes the last period; its 'observed' value may be NaN.
 
     Args:
         df (DataFrame): A dataframe having a datetime index or a datetime column with the timezone also being set.

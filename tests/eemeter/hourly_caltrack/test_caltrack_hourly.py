@@ -562,6 +562,17 @@ def test_from_2_0_json_rejects_formula_outside_the_grammar(request, monkeypatch)
         HourlyCaltrackModel.from_2_0_json(json.dumps(tampered), is_electricity_data=True)
 
 
+def test_from_2_0_json_with_keyword_logs_no_prior_format_warning(request, caplog):
+    """Loading a payload without the fuel flag and supplying it logs nothing."""
+    with open(request.fspath.dirname + "/legacy_hourly.json", "r") as f:
+        legacy_str = f.read()
+
+    with caplog.at_level("WARNING", logger="eemeter"):
+        HourlyCaltrackModel.from_2_0_json(legacy_str, is_electricity_data=True)
+
+    assert caplog.records == [], f"expected no warnings, got {caplog.records}"
+
+
 def test_legacy_deserialization_hourly(request, comstock_hourly, snapshot):
     with open(request.fspath.dirname + "/legacy_hourly.json", "r") as f:
         legacy_str = f.read()
@@ -575,3 +586,32 @@ def test_legacy_deserialization_hourly(request, comstock_hourly, snapshot):
     ).sum()
 
     assert round(float(total_metered_savings), 2) == snapshot(name="total_metered_savings")
+
+
+def _constant_hourly_frame():
+    """Two days of constant hourly usage and temperature: enough to build a data object."""
+    index = pd.date_range("2020-01-01", periods=48, freq="h", tz="UTC")
+
+    return pd.DataFrame({"observed": 1.0, "temperature": 50.0}, index=index)
+
+
+@pytest.mark.parametrize(
+    "make_value,type_name",
+    [
+        (
+            lambda: _HourlyBaselineData(_constant_hourly_frame(), is_electricity_data=True),
+            "_HourlyBaselineData",
+        ),
+        (lambda: None, "NoneType"),
+        (lambda: {"observed": [1.0]}, "dict"),
+        (lambda: pd.Series([1.0]), "Series"),
+    ],
+    ids=["data_object", "none", "dict", "series"],
+)
+@pytest.mark.parametrize("method", ["fit", "predict"])
+def test_non_dataframe_input_raises_type_error(method, make_value, type_name):
+    """fit and predict on an unfitted model reject anything that is not a DataFrame."""
+    kwargs = {"fit": {"is_electricity_data": True}, "predict": {}}[method]
+
+    with pytest.raises(TypeError, match=f"df must be a pandas DataFrame, got {type_name}"):
+        getattr(HourlyCaltrackModel(), method)(make_value(), **kwargs)

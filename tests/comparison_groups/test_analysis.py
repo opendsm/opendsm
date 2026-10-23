@@ -30,25 +30,6 @@ from opendsm.comparison_groups.selection import (
 
 
 
-# ── builders ─────────────────────────────────────────────────────────────────
-
-
-def _rewrap_meters(comstock, population):
-    """A meters dict reusing a population's fitted models with the ComStock
-    frames behind them (no refits)."""
-    model_frequency = population.model_frequency
-    meters = {}
-
-    for mid, rec in population._meters.items():
-        meters[mid] = {
-            "model": rec.model,
-            "baseline_df": comstock.baseline(model_frequency, mid),
-            "reporting_df": comstock.reporting(model_frequency, mid),
-        }
-
-    return meters
-
-
 # ── fixtures ─────────────────────────────────────────────────────────────────
 
 
@@ -100,7 +81,9 @@ def coverage_env(comstock, model_bank):
 
 
 def _daily_reporting_for(df_r, mid):
-    return df_r.xs(int(mid), level="id").reset_index()
+    reporting = df_r.xs(int(mid), level="id").reset_index()
+
+    return reporting
 
 
 def _truncated_baseline(df_b, mid, n_days):
@@ -112,7 +95,9 @@ def _truncated_baseline(df_b, mid, n_days):
 
 
 def _truncated_reporting(df_r, mid, n_days):
-    return df_r.xs(int(mid), level="id").reset_index().iloc[:n_days]
+    truncated = df_r.xs(int(mid), level="id").reset_index().iloc[:n_days]
+
+    return truncated
 
 
 def _coverage_population(
@@ -343,7 +328,7 @@ def test_analysis_corrects_only_its_own_meter(billing_env):
 def _treatment_with_observed_unc(comstock, billing_env, unc):
     """Rebuild the billing treatment reusing its fitted models, tagging every
     meter with a scalar observed uncertainty."""
-    meters = _rewrap_meters(comstock, billing_env["treatment"])
+    meters = comstock.population_meters(billing_env["treatment"])
 
     for entry in meters.values():
         entry["observed_unc"] = unc
@@ -577,7 +562,7 @@ def test_meter_log_excludes_pool_meters_outside_this_comparison_group(billing_en
     no comparison group, so they stay out of this meter's log even though they
     are on the pool population's own ledger."""
     treatment = billing_env["treatment"]
-    pool_meters = _rewrap_meters(comstock, billing_env["pool"])
+    pool_meters = comstock.population_meters(billing_env["pool"])
     pool = ComparisonPool.from_fit_models(pool_meters, max_pool_size=len(pool_meters) - 2, seed=1)
 
     trimmed = pool.exclusions

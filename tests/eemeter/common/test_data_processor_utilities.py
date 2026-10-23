@@ -12,6 +12,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -21,6 +22,8 @@ from opendsm.eemeter.common.data_processor_utilities import (
     as_freq,
     compute_data_frequency,
     frequency_duration,
+    require_dataframe,
+    resolve_is_electricity_data,
     trim_edge_rows,
 )
 
@@ -144,6 +147,33 @@ def test_trim_edge_rows_keeps_interior_missing_rows():
     assert trimmed.index.equals(df.index), "interior missing rows were dropped"
 
 
+def test_trim_edge_rows_keeps_interior_missing_rows_of_unsorted_index():
+    """Edges are found in time order, so an interior missing row stored first is kept."""
+    df = _edge_frame()
+    df.iloc[2, df.columns.get_loc("observed")] = float("nan")
+    shuffled = df.iloc[[2, 0, 5, 4, 1, 3]]
+
+    trimmed, n_leading, n_trailing = trim_edge_rows(shuffled, ("observed", "temperature"))
+
+    assert (n_leading, n_trailing) == (0, 0), f"expected (0, 0), got ({n_leading}, {n_trailing})"
+    assert trimmed.index.equals(df.index), f"expected the time-sorted index, got {trimmed.index}"
+
+
+def test_trim_edge_rows_trims_time_edges_of_unsorted_datetime_column():
+    """With a 'datetime' column, the earliest and latest times are the edges, not row order."""
+    df = _edge_frame()
+    df.iloc[0, df.columns.get_loc("observed")] = float("nan")
+    df.iloc[-1, df.columns.get_loc("ghi")] = float("nan")
+    shuffled = df.iloc[[5, 2, 0, 3, 1, 4]].rename_axis("datetime").reset_index()
+
+    trimmed, n_leading, n_trailing = trim_edge_rows(shuffled, ("observed", "temperature", "ghi"))
+
+    assert (n_leading, n_trailing) == (1, 1), f"expected (1, 1), got ({n_leading}, {n_trailing})"
+    assert list(trimmed["datetime"]) == list(df.index[1:-1]), (
+        f"unexpected trimmed times {list(trimmed['datetime'])}"
+    )
+
+
 def test_trim_edge_rows_returns_frame_untouched_when_no_row_qualifies():
     """A frame with no usable row is passed through for the caller's sufficiency check."""
     df = _edge_frame()
@@ -163,3 +193,64 @@ def test_trim_edge_rows_returns_frame_untouched_when_a_column_is_absent():
 
     assert (n_leading, n_trailing) == (0, 0), f"expected (0, 0), got ({n_leading}, {n_trailing})"
     assert trimmed.index.equals(df.index), "a frame missing a column was modified"
+
+
+def test_require_dataframe_accepts_a_dataframe():
+    """A DataFrame passes the check without raising."""
+    require_dataframe(pd.DataFrame({"a": [1.0]}), "df")
+
+
+@pytest.mark.parametrize(
+    "value,type_name",
+    [
+        (None, "NoneType"),
+        ({"a": [1.0]}, "dict"),
+        (pd.Series([1.0]), "Series"),
+        (np.array([1.0]), "ndarray"),
+    ],
+    ids=["none", "dict", "series", "ndarray"],
+)
+def test_require_dataframe_rejects_non_frames(value, type_name):
+    """Anything other than a DataFrame raises TypeError naming the argument and the type."""
+    with pytest.raises(TypeError, match=f"^df must be a pandas DataFrame, got {type_name}\\.$"):
+        require_dataframe(value, "df")
+
+
+@pytest.mark.parametrize("stored", [True, False])
+def test_resolve_is_electricity_data_uses_the_stored_flag(stored):
+    """A payload's stored flag is used as is, with no warning."""
+    value, warning = resolve_is_electricity_data(stored, None)
+
+    assert value is stored
+    assert warning is None
+
+
+@pytest.mark.parametrize("supplied", [True, False])
+def test_resolve_is_electricity_data_uses_the_supplied_flag(supplied):
+    """A payload storing no flag takes the supplied one."""
+    value, _ = resolve_is_electricity_data(None, supplied)
+
+    assert value is supplied
+
+
+def test_resolve_is_electricity_data_warns_when_the_supplied_flag_is_used():
+    """Using the supplied flag yields a prior_format warning carrying that flag."""
+    _, warning = resolve_is_electricity_data(None, False)
+
+    assert warning.qualified_name == "eemeter.serialization.prior_format"
+    assert warning.description == (
+        "Model payload does not store 'is_electricity_data', so the supplied value was used."
+    )
+    assert warning.data == {"is_electricity_data": False}
+
+
+def test_resolve_is_electricity_data_rejects_both():
+    """A supplied flag is rejected when the payload stores one."""
+    with pytest.raises(ValueError, match="This model stores 'is_electricity_data'"):
+        resolve_is_electricity_data(True, True)
+
+
+def test_resolve_is_electricity_data_rejects_neither():
+    """A payload storing no flag requires a supplied one."""
+    with pytest.raises(ValueError, match="This model does not store 'is_electricity_data'"):
+        resolve_is_electricity_data(None, None)
