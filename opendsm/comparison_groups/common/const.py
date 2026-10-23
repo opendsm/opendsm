@@ -51,7 +51,6 @@ class LoadshapeType(str, Enum):
 class TimePeriod(str, Enum):
     HOUR = "hour"
     DAY_OF_WEEK = "day_of_week"
-    DAY_OF_YEAR = "day_of_year"
     HOURLY_DAY_OF_WEEK = "hourly_day_of_week"
     WEEKDAY_WEEKEND = "weekday_weekend"
     HOURLY_WEEKDAY_WEEKEND = "hourly_weekday_weekend"
@@ -92,29 +91,12 @@ weekday_num = {
     "sunday": 6,
 }
 
-time_period_row_counts = {
-    "hour": 24,
-    "month": 12,
-    "hourly_month": 24 * 12,
-    "day_of_week": 7,
-    "day_of_year": 365,
-    "hourly_day_of_week": 24 * 7,
-    "weekday_weekend": 2,
-    "hourly_weekday_weekend": 24 * 2,
-    "seasonal_day_of_week": 3 * 7,
-    "seasonal_hourly_day_of_week": 3 * 24 * 7,
-    "seasonal_weekday_weekend": 3 * 2,
-    "seasonal_hourly_weekday_weekend": 3 * 24 * 2,
-}
-
-
 max_data_interval_minutes_per_time_period = {
     # All the values are in minutes
     "hour": 60,
     "month": 60 * 24 * 28, # this is not used since we can have a different day per month
     "hourly_month": 60,
     "day_of_week": 60 * 24 * 7,
-    "day_of_year": 60 * 24 * 7,
     "hourly_day_of_week": 60,
     "weekday_weekend":  60 * 24 * 7,
     "hourly_weekday_weekend": 60,
@@ -125,15 +107,14 @@ max_data_interval_minutes_per_time_period = {
 }
 
 """
-    This list ordering is important for the groupby columns (refer _find_groupby_columns in data_processing.py)
-    The sorting is done on the basis of this ordering in the final dataframe. First the dataframe is sorted by season, then by day_of_week, then by hour in the seasonal_hourly_day_of_week case.
-    Similarly for other combinations.
+    The order is the loadshape time layout order, outermost first: Data_Settings.time_layout
+    and the cell keys in Data._convert_timeseries_to_loadshape follow it, so for
+    seasonal_hourly_day_of_week the times run by season, then day_of_week, then hour.
 """
 unique_time_periods = [
     "season",
     "month",
     "day_of_week",
-    "day_of_year",
     "weekday_weekend",
     "hour",
 ]

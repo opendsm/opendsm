@@ -15,10 +15,14 @@
 import numpy as np
 import pandas as pd
 import pytest
+from pydantic import ValidationError
 
 from opendsm.comparison_groups.common import Data, Data_Settings
 from opendsm.comparison_groups.common import const as _const
-from opendsm.comparison_groups.common.data import fill_missing
+from opendsm.comparison_groups.common.data import (
+    _keep_smallest_abs,
+    fill_missing,
+)
 
 
 
@@ -68,15 +72,13 @@ def _treatment_time_series(comstock_hourly_all, n_ids=3):
 
 
 def test_hour_time_period_keys_present():
-    """TimePeriod.HOUR is a valid key in the row-count and data interval dicts."""
-    assert _const.time_period_row_counts[_const.TimePeriod.HOUR] == 24
+    """TimePeriod.HOUR is a valid key in the data interval dict."""
     assert _const.max_data_interval_minutes_per_time_period[_const.TimePeriod.HOUR] == 60
 
 
 def test_time_series_ingestion_hourly(_comstock_hourly_all):
-    """Regression: building Data from a time series exercises loadshape_type /
-    time_period reads (previously uppercased -> AttributeError) and the HOUR
-    row-count lookup (previously KeyError). Should produce a 24-column loadshape."""
+    """Building Data from a time series reads loadshape_type and time_period and produces a
+    24-column loadshape."""
     time_series, ids = _treatment_time_series(_comstock_hourly_all)
     settings = Data_Settings(
         agg_type=_const.AggType.MEAN,
@@ -93,8 +95,7 @@ def test_time_series_ingestion_hourly(_comstock_hourly_all):
 
 
 def test_pool_trim_reproducible_with_seed(_comstock_hourly_all):
-    """Regression: comparison-pool trimming is reproducible when a seed is set.
-    It previously used an unseeded global np.random.choice."""
+    """Comparison-pool trimming is reproducible when a seed is set."""
     time_series, _ = _treatment_time_series(_comstock_hourly_all, n_ids=8)
 
     def _build():
@@ -226,7 +227,8 @@ def test_meter_coarser_than_time_period_is_excluded():
     ], f"expected one data interval row for 'two_hourly', got {ledger}"
 
 
-_INCOMPLETE_REASON = "Unique time counts per id don't have the minimum time counts required"
+_INCOMPLETE_REASON = "missing loadshape times with interpolate_missing off"
+_BELOW_MINIMUM_REASON = "fewer loadshape times present than min_data_pct_required"
 
 
 def _hour_settings(interpolate_missing):
@@ -238,6 +240,57 @@ def _hour_settings(interpolate_missing):
     )
 
     return settings
+
+
+def _loadshape_settings(interpolate_missing):
+    settings = Data_Settings(
+        agg_type=None,
+        loadshape_type=None,
+        time_period=None,
+        interpolate_missing=interpolate_missing,
+    )
+
+    return settings
+
+
+def test_interpolation_off_ledgers_below_minimum_and_incomplete_time_series():
+    """With interpolation off, a meter below min_data_pct_required gets the below-minimum
+    row, a meter at or above it that misses a time gets the incomplete row, and only the
+    complete meter is kept."""
+    time_series = pd.concat(
+        [_hourly_frame("full", 48), _hourly_frame("low", 10), _hourly_frame("short", 20)],
+        ignore_index=True,
+    )
+
+    data = Data(time_series_df=time_series, settings=_hour_settings(interpolate_missing=False))
+
+    assert list(data.loadshape.index) == ["full"]
+    ledger = data.excluded_ids.to_dict("records")
+    assert ledger == [
+        {"id": "low", "reason": _BELOW_MINIMUM_REASON},
+        {"id": "short", "reason": _INCOMPLETE_REASON},
+    ], f"expected one below-minimum row for 'low' and one incomplete row for 'short', got {ledger}"
+
+
+def test_interpolation_off_ledgers_below_minimum_and_incomplete_loadshape_df():
+    """With interpolation off, a long loadshape meter with 3 of 24 times gets the
+    below-minimum row, one with 23 of 24 gets the incomplete row, and only the complete
+    meter is kept."""
+    long_df = _long_loadshape_df(n_ids=3, n_time=24)
+    missing = ((long_df["id"] == "m1") & (long_df["time"] == 5)) | (
+        (long_df["id"] == "m2") & (long_df["time"] > 3)
+    )
+
+    data = Data(
+        loadshape_df=long_df[~missing], settings=_loadshape_settings(interpolate_missing=False)
+    )
+
+    assert list(data.loadshape.index) == ["m0"]
+    ledger = data.excluded_ids.to_dict("records")
+    assert ledger == [
+        {"id": "m2", "reason": _BELOW_MINIMUM_REASON},
+        {"id": "m1", "reason": _INCOMPLETE_REASON},
+    ], f"expected one below-minimum row for 'm2' and one incomplete row for 'm1', got {ledger}"
 
 
 def test_interpolation_off_excludes_meter_missing_times():
@@ -259,17 +312,20 @@ def test_interpolation_off_excludes_meter_missing_times():
     )
 
 
-def test_interpolation_off_null_row_keeps_its_reason_only():
-    """A meter with a NaN reading is recorded under the null-values reason, not also as
-    missing times."""
-    nan_meter = _hourly_frame("nan", 48)
-    nan_meter.loc[nan_meter["datetime"].dt.hour == 0, "observed"] = np.nan
-    time_series = pd.concat([_hourly_frame("a", 48), nan_meter], ignore_index=True)
+def test_meter_without_datetimes_is_recorded():
+    """A meter whose datetimes are all NaT has no reading in any time and is dropped with
+    one ledger row."""
+    no_times = _hourly_frame("no_times", 48)
+    no_times["datetime"] = pd.NaT
+    time_series = pd.concat([_hourly_frame("a", 48), no_times], ignore_index=True)
 
-    data = Data(time_series_df=time_series, settings=_hour_settings(interpolate_missing=False))
+    data = Data(time_series_df=time_series, settings=_hour_settings(interpolate_missing=True))
 
     assert list(data.loadshape.index) == ["a"]
-    assert set(data.excluded_ids["reason"]) == {"null values in features_df"}
+    ledger = data.excluded_ids.to_dict("records")
+    assert ledger == [{"id": "no_times", "reason": "no readings in any loadshape time"}], (
+        f"expected one no-readings row for 'no_times', got {ledger}"
+    )
 
 
 def test_interpolation_on_keeps_meter_missing_some_times():
@@ -285,7 +341,8 @@ def test_interpolation_on_keeps_meter_missing_some_times():
     assert data.excluded_ids.empty
 
 
-def test_all_meters_incomplete_raises_with_reason():
+def test_all_meters_excluded_from_time_series_raises_with_reasons():
+    """With every meter below the minimum or incomplete, building raises listing both reasons."""
     time_series = pd.concat(
         [_hourly_frame("x", 20), _hourly_frame("y", 10)], ignore_index=True
     )
@@ -294,21 +351,23 @@ def test_all_meters_incomplete_raises_with_reason():
         Data(time_series_df=time_series, settings=_hour_settings(interpolate_missing=False))
 
     assert _INCOMPLETE_REASON in str(excinfo.value)
+    assert _BELOW_MINIMUM_REASON in str(excinfo.value)
 
 
-def test_all_meters_excluded_from_loadshape_df_raises():
-    """Any validation path that leaves no meters raises, wide-format time counts included."""
+def test_all_meters_excluded_from_loadshape_df_raises_with_reasons():
+    """A long loadshape with every meter below the minimum or incomplete raises listing both
+    reasons."""
     loadshape_df = _long_loadshape_df(n_ids=2, n_time=24)
     loadshape_df = loadshape_df[loadshape_df["time"] != 5]
     loadshape_df = pd.concat(
         [loadshape_df, pd.DataFrame([{"id": "m2", "time": 24, "loadshape": 1.0}])]
     )
-    settings = Data_Settings(
-        agg_type=None, loadshape_type=None, time_period=None, interpolate_missing=False
-    )
 
-    with pytest.raises(ValueError, match=_INCOMPLETE_REASON):
-        Data(loadshape_df=loadshape_df, settings=settings)
+    with pytest.raises(ValueError, match="No meters remain") as excinfo:
+        Data(loadshape_df=loadshape_df, settings=_loadshape_settings(interpolate_missing=False))
+
+    assert _INCOMPLETE_REASON in str(excinfo.value)
+    assert _BELOW_MINIMUM_REASON in str(excinfo.value)
 
 
 def test_extend_concatenates_loadshapes():
@@ -390,19 +449,28 @@ def test_partial_loadshape_settings_raise():
         Data_Settings(agg_type=None)  # loadshape_type/time_period keep non-None defaults
 
 
-def test_interpolate_missing_controls_min_data_pct():
-    assert Data_Settings(interpolate_missing=True).min_data_pct_required is not None
-    assert Data_Settings(interpolate_missing=False).min_data_pct_required is None
+def test_interpolate_missing_defaults_to_false():
+    assert Data_Settings().interpolate_missing is False
 
 
-@pytest.mark.parametrize(
-    "interpolate_missing, given, expected",
-    [(True, None, 0.8), (True, 0.5, 0.5), (True, 1.0, 1.0), (False, 0.5, None)],
-)
-def test_min_data_pct_required_kept_when_interpolating(interpolate_missing, given, expected):
+@pytest.mark.parametrize("interpolate_missing", [True, False])
+def test_min_data_pct_required_default_kept_in_both_modes(interpolate_missing):
+    settings = Data_Settings(interpolate_missing=interpolate_missing)
+
+    assert settings.min_data_pct_required == 0.8
+
+
+@pytest.mark.parametrize("interpolate_missing", [True, False])
+@pytest.mark.parametrize("given, expected", [(None, 0.8), (0.5, 0.5), (1.0, 1.0)])
+def test_min_data_pct_required_kept_in_both_modes(interpolate_missing, given, expected):
+    """A given min_data_pct_required is kept whatever interpolate_missing is; None selects
+    the default."""
     settings = Data_Settings(interpolate_missing=interpolate_missing, min_data_pct_required=given)
 
-    assert settings.min_data_pct_required == expected
+    assert settings.min_data_pct_required == expected, (
+        f"interpolate_missing={interpolate_missing}, given {given}: "
+        f"expected {expected}, got {settings.min_data_pct_required}"
+    )
 
 
 @pytest.mark.parametrize("value", [0, -0.1, 1.5])
@@ -423,6 +491,7 @@ def test_min_data_pct_required_sets_which_meters_survive(min_data_pct_required, 
         agg_type=_const.AggType.MEAN,
         loadshape_type=_const.LoadshapeType.OBSERVED,
         time_period=_const.TimePeriod.HOUR,
+        interpolate_missing=True,
         min_data_pct_required=min_data_pct_required,
     )
 
@@ -437,35 +506,34 @@ def test_season_dict_is_converted_to_definition():
     assert not isinstance(Data_Settings().season, dict)
 
 
-@pytest.mark.parametrize(
-    "time_period, expected_layout, expected_n_times",
-    [
-        (_const.TimePeriod.HOUR, [("hour", 24)], 24),
-        (_const.TimePeriod.DAY_OF_WEEK, [("day_of_week", 7)], 7),
-        (_const.TimePeriod.DAY_OF_YEAR, [("day_of_year", 365)], 365),
-        (_const.TimePeriod.HOURLY_DAY_OF_WEEK, [("day_of_week", 7), ("hour", 24)], 168),
-        (_const.TimePeriod.WEEKDAY_WEEKEND, [("weekday_weekend", 2)], 2),
-        (_const.TimePeriod.HOURLY_WEEKDAY_WEEKEND, [("weekday_weekend", 2), ("hour", 24)], 48),
-        (_const.TimePeriod.MONTH, [("month", 12)], 12),
-        (_const.TimePeriod.HOURLY_MONTH, [("month", 12), ("hour", 24)], 288),
-        (_const.TimePeriod.SEASONAL_DAY_OF_WEEK, [("season", 3), ("day_of_week", 7)], 21),
-        (
-            _const.TimePeriod.SEASONAL_HOURLY_DAY_OF_WEEK,
-            [("season", 3), ("day_of_week", 7), ("hour", 24)],
-            504,
-        ),
-        (
-            _const.TimePeriod.SEASONAL_WEEKDAY_WEEKEND,
-            [("season", 3), ("weekday_weekend", 2)],
-            6,
-        ),
-        (
-            _const.TimePeriod.SEASONAL_HOURLY_WEEKDAY_WEEKEND,
-            [("season", 3), ("weekday_weekend", 2), ("hour", 24)],
-            144,
-        ),
-    ],
-)
+_TIME_LAYOUT_TABLE = [
+    (_const.TimePeriod.HOUR, [("hour", 24)], 24),
+    (_const.TimePeriod.DAY_OF_WEEK, [("day_of_week", 7)], 7),
+    (_const.TimePeriod.HOURLY_DAY_OF_WEEK, [("day_of_week", 7), ("hour", 24)], 168),
+    (_const.TimePeriod.WEEKDAY_WEEKEND, [("weekday_weekend", 2)], 2),
+    (_const.TimePeriod.HOURLY_WEEKDAY_WEEKEND, [("weekday_weekend", 2), ("hour", 24)], 48),
+    (_const.TimePeriod.MONTH, [("month", 12)], 12),
+    (_const.TimePeriod.HOURLY_MONTH, [("month", 12), ("hour", 24)], 288),
+    (_const.TimePeriod.SEASONAL_DAY_OF_WEEK, [("season", 3), ("day_of_week", 7)], 21),
+    (
+        _const.TimePeriod.SEASONAL_HOURLY_DAY_OF_WEEK,
+        [("season", 3), ("day_of_week", 7), ("hour", 24)],
+        504,
+    ),
+    (
+        _const.TimePeriod.SEASONAL_WEEKDAY_WEEKEND,
+        [("season", 3), ("weekday_weekend", 2)],
+        6,
+    ),
+    (
+        _const.TimePeriod.SEASONAL_HOURLY_WEEKDAY_WEEKEND,
+        [("season", 3), ("weekday_weekend", 2), ("hour", 24)],
+        144,
+    ),
+]
+
+
+@pytest.mark.parametrize("time_period, expected_layout, expected_n_times", _TIME_LAYOUT_TABLE)
 def test_time_layout_default_options(time_period, expected_layout, expected_n_times):
     """time_layout lists grouping columns in unique_time_periods order with default
     season/weekday_weekend cardinalities, and n_times is their product."""
@@ -480,9 +548,20 @@ def test_time_layout_default_options(time_period, expected_layout, expected_n_ti
 
 
 def test_time_layout_covers_every_time_period():
-    """Every TimePeriod has a non-empty layout, so the parametrized table above is complete."""
-    assert len(_const.TimePeriod) == 12
-    assert all(Data_Settings(time_period=tp).time_layout for tp in _const.TimePeriod)
+    """The time layout table has one row per TimePeriod, each with a non-empty layout."""
+    table_periods = [row[0] for row in _TIME_LAYOUT_TABLE]
+
+    assert len(table_periods) == len(set(table_periods)), f"duplicated rows: {table_periods}"
+    assert set(table_periods) == set(_const.TimePeriod), (
+        f"missing from the table: {set(_const.TimePeriod) - set(table_periods)}"
+    )
+    assert all(row[1] for row in _TIME_LAYOUT_TABLE)
+
+
+def test_day_of_year_time_period_raises():
+    """day_of_year is not a TimePeriod, so settings reject it."""
+    with pytest.raises(ValidationError, match="time_period"):
+        Data_Settings(time_period="day_of_year")
 
 
 def test_time_layout_four_season_definition():
@@ -519,7 +598,13 @@ def test_time_layout_without_time_period_is_empty():
     settings = Data_Settings(agg_type=None, loadshape_type=None, time_period=None)
 
     assert settings.time_layout == []
-    assert settings.n_times is None
+
+
+def test_n_times_without_time_period_is_none():
+    """Settings without a time_period define no loadshape time count."""
+    settings = Data_Settings(agg_type=None, loadshape_type=None, time_period=None)
+
+    assert settings.n_times is None, f"expected None, got {settings.n_times}"
 
 
 def _year_frame(meter_id, values):
@@ -541,8 +626,6 @@ def _time_digits(datetimes, column, settings):
         keys = datetimes.dt.month - 1
     elif column == "day_of_week":
         keys = datetimes.dt.day_of_week
-    elif column == "day_of_year":
-        keys = datetimes.dt.day_of_year - 1
     elif column == "weekday_weekend":
         labels = datetimes.dt.day_of_week.map(settings.weekday_weekend._num_dict)
         keys = labels.map(settings.weekday_weekend.options.index)
@@ -595,7 +678,7 @@ def _drop_time(frame, settings, season, day_of_week, hour):
 def test_constant_loads_keep_their_own_ids(drop_times):
     """With several meters, each keeps its own loadshape through interpolation: constant
     loads come back unchanged under their own id."""
-    settings = _observed_settings()
+    settings = _observed_settings(interpolate_missing=True)
     frames = []
     for offset, (meter_id, load) in enumerate([("c", 100.0), ("a", 300.0), ("b", 200.0)]):
         frame = _year_frame(meter_id, load)
@@ -621,7 +704,7 @@ def test_constant_loads_keep_their_own_ids(drop_times):
 def test_fill_does_not_borrow_across_season_boundary():
     """A time missing at the edge of a season block takes its own season's edge value,
     never a value interpolated toward the neighbouring season."""
-    settings = _observed_settings()
+    settings = _observed_settings(interpolate_missing=True)
     season = _season_ordinal(pd.Series(_YEAR_HOURS), settings)
     frame = _year_frame("a", (season + 1).astype(float).to_numpy())
     # last time of season 0 (Sunday 23h) and first time of season 2 (Monday 0h)
@@ -638,7 +721,7 @@ def test_fill_does_not_borrow_across_season_boundary():
 def test_meter_without_a_season_is_excluded():
     """A meter with no readings in a whole season falls below the minimum-data rule and
     is recorded in the ledger under the minimum-data reason."""
-    settings = _observed_settings()
+    settings = _observed_settings(interpolate_missing=True)
     gap = _year_frame("gap", 1.0)
     gap = gap[_season_ordinal(gap["datetime"], settings) != 1]
     time_series = pd.concat([_year_frame("full", 2.0), gap], ignore_index=True)
@@ -647,13 +730,13 @@ def test_meter_without_a_season_is_excluded():
 
     assert list(data.loadshape.index) == ["full"]
     ledger = data.excluded_ids.set_index("id")["reason"]
-    assert ledger["gap"] == "missing minimum number of values in loadshape_df"
+    assert ledger["gap"] == _BELOW_MINIMUM_REASON
 
 
 def test_meter_without_a_season_is_excluded_below_minimum_data_rule():
     """A meter missing a whole season clears a low min_data_pct_required, so the empty
     season block left NaN by the fill is what excludes it."""
-    settings = _observed_settings(min_data_pct_required=0.5)
+    settings = _observed_settings(interpolate_missing=True, min_data_pct_required=0.5)
     gap = _year_frame("gap", 1.0)
     gap = gap[_season_ordinal(gap["datetime"], settings) != 1]
     time_series = pd.concat([_year_frame("full", 2.0), gap], ignore_index=True)
@@ -667,34 +750,14 @@ def test_meter_without_a_season_is_excluded_below_minimum_data_rule():
     ]
 
 
-def test_leap_day_stays_in_its_own_meter():
-    """Leap-year day 366 has no time, so it never lands in the next meter's first time."""
-    leap_year = pd.date_range("2024-01-01", "2024-12-31 23:00", freq="h")
-    time_series = pd.concat(
-        [
-            pd.DataFrame({"id": meter_id, "datetime": leap_year, "observed": load})
-            for meter_id, load in [("a", 1.0), ("b", 5.0)]
-        ],
-        ignore_index=True,
-    )
-    settings = _observed_settings(time_period=_const.TimePeriod.DAY_OF_YEAR)
-
-    data = Data(time_series_df=time_series, settings=settings)
-
-    loadshape = data.loadshape
-    assert loadshape.shape == (2, 365)
-    np.testing.assert_array_equal(loadshape.loc["a"].to_numpy(), np.full(365, 1.0))
-    np.testing.assert_array_equal(loadshape.loc["b"].to_numpy(), np.full(365, 5.0))
-
-
 def test_long_loadshape_fills_flat():
-    """Long loadshape input has no season layout, so the whole row is interpolated,
-    with the edge time taking its nearest reading."""
+    """With settings that carry no season, a long loadshape row is interpolated as one
+    block, with the edge time taking its nearest reading."""
     long_df = _long_loadshape_df(n_ids=3, n_time=24)
     dropped = (long_df["id"] == "m1") & long_df["time"].isin([1, 5])
     long_df = long_df[~dropped]
 
-    data = Data(loadshape_df=long_df)
+    data = Data(loadshape_df=long_df, settings=_loadshape_settings(interpolate_missing=True))
 
     expected = pd.DataFrame(
         [[float(t + i) for t in range(1, 25)] for i in range(3)],
@@ -705,13 +768,94 @@ def test_long_loadshape_fills_flat():
     pd.testing.assert_frame_equal(data.loadshape, expected, check_column_type=False)
 
 
+def _zero_based_long_loadshape_without_time_0_for_m1():
+    long_df = _long_loadshape_df(n_ids=2, n_time=24)
+    long_df["time"] -= 1
+
+    return long_df[~((long_df["id"] == "m1") & (long_df["time"] == 0))]
+
+
+def _zero_based_settings(interpolate_missing):
+    return Data_Settings(
+        agg_type=None,
+        loadshape_type=None,
+        time_period=None,
+        interpolate_missing=interpolate_missing,
+    )
+
+
+def test_long_loadshape_zero_based_time_fills_missing_time_0():
+    """A long loadshape numbered from 0 keeps time 0 and fills a meter's missing time 0 flat."""
+    long_df = _zero_based_long_loadshape_without_time_0_for_m1()
+
+    data = Data(loadshape_df=long_df, settings=_zero_based_settings(interpolate_missing=True))
+
+    expected = pd.DataFrame(
+        [[float(t + 1 + i) for t in range(24)] for i in range(2)],
+        index=pd.Index(["m0", "m1"], name="id"),
+        columns=range(24),
+    )
+    expected.loc["m1", 0] = 3.0
+    pd.testing.assert_frame_equal(data.loadshape, expected, check_column_type=False)
+    assert data.excluded_ids.empty, data.excluded_ids
+
+
+def test_long_loadshape_zero_based_time_interpolation_off_excludes_meter_lacking_time_0():
+    """With interpolation off, a meter lacking time 0 is recorded as incomplete and the
+    complete meter keeps its 0-based columns."""
+    long_df = _zero_based_long_loadshape_without_time_0_for_m1()
+
+    data = Data(loadshape_df=long_df, settings=_zero_based_settings(interpolate_missing=False))
+
+    assert list(data.loadshape.index) == ["m0"]
+    assert list(data.loadshape.columns) == list(range(24))
+    assert data.excluded_ids.to_dict("records") == [{"id": "m1", "reason": _INCOMPLETE_REASON}]
+
+
+def _long_loadshape_without_time_1():
+    long_df = _long_loadshape_df(n_ids=2, n_time=24)
+
+    return long_df[long_df["time"] != 1]
+
+
+def test_long_loadshape_fills_time_1_every_meter_lacks():
+    """A 1-based long loadshape whose time 1 every meter lacks keeps time 1, filled flat."""
+    long_df = _long_loadshape_without_time_1()
+
+    data = Data(loadshape_df=long_df, settings=_loadshape_settings(interpolate_missing=True))
+
+    expected = pd.DataFrame(
+        [[float(max(t, 2) + i) for t in range(1, 25)] for i in range(2)],
+        index=pd.Index(["m0", "m1"], name="id"),
+        columns=range(1, 25),
+    )
+    pd.testing.assert_frame_equal(data.loadshape, expected, check_column_type=False)
+    assert data.excluded_ids.empty, data.excluded_ids
+
+
+def test_long_loadshape_interpolation_off_excludes_meters_lacking_time_1():
+    """With interpolation off, every meter lacking time 1 is recorded as incomplete."""
+    long_df = _long_loadshape_without_time_1()
+
+    with pytest.raises(ValueError, match=_INCOMPLETE_REASON):
+        Data(loadshape_df=long_df, settings=_loadshape_settings(interpolate_missing=False))
+
+
+def test_long_loadshape_null_time_raises():
+    long_df = _long_loadshape_df(n_ids=2, n_time=24)
+    long_df.loc[0, "time"] = np.nan
+
+    with pytest.raises(ValueError, match="Loadshape times must not be null"):
+        Data(loadshape_df=long_df, settings=_loadshape_settings(interpolate_missing=True))
+
+
 def test_wide_loadshape_missing_column_is_added_and_filled():
     wide = pd.DataFrame({"id": ["b", "a"]})
     for t in range(1, 25):
         if t != 7:
             wide[t] = [2.0 * t, float(t)]
 
-    data = Data(loadshape_df=wide)
+    data = Data(loadshape_df=wide, settings=_loadshape_settings(interpolate_missing=True))
 
     loadshape = data.loadshape
     assert loadshape.shape == (2, 24)
@@ -771,10 +915,10 @@ def test_wide_loadshape_empty_meter_is_excluded():
     wide = _wide_loadshape_df()
     wide.loc[wide["id"] == "b", list(range(1, 25))] = np.nan
 
-    data = Data(loadshape_df=wide)
+    data = Data(loadshape_df=wide, settings=_loadshape_settings(interpolate_missing=True))
 
     assert list(data.loadshape.index) == ["a"]
-    assert data.excluded_ids.to_dict("records") == [{"id": "b", "reason": _INCOMPLETE_REASON}]
+    assert data.excluded_ids.to_dict("records") == [{"id": "b", "reason": _BELOW_MINIMUM_REASON}]
 
 
 def test_four_season_definition_has_672_times():
@@ -785,13 +929,14 @@ def test_four_season_definition_has_672_times():
     assert data.loadshape.shape == (1, 4 * 7 * 24)
 
 
-@pytest.mark.parametrize("season", [None, _FOUR_SEASONS], ids=["three_seasons", "four_seasons"])
+@pytest.mark.parametrize(
+    "season_kwargs", [{}, {"season": _FOUR_SEASONS}], ids=["three_seasons", "four_seasons"]
+)
 @pytest.mark.parametrize("agg_type", list(_const.AggType))
-def test_loadshape_matches_per_meter_brute_force(agg_type, season):
+def test_loadshape_matches_per_meter_brute_force(agg_type, season_kwargs):
     """Each meter's times equal a plain per-meter groupby, including a meter missing a
     whole time, which is filled in place rather than shifting the later times."""
-    season_kwargs = {} if season is None else {"season": season}
-    settings = _observed_settings(agg_type=agg_type, **season_kwargs)
+    settings = _observed_settings(agg_type=agg_type, interpolate_missing=True, **season_kwargs)
     rng = np.random.default_rng(0)
     frames = []
     for offset, meter_id in enumerate(["c", "a", "b"]):
@@ -822,14 +967,15 @@ def _smallest_abs_reading(time_series, column):
     return deduped
 
 
-@pytest.mark.parametrize("season", [None, _FOUR_SEASONS], ids=["three_seasons", "four_seasons"])
+@pytest.mark.parametrize(
+    "season_kwargs", [{}, {"season": _FOUR_SEASONS}], ids=["three_seasons", "four_seasons"]
+)
 @pytest.mark.parametrize("agg_type", list(_const.AggType))
-def test_shuffled_duplicated_readings_match_per_meter_brute_force(agg_type, season):
+def test_shuffled_duplicated_readings_match_per_meter_brute_force(agg_type, season_kwargs):
     """Shuffled readings with NaNs, a missing time, a meter without a season and duplicated
     (id, datetime) rows (an exact tie, a larger value, a NaN) aggregate to the per-meter
     reference of the smallest-|value| readings, and only the seasonless meter is excluded."""
-    season_kwargs = {} if season is None else {"season": season}
-    settings = _observed_settings(agg_type=agg_type, **season_kwargs)
+    settings = _observed_settings(agg_type=agg_type, interpolate_missing=True, **season_kwargs)
     rng = np.random.default_rng(1)
     frames = []
     for offset, meter_id in enumerate(["c", "a", "b"]):
@@ -863,13 +1009,38 @@ def test_shuffled_duplicated_readings_match_per_meter_brute_force(agg_type, seas
         data.loadshape.to_numpy(), expected_filled, rtol=0, atol=1e-12
     )
     assert data.excluded_ids.to_dict("records") == [
-        {"id": "gap", "reason": "missing minimum number of values in loadshape_df"}
+        {"id": "gap", "reason": _BELOW_MINIMUM_REASON}
     ]
 
 
-def test_interpolation_off_ledger_has_one_null_row_per_null_time():
-    """With interpolation off, a meter with two all-NaN times gets two null-values rows,
-    a meter missing a time gets one incomplete row, and the complete meter is kept."""
+def test_observed_basis_duplicate_readings_keep_the_smallest_abs_value():
+    """Duplicated (id, datetime) readings of the observed basis collapse to the reading with
+    the smallest |value| before aggregation: an exact tie and a larger value leave the
+    reading as is, a NaN never wins over a finite reading, and the sign is kept."""
+    frame = _hourly_frame("m", 24)
+    frame.loc[7, "observed"] = np.nan
+    duplicates = pd.DataFrame(
+        {
+            "id": "m",
+            "datetime": frame["datetime"].iloc[[5, 5, 5, 7, 9]].to_numpy(),
+            "observed": [5.0, 10.0, np.nan, 4.0, -2.0],
+        }
+    )
+    time_series = pd.concat([frame, duplicates], ignore_index=True)
+
+    settings = _hour_settings(interpolate_missing=False)
+
+    loadshape = Data(time_series_df=time_series, settings=settings).loadshape
+
+    for hour, expected in [(5, 5.0), (7, 4.0), (9, -2.0), (0, 0.0)]:
+        actual = loadshape.loc["m", hour + 1]
+        assert actual == expected, f"hour {hour}: expected {expected}, got {actual}"
+
+
+def test_interpolation_off_ledger_has_one_null_row_per_id():
+    """With interpolation off, a meter with two all-NaN times gets one null-readings row and
+    no incomplete row, a meter missing a time gets one incomplete row, and the complete
+    meter is kept."""
     nan_meter = _hourly_frame("nan", 48)
     nan_meter.loc[nan_meter["datetime"].dt.hour.isin([0, 1]), "observed"] = np.nan
     short = _hourly_frame("short", 48)
@@ -882,8 +1053,7 @@ def test_interpolation_off_ledger_has_one_null_row_per_null_time():
 
     assert list(data.loadshape.index) == ["a"]
     assert data.excluded_ids.to_dict("records") == [
-        {"id": "nan", "reason": "null values in features_df"},
-        {"id": "nan", "reason": "null values in features_df"},
+        {"id": "nan", "reason": "only null readings in a loadshape time"},
         {"id": "short", "reason": _INCOMPLETE_REASON},
     ]
 
@@ -915,14 +1085,26 @@ def test_fill_missing_within_blocks():
 def test_fill_missing_without_season_is_flat():
     matrix = np.array([[np.nan, 2.0, np.nan, np.nan, 8.0, np.nan]])
 
-    filled = fill_missing(matrix, None)
+    filled = fill_missing(matrix, [])
 
     np.testing.assert_array_equal(filled, [[2.0, 2.0, 4.0, 6.0, 8.0, 8.0]])
 
 
-def test_fill_missing_rejects_unknown_method():
-    with pytest.raises(ValueError, match="linear"):
-        fill_missing(np.zeros((1, 4)), None, method="nearest")
+def test_keep_smallest_abs_per_duplicate_group():
+    """Each duplicated (id, time) group keeps its smallest |value| row, NaN sorts last, a
+    tie keeps the earliest row, and unduplicated rows pass through."""
+    df = pd.DataFrame(
+        {
+            "id": ["a", "a", "a", "b", "b", "c", "c", "d"],
+            "time": [1, 1, 1, 1, 1, 1, 1, 1],
+            "loadshape": [-5.0, 2.0, np.nan, np.nan, 7.0, 3.0, -3.0, 9.0],
+            "row": [0, 1, 2, 3, 4, 5, 6, 7],
+        }
+    )
+
+    kept = _keep_smallest_abs(df, "loadshape", ["id", "time"])
+
+    assert sorted(kept["row"]) == [1, 4, 5, 7], f"kept rows {sorted(kept['row'])}"
 
 
 def test_error_basis_duplicate_reading_keeps_the_smallest_error():
