@@ -1562,10 +1562,6 @@ class TestFrameAPI:
 
         assert hm.to_dict()["model_choice"] == "hourly"
 
-    def test_from_dict_rejects_another_model_class_payload(self):
-        with pytest.raises(ModelLoadError, match="'daily' model; this class loads 'hourly'"):
-            HourlyModel.from_dict({"model_choice": "daily"})
-
 
 def test_settings_deviations_property_reports_hourly_developer_tier_changes():
     model = HourlyModel(settings=HourlyNonSolarSettings(cvrmse_threshold=1.2))

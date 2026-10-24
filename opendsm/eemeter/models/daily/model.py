@@ -144,6 +144,7 @@ class DailyModel:
         self.compliance = Compliance()
         self.is_fitted = False
         self._is_electricity_data = None
+        self.version = __version__
 
     def _initialize_settings(
         self,
@@ -317,6 +318,7 @@ class DailyModel:
 
         self.baseline_metrics = self._get_error_metrics(self.best_combination)
 
+        self.version = __version__
         self.params = self._create_params_from_fit_model()
         self.is_fitted = True
         return self
@@ -561,6 +563,7 @@ class DailyModel:
         if prior_format is not None:
             daily_model.compliance.record(prior_format)
 
+        daily_model.version = info.get("version")
         daily_model.baseline_timezone = info.get("baseline_timezone")
         if info.get("metrics") is not None:
             daily_model.baseline_metrics = BaselineMetricsFromDict(info.get("metrics"))
@@ -678,7 +681,7 @@ class DailyModel:
                 "metrics": self.baseline_metrics.model_dump(),
                 "baseline_timezone": str(self.baseline_timezone),
                 "is_electricity_data": bool(self._is_electricity_data),
-                "version": __version__,
+                "version": self.version,
             },
         )
 

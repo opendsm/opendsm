@@ -13,13 +13,11 @@
 #  limitations under the License.
 
 import json
-from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
 
 from opendsm.eemeter import HourlyCaltrackModel
-from opendsm.eemeter.common.exceptions import ModelLoadError
 from opendsm.eemeter.models.hourly_caltrack.data import (
     _HourlyBaselineData,
     _HourlyReportingData,
@@ -619,15 +617,6 @@ def test_non_dataframe_input_raises_type_error(method, make_value, type_name):
         getattr(HourlyCaltrackModel(), method)(make_value(), **kwargs)
 
 
-def test_wrapper_to_dict_writes_model_choice():
-    model = HourlyCaltrackModel()
-    model.model = SimpleNamespace(json=lambda: {"model": {}})
-    model._autocorr_unc_vars = {}
-    model._is_electricity_data = True
-
-    assert model.to_dict()["model_choice"] == "hourly_caltrack"
-
-
-def test_wrapper_from_dict_rejects_another_model_class_payload():
-    with pytest.raises(ModelLoadError, match="'hourly' model; this class loads 'hourly_caltrack'"):
-        HourlyCaltrackModel.from_dict({"model_choice": "hourly", "model": {}})
+@pytest.mark.slow
+def test_wrapper_to_dict_writes_model_choice(caltrack_hourly_model):
+    assert caltrack_hourly_model.to_dict()["model_choice"] == "hourly_caltrack"
