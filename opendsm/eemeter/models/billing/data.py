@@ -384,6 +384,8 @@ class BillingBaselineData(_BillingData):
             is_reporting_data=False,
             family="billing",
             settings=self.settings.sufficiency,
+            span_start=self._span[0],
+            span_end=self._span[1],
             data_report=self._data_report,
         )
         run_sufficiency(context, "baseline")
@@ -444,6 +446,8 @@ class BillingReportingData(_BillingData):
             is_reporting_data=True,
             family="billing",
             settings=self.settings.sufficiency,
+            span_start=self._span[0],
+            span_end=self._span[1],
             data_report=self._data_report,
         )
         run_sufficiency(context, "reporting")

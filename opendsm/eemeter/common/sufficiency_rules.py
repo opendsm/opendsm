@@ -21,8 +21,9 @@ decides which rules run for a family and phase, and records what they return.
 
 from __future__ import annotations
 
-from typing import Callable, Literal, Optional
+from typing import Callable, Optional
 
+from opendsm.eemeter.common.data_processor_utilities import billing_period_bounds
 from opendsm.eemeter.common.sufficiency_criteria import SufficiencyCriteria, _round_sig
 from opendsm.eemeter.common.sufficiency_registry import (
     Column,
@@ -30,26 +31,11 @@ from opendsm.eemeter.common.sufficiency_registry import (
     Phase,
     RULE_SPECS,
     RuleSpec,
-    register,
-    registered_rules,
 )
 from opendsm.eemeter.common.warnings import EEMeterWarning
 
 
 
-# These rules record judgments the data path made before sufficiency runs, so their entries
-# precede the rules that judge the frame.
-_DATA_REPORT_RULES = (
-    "offcycle_reads",
-    "high_frequency_meter_coverage",
-    "high_frequency_observed_coverage",
-    "estimated_reads",
-)
-
-_DECLARATION_ORDER = {name: order for order, name in enumerate(RULE_SPECS)}
-
-
-@register("no_data")
 def no_data(context: SufficiencyCriteria) -> list[EEMeterWarning]:
     """Report the infeasible entry when the frame cannot support a fit at all.
 
@@ -78,7 +64,6 @@ def no_data(context: SufficiencyCriteria) -> list[EEMeterWarning]:
     return [entry]
 
 
-@register("baseline_day_length")
 def baseline_day_length(context: SufficiencyCriteria) -> list[EEMeterWarning]:
     min_length = context.settings.min_baseline_length
     max_length = context.settings.max_baseline_length
@@ -103,7 +88,6 @@ def baseline_day_length(context: SufficiencyCriteria) -> list[EEMeterWarning]:
     return [entry]
 
 
-@register("negative_observed_values")
 def negative_observed_values(context: SufficiencyCriteria) -> list[EEMeterWarning]:
     # electricity goes negative under net export
     if context.is_electricity_data:
@@ -125,7 +109,6 @@ def negative_observed_values(context: SufficiencyCriteria) -> list[EEMeterWarnin
     return [entry]
 
 
-@register("unique_values")
 def unique_values(context: SufficiencyCriteria, col: Column) -> list[EEMeterWarning]:
     min_pct_unique = context._col_settings(col).min_pct_unique_values
 
@@ -161,15 +144,12 @@ def unique_values(context: SufficiencyCriteria, col: Column) -> list[EEMeterWarn
     return [entry]
 
 
-@register("daily_coverage")
 def daily_coverage(context: SufficiencyCriteria, col: Column) -> list[EEMeterWarning]:
     n_days_total = float(context.n_days_total)
     name = context._col_display_name(col)
 
     if col == "temperature":
         valid_days = context.n_valid_temperature_days
-    elif col == "ghi":
-        raise NotImplementedError("GHI valid days percentage check not implemented yet")
     elif col == "observed":
         valid_days = context.n_valid_observed_days
     elif col == "joint":
@@ -204,10 +184,9 @@ def daily_coverage(context: SufficiencyCriteria, col: Column) -> list[EEMeterWar
     return [entry]
 
 
-@register("monthly_coverage")
 def monthly_coverage(context: SufficiencyCriteria, col: Column) -> list[EEMeterWarning]:
-    if col == "joint":
-        raise NotImplementedError("Joint monthly coverage check not implemented yet")
+    if col not in RULE_SPECS["monthly_coverage"].columns:
+        raise ValueError(f"monthly_coverage does not judge the {col} column")
 
     name = context._col_display_name(col)
     min_pct = context._col_settings(col).min_pct_monthly_coverage
@@ -236,7 +215,6 @@ def monthly_coverage(context: SufficiencyCriteria, col: Column) -> list[EEMeterW
     return [entry]
 
 
-@register("extreme_values")
 def extreme_values(context: SufficiencyCriteria) -> list[EEMeterWarning]:
     observed = context.data.observed.dropna()
     if observed.empty:
@@ -272,66 +250,6 @@ def extreme_values(context: SufficiencyCriteria) -> list[EEMeterWarning]:
     return [entry]
 
 
-@register("boundary_gap")
-def boundary_gap(context: SufficiencyCriteria) -> list[EEMeterWarning]:
-    """Report data reaching outside the requested window, at either boundary."""
-
-    entries = []
-    for gap_type in ("start", "end"):
-        entry = _boundary_gap_entry(context, gap_type)
-
-        if entry is not None:
-            entries.append(entry)
-
-    return entries
-
-
-def _boundary_gap_entry(
-    context: SufficiencyCriteria, gap_type: Literal["start", "end"]
-) -> Optional[EEMeterWarning]:
-    if gap_type == "start":
-        user_boundary = context.settings.requested_start
-    else:
-        user_boundary = context.settings.requested_end
-
-    if user_boundary is None:
-        return None
-
-    non_null_index = context.data.dropna().index
-    if gap_type == "start":
-        data_boundary = non_null_index.min()
-        gap = (data_boundary - user_boundary).days
-    else:
-        data_boundary = non_null_index.max()
-        gap = (user_boundary - data_boundary).days
-
-    if gap >= 0:
-        return None
-
-    # CalTRACK 2.2.4
-    if gap_type == "start":
-        err = "before"
-    else:
-        err = "after"
-
-    entry = EEMeterWarning(
-        qualified_name=(
-            "eemeter.sufficiency_criteria"
-            f".extra_data_{err}_requested_{gap_type}_date"
-        ),
-        description=f"Extra data found {err} requested {gap_type} date.",
-        severity="disqualified",
-        member="data",
-        data={
-            f"requested_{gap_type}": user_boundary.isoformat(),
-            f"data_{gap_type}": data_boundary.isoformat(),
-        },
-    )
-
-    return entry
-
-
-@register("consecutive_missing_temperature_hours")
 def consecutive_missing_temperature_hours(
     context: SufficiencyCriteria,
 ) -> list[EEMeterWarning]:
@@ -358,36 +276,8 @@ def consecutive_missing_temperature_hours(
     return [entry]
 
 
-@register("high_frequency_observed_coverage")
-def high_frequency_observed_coverage(context: SufficiencyCriteria) -> list[EEMeterWarning]:
-    """Report hourly days whose observed coverage fell below the settings-declared floor.
-
-    The rows themselves are already dropped by the cleaning path; this rule only reports
-    what `context.data_report.low_coverage_days` names.
-    """
-
-    low_coverage_days = context.data_report.low_coverage_days
-    if not low_coverage_days:
-        return []
-
-    min_pct = context.settings.observed.min_pct_hourly_coverage
-
-    # CalTRACK 2.2.2.1
-    entry = EEMeterWarning(
-        qualified_name="eemeter.sufficiency_criteria.missing_high_frequency_observed_data",
-        description=(
-            f"More than {(1-min_pct)*100:.0f}% of the high frequency Observed data is missing."
-        ),
-        severity="advisory",
-        data=[timestamp.isoformat() for timestamp in low_coverage_days],
-    )
-
-    return [entry]
-
-
-@register("high_frequency_meter_coverage")
 def high_frequency_meter_coverage(context: SufficiencyCriteria) -> list[EEMeterWarning]:
-    """Report daily or billing days whose meter coverage fell below the settings-declared floor."""
+    """Report each day the data report names as blanked for low meter coverage."""
 
     low_coverage_days = context.data_report.low_coverage_days
     if not low_coverage_days:
@@ -407,7 +297,6 @@ def high_frequency_meter_coverage(context: SufficiencyCriteria) -> list[EEMeterW
     return [entry]
 
 
-@register("offcycle_reads")
 def offcycle_reads(context: SufficiencyCriteria) -> list[EEMeterWarning]:
     """Report billing periods whose length fell outside the settings-declared bounds."""
 
@@ -415,16 +304,9 @@ def offcycle_reads(context: SufficiencyCriteria) -> list[EEMeterWarning]:
     if not offcycle_periods:
         return []
 
-    data_frequency = context.data_report.data_frequency
-    min_days = context.settings.min_days_in_period
-    if data_frequency == "billing_monthly":
-        period_type = "monthly"
-        max_days = context.settings.max_days_in_monthly_period
-    elif data_frequency == "billing_bimonthly":
-        period_type = "bimonthly"
-        max_days = context.settings.max_days_in_bimonthly_period
-    else:
-        return []
+    period_type, min_days, max_days = billing_period_bounds(
+        context.settings, context.data_report.data_frequency
+    )
 
     # CalTRACK 2.2.3.4, 2.2.3.5
     entry = EEMeterWarning(
@@ -441,7 +323,6 @@ def offcycle_reads(context: SufficiencyCriteria) -> list[EEMeterWarning]:
     return [entry]
 
 
-@register("estimated_reads")
 def estimated_reads(context: SufficiencyCriteria) -> list[EEMeterWarning]:
     """Report billing reads that absorbed a preceding estimated read."""
 
@@ -465,35 +346,52 @@ def estimated_reads(context: SufficiencyCriteria) -> list[EEMeterWarning]:
     return [entry]
 
 
-def _rule_order(name: str, spec: RuleSpec) -> tuple[int, int]:
-    """Sort key placing infeasible rules first and report-fed rules next."""
+RULE_FUNCTIONS: dict[str, Callable] = {
+    "no_data": no_data,
+    "baseline_day_length": baseline_day_length,
+    "negative_observed_values": negative_observed_values,
+    "extreme_values": extreme_values,
+    "consecutive_missing_temperature_hours": consecutive_missing_temperature_hours,
+    "high_frequency_meter_coverage": high_frequency_meter_coverage,
+    "offcycle_reads": offcycle_reads,
+    "estimated_reads": estimated_reads,
+    "unique_values": unique_values,
+    "daily_coverage": daily_coverage,
+    "monthly_coverage": monthly_coverage,
+}
 
-    if spec.severity == "infeasible":
-        group, position = 0, _DECLARATION_ORDER[name]
-    elif name in _DATA_REPORT_RULES:
-        group, position = 1, _DATA_REPORT_RULES.index(name)
-    else:
-        group, position = 2, _DECLARATION_ORDER[name]
 
-    return group, position
+def _check_rule_binding(specs: dict[str, RuleSpec], functions: dict[str, Callable]) -> None:
+    """Raise ValueError unless every declared rule has exactly one function and vice versa."""
+
+    missing = sorted(set(specs) - set(functions))
+    extra = sorted(set(functions) - set(specs))
+    if missing or extra:
+        raise ValueError(
+            f"sufficiency rule table mismatch: specs without a function {missing}, "
+            f"functions without a spec {extra}"
+        )
+
+
+_check_rule_binding(RULE_SPECS, RULE_FUNCTIONS)
 
 
 def _applicable_rules(family: Family, phase: Phase) -> list[tuple[str, RuleSpec, Callable]]:
-    """The registered rules that may run for a family and phase, in execution order."""
+    """The rules that may run for a family and phase, in the table's execution order."""
 
     rules = [
-        (name, spec, function)
-        for name, (spec, function) in registered_rules().items()
+        (name, spec, RULE_FUNCTIONS[name])
+        for name, spec in RULE_SPECS.items()
         if family in spec.families and phase in spec.phases
     ]
 
-    return sorted(rules, key=lambda rule: _rule_order(rule[0], rule[1]))
+    return rules
 
 
 def _toggled_on(
     context: SufficiencyCriteria, name: str, spec: RuleSpec, phase: Phase, col: Optional[Column]
 ) -> bool:
-    if not spec.toggleable:
+    if spec.severity == "infeasible":
         return True
 
     if col is None:
@@ -501,7 +399,10 @@ def _toggled_on(
     else:
         block = context._col_settings(col)
 
-    return getattr(getattr(block, name), phase)
+    toggle = getattr(block, name)
+    enabled = getattr(toggle, phase)
+
+    return enabled
 
 
 def _column_applies(context: SufficiencyCriteria, col: Column) -> bool:
@@ -510,20 +411,20 @@ def _column_applies(context: SufficiencyCriteria, col: Column) -> bool:
     if context._col_settings(col) is None:
         return False
 
-    return not context._should_skip_col(col)
+    applies = not context._should_skip_col(col)
+
+    return applies
 
 
-def run_sufficiency(
-    context: SufficiencyCriteria, phase: Phase
-) -> dict[tuple[str, Optional[Column]], int]:
-    """Run every enabled sufficiency rule and record what it found on the context.
+def run_sufficiency(context: SufficiencyCriteria, phase: Phase) -> None:
+    """Run every enabled rule that applies to the context's family, phase and columns, and
+    record what each finds on `context.compliance`.
 
-    Returns the run report: (rule name, column) -> number of entries the rule produced,
-    with a `None` column for the rules that judge the whole frame. Entries are recorded,
-    never emitted; the caller that owns the compliance object emits them.
+    On an empty frame only the infeasible rules run. A column rule skips a column with no
+    settings block or no usable data. Entries are recorded, never emitted; the caller that
+    owns the compliance object emits them.
     """
 
-    report = {}
     for name, spec, function in _applicable_rules(context.family, phase):
         if context.data.empty and spec.severity != "infeasible":
             break
@@ -532,7 +433,7 @@ def run_sufficiency(
             if not _toggled_on(context, name, spec, phase, None):
                 continue
 
-            report[(name, None)] = _record(context, function(context))
+            _record(context, function(context))
             continue
 
         for col in spec.columns:
@@ -542,13 +443,9 @@ def run_sufficiency(
             if not _toggled_on(context, name, spec, phase, col):
                 continue
 
-            report[(name, col)] = _record(context, function(context, col))
-
-    return report
+            _record(context, function(context, col))
 
 
-def _record(context: SufficiencyCriteria, entries: list[EEMeterWarning]) -> int:
+def _record(context: SufficiencyCriteria, entries: list[EEMeterWarning]) -> None:
     for entry in entries:
         context.compliance.record(entry)
-
-    return len(entries)

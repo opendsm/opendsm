@@ -30,7 +30,7 @@ from opendsm.eemeter.common.data_processor_utilities import (
 from opendsm.eemeter.common.compliance import Compliance
 from opendsm.eemeter.common.features import compute_temperature_features
 from opendsm.eemeter.common.data_settings import DailyDataSettings
-from opendsm.eemeter.common.sufficiency_criteria import SufficiencyCriteria
+from opendsm.eemeter.common.sufficiency_criteria import SufficiencyCriteria, frame_span
 from opendsm.eemeter.common.sufficiency_rules import run_sufficiency
 
 from opendsm.eemeter.common.warnings import EEMeterWarning
@@ -45,6 +45,7 @@ class _DailyData:
     Args:
         df (pd.DataFrame): The DataFrame containing the observed meter data.
         is_electricity_data (bool): A flag indicating whether the data represents electricity data. This is required as electricity data with 0 values are converted to NaNs.
+        span (tuple): The first and last timestamp of the window the frame covers; length and coverage are judged over it. Defaults to the frame's own first and last timestamp.
     """
 
     # Abstract the settings class for easier inheritance and alteration
@@ -54,7 +55,9 @@ class _DailyData:
         self,
         df: pd.DataFrame,
         is_electricity_data: bool,
-        settings: dict | DailyDataSettings | None = None
+        settings: dict | DailyDataSettings | None = None,
+        *,
+        span: tuple[pd.Timestamp | None, pd.Timestamp | None] | None = None,
     ):
         self._df = None
         self.is_electricity_data = is_electricity_data
@@ -78,6 +81,10 @@ class _DailyData:
         # TODO re-examine dq/warning pattern. keep consistent between
         # either implicitly setting as side effects, or returning and assigning outside
         self._df, temp_coverage = self._set_data(df)
+        if span is None:
+            span = frame_span(df)
+
+        self._span = span
 
         sufficiency_df = self._df.merge(
             temp_coverage, left_index=True, right_index=True, how="left"
@@ -453,6 +460,8 @@ class DailyBaselineData(_DailyData):
             is_reporting_data=False,
             family="daily",
             settings=self.settings.sufficiency,
+            span_start=self._span[0],
+            span_end=self._span[1],
             data_report=self._data_report,
         )
         run_sufficiency(context, "baseline")
@@ -513,6 +522,8 @@ class DailyReportingData(_DailyData):
             is_reporting_data=True,
             family="daily",
             settings=self.settings.sufficiency,
+            span_start=self._span[0],
+            span_end=self._span[1],
             data_report=self._data_report,
         )
         run_sufficiency(context, "reporting")

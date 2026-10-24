@@ -74,6 +74,7 @@ from opendsm.eemeter.common.exceptions import (
     ModelLoadError,
     NonstandardSettingsError,
 )
+from opendsm.eemeter.common.sufficiency_criteria import frame_span
 from opendsm.eemeter.common.warnings import EEMeterWarning, nonstandard_settings_warning
 from opendsm.common.warnings import OpenDSMWarning
 from opendsm.common.clustering.cluster import cluster_features
@@ -550,6 +551,7 @@ class HourlyModel:
             is_electricity_data,
             pv_start=pv_start,
             settings=self.settings.data,
+            span=frame_span(df),
         )
 
         return baseline_data, n_leading, n_trailing

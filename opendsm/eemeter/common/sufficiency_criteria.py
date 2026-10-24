@@ -21,7 +21,7 @@ settings, the data report and the cached day counts they share.
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, Optional
 
 import pandas as pd
 
@@ -47,8 +47,9 @@ def _round_sig(x, sig=4):
 
 _DAY = pd.Timedelta(days=1)
 
-# the span a lone row covers, since one row leaves no spacing to read
-_SINGLE_ROW_STEP = {
+# the span one row covers: a lone row's step, since one row leaves no spacing to read, and the
+# unit the frame span is counted in
+_FAMILY_ROW_STEP = {
     "hourly": pd.Timedelta(hours=1),
     "daily": _DAY,
     "billing": _DAY,
@@ -66,12 +67,20 @@ def _wall_clock(timestamp: pd.Timestamp) -> pd.Timestamp:
     return timestamp
 
 
-def _in_zone_of(timestamp: pd.Timestamp, like: pd.Timestamp) -> pd.Timestamp:
-    """``timestamp`` expressed in the timezone of ``like``, when both carry one."""
-    if timestamp.tzinfo is not None and getattr(like, "tzinfo", None) is not None:
-        timestamp = timestamp.tz_convert(like.tzinfo)
+def frame_span(df: pd.DataFrame) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
+    """The first and last timestamp of a frame, read from its ``datetime`` column when it has
+    one and from its index otherwise; ``(None, None)`` for a frame with no rows."""
+    if "datetime" in df.columns:
+        timestamps = df["datetime"]
+    else:
+        timestamps = df.index
 
-    return timestamp
+    if len(timestamps) == 0:
+        return None, None
+
+    span = (timestamps.min(), timestamps.max())
+
+    return span
 
 
 def _valid_days(valid_rows: pd.Series, step: pd.Timedelta) -> float:
@@ -97,6 +106,8 @@ class SufficiencyCriteria(BaseSettings):
     is_reporting_data: bool
     family: Literal["hourly", "daily", "billing"]
     settings: BaseSufficiencySettings
+    span_start: Optional[pd.Timestamp] = None
+    span_end: Optional[pd.Timestamp] = None
 
     _n_valid_observed_days = None
     _n_valid_days = None
@@ -104,6 +115,17 @@ class SufficiencyCriteria(BaseSettings):
 
     data_report: DataReport = pydantic.Field(default_factory=DataReport)
     compliance: Compliance = pydantic.Field(default_factory=Compliance)
+
+    @pydantic.model_validator(mode="after")
+    def _default_span_to_frame_rows(self):
+        """A span bound left unset is the frame's own first or last row, NaT for no rows."""
+        if self.span_start is None:
+            self.span_start = self.data.index.min()
+
+        if self.span_end is None:
+            self.span_end = self.data.index.max()
+
+        return self
 
     def _should_skip_col(self, col: str) -> bool:
         """Check if a column-based check should be skipped."""
@@ -135,35 +157,22 @@ class SufficiencyCriteria(BaseSettings):
 
     @computed_field_cached_property()
     def n_days_total(self) -> float:
-        """Days the data spans on its own wall clock: first to last row with data plus one row's
-        step, extended to the requested bounds. A DST change or an off-midnight start does not
-        shift it."""
-        requested_start = self.settings.requested_start
-        requested_end = self.settings.requested_end
+        """Days the span covers on its own wall clock: the whole rows (hours for hourly, days
+        for daily and billing) from ``span_start`` through ``span_end``, counting the row that
+        holds ``span_end``. A DST change in the span's own zone does not shift the count; a UTC
+        span of local-midnight daily rows that crosses a DST change counts one row short. NaN
+        when the span is NaT."""
+        row = _FAMILY_ROW_STEP[self.family]
+        wall_span = _wall_clock(self.span_end) - _wall_clock(self.span_start)
+        n_days = (wall_span // row + 1) * (row / _DAY)
 
-        non_null_data = self.data.dropna()
-        data_start = non_null_data.index.min()
-        data_end = non_null_data.index.max()
-        step = self._grid_step()
-        n_days_data = (_wall_clock(data_end) - _wall_clock(data_start) + step) / _DAY
-
-        n_days_start_gap = 0.0
-        if requested_start is not None:
-            requested_start = _in_zone_of(requested_start, data_start)
-            n_days_start_gap = (_wall_clock(data_start) - _wall_clock(requested_start)) / _DAY
-
-        n_days_end_gap = 0.0
-        if requested_end is not None:
-            requested_end = _in_zone_of(requested_end, data_end)
-            n_days_end_gap = (_wall_clock(requested_end) - _wall_clock(data_end)) / _DAY
-
-        return float(n_days_data + n_days_start_gap + n_days_end_gap)
+        return float(n_days)
 
     def _grid_step(self) -> pd.Timedelta:
         """The regular spacing of the data's rows (one hour or one day)."""
         index = self.data.index
         if len(index) < 2:
-            return _SINGLE_ROW_STEP[self.family]
+            return _FAMILY_ROW_STEP[self.family]
 
         step = pd.Series(index[1:] - index[:-1]).median()
 

@@ -224,7 +224,8 @@ def test_predict_does_not_trim_edge_nan_rows(daily_series):
 
 @pytest.mark.slow
 def test_edge_trimmed_frame_fits_same_coefficients_with_warning(daily_series):
-    """A baseline frame padded with all-NaN edge rows fits identically and logs one trim warning."""
+    """A baseline frame padded with all-NaN edge rows fits identically and logs one trim warning.
+    The padding counts toward the judged span, so the padded full year is too long a baseline."""
     meter, temp = daily_series
     df = meter_temperature_frame(meter, temp)
     unpadded_model = DailyModel().fit(df, is_electricity_data=True)
@@ -240,7 +241,12 @@ def test_edge_trimmed_frame_fits_same_coefficients_with_warning(daily_series):
     )
     padded_df = pd.concat([leading, df, trailing])
 
-    padded_model = DailyModel().fit(padded_df, is_electricity_data=True)
+    padded_model = DailyModel().fit(
+        padded_df, is_electricity_data=True, enforce_compliance=["model", "settings"]
+    )
+
+    disqualified = {d.qualified_name for d in padded_model.compliance.disqualification}
+    assert disqualified == {"eemeter.sufficiency_criteria.incorrect_number_of_total_days"}
 
     trim_warnings = [
         w
@@ -927,15 +933,6 @@ def test_changed_min_baseline_length_fires_nonstandard_settings_warning(comstock
     )
 
     assert nonstandard_settings_warnings(model.compliance.disqualification) != []
-
-
-def test_changed_requested_start_does_not_fire_nonstandard_settings_warning(comstock_daily):
-    df_b, _ = comstock_daily
-    model = DailyModel(
-        settings={"data": {"sufficiency": {"requested_start": df_b.index.min()}}}
-    ).fit(df_b.reset_index(), is_electricity_data=True, enforce_compliance=False)
-
-    assert nonstandard_settings_warnings(model.compliance.all) == []
 
 
 @pytest.mark.slow

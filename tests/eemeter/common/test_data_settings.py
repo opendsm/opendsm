@@ -15,15 +15,17 @@
 import pydantic
 import pytest
 
-from opendsm.eemeter.common.sufficiency_registry import RULE_SPECS, registered_rules
-import opendsm.eemeter.common.sufficiency_rules  # noqa: F401  binds the rule functions
+from opendsm.eemeter.common.sufficiency_registry import RULE_SPECS
+from opendsm.eemeter.common.sufficiency_rules import RULE_FUNCTIONS, _check_rule_binding
 from opendsm.eemeter.common.data_settings import (
+    AdvisoryRuleToggle,
     BaseSufficiencySettings,
     BillingDataSufficiencySettings,
     DailyDataSufficiencySettings,
     GhiSufficiencySettings,
     HourlyDataSufficiencySettings,
     HourlyWholeFrameSufficiencySettings,
+    JointSufficiencySettings,
     RuleToggle,
     TemperatureSufficiencySettings,
     WholeFrameSufficiencySettings,
@@ -102,64 +104,6 @@ SETTINGS_BY_FAMILY = {
 
 COLUMN_BLOCKS = ("temperature", "ghi", "observed", "joint")
 
-# (baseline, reporting) each rule toggle must default to, per data family
-DEFAULT_TOGGLES = {
-    "hourly": {
-        "rules.baseline_day_length": (True, False),
-        "rules.negative_observed_values": (True, True),
-        "rules.extreme_values": (True, False),
-        "rules.boundary_gap": (False, False),
-        "rules.consecutive_missing_temperature_hours": (False, False),
-        "rules.high_frequency_observed_coverage": (False, False),
-        "temperature.unique_values": (False, False),
-        "temperature.daily_coverage": (True, True),
-        "temperature.monthly_coverage": (True, True),
-        "ghi.unique_values": (False, False),
-        "ghi.daily_coverage": (False, False),
-        "ghi.monthly_coverage": (True, True),
-        "observed.unique_values": (True, True),
-        "observed.daily_coverage": (True, True),
-        "observed.monthly_coverage": (True, False),
-        "joint.unique_values": (False, False),
-        "joint.daily_coverage": (True, True),
-        "joint.monthly_coverage": (False, False),
-    },
-    "daily": {
-        "rules.baseline_day_length": (True, False),
-        "rules.negative_observed_values": (True, True),
-        "rules.extreme_values": (True, False),
-        "rules.boundary_gap": (False, False),
-        "rules.high_frequency_meter_coverage": (True, True),
-        "temperature.unique_values": (True, False),
-        "temperature.daily_coverage": (True, True),
-        "temperature.monthly_coverage": (True, True),
-        "observed.unique_values": (True, True),
-        "observed.daily_coverage": (True, True),
-        "observed.monthly_coverage": (False, False),
-        "joint.unique_values": (False, False),
-        "joint.daily_coverage": (True, True),
-        "joint.monthly_coverage": (False, False),
-    },
-    "billing": {
-        "rules.baseline_day_length": (True, False),
-        "rules.negative_observed_values": (True, True),
-        "rules.extreme_values": (True, False),
-        "rules.boundary_gap": (False, False),
-        "rules.high_frequency_meter_coverage": (True, True),
-        "rules.offcycle_reads": (True, True),
-        "rules.estimated_reads": (True, True),
-        "temperature.unique_values": (True, False),
-        "temperature.daily_coverage": (True, True),
-        "temperature.monthly_coverage": (True, True),
-        "observed.unique_values": (False, False),
-        "observed.daily_coverage": (True, True),
-        "observed.monthly_coverage": (False, False),
-        "joint.unique_values": (False, False),
-        "joint.daily_coverage": (True, True),
-        "joint.monthly_coverage": (False, False),
-    },
-}
-
 
 def toggle_paths(settings):
     """Return the dotted paths of every rule toggle a settings object carries."""
@@ -177,40 +121,6 @@ def toggle_paths(settings):
     return paths
 
 
-@pytest.mark.parametrize(
-    "family, path, expected",
-    [
-        (family, path, expected)
-        for family, toggles in DEFAULT_TOGGLES.items()
-        for path, expected in toggles.items()
-    ],
-    ids=[
-        f"{family}-{path}"
-        for family, toggles in DEFAULT_TOGGLES.items()
-        for path in toggles
-    ],
-)
-def test_default_rule_toggle_matrix(family, path, expected):
-    """Every rule toggle defaults to the phases in ``DEFAULT_TOGGLES``."""
-    settings = SETTINGS_BY_FAMILY[family]()
-    block_name, field_name = path.split(".")
-
-    toggle = getattr(getattr(settings, block_name), field_name)
-
-    assert (toggle.baseline, toggle.reporting) == expected, (
-        f"{family} {path}: expected (baseline, reporting) {expected}, "
-        f"got {(toggle.baseline, toggle.reporting)}"
-    )
-
-
-@pytest.mark.parametrize("family", sorted(DEFAULT_TOGGLES))
-def test_family_declares_exactly_its_rule_toggles(family):
-    """A family carries a toggle for each rule it can run and for no other rule."""
-    settings = SETTINGS_BY_FAMILY[family]()
-
-    assert set(toggle_paths(settings)) == set(DEFAULT_TOGGLES[family])
-
-
 def test_enabling_a_phase_the_rule_never_runs_in_is_rejected():
     """extreme_values is baseline-only, so enabling its reporting phase fails."""
     with pytest.raises(pydantic.ValidationError, match="never runs in the reporting phase"):
@@ -219,18 +129,32 @@ def test_enabling_a_phase_the_rule_never_runs_in_is_rejected():
 
 def test_enabling_a_rule_without_its_threshold_is_rejected():
     """A column rule cannot be switched on while its threshold is None."""
-    with pytest.raises(pydantic.ValidationError, match="min_pct_daily_coverage is None"):
-        GhiSufficiencySettings(daily_coverage={"baseline": True})
+    with pytest.raises(pydantic.ValidationError, match="min_pct_unique_values is None"):
+        GhiSufficiencySettings(unique_values={"baseline": True})
 
 
 def test_enabling_a_rule_with_its_threshold_supplied_is_accepted():
     """Supplying the threshold alongside the toggle switches the rule on."""
     settings = GhiSufficiencySettings(
-        daily_coverage={"baseline": True},
-        min_pct_daily_coverage=0.9,
+        unique_values={"baseline": True},
+        min_pct_unique_values=0.1,
     )
 
-    assert settings.daily_coverage.baseline is True
+    assert settings.unique_values.baseline is True
+
+
+@pytest.mark.parametrize(
+    "block, rule",
+    [
+        (GhiSufficiencySettings, "daily_coverage"),
+        (JointSufficiencySettings, "unique_values"),
+        (JointSufficiencySettings, "monthly_coverage"),
+    ],
+)
+def test_a_toggle_for_a_rule_the_column_has_no_check_for_is_rejected(block, rule):
+    """A column block carries toggles only for the rules that judge that column."""
+    with pytest.raises(pydantic.ValidationError, match=rule):
+        block(**{rule: {"baseline": True}})
 
 
 def test_misspelled_toggle_field_is_rejected():
@@ -243,14 +167,6 @@ def test_misspelled_threshold_field_is_rejected():
     """A typo in a threshold name fails at construction."""
     with pytest.raises(pydantic.ValidationError, match="min_pct_dayly_coverage"):
         TemperatureSufficiencySettings(min_pct_dayly_coverage=0.9)
-
-
-def test_ghi_coverage_and_unique_value_rules_default_off():
-    """GHI is judged on monthly coverage alone."""
-    settings = GhiSufficiencySettings()
-
-    assert (settings.daily_coverage.baseline, settings.daily_coverage.reporting) == (False, False)
-    assert (settings.unique_values.baseline, settings.unique_values.reporting) == (False, False)
 
 
 def test_dump_and_rebuild_preserves_a_disabled_rule():
@@ -336,7 +252,7 @@ def test_strip_drops_every_key_the_schema_does_not_declare():
 
 
 def test_stripped_prior_format_payload_rebuilds_hourly_sufficiency():
-    """A prior-format payload carrying undeclared threshold keys loads once stripped."""
+    """A payload carrying undeclared threshold keys loads once stripped."""
     stripped = strip_removed_sufficiency_keys(PRIOR_FORMAT_HOURLY_PAYLOAD)
 
     settings = HourlyDataSufficiencySettings(**stripped["data"]["sufficiency"])
@@ -344,15 +260,44 @@ def test_stripped_prior_format_payload_rebuilds_hourly_sufficiency():
     assert settings.observed.min_pct_hourly_coverage == 0.5
 
 
-# ---------------------------------------------------------------------------
-# settings schema against the rule registry
-# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("family", list(SETTINGS_BY_FAMILY))
+def test_stripped_payload_with_a_requested_window_builds_sufficiency(family):
+    """requested_start and requested_end at the top of the sufficiency block are stripped
+    with an undeclared column-block threshold, and what remains builds the family's
+    settings."""
+    payload = {
+        "data": {
+            "sufficiency": {
+                "requested_start": "2020-01-01T00:00:00+00:00",
+                "requested_end": "2020-12-31T00:00:00+00:00",
+                "min_baseline_length": 300,
+                "observed": {"min_pct_period_coverage": None, "min_pct_daily_coverage": 0.8},
+            },
+        },
+    }
+
+    stripped = strip_removed_sufficiency_keys(payload)
+    settings = SETTINGS_BY_FAMILY[family](**stripped["data"]["sufficiency"])
+
+    assert settings.min_baseline_length == 300
+    assert settings.observed.min_pct_daily_coverage == 0.8
+
+
+@pytest.mark.parametrize("key", ["requested_start", "requested_end"])
+def test_sufficiency_settings_reject_a_requested_window_bound(key):
+    """The sufficiency settings declare no requested window, so either bound is rejected."""
+    with pytest.raises(pydantic.ValidationError, match=key):
+        DailyDataSufficiencySettings(**{key: "2020-01-01"})
+
+
+# Rule toggles
+
 
 def _expected_toggle_paths(family):
-    """Dotted toggle paths the registry says this family must expose."""
+    """Dotted toggle paths RULE_SPECS says this family must expose."""
     paths = set()
     for name, spec in RULE_SPECS.items():
-        if not spec.toggleable or family not in spec.families:
+        if spec.severity == "infeasible" or family not in spec.families:
             continue
 
         if spec.columns:
@@ -366,8 +311,8 @@ def _expected_toggle_paths(family):
 
 @pytest.mark.parametrize("family", sorted(SETTINGS_BY_FAMILY))
 def test_settings_expose_a_toggle_for_every_registered_rule(family):
-    """Each family declares a toggle for every registered rule it can run, read from
-    RULE_SPECS. A column the family does not carry (ghi outside hourly) is excluded, since
+    """Each family declares a toggle for every rule in RULE_SPECS it can run, and for no
+    other rule. A column the family does not carry (ghi outside hourly) is excluded, since
     the settings object has no block to hang the toggle on.
     """
     settings = SETTINGS_BY_FAMILY[family]()
@@ -381,8 +326,43 @@ def test_settings_expose_a_toggle_for_every_registered_rule(family):
     assert set(toggle_paths(settings)) == expected
 
 
-def test_every_registered_spec_is_bound_to_a_rule_function():
-    """No spec is declared without an implementation behind it."""
-    bound = set(registered_rules())
+@pytest.mark.parametrize("family", sorted(SETTINGS_BY_FAMILY))
+def test_each_toggle_class_follows_its_rule_severity(family):
+    """An advisory rule's toggle is the user-tier AdvisoryRuleToggle; every other rule's toggle
+    is the developer-tier RuleToggle."""
+    settings = SETTINGS_BY_FAMILY[family]()
 
-    assert bound == set(RULE_SPECS)
+    mismatched = {}
+    for path in toggle_paths(settings):
+        block_name, name = path.split(".")
+        toggle_class = type(getattr(getattr(settings, block_name), name))
+        if RULE_SPECS[name].severity == "advisory":
+            expected_class = AdvisoryRuleToggle
+        else:
+            expected_class = RuleToggle
+
+        if toggle_class is not expected_class:
+            mismatched[path] = (toggle_class.__name__, expected_class.__name__)
+
+    assert mismatched == {}, f"(declared, expected) toggle class by path: {mismatched}"
+
+
+def test_rule_binding_check_accepts_the_declared_tables():
+    """The shipped spec and function tables name the same rules."""
+    _check_rule_binding(RULE_SPECS, RULE_FUNCTIONS)
+
+
+def test_rule_binding_check_raises_on_a_spec_without_a_function():
+    """A declared rule with no function behind it is named in the error."""
+    functions = {name: function for name, function in RULE_FUNCTIONS.items() if name != "no_data"}
+
+    with pytest.raises(ValueError, match=r"specs without a function \['no_data'\]"):
+        _check_rule_binding(RULE_SPECS, functions)
+
+
+def test_rule_binding_check_raises_on_a_function_without_a_spec():
+    """A function bound under an undeclared name is named in the error."""
+    functions = {**RULE_FUNCTIONS, "not_a_rule": RULE_FUNCTIONS["no_data"]}
+
+    with pytest.raises(ValueError, match=r"functions without a spec \['not_a_rule'\]"):
+        _check_rule_binding(RULE_SPECS, functions)

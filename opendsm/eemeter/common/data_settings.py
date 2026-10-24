@@ -15,40 +15,25 @@
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 
 import pydantic
 
 from typing import Any, ClassVar, Optional
 
-from opendsm.common.base_settings import BaseSettings, UserField, lowercase_keys
-from opendsm.eemeter.common.sufficiency_registry import ALL_PHASES, rule_spec
+from opendsm.common.base_settings import BaseSettings, DeveloperField, UserField, lowercase_keys
+from opendsm.eemeter.common.sufficiency_registry import ALL_PHASES, RULE_SPECS
 
 
 
 class RuleToggle(BaseSettings):
     """Whether a sufficiency rule runs on baseline data, on reporting data, or neither."""
 
-    baseline: bool = pydantic.Field(
+    baseline: bool = DeveloperField(
         default=False,
         description="Run the rule when judging baseline data.",
     )
 
-    reporting: bool = pydantic.Field(
-        default=False,
-        description="Run the rule when judging reporting data.",
-    )
-
-
-class DisqualifyingRuleToggle(RuleToggle):
-    """Toggle for a rule whose verdict can disqualify the data."""
-
-    baseline: bool = pydantic.Field(
-        default=False,
-        description="Run the rule when judging baseline data.",
-    )
-
-    reporting: bool = pydantic.Field(
+    reporting: bool = DeveloperField(
         default=False,
         description="Run the rule when judging reporting data.",
     )
@@ -74,7 +59,7 @@ def _toggle(toggle: type[RuleToggle], baseline: bool = False, reporting: bool = 
     The field itself stays developer-tier so that deviation reports recurse into it; the
     user/developer tier of a rule lives on the bools of its toggle class.
     """
-    field = pydantic.Field(
+    field = DeveloperField(
         default_factory=lambda: toggle(baseline=baseline, reporting=reporting),
     )
 
@@ -97,7 +82,7 @@ class RuleToggleSettings(BaseSettings):
             if not isinstance(toggle, RuleToggle):
                 continue
 
-            spec = rule_spec(name)
+            spec = RULE_SPECS[name]
             threshold = self.rule_thresholds.get(name)
 
             for phase in ALL_PHASES:
@@ -120,27 +105,23 @@ class RuleToggleSettings(BaseSettings):
 class WholeFrameSufficiencySettings(RuleToggleSettings):
     """Toggles for the sufficiency rules that judge the frame rather than one column."""
 
-    baseline_day_length: DisqualifyingRuleToggle = _toggle(
-        DisqualifyingRuleToggle, baseline=True,
+    baseline_day_length: RuleToggle = _toggle(
+        RuleToggle, baseline=True,
     )
 
-    negative_observed_values: DisqualifyingRuleToggle = _toggle(
-        DisqualifyingRuleToggle, baseline=True, reporting=True,
+    negative_observed_values: RuleToggle = _toggle(
+        RuleToggle, baseline=True, reporting=True,
     )
 
     extreme_values: AdvisoryRuleToggle = _toggle(
         AdvisoryRuleToggle, baseline=True,
     )
 
-    boundary_gap: DisqualifyingRuleToggle = _toggle(DisqualifyingRuleToggle)
-
 
 class HourlyWholeFrameSufficiencySettings(WholeFrameSufficiencySettings):
-    consecutive_missing_temperature_hours: DisqualifyingRuleToggle = _toggle(
-        DisqualifyingRuleToggle,
+    consecutive_missing_temperature_hours: RuleToggle = _toggle(
+        RuleToggle,
     )
-
-    high_frequency_observed_coverage: AdvisoryRuleToggle = _toggle(AdvisoryRuleToggle)
 
 
 class DailyWholeFrameSufficiencySettings(WholeFrameSufficiencySettings):
@@ -150,12 +131,8 @@ class DailyWholeFrameSufficiencySettings(WholeFrameSufficiencySettings):
 
 
 class BillingWholeFrameSufficiencySettings(WholeFrameSufficiencySettings):
-    high_frequency_meter_coverage: AdvisoryRuleToggle = _toggle(
-        AdvisoryRuleToggle, baseline=True, reporting=True,
-    )
-
-    offcycle_reads: DisqualifyingRuleToggle = _toggle(
-        DisqualifyingRuleToggle, baseline=True, reporting=True,
+    offcycle_reads: RuleToggle = _toggle(
+        RuleToggle, baseline=True, reporting=True,
     )
 
     estimated_reads: AdvisoryRuleToggle = _toggle(
@@ -184,34 +161,30 @@ class ColumnSufficiencySettings(RuleToggleSettings):
         description="Minimum percentage of monthly coverage.",
     )
 
-    min_pct_unique_values: Optional[float] = pydantic.Field(
+    min_pct_unique_values: Optional[float] = DeveloperField(
         default=None,
         gt=0,
         le=1,
         description="Minimum percentage of unique values compared to total values.",
     )
 
-    unique_values: DisqualifyingRuleToggle = _toggle(DisqualifyingRuleToggle)
-
-    daily_coverage: DisqualifyingRuleToggle = _toggle(DisqualifyingRuleToggle)
-
-    monthly_coverage: DisqualifyingRuleToggle = _toggle(DisqualifyingRuleToggle)
-
 
 class TemperatureSufficiencySettings(ColumnSufficiencySettings):
-    min_pct_period_coverage: Optional[float] = pydantic.Field(
+    min_pct_period_coverage: Optional[float] = DeveloperField(
         default=None,
         gt=0,
         le=1,
         description="Minimum percentage of period coverage.",
     )
 
-    daily_coverage: DisqualifyingRuleToggle = _toggle(
-        DisqualifyingRuleToggle, baseline=True, reporting=True,
+    unique_values: RuleToggle = _toggle(RuleToggle)
+
+    daily_coverage: RuleToggle = _toggle(
+        RuleToggle, baseline=True, reporting=True,
     )
 
-    monthly_coverage: DisqualifyingRuleToggle = _toggle(
-        DisqualifyingRuleToggle, baseline=True, reporting=True,
+    monthly_coverage: RuleToggle = _toggle(
+        RuleToggle, baseline=True, reporting=True,
     )
 
     def __init__(self, **kwargs):
@@ -226,8 +199,10 @@ class TemperatureSufficiencySettings(ColumnSufficiencySettings):
 
 
 class GhiSufficiencySettings(ColumnSufficiencySettings):
-    monthly_coverage: DisqualifyingRuleToggle = _toggle(
-        DisqualifyingRuleToggle, baseline=True, reporting=True,
+    unique_values: RuleToggle = _toggle(RuleToggle)
+
+    monthly_coverage: RuleToggle = _toggle(
+        RuleToggle, baseline=True, reporting=True,
     )
 
     def __init__(self, **kwargs):
@@ -242,23 +217,23 @@ class GhiSufficiencySettings(ColumnSufficiencySettings):
 
 
 class ObservedSufficiencySettings(ColumnSufficiencySettings):
-    min_pct_hourly_coverage: Optional[float] = pydantic.Field(
+    min_pct_hourly_coverage: Optional[float] = DeveloperField(
         default=None,
         gt=0,
         le=1,
         description="Minimum percentage of hourly coverage.",
     )
 
-    unique_values: DisqualifyingRuleToggle = _toggle(
-        DisqualifyingRuleToggle, baseline=True, reporting=True,
+    unique_values: RuleToggle = _toggle(
+        RuleToggle, baseline=True, reporting=True,
     )
 
-    daily_coverage: DisqualifyingRuleToggle = _toggle(
-        DisqualifyingRuleToggle, baseline=True, reporting=True,
+    daily_coverage: RuleToggle = _toggle(
+        RuleToggle, baseline=True, reporting=True,
     )
 
-    monthly_coverage: DisqualifyingRuleToggle = _toggle(
-        DisqualifyingRuleToggle, baseline=True,
+    monthly_coverage: RuleToggle = _toggle(
+        RuleToggle, baseline=True,
     )
 
     def __init__(self, **kwargs):
@@ -274,8 +249,8 @@ class ObservedSufficiencySettings(ColumnSufficiencySettings):
 
 
 class JointSufficiencySettings(ColumnSufficiencySettings):
-    daily_coverage: DisqualifyingRuleToggle = _toggle(
-        DisqualifyingRuleToggle, baseline=True, reporting=True,
+    daily_coverage: RuleToggle = _toggle(
+        RuleToggle, baseline=True, reporting=True,
     )
 
     def __init__(self, **kwargs):
@@ -292,16 +267,6 @@ class JointSufficiencySettings(ColumnSufficiencySettings):
 class BaseSufficiencySettings(BaseSettings):
     model_config = pydantic.ConfigDict(extra="forbid")
 
-    requested_start: Optional[pd.Timestamp] = UserField(
-        default=None,
-        description="Requested start date for the data. If None, use the data start date."
-    )
-
-    requested_end: Optional[pd.Timestamp] = UserField(
-        default=None,
-        description="Requested end date for the data. If None, use the data end date."
-    )
-
     min_baseline_length: int = pydantic.Field(
         default=int(np.ceil(0.9 * 365)),
         ge=1,
@@ -314,7 +279,7 @@ class BaseSufficiencySettings(BaseSettings):
         description="Maximum number of days in the baseline.",
     )
 
-    rules: WholeFrameSufficiencySettings = pydantic.Field(
+    rules: WholeFrameSufficiencySettings = DeveloperField(
         default_factory=WholeFrameSufficiencySettings,
     )
 
@@ -355,8 +320,8 @@ class BaseSufficiencySettings(BaseSettings):
 
 
 class DailyTemperatureSufficiencySettings(TemperatureSufficiencySettings):
-    unique_values: DisqualifyingRuleToggle = _toggle(
-        DisqualifyingRuleToggle, baseline=True,
+    unique_values: RuleToggle = _toggle(
+        RuleToggle, baseline=True,
     )
 
     def __init__(self, **kwargs):
@@ -369,19 +334,19 @@ class DailyTemperatureSufficiencySettings(TemperatureSufficiencySettings):
 
 
 class DailyObservedSufficiencySettings(ObservedSufficiencySettings):
-    monthly_coverage: DisqualifyingRuleToggle = _toggle(DisqualifyingRuleToggle)
+    monthly_coverage: RuleToggle = _toggle(RuleToggle)
 
 
 class BillingObservedSufficiencySettings(ObservedSufficiencySettings):
-    unique_values: DisqualifyingRuleToggle = _toggle(DisqualifyingRuleToggle)
+    unique_values: RuleToggle = _toggle(RuleToggle)
 
-    monthly_coverage: DisqualifyingRuleToggle = _toggle(DisqualifyingRuleToggle)
+    monthly_coverage: RuleToggle = _toggle(RuleToggle)
 
 
 class DailyDataSufficiencySettings(BaseSufficiencySettings):
     ghi: None = None
 
-    rules: DailyWholeFrameSufficiencySettings = pydantic.Field(
+    rules: DailyWholeFrameSufficiencySettings = DeveloperField(
         default_factory=DailyWholeFrameSufficiencySettings,
     )
 
@@ -389,7 +354,7 @@ class DailyDataSufficiencySettings(BaseSufficiencySettings):
         default_factory=DailyTemperatureSufficiencySettings,
     )
 
-    observed: DailyObservedSufficiencySettings = pydantic.Field(
+    observed: DailyObservedSufficiencySettings = DeveloperField(
         default_factory=DailyObservedSufficiencySettings,
     )
 
@@ -397,7 +362,7 @@ class DailyDataSufficiencySettings(BaseSufficiencySettings):
 class BillingDataSufficiencySettings(BaseSufficiencySettings):
     ghi: None = None
 
-    rules: BillingWholeFrameSufficiencySettings = pydantic.Field(
+    rules: BillingWholeFrameSufficiencySettings = DeveloperField(
         default_factory=BillingWholeFrameSufficiencySettings,
     )
 
@@ -405,7 +370,7 @@ class BillingDataSufficiencySettings(BaseSufficiencySettings):
         default_factory=DailyTemperatureSufficiencySettings,
     )
 
-    observed: BillingObservedSufficiencySettings = pydantic.Field(
+    observed: BillingObservedSufficiencySettings = DeveloperField(
         default_factory=BillingObservedSufficiencySettings,
     )
 
@@ -440,7 +405,10 @@ class HourlyTemperatureSufficiencySettings(TemperatureSufficiencySettings):
     max_consecutive_hours_missing: int = pydantic.Field(
         default=6,
         ge=0,
-        description="Maximum number of consecutive missing hours to declare the day as missing.",
+        description=(
+            "Longest run of missing temperature hours allowed; a longer run disqualifies the "
+            "meter when the consecutive_missing_temperature_hours rule is on."
+        ),
     )
 
     @pydantic.field_validator("max_consecutive_hours_missing", mode="before")
@@ -452,7 +420,7 @@ class HourlyTemperatureSufficiencySettings(TemperatureSufficiencySettings):
         return v
 
 class HourlyDataSufficiencySettings(BaseSufficiencySettings):
-    rules: HourlyWholeFrameSufficiencySettings = pydantic.Field(
+    rules: HourlyWholeFrameSufficiencySettings = DeveloperField(
         default_factory=HourlyWholeFrameSufficiencySettings,
     )
 
@@ -460,6 +428,8 @@ class HourlyDataSufficiencySettings(BaseSufficiencySettings):
         default_factory=HourlyTemperatureSufficiencySettings,
     )
 
+
+_REMOVED_TOP_LEVEL_SUFFICIENCY_KEYS: set[str] = {"requested_start", "requested_end"}
 
 _REMOVED_SUFFICIENCY_KEYS: dict[str, set[str]] = {
     "temperature": {"min_pct_hourly_coverage"},
@@ -470,13 +440,10 @@ _REMOVED_SUFFICIENCY_KEYS: dict[str, set[str]] = {
 
 
 def strip_removed_sufficiency_keys(settings_payload: dict) -> dict:
-    """Drop the threshold keys the sufficiency schema does not declare from a prior-format
-    settings payload.
+    """Drop the keys in `_REMOVED_TOP_LEVEL_SUFFICIENCY_KEYS` and `_REMOVED_SUFFICIENCY_KEYS`
+    from a settings payload's sufficiency blocks without mutating the payload.
 
-    Those keys are min_pct_hourly_coverage under temperature, ghi and joint, and
-    min_pct_period_coverage under observed, ghi and joint. Returns a new dict with them
-    dropped from any sufficiency block present in the payload; everything else, including
-    the input, is left untouched.
+    A payload carrying none of those keys is returned as is.
     """
     data = settings_payload.get("data")
     if not isinstance(data, dict):
@@ -486,24 +453,23 @@ def strip_removed_sufficiency_keys(settings_payload: dict) -> dict:
     if not isinstance(sufficiency, dict):
         return settings_payload
 
-    new_sufficiency = dict(sufficiency)
-    changed = False
+    new_sufficiency = {
+        k: v for k, v in sufficiency.items() if k not in _REMOVED_TOP_LEVEL_SUFFICIENCY_KEYS
+    }
     for block_name, removed_keys in _REMOVED_SUFFICIENCY_KEYS.items():
         block = new_sufficiency.get(block_name)
-        if not isinstance(block, dict):
-            continue
+        if isinstance(block, dict):
+            new_sufficiency[block_name] = {
+                k: v for k, v in block.items() if k not in removed_keys
+            }
 
-        stripped_block = {k: v for k, v in block.items() if k not in removed_keys}
-        if stripped_block != block:
-            new_sufficiency[block_name] = stripped_block
-            changed = True
-
-    if not changed:
+    if new_sufficiency == sufficiency:
         return settings_payload
 
     new_data = {**data, "sufficiency": new_sufficiency}
+    stripped = {**settings_payload, "data": new_data}
 
-    return {**settings_payload, "data": new_data}
+    return stripped
 
 
 class DailyDataSettings(BaseSettings):

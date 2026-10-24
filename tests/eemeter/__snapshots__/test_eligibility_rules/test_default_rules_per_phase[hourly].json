@@ -1,0 +1,43 @@
+{
+  "baseline": {
+    "baseline_day_length": true,
+    "consecutive_missing_temperature_hours": false,
+    "daily_coverage": {
+      "joint": true,
+      "observed": true,
+      "temperature": true
+    },
+    "extreme_values": true,
+    "monthly_coverage": {
+      "ghi": true,
+      "observed": true,
+      "temperature": true
+    },
+    "negative_observed_values": true,
+    "no_data": "always on",
+    "unique_values": {
+      "ghi": false,
+      "observed": true,
+      "temperature": false
+    }
+  },
+  "reporting": {
+    "daily_coverage": {
+      "joint": true,
+      "observed": true,
+      "temperature": true
+    },
+    "monthly_coverage": {
+      "ghi": true,
+      "observed": false,
+      "temperature": true
+    },
+    "negative_observed_values": true,
+    "no_data": "always on",
+    "unique_values": {
+      "ghi": false,
+      "observed": true,
+      "temperature": false
+    }
+  }
+}

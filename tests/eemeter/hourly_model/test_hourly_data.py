@@ -33,6 +33,7 @@ from opendsm.eemeter.models.hourly.data import (
     HourlyBaselineData,
     HourlyReportingData,
 )
+from opendsm.eemeter.models.hourly.model import HourlyModel
 from opendsm.eemeter.common.data_settings import HourlyDataSettings
 
 from .helpers import (
@@ -1745,6 +1746,53 @@ class TestHourlyDataEdgeCases:
 
         assert isinstance(data_index.df.index, pd.DatetimeIndex)
         pd.testing.assert_frame_equal(data_column.df, data_index.df)
+
+
+def _edge_empty_hourly_frame():
+    """A year of hourly rows whose first and last 20 days carry neither observed nor
+    temperature."""
+    rng = np.random.default_rng(0)
+    index = pd.date_range("2020-01-01", periods=365 * 24, freq="h", tz="America/Chicago")
+    df = pd.DataFrame(
+        {
+            "observed": rng.uniform(1, 2, len(index)),
+            "temperature": rng.uniform(30, 90, len(index)),
+        },
+        index=index,
+    )
+    df.iloc[: 20 * 24] = np.nan
+    df.iloc[-20 * 24 :] = np.nan
+
+    return df
+
+
+def _hourly_baseline_built_directly(df):
+    return HourlyBaselineData(df, is_electricity_data=True)
+
+
+def _hourly_baseline_built_by_the_model(df):
+    data, n_leading, n_trailing = HourlyModel()._build_baseline_data(df, True)
+    assert (n_leading, n_trailing) == (20 * 24, 20 * 24)
+
+    return data
+
+
+@pytest.mark.parametrize(
+    "build",
+    [_hourly_baseline_built_directly, _hourly_baseline_built_by_the_model],
+    ids=["direct", "model"],
+)
+def test_hourly_baseline_with_empty_edge_rows_is_judged_over_its_full_span(build):
+    """A year whose first and last 20 days are empty spans 365 days, the model's edge trim
+    included: the length rule passes and its 325 valid days fail daily coverage."""
+    data = build(_edge_empty_hourly_frame())
+
+    records = {d.qualified_name: d.data for d in data.compliance.disqualification}
+    assert "eemeter.sufficiency_criteria.incorrect_number_of_total_days" not in records
+    assert records["eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data"] == {
+        "n_valid_joint_data_days": 325.0,
+        "n_days_total": 365.0,
+    }
 
 
 # End of test file

@@ -43,6 +43,7 @@ from opendsm.eemeter.common.exceptions import (
     ModelLoadError,
     NonstandardSettingsError,
 )
+from opendsm.eemeter.common.sufficiency_criteria import frame_span
 from opendsm.eemeter.common.warnings import EEMeterWarning, nonstandard_settings_warning
 from opendsm.common.warnings import OpenDSMWarning
 from opendsm.eemeter.models.daily.base_models.full_model import (
@@ -194,7 +195,7 @@ class DailyModel:
             df, trailing_columns=self._trim_trailing_columns
         )
         baseline_data = self._baseline_data_type(
-            trimmed, is_electricity_data, settings=self.settings.data
+            trimmed, is_electricity_data, settings=self.settings.data, span=frame_span(df)
         )
 
         return baseline_data, n_leading, n_trailing

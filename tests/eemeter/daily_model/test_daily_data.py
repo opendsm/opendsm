@@ -13,6 +13,7 @@
 #  limitations under the License.
 
 from opendsm.eemeter.models.daily.data import DailyBaselineData, DailyReportingData
+from opendsm.eemeter.models.daily.model import DailyModel
 import numpy as np
 import pandas as pd
 from pandas import Timestamp, DatetimeIndex, DataFrame
@@ -806,3 +807,47 @@ def test_daily_reporting_flags_unique_values_when_observed_present():
         if "insufficient_unique_observed_values" in d.qualified_name
     ]
     assert len(insufficient) == 1
+
+
+def _edge_empty_daily_frame():
+    """A year of daily rows whose first and last 20 rows carry neither observed nor
+    temperature."""
+    rng = np.random.default_rng(0)
+    index = pd.date_range("2020-01-01", periods=365, freq="D", tz="America/Chicago")
+    df = pd.DataFrame(
+        {"observed": rng.uniform(20, 40, 365), "temperature": rng.uniform(30, 90, 365)},
+        index=index,
+    )
+    df.iloc[:20] = np.nan
+    df.iloc[-20:] = np.nan
+
+    return df
+
+
+def _daily_baseline_built_directly(df):
+    return DailyBaselineData(df, is_electricity_data=True)
+
+
+def _daily_baseline_built_by_the_model(df):
+    data, n_leading, n_trailing = DailyModel()._build_baseline_data(df, True)
+    assert (n_leading, n_trailing) == (20, 20)
+
+    return data
+
+
+@pytest.mark.parametrize(
+    "build",
+    [_daily_baseline_built_directly, _daily_baseline_built_by_the_model],
+    ids=["direct", "model"],
+)
+def test_daily_baseline_with_empty_edge_rows_is_judged_over_its_full_span(build):
+    """A year whose first and last 20 days are empty spans 365 days, the model's edge trim
+    included: the length rule passes and its 325 valid days fail daily coverage."""
+    data = build(_edge_empty_daily_frame())
+
+    records = {d.qualified_name: d.data for d in data.compliance.disqualification}
+    assert "eemeter.sufficiency_criteria.incorrect_number_of_total_days" not in records
+    assert records["eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data"] == {
+        "n_valid_joint_data_days": 325.0,
+        "n_days_total": 365.0,
+    }

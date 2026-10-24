@@ -25,7 +25,7 @@ from opendsm.eemeter.common.data_processor_utilities import (
 from opendsm.common.hourly_interpolation import interpolate
 from opendsm.eemeter.common.compliance import Compliance
 from opendsm.eemeter.common.data_settings import HourlyDataSettings
-from opendsm.eemeter.common.sufficiency_criteria import SufficiencyCriteria
+from opendsm.eemeter.common.sufficiency_criteria import SufficiencyCriteria, frame_span
 from opendsm.eemeter.common.sufficiency_rules import run_sufficiency
 
 from opendsm.eemeter.common.warnings import EEMeterWarning
@@ -36,6 +36,10 @@ class _HourlyData:
     """Private base class for hourly baseline and reporting data
 
     Will raise exception during data sufficiency check if instantiated
+
+    Args:
+        span (tuple): The first and last timestamp of the window the frame covers; length and
+            coverage are judged over it. Defaults to the frame's own first and last timestamp.
     """
 
     _settings_class = HourlyDataSettings
@@ -46,6 +50,8 @@ class _HourlyData:
         is_electricity_data: bool,
         pv_start: date | str | None = None,
         settings: dict | None = None,
+        *,
+        span: tuple[pd.Timestamp | None, pd.Timestamp | None] | None = None,
     ):
         self._df = None
         self.is_electricity_data = is_electricity_data
@@ -75,6 +81,10 @@ class _HourlyData:
             )
 
         self._df = self._set_data(df)
+        if span is None:
+            span = frame_span(df)
+
+        self._span = span
 
         for entry in self._check_data_sufficiency():
             self.compliance.record_and_warn(entry)
@@ -248,6 +258,8 @@ class HourlyBaselineData(_HourlyData):
             is_reporting_data=False,
             family="hourly",
             settings=self._settings.sufficiency,
+            span_start=self._span[0],
+            span_end=self._span[1],
         )
         run_sufficiency(context, "baseline")
 
@@ -297,6 +309,8 @@ class HourlyReportingData(_HourlyData):
             is_reporting_data=True,
             family="hourly",
             settings=self._settings.sufficiency,
+            span_start=self._span[0],
+            span_end=self._span[1],
         )
         run_sufficiency(context, "reporting")
 

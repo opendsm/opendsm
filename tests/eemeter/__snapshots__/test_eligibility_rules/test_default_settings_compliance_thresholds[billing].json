@@ -3,32 +3,76 @@
     "sufficiency": {
       "ghi": null,
       "joint": {
+        "daily_coverage": {
+          "baseline": true,
+          "reporting": true
+        },
         "min_pct_daily_coverage": 0.9,
-        "min_pct_hourly_coverage": null,
         "min_pct_monthly_coverage": null,
-        "min_pct_period_coverage": null,
         "min_pct_unique_values": null
       },
       "max_baseline_length": 366,
       "max_days_in_bimonthly_period": 70,
-      "max_days_in_monthly_period": 70,
+      "max_days_in_monthly_period": 35,
       "min_baseline_length": 329,
       "min_days_in_period": 25,
       "observed": {
+        "daily_coverage": {
+          "baseline": true,
+          "reporting": true
+        },
         "min_pct_daily_coverage": 0.9,
         "min_pct_hourly_coverage": 0.5,
         "min_pct_monthly_coverage": 0.9,
-        "min_pct_period_coverage": null,
-        "min_pct_unique_values": 0.1
+        "min_pct_unique_values": 0.1,
+        "monthly_coverage": {
+          "baseline": false,
+          "reporting": false
+        },
+        "unique_values": {
+          "baseline": false,
+          "reporting": false
+        }
       },
-      "requested_end": null,
-      "requested_start": null,
+      "rules": {
+        "baseline_day_length": {
+          "baseline": true,
+          "reporting": false
+        },
+        "estimated_reads": {
+          "baseline": true,
+          "reporting": true
+        },
+        "extreme_values": {
+          "baseline": true,
+          "reporting": false
+        },
+        "negative_observed_values": {
+          "baseline": true,
+          "reporting": true
+        },
+        "offcycle_reads": {
+          "baseline": true,
+          "reporting": true
+        }
+      },
       "temperature": {
+        "daily_coverage": {
+          "baseline": true,
+          "reporting": true
+        },
         "min_pct_daily_coverage": 0.9,
-        "min_pct_hourly_coverage": 0.5,
         "min_pct_monthly_coverage": 0.9,
         "min_pct_period_coverage": 0.9,
-        "min_pct_unique_values": 0.1
+        "min_pct_unique_values": 0.1,
+        "monthly_coverage": {
+          "baseline": true,
+          "reporting": true
+        },
+        "unique_values": {
+          "baseline": true,
+          "reporting": false
+        }
       }
     }
   },

@@ -21,6 +21,7 @@ from pandas.tseries.offsets import Day
 from opendsm.eemeter.common.data_processor_utilities import (
     DataReport,
     as_freq,
+    billing_period_bounds,
     clean_billing_daily_data,
     clean_billing_data,
     compute_data_frequency,
@@ -90,6 +91,26 @@ def test_compute_minimum_data_frequency_uses_configured_monthly_threshold():
         )
         == "billing_monthly"
     )
+
+
+@pytest.mark.parametrize(
+    "median_days, expected",
+    [
+        (BillingDataSufficiencySettings().max_days_in_monthly_period, "billing_monthly"),
+        (BillingDataSufficiencySettings().max_days_in_monthly_period + 1, "billing_bimonthly"),
+    ],
+)
+def test_compute_data_frequency_cutoff_defaults_to_the_billing_settings_default(
+    median_days, expected
+):
+    """Without explicit cutoffs, the monthly cutoff is the billing settings' default."""
+    # spacings of median_days - 1, median_days and median_days + 1 infer no frequency
+    offsets = [0, median_days - 1, 2 * median_days - 1, 3 * median_days]
+    index = pd.DatetimeIndex([pd.Timestamp("2020-01-01") + pd.Timedelta(days=d) for d in offsets])
+
+    frequency = compute_data_frequency(index, default_data_frequency="daily")
+
+    assert frequency == expected, f"median spacing {median_days} days -> {frequency}"
 
 
 @pytest.mark.parametrize(
@@ -289,7 +310,7 @@ def _billing_frame(dates, values, estimated=None):
 
 def test_clean_billing_data_reports_offcycle_periods_it_nans():
     """Periods shorter than the minimum or longer than the monthly maximum are NaNed and
-    reported with their lengths in days."""
+    reported by their start."""
     # 31, 9, 70 and 30 day periods: the 9 and 70 day ones fall outside 25-35 days
     data = _billing_frame(
         ["2020-01-01", "2020-02-01", "2020-02-10", "2020-04-20", "2020-05-20"],
@@ -300,10 +321,10 @@ def test_clean_billing_data_reports_offcycle_periods_it_nans():
         data, "billing_monthly", BillingDataSufficiencySettings()
     )
 
-    assert report.offcycle_periods == {
-        pd.Timestamp("2020-02-01"): 9.0,
-        pd.Timestamp("2020-02-10"): 70.0,
-    }, f"unexpected off-cycle periods {report.offcycle_periods}"
+    assert report.offcycle_periods == (
+        pd.Timestamp("2020-02-01"),
+        pd.Timestamp("2020-02-10"),
+    ), f"unexpected off-cycle periods {report.offcycle_periods}"
     assert report.data_frequency == "billing_monthly"
     naned = cleaned.index[cleaned["value"].isna()]
     # the final row closes the last period and carries no length of its own
@@ -327,7 +348,7 @@ def test_clean_billing_data_bimonthly_keeps_a_seventy_day_period():
         data, "billing_bimonthly", BillingDataSufficiencySettings()
     )
 
-    assert report.offcycle_periods == {}, f"unexpected off-cycle periods {report.offcycle_periods}"
+    assert report.offcycle_periods == (), f"unexpected off-cycle periods {report.offcycle_periods}"
     assert report.data_frequency == "billing_bimonthly"
     assert cleaned["value"].tolist()[:3] == [1.0, 2.0, 3.0]
 
@@ -342,8 +363,38 @@ def test_clean_billing_data_thresholds_come_from_settings():
 
     cleaned, report = clean_billing_data(data, "billing_monthly", settings)
 
-    assert report.offcycle_periods == {}, f"unexpected off-cycle periods {report.offcycle_periods}"
+    assert report.offcycle_periods == (), f"unexpected off-cycle periods {report.offcycle_periods}"
     assert cleaned["value"].tolist()[:3] == [1.0, 2.0, 3.0]
+
+
+def test_clean_billing_data_rejects_an_interval_with_no_billing_bounds():
+    data = _billing_frame(["2020-01-01", "2020-02-01"], [1.0, 2.0])
+
+    with pytest.raises(ValueError, match="unknown billing interval: daily"):
+        clean_billing_data(data, "daily", BillingDataSufficiencySettings())
+
+
+@pytest.mark.parametrize(
+    "interval, expected",
+    [
+        ("billing_monthly", ("monthly", 20, 40)),
+        ("billing_bimonthly", ("bimonthly", 20, 80)),
+    ],
+)
+def test_billing_period_bounds_read_the_interval_bounds_from_settings(interval, expected):
+    settings = BillingDataSufficiencySettings(
+        min_days_in_period=20, max_days_in_monthly_period=40, max_days_in_bimonthly_period=80
+    )
+
+    bounds = billing_period_bounds(settings, interval)
+
+    assert bounds == expected, f"{interval}: expected {expected}, got {bounds}"
+
+
+@pytest.mark.parametrize("interval", ["daily", "hourly", "billing_weekly"])
+def test_billing_period_bounds_reject_a_non_billing_interval(interval):
+    with pytest.raises(ValueError, match=f"unknown billing interval: {interval}"):
+        billing_period_bounds(BillingDataSufficiencySettings(), interval)
 
 
 def test_clean_billing_data_merges_an_estimated_read_into_the_following_read():
@@ -391,15 +442,15 @@ def _sub_daily_series():
     return series
 
 
-def test_downsample_and_clean_daily_data_drops_and_reports_low_coverage_days():
-    """A day at or below the coverage threshold is dropped and reported with its coverage."""
+def test_downsample_and_clean_daily_data_blanks_and_reports_low_coverage_days():
+    """A day at or below the coverage threshold is blanked and reported."""
     settings = DailyDataSufficiencySettings()
 
     cleaned, report = downsample_and_clean_daily_data(_sub_daily_series(), settings)
 
-    assert report.low_coverage_days == {
-        pd.Timestamp("2020-01-02"): 0.5
-    }, f"unexpected low coverage days {report.low_coverage_days}"
+    assert report.low_coverage_days == (
+        pd.Timestamp("2020-01-02"),
+    ), f"unexpected low coverage days {report.low_coverage_days}"
     dropped = cleaned.index[cleaned["value"].isna()]
     assert list(dropped) == list(
         report.low_coverage_days
@@ -426,7 +477,7 @@ def test_downsample_and_clean_daily_data_threshold_comes_from_settings():
 
     cleaned, report = downsample_and_clean_daily_data(_sub_daily_series(), settings)
 
-    assert report.low_coverage_days == {}, f"unexpected low coverage days {report.low_coverage_days}"
+    assert report.low_coverage_days == (), f"unexpected low coverage days {report.low_coverage_days}"
     assert cleaned["value"].tolist()[1] == pytest.approx(24.0)
 
 

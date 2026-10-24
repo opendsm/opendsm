@@ -1,0 +1,21 @@
+{
+  "baseline": {
+    "at_threshold": {
+      "passed": true,
+      "records": []
+    },
+    "one_step_past": {
+      "passed": false,
+      "records": [
+        {
+          "data": {
+            "n_days_total": 367.0
+          },
+          "member": "data",
+          "qualified_name": "eemeter.sufficiency_criteria.incorrect_number_of_total_days",
+          "severity": "disqualified"
+        }
+      ]
+    }
+  }
+}

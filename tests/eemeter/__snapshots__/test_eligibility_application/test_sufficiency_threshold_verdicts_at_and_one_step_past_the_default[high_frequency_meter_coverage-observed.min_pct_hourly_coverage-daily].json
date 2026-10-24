@@ -1,0 +1,54 @@
+{
+  "baseline": {
+    "at_threshold": {
+      "passed": true,
+      "records": [
+        {
+          "data": {
+            "lower_bound": 29.75,
+            "lower_quantile": 35.19,
+            "max_value": 40.71,
+            "median": 36.1,
+            "min_value": 17.1,
+            "n_extreme_values": 1,
+            "upper_bound": 42.43,
+            "upper_quantile": 37.0
+          },
+          "member": null,
+          "qualified_name": "eemeter.sufficiency_criteria.extreme_values_detected",
+          "severity": "advisory"
+        }
+      ]
+    },
+    "one_step_past": {
+      "passed": true,
+      "records": [
+        {
+          "data": {
+            "lower_bound": 29.75,
+            "lower_quantile": 35.19,
+            "max_value": 40.71,
+            "median": 36.1,
+            "min_value": 19.0,
+            "n_extreme_values": 1,
+            "upper_bound": 42.43,
+            "upper_quantile": 37.0
+          },
+          "member": null,
+          "qualified_name": "eemeter.sufficiency_criteria.extreme_values_detected",
+          "severity": "advisory"
+        }
+      ]
+    }
+  },
+  "reporting": {
+    "at_threshold": {
+      "passed": true,
+      "records": []
+    },
+    "one_step_past": {
+      "passed": true,
+      "records": []
+    }
+  }
+}

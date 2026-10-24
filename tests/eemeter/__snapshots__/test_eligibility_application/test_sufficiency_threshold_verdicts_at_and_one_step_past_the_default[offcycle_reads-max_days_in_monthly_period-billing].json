@@ -1,0 +1,40 @@
+{
+  "baseline": {
+    "at_threshold": {
+      "passed": true,
+      "records": []
+    },
+    "one_step_past": {
+      "passed": false,
+      "records": [
+        {
+          "data": [
+            "2019-01-01T00:00:00-07:00"
+          ],
+          "member": "data",
+          "qualified_name": "eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data",
+          "severity": "disqualified"
+        }
+      ]
+    }
+  },
+  "reporting": {
+    "at_threshold": {
+      "passed": true,
+      "records": []
+    },
+    "one_step_past": {
+      "passed": false,
+      "records": [
+        {
+          "data": [
+            "2019-01-01T00:00:00-07:00"
+          ],
+          "member": "data",
+          "qualified_name": "eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data",
+          "severity": "disqualified"
+        }
+      ]
+    }
+  }
+}

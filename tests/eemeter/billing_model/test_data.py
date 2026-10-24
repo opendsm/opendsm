@@ -15,6 +15,7 @@ from opendsm.eemeter.models.billing.data import (
     BillingBaselineData,
     BillingReportingData,
 )
+from opendsm.eemeter.models.billing.model import BillingModel
 import numpy as np
 import pandas as pd
 from pandas import Timestamp, DatetimeIndex, DataFrame
@@ -579,3 +580,48 @@ def test_mixed_monthly_and_bimonthly_reads_infer_monthly(comstock_monthly):
     names = {entry.qualified_name for entry in data.compliance.disqualification}
     assert "eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data" in names
     assert "eemeter.sufficiency_criteria.offcycle_reads_in_billing_bimonthly_data" not in names
+
+
+def _edge_empty_billing_frame():
+    """A year of daily rows with twelve 29-day reads from row 20 on, and no temperature in
+    the first and last 20 rows."""
+    rng = np.random.default_rng(0)
+    index = pd.date_range("2020-01-01", periods=365, freq="D", tz="America/Chicago")
+    df = pd.DataFrame(
+        {"observed": np.nan, "temperature": rng.uniform(30, 90, 365)}, index=index
+    )
+    df.iloc[20:340:29, df.columns.get_loc("observed")] = rng.uniform(600, 900, 12)
+    df.iloc[:20, df.columns.get_loc("temperature")] = np.nan
+    df.iloc[-20:, df.columns.get_loc("temperature")] = np.nan
+
+    return df
+
+
+def _billing_baseline_built_directly(df):
+    return BillingBaselineData(df, is_electricity_data=True)
+
+
+def _billing_baseline_built_by_the_model(df):
+    data, n_leading, n_trailing = BillingModel()._build_baseline_data(df, True)
+    assert (n_leading, n_trailing) == (20, 0)
+
+    return data
+
+
+@pytest.mark.parametrize(
+    "build",
+    [_billing_baseline_built_directly, _billing_baseline_built_by_the_model],
+    ids=["direct", "model"],
+)
+def test_billing_baseline_with_empty_edge_rows_is_judged_over_its_full_span(build):
+    """A year whose first 20 days precede the first read and whose last 20 days lack
+    temperature spans 365 days, the model's edge trim included: the length rule passes and
+    its 325 valid days fail daily coverage."""
+    data = build(_edge_empty_billing_frame())
+
+    records = {d.qualified_name: d.data for d in data.compliance.disqualification}
+    assert "eemeter.sufficiency_criteria.incorrect_number_of_total_days" not in records
+    assert records["eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data"] == {
+        "n_valid_joint_data_days": 325.0,
+        "n_days_total": 365.0,
+    }
