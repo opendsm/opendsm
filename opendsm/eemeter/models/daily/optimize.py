@@ -184,9 +184,7 @@ class SciPyOptimizer(BaseOptimizer):
                     )
             except (np.linalg.LinAlgError, FloatingPointError) as exc:
                 raise ModelFitError(
-                    f"SciPy optimization failed: {exc}",
-                    component="optimizer",
-                    segment=algorithm.lower(),
+                    f"SciPy {algorithm.lower()} optimization failed: {exc}"
                 ) from exc
 
             res.x = [res.x]
@@ -212,9 +210,7 @@ class SciPyOptimizer(BaseOptimizer):
                     )
             except (np.linalg.LinAlgError, FloatingPointError) as exc:
                 raise ModelFitError(
-                    f"SciPy optimization failed: {exc}",
-                    component="optimizer",
-                    segment=algorithm.lower(),
+                    f"SciPy {algorithm.lower()} optimization failed: {exc}"
                 ) from exc
 
         res.time_elapsed = timer() - timer_start
@@ -249,82 +245,63 @@ class NLoptOptimizer(BaseOptimizer):
         
         algorithm = nlopt_algorithms[settings.algorithm]
 
+        opt = nlopt.opt(algorithm, np.size(x0_opt))
+        opt.set_min_objective(obj_fcn)
+        if settings.stop_criteria_type == "iteration maximum":
+            opt.set_maxeval(int(settings.stop_criteria_value) - 1)
+        elif settings.stop_criteria_type == "maximum time [min]":
+            opt.set_maxtime(settings.stop_criteria_value * 60)
+
+        opt.set_xtol_rel(settings.x_tol_rel)
+        opt.set_ftol_rel(settings.f_tol_rel)
+        opt.set_lower_bounds(bnds_opt[0])
+        opt.set_upper_bounds(bnds_opt[1])
+
+        # initial_step
+        if settings.initial_step is not None:
+            max_initial_step = np.max(np.abs(bnds_opt - x0_opt), axis=0)
+
+            initial_step = (bnds_opt[1] - bnds_opt[0]) * settings.initial_step
+            initial_step = np.clip(initial_step, -max_initial_step, max_initial_step)
+
+            x1 = x0_opt + initial_step
+            np.putmask(
+                initial_step, (x1 < bnds_opt[0]) | (x1 > bnds_opt[1]), -initial_step
+            )  # first step in direction of more variable space
+
+            opt.set_initial_step(initial_step)
+
+        # alter default size of population in relevant algorithms
+        if settings.algorithm == "nlopt_crs2_lm":
+            default_pop_size = 10 * (len(x0_opt) + 1)
+        elif settings.algorithm in ["nlopt_mlsl_lds", "nlopt_mlsl"]:
+            default_pop_size = 4
+        elif settings.algorithm == "nlopt_isres":
+            default_pop_size = 20 * (len(x0_opt) + 1)
+
+            opt.set_population(
+                int(np.rint(default_pop_size * settings["initial_pop_multiplier"]))
+            )
+
+        if settings.algorithm == "nlopt_mlsl_lds":
+            raise NotImplementedError("nlopt_mlsl_lds not implemented")
+
+        # Seed NLopt's internal RNG so stochastic algorithms (SBPLX initial-step
+        # perturbation, DIRECT_L_RAND, CRS2_LM, MLSL, ISRES, ESCH) converge to
+        # the same minimum across platforms / BLAS / CPU instruction sets.
+        if settings.seed is not None:
+            nlopt.srand(settings.seed)
+
         try:
-            opt = nlopt.opt(algorithm, np.size(x0_opt))
-            opt.set_min_objective(obj_fcn)
-            if settings.stop_criteria_type == "iteration maximum":
-                opt.set_maxeval(int(settings.stop_criteria_value) - 1)
-            elif settings.stop_criteria_type == "maximum time [min]":
-                opt.set_maxtime(settings.stop_criteria_value * 60)
-
-            opt.set_xtol_rel(settings.x_tol_rel)
-            opt.set_ftol_rel(settings.f_tol_rel)
-            opt.set_lower_bounds(bnds_opt[0])
-            opt.set_upper_bounds(bnds_opt[1])
-
-            # initial_step
-            if settings.initial_step is not None:
-                max_initial_step = np.max(np.abs(bnds_opt - x0_opt), axis=0)
-
-                initial_step = (bnds_opt[1] - bnds_opt[0]) * settings.initial_step
-
-                # TODO: bring this back in at some point?
-                # coef_id_opt = [id for n, id in enumerate(self.coef_id) if n in idx_opt]
-                # for n, coef_name in enumerate(coef_id_opt):
-                #     if "dd_bp" in coef_name:
-                #         initial_step[n] *= 2
-
-                #     if coef_name == "hdd_bp":
-                #         initial_step[n] *= -1
-
-                initial_step = np.clip(initial_step, -max_initial_step, max_initial_step)
-
-                x1 = x0_opt + initial_step
-                np.putmask(
-                    initial_step, (x1 < bnds_opt[0]) | (x1 > bnds_opt[1]), -initial_step
-                )  # first step in direction of more variable space
-
-                opt.set_initial_step(initial_step)
-
-            # alter default size of population in relevant algorithms
-            if settings.algorithm == "nlopt_crs2_lm":
-                default_pop_size = 10 * (len(x0_opt) + 1)
-            elif settings.algorithm in ["nlopt_mlsl_lds", "nlopt_mlsl"]:
-                default_pop_size = 4
-            elif settings.algorithm == "nlopt_isres":
-                default_pop_size = 20 * (len(x0_opt) + 1)
-
-                opt.set_population(
-                    int(np.rint(default_pop_size * settings["initial_pop_multiplier"]))
-                )
-
-            # if using multistart algorithm as global, set subopt
-            if (settings.algorithm == "nlopt_mlsl_lds"):
-                raise NotImplementedError("nlopt_mlsl_lds not implemented")
-                local_algorithm = nlopt_algorithms[self.opt_settings.algorithm]
-                sub_opt = nlopt.opt(local_algorithm, np.size(x0_opt))
-                sub_opt.set_initial_step(initial_step)
-                sub_opt.set_xtol_rel(settings.x_tol_rel)
-                sub_opt.set_ftol_rel(settings.f_tol_rel)
-                opt.set_local_optimizer(sub_opt)
-
-            # Seed NLopt's internal RNG so stochastic algorithms (SBPLX initial-step
-            # perturbation, DIRECT_L_RAND, CRS2_LM, MLSL, ISRES, ESCH) converge to
-            # the same minimum across platforms / BLAS / CPU instruction sets.
-            if settings.seed is not None:
-                nlopt.srand(settings.seed)
-            x_opt = opt.optimize(x0_opt)  # optimize!
+            x_opt = opt.optimize(x0_opt)
         except (
             nlopt.RoundoffLimited,
-            nlopt.ForcedStop,
             nlopt.exception,
             np.linalg.LinAlgError,
             FloatingPointError,
         ) as exc:
             raise ModelFitError(
-                f"NLopt optimization failed: {exc}",
-                component="optimizer",
-                segment=settings.algorithm,
+                f"NLopt {settings.algorithm.value} optimization failed: {exc}"
             ) from exc
 
         if nlopt.SUCCESS > 0:

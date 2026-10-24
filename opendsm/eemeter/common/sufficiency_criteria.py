@@ -165,7 +165,7 @@ class SufficiencyCriteria(BaseSettings):
 
         valid_rows = valid_temperature_rows
 
-        if "observed" in self.data.columns and (not self.is_reporting_data or self._has_observed_values):
+        if not self.is_reporting_data or self._has_observed_values:
             valid_observed_rows = self.data.observed.notnull()
             valid_rows = valid_rows & valid_observed_rows
             self._n_valid_observed_days = _valid_days(valid_observed_rows, step)
@@ -206,12 +206,10 @@ class SufficiencyCriteria(BaseSettings):
         if self.is_reporting_data:
             min_usable = 1
             usable = self.data.temperature.notna()
-        elif "observed" in self.data.columns:
-            min_usable = 2
-            usable = self.data.temperature.notna() & self.data.observed.notna()
         else:
             min_usable = 2
-            usable = pd.Series(False, index=self.data.index)
+            # An input that collapses to no periods has no observed column at all
+            usable = self.data.reindex(columns=["temperature", "observed"]).notna().all(axis=1)
 
         if int(usable.sum()) < min_usable:
             self.compliance.record(
@@ -222,10 +220,6 @@ class SufficiencyCriteria(BaseSettings):
                     data={},
                 )
             )
-
-            return False
-
-        return True
 
     def _check_n_days_boundary_gap(self, gap_type: Literal["start", "end"]):
         if gap_type == "start":

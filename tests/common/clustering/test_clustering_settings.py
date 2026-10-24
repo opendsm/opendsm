@@ -227,7 +227,7 @@ class TestFeatureTransformSettings:
         assert len(record) == 1
         assert (
             record[0].message.qualified_name
-            == "opendsm.clustering.transform.magnitude_without_normalization"
+            == "clustering.transform.magnitude_without_normalization"
         )
 
     def test_default_magnitude_features_no_warning(self, recwarn):

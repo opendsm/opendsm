@@ -95,6 +95,15 @@ def assert_has_disqualification(data, qualified_name):
     assert qualified_name in names, f"{qualified_name} not in {names}"
 
 
+def assert_has_infeasible(data, qualified_name):
+    severities = {
+        entry.severity for entry in data.compliance.all if entry.qualified_name == qualified_name
+    }
+    assert severities == {"infeasible"}, (
+        f"{qualified_name} severities {severities}, expected {{'infeasible'}}"
+    )
+
+
 def assert_has_warning(data, qualified_name):
     names = {w.qualified_name for w in data.compliance.warnings}
     assert qualified_name in names, f"{qualified_name} not in {names}"

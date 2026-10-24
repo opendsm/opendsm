@@ -22,9 +22,13 @@ import pandas as pd
 
 from opendsm.common.base_settings import settings_deviation_report
 from opendsm.eemeter.common.compliance import (
+    SCHEMA_VERSION,
     Compliance,
-    _prior_format_entries,
     normalize_enforce_compliance,
+    prior_format_entries,
+    raise_if_baseline_disqualified,
+    raise_if_infeasible,
+    raise_if_model_disqualified,
     record_timezone_mismatch,
 )
 from opendsm.eemeter.common.data_processor_utilities import (
@@ -34,8 +38,6 @@ from opendsm.eemeter.common.data_processor_utilities import (
 )
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
-    DisqualifiedModelError,
-    InfeasibleDataError,
     ModelFitError,
     ModelLoadError,
     NonstandardSettingsError,
@@ -52,7 +54,6 @@ from opendsm.eemeter.models.daily.fit_base_models import (
     fit_initial_models_from_full_model,
 )
 from opendsm.eemeter.models.daily.parameters import (
-    SCHEMA_VERSION,
     DailyModelParameters,
     DailySubmodelParameters,
     SerializedDailyModel,
@@ -198,7 +199,11 @@ class DailyModel:
         return baseline_data, n_leading, n_trailing
 
     def _reporting_data(self, df: pd.DataFrame):
-        """Called by `predict` and by the comparison-group population."""
+        """Called by `predict` and by the comparison-group population. Raises `RuntimeError`
+        on an unfitted model, whose fuel flag the reporting data is built with."""
+
+        if not self.is_fitted:
+            raise RuntimeError("Model must be fit before predictions can be made.")
 
         reporting_data = self._reporting_data_type(
             df, self._is_electricity_data, settings=self.settings.data
@@ -253,13 +258,11 @@ class DailyModel:
         compliance = Compliance()
 
         settings_warning = nonstandard_settings_warning(self.settings_deviations)
-        if settings_warning is not None:
-            compliance.record(settings_warning)
-            if "settings" in enforced:
-                raise NonstandardSettingsError(
-                    "Can't fit a compliant model with nonstandard settings",
-                    entries=[settings_warning],
-                )
+        if settings_warning is not None and "settings" in enforced:
+            raise NonstandardSettingsError(
+                "Can't fit a compliant model with nonstandard settings",
+                entries=[settings_warning],
+            )
 
         for entry in baseline.compliance.all:
             compliance.record(entry)
@@ -274,22 +277,13 @@ class DailyModel:
                 severity="advisory",
                 data={"leading": n_leading, "trailing": n_trailing},
             )
-            compliance.record(trim_warning)
-            trim_warning.warn()
+            compliance.record_and_warn(trim_warning)
 
-        self._raise_if_infeasible(compliance)
+        raise_if_infeasible(compliance)
+        raise_if_baseline_disqualified(compliance, enforced)
 
-        if "data" in enforced:
-            insufficient = [
-                entry
-                for entry in compliance.disqualification
-                if entry.member == "data"
-            ]
-            if insufficient:
-                raise DataSufficiencyError(
-                    "Can't fit model on disqualified baseline data",
-                    entries=insufficient,
-                )
+        if settings_warning is not None:
+            compliance.record_and_warn(settings_warning)
 
         self._is_electricity_data = is_electricity_data
         self.baseline_timezone = baseline.tz
@@ -322,62 +316,37 @@ class DailyModel:
         self.is_fitted = True
         return self
 
-    def _raise_if_infeasible(self, compliance: Compliance) -> None:
-        """Raise when a record says no model can be fit on this data at all."""
-
-        entries = [
-            entry for entry in compliance.all if entry.severity == "infeasible"
-        ]
-        if entries:
-            raise InfeasibleDataError(
-                "Can't fit any model on this baseline data", entries=entries
-            )
-
-    def _check_model_compliance(self, enforced) -> None:
-        """Raise when an enforced member is disqualified on this model."""
-
-        blocking = [
-            entry
-            for entry in self.compliance.disqualification
-            if entry.member in enforced
-        ]
-        if blocking:
-            raise DisqualifiedModelError(
-                "Attempting to predict using disqualified model without relaxing enforce_compliance",
-                entries=blocking,
-            )
-
-    def _check_reporting_compliance(self, data, enforced) -> None:
-        """Raise when data compliance is enforced and the reporting data is disqualified."""
-
-        if "data" not in enforced:
-            return
-
-        entries = data.compliance.disqualification
-        if entries:
-            raise DataSufficiencyError(
-                "Can't predict on disqualified reporting data", entries=entries
-            )
-
     def _check_predictable(self, data, enforce_compliance) -> None:
-        """Raise unless this fitted model may predict on the built data object."""
+        """Raise unless this fitted model may predict on the built data object, checking
+        in order: fitted, model compliance, then `data`'s compliance. A timezone mismatch
+        is recorded on `data.compliance` before `data` is judged."""
 
         if not self.is_fitted:
             raise RuntimeError("Model must be fit before predictions can be made.")
 
         enforced = normalize_enforce_compliance(enforce_compliance)
-        self._check_model_compliance(enforced)
+        raise_if_model_disqualified(self.compliance, enforced)
+        record_timezone_mismatch(data.compliance, self.baseline_timezone, data.tz)
 
-        if record_timezone_mismatch(data.compliance, self.baseline_timezone, data.tz):
-            if "data" in enforced:
-                raise DataSufficiencyError(
-                    "Can't predict on disqualified reporting data",
-                    entries=data.compliance.disqualification,
-                )
+        if "data" not in enforced:
+            return
+
+        entries = data.compliance.disqualification + data.compliance.infeasible
+        if entries:
+            raise DataSufficiencyError(
+                "Can't predict on disqualified or infeasible reporting data", entries=entries
+            )
 
     def _predict_data(self, data, enforce_compliance: bool = True) -> pd.DataFrame:
         """Predict on an already built reporting or baseline data object. Called by `predict`
-        and by the comparison-group population."""
+        and by the comparison-group population.
+
+        Raises:
+            RuntimeError: If the model is not fitted.
+            DisqualifiedModelError: If an enforced member is disqualified on the model.
+            DataSufficiencyError: If data compliance is enforced and `data` is disqualified or
+                infeasible.
+        """
 
         self._check_predictable(data, enforce_compliance)
         df = getattr(data, self._data_df_name)
@@ -405,25 +374,15 @@ class DailyModel:
             Dataframe with input data along with predicted energy consumption.
 
         Raises:
+            TypeError: If df is not a pandas DataFrame.
             RuntimeError: If the model is not fitted.
             DisqualifiedModelError: If an enforced member is disqualified on the model.
             DataSufficiencyError: If data compliance is enforced and the reporting data
                 is disqualified.
-            TypeError: If df is not a pandas DataFrame.
         """
         require_dataframe(df, "df")
 
-        if not self.is_fitted:
-            raise RuntimeError("Model must be fit before predictions can be made.")
-
-        enforced = normalize_enforce_compliance(enforce_compliance)
-        self._check_model_compliance(enforced)
-
-        reporting = self._reporting_data(df)
-        record_timezone_mismatch(reporting.compliance, self.baseline_timezone, reporting.tz)
-        self._check_reporting_compliance(reporting, enforced)
-
-        df_res = self._predict_data(reporting, enforce_compliance=False)
+        df_res = self._predict_data(self._reporting_data(df), enforce_compliance)
 
         return df_res
 
@@ -515,8 +474,7 @@ class DailyModel:
                     "pnrmse": pnrmse,
                 },
             )
-            model_fit_warning.warn()
-            self.compliance.record(model_fit_warning)
+            self.compliance.record_and_warn(model_fit_warning)
 
     def to_dict(self) -> dict:
         """Returns a dictionary of model parameters.
@@ -556,8 +514,8 @@ class DailyModel:
         Raises:
             ValueError: If is_electricity_data is missing from both the payload and the call,
                 or given when the payload already carries it.
-            ModelLoadError: If the payload is malformed, or was written by a schema
-                version this package cannot read.
+            ModelLoadError: If the payload is malformed or carries a `schema_version`
+                this package cannot read.
         """
         settings = data.get("settings")
         daily_model = cls(settings=settings)
@@ -571,7 +529,7 @@ class DailyModel:
         try:
             if payload.get("schema_version") is None:
                 params = DailyModelParameters(**payload)
-                entries = _prior_format_entries(info)
+                entries = prior_format_entries(info)
             else:
                 validated = SerializedDailyModel(**payload)
                 params = DailyModelParameters(
@@ -1139,16 +1097,15 @@ class DailyModel:
                     severity="advisory",
                     data={"candidate": combo, "reason": "non-finite selection criterion"},
                 )
-                dropped_warning.warn()
-                self.compliance.record(dropped_warning)
+                self.compliance.record_and_warn(dropped_warning)
                 continue
 
             scored.append((score, len(combo.split("__")), combo))
 
         if not scored:
             raise ModelFitError(
-                "No candidate combination produced a finite selection criterion.",
-                component="model_selection",
+                "Model selection failed: no candidate combination produced a finite "
+                "selection criterion."
             )
 
         best_score = min(score for score, _, _ in scored)

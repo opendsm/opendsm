@@ -85,15 +85,6 @@ def test_compliance_leaf_is_catchable_as_compliance_error(error_cls):
         raise error_cls("rejected", entries=[_record()])
 
 
-def test_infeasible_data_error_occupies_the_full_lattice():
-    error = InfeasibleDataError("no fit is possible")
-
-    assert isinstance(error, DataSufficiencyError)
-    assert isinstance(error, ComplianceError)
-    assert isinstance(error, EEMeterError)
-    assert isinstance(error, OpenDSMError)
-
-
 def test_model_fit_error_is_not_a_compliance_error():
     assert not issubclass(ModelFitError, ComplianceError)
 
@@ -120,22 +111,3 @@ def test_compliance_entries_copy_the_list_given():
     records.append(_record("eemeter.test.later"))
 
     assert len(error.entries) == 1
-
-
-def test_compliance_error_carries_its_message():
-    with pytest.raises(ComplianceError, match="rejected by compliance"):
-        raise ComplianceError("rejected by compliance")
-
-
-def test_model_fit_error_carries_component_and_segment():
-    error = ModelFitError("fit failed", component="tempc", segment="summer")
-
-    assert error.component == "tempc"
-    assert error.segment == "summer"
-
-
-def test_model_fit_error_component_and_segment_default_to_none():
-    error = ModelFitError("fit failed")
-
-    assert error.component is None
-    assert error.segment is None

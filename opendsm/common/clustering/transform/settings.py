@@ -278,7 +278,7 @@ class FeatureTransformSettings(BaseSettings):
         is_customized = self.magnitude_features != default_mag
         if is_customized and not self.normalize.enabled:
             ClusteringWarning(
-                qualified_name="opendsm.clustering.transform.magnitude_without_normalization",
+                qualified_name="clustering.transform.magnitude_without_normalization",
                 description=(
                     "magnitude_features was customized but normalization is disabled. "
                     "Magnitude features are only appended when normalization is enabled."

@@ -155,7 +155,7 @@ def test_nlopt_optimizer_run_wraps_nlopt_failure(get_x0, get_bnds, monkeypatch):
     with pytest.raises(ModelFitError) as exc_info:
         optimizer.run()
 
-    assert exc_info.value.component == "optimizer"
+    assert "NLopt nlopt_sbplx optimization failed" in str(exc_info.value)
     assert isinstance(exc_info.value.__cause__, nlopt.invalid_argument)
 
 
@@ -177,5 +177,5 @@ def test_scipy_optimizer_run_wraps_linalg_error(get_x0, get_bnds, monkeypatch):
     with pytest.raises(ModelFitError) as exc_info:
         optimizer.run()
 
-    assert exc_info.value.component == "optimizer"
+    assert "SciPy nelder-mead optimization failed" in str(exc_info.value)
     assert isinstance(exc_info.value.__cause__, np.linalg.LinAlgError)

@@ -748,6 +748,34 @@ def test_json_roundtrip_preserves_relaxed_enforce_compliance(daily_meters):
     )
 
 
+@pytest.mark.parametrize(
+    "enforce_compliance, error",
+    [(["not_a_member"], ValueError), ("settings", TypeError)],
+    ids=["unknown_member", "bare_string"],
+)
+def test_constructor_rejects_a_bad_enforce_compliance(daily_meters, enforce_compliance, error):
+    """An ``enforce_compliance`` that names an unknown member or is not a bool,
+    list or tuple fails at construction."""
+    with pytest.raises(error, match="enforce_compliance"):
+        TreatmentGroup.from_fit_models(daily_meters, enforce_compliance=enforce_compliance)
+
+
+def test_json_roundtrip_keeps_full_enforce_compliance_as_true(daily_meters):
+    """``enforce_compliance=True`` is serialized as ``true``, not as a member list, so a
+    reloaded population enforces every member known when it is reloaded."""
+    group = TreatmentGroup.from_fit_models(daily_meters, enforce_compliance=True)
+
+    rebuilt = TreatmentGroup.from_json(
+        group.to_json(),
+        baseline=_baseline_map(daily_meters),
+        reporting=_reporting_map(daily_meters),
+    )
+
+    assert rebuilt.enforce_compliance is True, (
+        f"expected True, got {rebuilt.enforce_compliance!r}"
+    )
+
+
 def test_to_ndjson_has_no_model_ceiling(daily_meters, monkeypatch):
     group = TreatmentGroup.from_fit_models(daily_meters)
     monkeypatch.setattr("opendsm.comparison_groups.population._MAX_JSON_MODELS", 1)
@@ -1001,7 +1029,7 @@ def test_from_data_excludes_meter_failing_baseline_sufficiency(_comstock_daily_a
     row = group.exclusions.set_index("id").loc[str(ids[2])]
     assert row["stage"] == "population"
     assert row["origin"] == "baseline_data"
-    assert row["reason"] == "DataSufficiencyError"
+    assert row["reason"] == "insufficient baseline data"
     assert "eemeter.sufficiency_criteria" in row["detail"]
 
 
@@ -1115,7 +1143,7 @@ def test_from_data_ledgers_a_disqualified_model_and_keeps_the_rest(daily_meters,
             "id": disqualified,
             "stage": "population",
             "origin": "model",
-            "reason": "DisqualifiedModelError",
+            "reason": "model disqualified",
             "detail": "eemeter.test: flagged",
         }
     ]
@@ -1272,35 +1300,53 @@ def _fit_one_failing_meter(monkeypatch, failure):
 
 
 @pytest.mark.parametrize(
-    "failure, origin",
+    "failure, origin, reason",
     [
-        (DataSufficiencyError("insufficient", entries=[_LEDGER_ENTRY]), "baseline_data"),
-        (InfeasibleDataError("no model fits", entries=[_LEDGER_ENTRY]), "baseline_data"),
-        (DisqualifiedModelError("disqualified", entries=[_LEDGER_ENTRY]), "model"),
-        (NonstandardSettingsError("nonstandard", entries=[_LEDGER_ENTRY]), "settings"),
+        (
+            DataSufficiencyError("insufficient", entries=[_LEDGER_ENTRY]),
+            "baseline_data",
+            "insufficient baseline data",
+        ),
+        (
+            InfeasibleDataError("no model fits", entries=[_LEDGER_ENTRY]),
+            "baseline_data",
+            "no feasible model for the baseline data",
+        ),
+        (
+            DisqualifiedModelError("disqualified", entries=[_LEDGER_ENTRY]),
+            "model",
+            "model disqualified",
+        ),
+        (
+            NonstandardSettingsError("nonstandard", entries=[_LEDGER_ENTRY]),
+            "settings",
+            "nonstandard settings",
+        ),
     ],
     ids=["sufficiency", "infeasible", "disqualified_model", "nonstandard_settings"],
 )
-def test_from_data_ledger_reason_is_the_leaf_compliance_exception(monkeypatch, failure, origin):
+def test_from_data_ledger_names_the_compliance_failure(monkeypatch, failure, origin, reason):
+    """A compliance failure at fit is one population-stage row whose origin and
+    reason name the failing part, with the error's records as detail."""
     group = _fit_one_failing_meter(monkeypatch, failure)
 
     assert group.ids == ["ok"]
     row = group.exclusions.set_index("id").loc["bad"]
     assert row["stage"] == "population"
     assert row["origin"] == origin
-    assert row["reason"] == type(failure).__name__
+    assert row["reason"] == reason
     assert row["detail"] == "eemeter.test.check: ledger detail"
 
 
 def test_from_data_ledger_records_a_model_fit_error(monkeypatch):
     """A ModelFitError carries no compliance entries, so its message is the detail."""
-    failure = ModelFitError("solver did not converge", component="smoothed", segment="summer")
+    failure = ModelFitError("solver did not converge")
 
     group = _fit_one_failing_meter(monkeypatch, failure)
 
     row = group.exclusions.set_index("id").loc["bad"]
     assert row["origin"] == "model"
-    assert row["reason"] == "ModelFitError"
+    assert row["reason"] == "model fit failed"
     assert row["detail"] == "solver did not converge"
 
 
@@ -1337,9 +1383,9 @@ def _population_on_disqualified_meter(meters, enforce_compliance):
 
 
 def test_relaxed_enforcement_predicts_on_a_disqualified_meter(daily_meters):
-    """A population that admitted a disqualified meter at fit keeps the caller's
-    enforcement list and predicts on that meter."""
-    meters = _disqualified_meter(daily_meters)
+    """A population whose enforcement list leaves out the member a meter is
+    disqualified on predicts on that meter."""
+    meters = _disqualified_meter(daily_meters, member="data")
 
     group = _population_on_disqualified_meter(meters, ["settings"])
 

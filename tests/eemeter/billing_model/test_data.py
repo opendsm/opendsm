@@ -566,12 +566,8 @@ def test_dst_handling():
 
 
 def test_mixed_monthly_and_bimonthly_reads_infer_monthly(comstock_monthly):
-    """A read schedule mixing monthly and bimonthly periods resolves to monthly.
-
-    Data frequency comes from the median gap between reads, so a majority-monthly
-    schedule is treated as monthly and the longer reads are disqualified as
-    off-cycle rather than the whole series being read as bimonthly.
-    """
+    """Data frequency comes from the median gap between reads, so a majority-monthly
+    schedule is treated as monthly and the longer reads are disqualified as off-cycle."""
     df_b, _ = comstock_monthly
     df = df_b.copy()
     observed = df["observed"].dropna()

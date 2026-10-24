@@ -29,14 +29,12 @@ from opendsm.common.clustering.settings import ClusteringSettings
 from opendsm.common.metrics import BaselineMetrics
 from opendsm.common.const import CAlgoChoice
 
+from opendsm.eemeter.common.compliance import SCHEMA_VERSION, check_schema_version
 from opendsm.eemeter.common.data_settings import HourlyDataSettings
 
 
 
 # from opendsm.common.const import CountryCode
-
-
-SCHEMA_VERSION = 1
 
 
 class SelectionChoice(str, Enum):
@@ -577,8 +575,8 @@ class SerializedHourlyModel(SerializeModel):
 
     `schema_version` names the payload layout and `compliance` holds the records the
     model carried when it was written, one `OpenDSMWarning.json()` entry each. The
-    settings and metrics blocks are plain mappings here: each is rebuilt by the loader
-    from its serialized form rather than revalidated as the object that wrote it.
+    settings and metrics blocks are plain mappings here; the loader rebuilds each from
+    its serialized form.
     """
 
     schema_version: int
@@ -587,12 +585,4 @@ class SerializedHourlyModel(SerializeModel):
     baseline_metrics: Optional[Dict[str, Any]] = None
     baseline_hour_metrics: Optional[Dict[str, Dict[str, Any]]] = None
 
-    @pydantic.field_validator("schema_version")
-    def _known_schema_version(cls, v):
-        if v > SCHEMA_VERSION:
-            raise ValueError(
-                f"payload schema_version {v} is newer than the {SCHEMA_VERSION} this "
-                "package can read"
-            )
-
-        return v
+    _known_schema_version = pydantic.field_validator("schema_version")(check_schema_version)

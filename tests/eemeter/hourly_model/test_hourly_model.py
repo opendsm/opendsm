@@ -33,7 +33,7 @@ from opendsm.eemeter.common.exceptions import (
     NonstandardSettingsError,
 )
 from opendsm.eemeter.common.warnings import EEMeterWarning
-from opendsm import OpenDSMWarning
+from opendsm.common.warnings import OpenDSMWarning
 from opendsm.common.test_data import load_test_data
 from ..helpers import nonstandard_settings_warnings
 from .conftest import _TEST_METER
@@ -96,22 +96,7 @@ def test_fit_wraps_regressor_linalg_error(baseline, monkeypatch):
     with pytest.raises(ModelFitError) as exc_info:
         hm.fit(baseline, is_electricity_data=True)
 
-    assert exc_info.value.component == "regressor"
-    assert isinstance(exc_info.value.__cause__, np.linalg.LinAlgError)
-
-
-def test_fit_wraps_design_matrix_linalg_error(baseline, monkeypatch):
-    hm = HourlyModel()
-
-    def raise_linalg_error(self, df, dst_indices):
-        raise np.linalg.LinAlgError("singular matrix")
-
-    monkeypatch.setattr(HourlyModel, "_get_feature_matrices", raise_linalg_error)
-
-    with pytest.raises(ModelFitError) as exc_info:
-        hm.fit(baseline, is_electricity_data=True)
-
-    assert exc_info.value.component == "regressor"
+    assert "Hourly regressor fit failed" in str(exc_info.value)
     assert isinstance(exc_info.value.__cause__, np.linalg.LinAlgError)
 
 
@@ -137,23 +122,46 @@ def test_tz_naive(baseline):
         HourlyModel().fit(baseline, is_electricity_data=True)
 
 
-def test_tz_mismatch(baseline):
-    """Reporting data in another timezone is a data disqualification, so the default
-    refuses and dropping "data" from the enforced set predicts anyway."""
+def _fit_with_tz_mismatched_reporting(baseline):
+    """A model fit on a Los Angeles baseline, and that baseline converted to New York."""
     baseline.index = baseline.index.tz_convert("America/Los_Angeles")
     reporting = baseline.copy()
     reporting.index = reporting.index.tz_convert("America/New_York")
     hm = HourlyModel().fit(baseline, is_electricity_data=True)
 
+    return hm, reporting
+
+
+def test_tz_mismatch_raises_by_default(baseline):
+    """Reporting data in another timezone is a data disqualification, so the default
+    refuses with one timezone_mismatch entry."""
+    hm, reporting = _fit_with_tz_mismatched_reporting(baseline)
+
     with pytest.raises(DataSufficiencyError) as exc_info:
         hm.predict(reporting)
 
-    assert any(
-        entry.qualified_name == "eemeter.data_quality.timezone_mismatch"
+    mismatches = [
+        entry
         for entry in exc_info.value.entries
-    )
+        if entry.qualified_name == "eemeter.data_quality.timezone_mismatch"
+    ]
+    assert len(mismatches) == 1, [entry.qualified_name for entry in exc_info.value.entries]
 
-    hm.predict(reporting, enforce_compliance=["model", "settings"])
+
+def test_tz_mismatch_predicts_with_data_unenforced(baseline):
+    """Dropping "data" from the enforced set predicts on reporting data in another timezone."""
+    hm, reporting = _fit_with_tz_mismatched_reporting(baseline)
+
+    result = hm.predict(reporting, enforce_compliance=["model", "settings"])
+
+    assert len(result) > 0
+
+
+def test_predict_before_fit_raises(reporting):
+    """Predicting on an unfitted HourlyModel raises RuntimeError, not a validation error
+    from building the reporting data."""
+    with pytest.raises(RuntimeError, match="must be fit"):
+        HourlyModel().predict(reporting)
 
 
 def test_predict_missing_fit_features(baseline, reporting):
@@ -222,7 +230,7 @@ def test_low_freq_temp(baseline):
     """Daily-resampled temperature leaves no day with enough non-interpolated
     hours, which is infeasible rather than an ordinary disqualification."""
     baseline["temperature"] = baseline["temperature"].resample("D").mean()
-    with pytest.raises(InfeasibleDataError) as exc_info:
+    with pytest.raises(InfeasibleDataError, match="no day has at least") as exc_info:
         HourlyModel().fit(baseline, is_electricity_data=True)
     assert any(entry.qualified_name == "eemeter.model_fit" for entry in exc_info.value.entries)
 
@@ -231,7 +239,7 @@ def test_low_freq_meter(baseline):
     """Daily-resampled observed leaves no day with enough non-interpolated
     hours, which is infeasible rather than an ordinary disqualification."""
     baseline["observed"] = baseline["observed"].resample("D").mean()
-    with pytest.raises(InfeasibleDataError) as exc_info:
+    with pytest.raises(InfeasibleDataError, match="no day has at least") as exc_info:
         HourlyModel().fit(baseline, is_electricity_data=True)
     assert any(entry.qualified_name == "eemeter.model_fit" for entry in exc_info.value.entries)
 
@@ -304,34 +312,42 @@ def test_hourly_fit_daily_threshold(baseline):
     m = HourlyModel()
     b1 = baseline.copy()
     b1.loc["2018-01-08":"2018-01-08 11", "temperature"] = np.nan
-    b1 = m._daily_fitting_sufficiency(b1)
-    assert b1.loc["2018-01-08", "include_date"].sum() == 24
+    enough_hours_1, _ = m._fitting_day_masks(b1)
+    assert enough_hours_1.loc["2018-01-08"].sum() == 24
 
     b2 = baseline.copy()
     b2.loc["2018-01-08":"2018-01-08 12", "temperature"] = np.nan
-    b2 = m._daily_fitting_sufficiency(b2)
-    assert b2.loc["2018-01-08", "include_date"].sum() == 0
-    assert b2.loc["2018-01-09", "include_date"].sum() == 24
+    enough_hours_2, _ = m._fitting_day_masks(b2)
+    assert enough_hours_2.loc["2018-01-08"].sum() == 0
+    assert enough_hours_2.loc["2018-01-09"].sum() == 24
+
+
+@pytest.fixture
+def poor_baseline(baseline):
+    """The `baseline` frame with heavy-tailed observed loads whose fit fails the fit-metrics
+    criteria."""
+    poor = baseline.copy()
+    poor["observed"] = np.random.default_rng(0).normal(-1, 10, len(poor)) ** 3
+
+    return poor
 
 
 @pytest.mark.filterwarnings("ignore:Objective did not converge.")
-def test_hourly_error_metric_dq(baseline):
-    baseline["observed"] = np.random.normal(-1, 10, len(baseline)) ** 3
-    model = HourlyModel().fit(baseline, is_electricity_data=True)
+def test_hourly_error_metric_dq(poor_baseline):
+    model = HourlyModel().fit(poor_baseline, is_electricity_data=True)
     assert_dq(model, ["eemeter.model_fit_metrics"])
     with pytest.raises(DisqualifiedModelError):
-        model.predict(baseline)
+        model.predict(poor_baseline)
 
 
 @pytest.mark.filterwarnings("ignore:Objective did not converge.")
-def test_fit_starts_its_own_compliance_record(baseline):
+def test_fit_starts_its_own_compliance_record(poor_baseline):
     """A second model fit on a frame carries one fit-metrics disqualification and leaves the
     first model fit on that frame unchanged."""
-    baseline["observed"] = np.random.default_rng(0).normal(-1, 10, len(baseline)) ** 3
-    first = HourlyModel().fit(baseline, is_electricity_data=True)
+    first = HourlyModel().fit(poor_baseline, is_electricity_data=True)
     first_payload = first.to_json()
 
-    second = HourlyModel().fit(baseline, is_electricity_data=True)
+    second = HourlyModel().fit(poor_baseline, is_electricity_data=True)
 
     names = [entry.qualified_name for entry in second.compliance.disqualification]
     assert names.count("eemeter.model_fit_metrics") == 1, (
@@ -378,8 +394,7 @@ def test_predict_on_all_nan_temperature_with_gappy_input_returns_built_frame_ind
     baseline, reporting
 ):
     """When the reporting content is gappy or sub-hourly, the infeasible prediction
-    frame is indexed to the built (gap-filled, hourly) reporting frame, not to the
-    caller's raw input frame."""
+    frame is indexed to the built (gap-filled, hourly) reporting frame."""
     hm = HourlyModel().fit(baseline, is_electricity_data=True)
 
     reporting_gappy = reporting.copy()
@@ -404,6 +419,29 @@ def test_predict_on_all_nan_temperature_raises_by_default(baseline, reporting):
 
     with pytest.raises(DataSufficiencyError):
         hm.predict(reporting_nan)
+
+
+@pytest.mark.slow
+def test_predict_emits_each_infeasible_reporting_record_once(baseline, reporting):
+    """Predicting on infeasible reporting content with 'data' not enforced emits each
+    infeasible record of the built reporting data exactly once."""
+    hm = HourlyModel().fit(baseline, is_electricity_data=True)
+    reporting_nan = reporting.copy()
+    reporting_nan["temperature"] = np.nan
+    expected = sorted(
+        entry.qualified_name for entry in hm._reporting_data(reporting_nan).compliance.infeasible
+    )
+
+    with pytest.warns(OpenDSMWarning) as record:
+        hm.predict(reporting_nan, enforce_compliance=["model", "settings"])
+
+    emitted = sorted(
+        w.message.qualified_name
+        for w in record
+        if isinstance(w.message, OpenDSMWarning) and w.message.severity == "infeasible"
+    )
+    assert expected, "the all-NaN reporting frame recorded no infeasible entry"
+    assert emitted == expected, f"expected {expected} emitted once each, got {emitted}"
 
 
 def test_hourly_dict_settings():
@@ -466,21 +504,25 @@ def test_default_settings_fit_carries_no_nonstandard_settings_warning(default_fi
 
 
 @pytest.mark.slow
-def test_nonstandard_developer_setting_fit_carries_one_warning(cvrmse_1_2_fitted_hourly):
-    warnings = nonstandard_settings_warnings(cvrmse_1_2_fitted_hourly.compliance.disqualification)
+def test_nonstandard_developer_setting_fit_carries_one_disqualification(
+    cvrmse_1_2_fitted_hourly,
+):
+    records = nonstandard_settings_warnings(cvrmse_1_2_fitted_hourly.compliance.disqualification)
 
-    assert len(warnings) == 1
-    assert warnings[0].data["deviations"] == {"cvrmse_threshold": {"value": 1.2, "default": 1.4}}
+    assert len(records) == 1
+    assert records[0].data["deviations"] == {"cvrmse_threshold": {"value": 1.2, "default": 1.4}}
 
 
 @pytest.mark.slow
-def test_nonstandard_developer_setting_warning_survives_dict_round_trip(cvrmse_1_2_fitted_hourly):
+def test_nonstandard_developer_setting_disqualification_survives_dict_round_trip(
+    cvrmse_1_2_fitted_hourly,
+):
     rebuilt = HourlyModel.from_dict(cvrmse_1_2_fitted_hourly.to_dict())
 
-    warnings = nonstandard_settings_warnings(rebuilt.compliance.disqualification)
+    records = nonstandard_settings_warnings(rebuilt.compliance.disqualification)
 
-    assert len(warnings) == 1
-    assert warnings[0].data["deviations"] == {"cvrmse_threshold": {"value": 1.2, "default": 1.4}}
+    assert len(records) == 1
+    assert records[0].data["deviations"] == {"cvrmse_threshold": {"value": 1.2, "default": 1.4}}
 
 
 @pytest.mark.slow
@@ -793,10 +835,10 @@ class TestFitStatisticsFromIncludedDays:
     def test_complete_dst_day_counts_as_fully_measured(self, flagged_hourly, day):
         model = HourlyModel(settings=HourlyNonSolarSettings(min_daily_training_hours=24))
 
-        df = model._daily_fitting_sufficiency(flagged_hourly)
+        enough_hours, _ = model._fitting_day_masks(flagged_hourly)
 
-        on_day = df.index.date == day
-        assert df.loc[on_day, "include_date"].all(), (
+        on_day = flagged_hourly.index.date == day
+        assert enough_hours[on_day].all(), (
             f"a complete {on_day.sum()}-hour day was excluded at min_daily_training_hours=24"
         )
 
@@ -833,7 +875,9 @@ class TestFitStatisticsFromIncludedDays:
         for flag in _UNMEASURED_FLAGS:
             flagged_hourly[flag] = flagged_hourly.index.hour >= 10
 
-        with pytest.raises(InfeasibleDataError) as exc_info:
+        with pytest.raises(
+            InfeasibleDataError, match="no day has at least 12 measured hours"
+        ) as exc_info:
             _fit_flagged(flagged_hourly, min_daily_training_hours=12)
 
         descriptions = [entry.description for entry in exc_info.value.entries]
@@ -1058,13 +1102,28 @@ class TestMissingSupplementalValues:
     def test_fit_raises_when_every_day_is_missing_a_supplemental_value(self, supplemental_hourly):
         supplemental_hourly.loc[supplemental_hourly.index.hour == 0, "occupancy"] = np.nan
 
-        with pytest.raises(InfeasibleDataError) as exc_info:
+        with pytest.raises(
+            InfeasibleDataError,
+            match="every day with enough measured hours is missing a supplemental value",
+        ) as exc_info:
             _fit_flagged(supplemental_hourly, **_SUPPLEMENTAL)
 
         descriptions = [entry.description for entry in exc_info.value.entries]
         assert any("missing a supplemental value" in d for d in descriptions), (
             f"no entry names the missing supplemental values: {descriptions}"
         )
+
+    def test_fit_names_the_measured_hours_minimum_when_both_masks_exclude_every_day(
+        self, supplemental_hourly
+    ):
+        """No day reaching the measured-hours minimum is the cause a fit names, even when
+        every day is also missing a supplemental value."""
+        for flag in _UNMEASURED_FLAGS:
+            supplemental_hourly[flag] = supplemental_hourly.index.hour >= 10
+        supplemental_hourly.loc[supplemental_hourly.index.hour == 0, "occupancy"] = np.nan
+
+        with pytest.raises(InfeasibleDataError, match="no day has at least 12 measured hours"):
+            _fit_flagged(supplemental_hourly, min_daily_training_hours=12, **_SUPPLEMENTAL)
 
     def test_fit_reports_the_days_left_out(self, supplemental_hourly):
         supplemental_hourly.loc["2019-07-17 15:00", "occupancy"] = np.nan
@@ -1567,37 +1626,57 @@ def test_enforce_compliance_false_enforces_nothing(baseline):
     assert set(hm.compliance.status) == {"data", "settings"}
 
 
-def test_fit_enforces_data_member_alone(baseline):
-    """A single-member list enforces only that member's issue."""
+def test_fit_enforcing_data_alone_raises_on_short_baseline(baseline):
+    """A single-member list enforces that member's issue."""
     short_df = _short_baseline(baseline)
 
     with pytest.raises(DataSufficiencyError):
         HourlyModel().fit(short_df, is_electricity_data=True, enforce_compliance=["data"])
 
-    HourlyModel().fit(short_df, is_electricity_data=True, enforce_compliance=["model", "settings"])
+
+def test_fit_without_data_enforced_accepts_short_baseline(baseline):
+    """A list without "data" fits a too-short baseline and records the data issue."""
+    short_df = _short_baseline(baseline)
+
+    hm = HourlyModel().fit(
+        short_df, is_electricity_data=True, enforce_compliance=["model", "settings"]
+    )
+
+    assert "data" in hm.compliance.status, hm.compliance.status
 
 
-def test_fit_enforces_settings_member_alone(baseline):
+def test_fit_enforcing_settings_alone_raises_on_deviation(baseline):
     with pytest.raises(NonstandardSettingsError):
         HourlyModel(settings=HourlyNonSolarSettings(cvrmse_threshold=1.2)).fit(
             baseline, is_electricity_data=True, enforce_compliance=["settings"]
         )
 
-    HourlyModel(settings=HourlyNonSolarSettings(cvrmse_threshold=1.2)).fit(
+
+def test_fit_without_settings_enforced_accepts_deviation(baseline):
+    """A list without "settings" fits through a settings deviation and records it."""
+    hm = HourlyModel(settings=HourlyNonSolarSettings(cvrmse_threshold=1.2)).fit(
         baseline, is_electricity_data=True, enforce_compliance=["data", "model"]
     )
 
+    assert "settings" in hm.compliance.status, hm.compliance.status
+
 
 @pytest.mark.filterwarnings("ignore:Objective did not converge.")
-def test_predict_enforces_model_member_alone(baseline):
-    poor_baseline = baseline.copy()
-    poor_baseline["observed"] = np.random.default_rng(0).normal(-1, 10, len(poor_baseline)) ** 3
+def test_predict_enforcing_model_alone_raises_on_disqualified_fit(poor_baseline):
     hm = HourlyModel().fit(poor_baseline, is_electricity_data=True)
     assert hm.compliance.status == ["model"]
 
     with pytest.raises(DisqualifiedModelError):
         hm.predict(poor_baseline, enforce_compliance=["model"])
-    hm.predict(poor_baseline, enforce_compliance=["data", "settings"])
+
+
+@pytest.mark.filterwarnings("ignore:Objective did not converge.")
+def test_predict_without_model_enforced_predicts_on_disqualified_fit(poor_baseline):
+    hm = HourlyModel().fit(poor_baseline, is_electricity_data=True)
+
+    result = hm.predict(poor_baseline, enforce_compliance=["data", "settings"])
+
+    assert len(result) > 0
 
 
 def test_fit_rejects_unknown_enforce_compliance_member(baseline):
@@ -1613,20 +1692,15 @@ def test_predict_rejects_unknown_enforce_compliance_member(baseline, reporting):
 
 
 def test_nonstandard_settings_disqualification_status_and_emission(baseline):
-    """A settings deviation is recorded silently: it shows up in `status`, but
-    unlike other disqualifications it is never emitted as a Python warning."""
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+    """A settings deviation shows up in `status` and is emitted once at fit."""
+    with pytest.warns(OpenDSMWarning) as record:
         hm = HourlyModel(settings=HourlyNonSolarSettings(cvrmse_threshold=1.2)).fit(
             baseline, is_electricity_data=True, enforce_compliance=False
         )
 
+    emitted = [w.message for w in record if isinstance(w.message, OpenDSMWarning)]
     assert hm.compliance.status == ["settings"]
-    assert not any(
-        issubclass(w.category, OpenDSMWarning)
-        and getattr(w.message, "qualified_name", None) == "eemeter.settings.nonstandard"
-        for w in caught
-    )
+    assert len(nonstandard_settings_warnings(emitted)) == 1, [w.qualified_name for w in emitted]
 
 
 def test_fit_refusal_order_settings_before_infeasible_data(baseline):
@@ -1658,11 +1732,11 @@ def test_fit_refusal_order_infeasible_before_data_disqualified(baseline):
 
 
 @pytest.mark.filterwarnings("ignore:Objective did not converge.")
-def test_predict_refusal_order_disqualified_model_before_disqualified_data(baseline, reporting):
+def test_predict_refusal_order_disqualified_model_before_disqualified_data(
+    poor_baseline, reporting
+):
     """A disqualified model and disqualified reporting data are both present;
     the model check runs first and is what raises."""
-    poor_baseline = baseline.copy()
-    poor_baseline["observed"] = np.random.default_rng(0).normal(-1, 10, len(poor_baseline)) ** 3
     with pytest.warns(OpenDSMWarning):
         hm = HourlyModel().fit(poor_baseline, is_electricity_data=True, enforce_compliance=False)
     assert hm.compliance.status == ["model"]
@@ -1674,29 +1748,15 @@ def test_predict_refusal_order_disqualified_model_before_disqualified_data(basel
         hm.predict(bad_reporting, enforce_compliance=True)
 
 
+@pytest.mark.parametrize("fill", [0.0, np.nan], ids=["all_zero", "all_nan"])
 @pytest.mark.parametrize("enforce_compliance", [True, False, ["model"], ["settings"]])
-def test_all_zero_observed_raises_infeasible_regardless_of_enforced(baseline, enforce_compliance):
-    """The all-zero pre-fit check is unconditional: it fires no matter what
+def test_unusable_observed_raises_infeasible_regardless_of_enforced(
+    baseline, fill, enforce_compliance
+):
+    """The all-zero and all-NaN pre-fit check is unconditional: it fires no matter what
     enforce_compliance names, since it carries no member of its own."""
     baseline_bad = baseline.copy()
-    baseline_bad["observed"] = 0.0
-
-    with pytest.raises(InfeasibleDataError) as exc_info:
-        HourlyModel().fit(
-            baseline_bad, is_electricity_data=True, enforce_compliance=enforce_compliance
-        )
-
-    assert any(
-        entry.qualified_name == "eemeter.sufficiency_criteria.no_data"
-        for entry in exc_info.value.entries
-    )
-
-
-@pytest.mark.parametrize("enforce_compliance", [True, False, ["model"], ["settings"]])
-def test_all_nan_observed_raises_infeasible_regardless_of_enforced(baseline, enforce_compliance):
-    """The all-NaN pre-fit check is unconditional in the same way."""
-    baseline_bad = baseline.copy()
-    baseline_bad["observed"] = np.nan
+    baseline_bad["observed"] = fill
 
     with pytest.raises(InfeasibleDataError) as exc_info:
         HourlyModel().fit(

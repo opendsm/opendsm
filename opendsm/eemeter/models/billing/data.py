@@ -94,7 +94,7 @@ class _BillingData(_DailyData):
             meter_series = meter_series.resample("MS").sum(min_count=1)
             # normalize to midnight since we're picking an arbitrary day to represent period start anyway
             end_date = end_date.normalize()
-            self._record(
+            self.compliance.record_and_warn(
                 EEMeterWarning(
                     qualified_name="eemeter.sufficiency_criteria.inferior_model_usage",
                     description=(
@@ -110,13 +110,11 @@ class _BillingData(_DailyData):
         meter_series[end_date + pd.Timedelta(days=1)] = np.nan
 
         # This checks for offcycle reads. That is a disqualification if the billing cycle is less than 25 days
-        offcycle_entries = []
-        meter_value_df = clean_billing_daily_data(
-            meter_series.to_frame("value"), data_frequency, offcycle_entries
+        meter_value_df, offcycle_entries = clean_billing_daily_data(
+            meter_series.to_frame("value"), data_frequency
         )
-
         for entry in offcycle_entries:
-            self._record(entry)
+            self.compliance.record_and_warn(entry)
 
         # Spread billing data to daily
         meter_value_df = as_freq(meter_value_df["value"], "D").to_frame("value")
@@ -173,7 +171,7 @@ class _BillingData(_DailyData):
                 or frequency_duration(temp_series.index.freq) > pd.Timedelta(hours=1)
             ):
                 # Add warning for frequencies longer than 1 hour
-                self._record(
+                self.compliance.record_and_warn(
                     EEMeterWarning(
                         qualified_name="eemeter.sufficiency_criteria.unable_to_confirm_daily_temperature_sufficiency",
                         description=(
@@ -191,7 +189,7 @@ class _BillingData(_DailyData):
                 )
                 # If high frequency data check for 50% data coverage in rollup
                 if len(temperature_features[temperature_features.coverage <= 0.5]) > 0:
-                    self._record(
+                    self.compliance.record_and_warn(
                         EEMeterWarning(
                             qualified_name="eemeter.sufficiency_criteria.missing_high_frequency_temperature_data",
                             description=(
@@ -267,7 +265,7 @@ class _BillingData(_DailyData):
                 )
 
                 if invalid_temperature_rows.any():
-                    self._record(
+                    self.compliance.record_and_warn(
                         EEMeterWarning(
                             qualified_name="eemeter.sufficiency_criteria.missing_high_frequency_temperature_data",
                             description=(
@@ -362,10 +360,7 @@ class BillingBaselineData(_BillingData):
 
     Attributes:
         df (DataFrame): Immutable dataframe that contains the meter and temperature values for the baseline data period.
-        compliance (Compliance): The records produced while checking this data. Its
-            `disqualification` records are serious issues that can degrade the quality of
-            the model; to build a model in spite of them, relax `enforce_compliance` on the
-            model. Its `warnings` records are issues that will not severely reduce quality.
+        compliance (Compliance): The records produced while checking this data.
     """
 
     def _check_data_sufficiency(self, sufficiency_df):
@@ -409,10 +404,7 @@ class BillingReportingData(_BillingData):
 
     Attributes:
         df (DataFrame): Immutable dataframe that contains the meter and temperature values for the baseline data period.
-        compliance (Compliance): The records produced while checking this data. Its
-            `disqualification` records are serious issues that can degrade the quality of
-            the model; to build a model in spite of them, relax `enforce_compliance` on the
-            model. Its `warnings` records are issues that will not severely reduce quality.
+        compliance (Compliance): The records produced while checking this data.
     """
 
     def __init__(

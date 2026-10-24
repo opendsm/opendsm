@@ -296,11 +296,11 @@ class BoxCox(PowerTransformMixin, TransformBase):
         # Box-Cox requires strictly positive data
         if np.any(col_f <= 0):
             StatsWarning(
-                qualified_name="opendsm.stats.distribution_transform.box_cox_non_positive",
+                qualified_name="stats.distribution_transform.box_cox_non_positive",
                 description=f"BoxCox: dim {d} has non-positive values; skipping.",
                 severity="advisory",
                 data={"dim": d},
-            ).warn()
+            ).warn(stacklevel=5)  # the caller of fit / fit_transform
             self.skip_dims_[d] = True
             return
 

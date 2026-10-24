@@ -171,14 +171,14 @@ class TransformBase(ABC):
                     self._fit_dim(d, col_f, fm, X, return_transformed, out)
                 except (np.linalg.LinAlgError, ValueError, FloatingPointError) as e:
                     StatsWarning(
-                        qualified_name="opendsm.stats.distribution_transform.fit_dim_failed",
+                        qualified_name="stats.distribution_transform.fit_dim_failed",
                         description=(
                             f"{type(self).__name__}: fitting failed for dim {d} "
                             f"({type(e).__name__}: {e}); passing through."
                         ),
                         severity="advisory",
                         data={"dim": d},
-                    ).warn()
+                    ).warn(stacklevel=4)  # the caller of fit / fit_transform
                     self.skip_dims_[d] = True
         finally:
             if old_err is not None:

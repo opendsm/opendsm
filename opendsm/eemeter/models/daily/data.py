@@ -81,7 +81,7 @@ class _DailyData:
         )
 
         for entry in self._check_data_sufficiency(sufficiency_df):
-            self._record(entry)
+            self.compliance.record_and_warn(entry)
 
     @property
     def df(self) -> pd.DataFrame | None:
@@ -91,16 +91,6 @@ class _DailyData:
             return None
         else:
             return self._df.copy()
-
-    def _record(self, entry: EEMeterWarning) -> None:
-        """Store a compliance record and emit it on the warnings channel.
-
-        This is the only point at which a record is emitted; readers of the stored
-        record, such as the model that was fit on this data, never re-emit it.
-        """
-
-        self.compliance.record(entry)
-        entry.warn()
 
     def _compute_meter_value_df(self, df: pd.DataFrame):
         """
@@ -131,13 +121,11 @@ class _DailyData:
         if data_frequency.startswith("billing"):
             # TODO : make this a warning instead of an exception
             raise ValueError("Billing data is not allowed in the daily model")
-        cleaning_entries = []
-        meter_value_df = clean_billing_daily_data(
-            meter_series, data_frequency, cleaning_entries
+        meter_value_df, cleaning_entries = clean_billing_daily_data(
+            meter_series, data_frequency
         )
-
         for entry in cleaning_entries:
-            self._record(entry)
+            self.compliance.record_and_warn(entry)
 
         meter_value_df = meter_value_df.rename(columns={"value": "observed"})
 
@@ -198,7 +186,7 @@ class _DailyData:
                 temp_series.index.freq
             ) > pd.Timedelta(hours=1):
                 # Add warning for frequencies longer than 1 hour
-                self._record(
+                self.compliance.record_and_warn(
                     EEMeterWarning(
                         qualified_name="eemeter.sufficiency_criteria.unable_to_confirm_daily_temperature_sufficiency",
                         description=(
@@ -215,7 +203,7 @@ class _DailyData:
                 )
                 # If high frequency data check for 50% data coverage in rollup
                 if len(temperature_features[temperature_features.coverage <= 0.5]) > 0:
-                    self._record(
+                    self.compliance.record_and_warn(
                         EEMeterWarning(
                             qualified_name="eemeter.sufficiency_criteria.missing_high_frequency_temperature_data",
                             description=(
@@ -286,7 +274,7 @@ class _DailyData:
 
                 # Set high frequency temperature data with more than 50% data missing as NaN
                 if invalid_temperature_rows.any():
-                    self._record(
+                    self.compliance.record_and_warn(
                         EEMeterWarning(
                             qualified_name="eemeter.sufficiency_criteria.missing_high_frequency_temperature_data",
                             description=(
@@ -394,7 +382,7 @@ class _DailyData:
         elif df.index.tz is None:
             raise ValueError("Datatime is missing timezone information")
         elif str(df.index.tz) == "UTC":
-            self._record(
+            self.compliance.record_and_warn(
                 EEMeterWarning(
                     qualified_name="eemeter.data_quality.utc_index",
                     description=(
@@ -441,10 +429,7 @@ class DailyBaselineData(_DailyData):
 
     Attributes:
         df (DataFrame): Immutable dataframe that contains the meter and temperature values for the baseline data period.
-        compliance (Compliance): The records produced while checking this data. Its
-            `disqualification` records are serious issues that can degrade the quality of
-            the model; to build a model in spite of them, relax `enforce_compliance` on the
-            model. Its `warnings` records are issues that will not severely reduce quality.
+        compliance (Compliance): The records produced while checking this data.
 
     """
 
@@ -490,10 +475,7 @@ class DailyReportingData(_DailyData):
 
     Attributes:
         df (DataFrame): Immutable dataframe that contains the meter and temperature values for the baseline data period.
-        compliance (Compliance): The records produced while checking this data. Its
-            `disqualification` records are serious issues that can degrade the quality of
-            the model; to build a model in spite of them, relax `enforce_compliance` on the
-            model. Its `warnings` records are issues that will not severely reduce quality.
+        compliance (Compliance): The records produced while checking this data.
     """
 
     def __init__(

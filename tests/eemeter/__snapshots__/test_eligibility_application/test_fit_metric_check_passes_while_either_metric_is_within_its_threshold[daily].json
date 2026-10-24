@@ -1,0 +1,30 @@
+{
+  "both_at_threshold": {
+    "passed": true,
+    "records": []
+  },
+  "both_past_threshold": {
+    "passed": false,
+    "records": [
+      {
+        "data": {
+          "cvrmse": 1.0000000000000002,
+          "cvrmse_threshold": 1,
+          "pnrmse": 1.6000000000000003,
+          "pnrmse_threshold": 1.6
+        },
+        "member": "model",
+        "qualified_name": "eemeter.model_fit_metrics",
+        "severity": "disqualified"
+      }
+    ]
+  },
+  "cvrmse_past_threshold": {
+    "passed": true,
+    "records": []
+  },
+  "pnrmse_past_threshold": {
+    "passed": true,
+    "records": []
+  }
+}

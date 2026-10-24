@@ -220,9 +220,20 @@ def test_box_cox_skips_non_positive_column():
     assert np.allclose(transformed, data)
     assert (
         record[0].message.qualified_name
-        == "opendsm.stats.distribution_transform.box_cox_non_positive"
+        == "stats.distribution_transform.box_cox_non_positive"
     )
     assert record[0].message.data == {"dim": 0}
+
+
+@pytest.mark.parametrize("method", ["fit", "fit_transform"])
+def test_box_cox_non_positive_warning_points_at_the_caller(method):
+    """The non-positive-column warning is attributed to the line calling the transform."""
+    data = np.array([-1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0]).reshape(-1, 1)
+
+    with pytest.warns(StatsWarning) as record:
+        getattr(BoxCox(), method)(data)
+
+    assert record[0].filename == __file__, f"expected {__file__}, got {record[0].filename}"
 
 
 class TestFitDimFailureHandling:
@@ -255,9 +266,24 @@ class TestFitDimFailureHandling:
 
         assert transform.skip_dims_[0]
         assert record[0].message.qualified_name == (
-            "opendsm.stats.distribution_transform.fit_dim_failed"
+            "stats.distribution_transform.fit_dim_failed"
         )
         assert record[0].message.data == {"dim": 0}
+
+    @pytest.mark.parametrize("method", ["fit", "fit_transform"])
+    def test_fit_dim_failure_warning_points_at_the_caller(self, monkeypatch, method):
+        """The fit-failure warning is attributed to the line calling the transform."""
+
+        def _raise(self, d, col_f, fm, X, return_transformed, out):
+            raise ValueError("degenerate column")
+
+        monkeypatch.setattr(Standardize, "_fit_dim", _raise)
+        data = np.linspace(1.0, 20.0, 50).reshape(-1, 1)
+
+        with pytest.warns(StatsWarning) as record:
+            getattr(Standardize(), method)(data)
+
+        assert record[0].filename == __file__, f"expected {__file__}, got {record[0].filename}"
 
     def test_uncaught_exception_propagates(self, monkeypatch):
         """An exception outside the caught set is not converted to a warning."""

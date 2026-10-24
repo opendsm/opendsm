@@ -17,10 +17,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from opendsm.eemeter.common.compliance import (
-    normalize_enforce_compliance,
-    record_timezone_mismatch,
-)
 from opendsm.eemeter.common.data_processor_utilities import require_dataframe
 from opendsm.eemeter.models.billing.data import (
     BillingBaselineData,
@@ -79,11 +75,15 @@ class BillingModel(DailyModel):
         Args:
             data: The billing data object to predict on.
             aggregation: The aggregation level for the prediction. One of [None, 'none', 'monthly', 'bimonthly'].
+            enforce_compliance: Which compliance members to enforce, as `predict` takes it.
 
         Returns:
             Dataframe with input data along with predicted energy consumption.
 
         Raises:
+            RuntimeError: If the model is not fitted.
+            DisqualifiedModelError: If an enforced member is disqualified on the model.
+            DataSufficiencyError: If data compliance is enforced and `data` is disqualified.
             ValueError: If the aggregation is not one of [None, 'none', 'monthly', 'bimonthly'].
         """
         self._check_predictable(data, enforce_compliance)
@@ -159,29 +159,19 @@ class BillingModel(DailyModel):
             Dataframe with input data along with predicted energy consumption.
 
         Raises:
+            TypeError: If df is not a pandas DataFrame.
             RuntimeError: If the model is not fitted.
             DisqualifiedModelError: If an enforced member is disqualified on the model.
             DataSufficiencyError: If data compliance is enforced and the reporting data
                 is disqualified.
-            TypeError: If df is not a pandas DataFrame.
             ValueError: If the aggregation is not one of [None, 'none', 'monthly', 'bimonthly'].
         """
         require_dataframe(df, "df")
 
-        if not self.is_fitted:
-            raise RuntimeError("Model must be fit before predictions can be made.")
-
-        enforced = normalize_enforce_compliance(enforce_compliance)
-        self._check_model_compliance(enforced)
-
-        reporting = self._reporting_data(df)
-        record_timezone_mismatch(reporting.compliance, self.baseline_timezone, reporting.tz)
-        self._check_reporting_compliance(reporting, enforced)
-
         df_res = self._predict_data(
-            reporting,
+            self._reporting_data(df),
             aggregation=aggregation,
-            enforce_compliance=False,
+            enforce_compliance=enforce_compliance,
         )
 
         return df_res

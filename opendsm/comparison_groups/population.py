@@ -25,12 +25,16 @@ from opendsm.comparison_groups import exclusions
 from opendsm.comparison_groups.common import Data, Data_Settings
 from opendsm.comparison_groups.common import const as _const
 from opendsm.comparison_groups.warnings import ComparisonGroupWarning
-from opendsm.eemeter.common.compliance import normalize_enforce_compliance
+from opendsm.eemeter.common.compliance import (
+    normalize_enforce_compliance,
+    raise_if_model_disqualified,
+)
 from opendsm.eemeter.common.data_processor_utilities import require_dataframe
 from opendsm.eemeter.common.exceptions import (
     ComplianceError,
     DataSufficiencyError,
     DisqualifiedModelError,
+    InfeasibleDataError,
     ModelFitError,
     NonstandardSettingsError,
 )
@@ -70,16 +74,23 @@ _INPUT_COLS = {
 }
 
 
-def _fit_failure_origin(exc) -> str:
-    """The ledger origin naming the part of the fit a failure came from."""
+def _fit_failure_origin_and_reason(exc) -> tuple:
+    """The ledger origin naming the part of the fit a failure came from, and the
+    ledger reason describing the failure."""
+    if isinstance(exc, InfeasibleDataError):
+        return "baseline_data", "no feasible model for the baseline data"
+
     if isinstance(exc, DataSufficiencyError):
-        return "baseline_data"
+        return "baseline_data", "insufficient baseline data"
 
     if isinstance(exc, NonstandardSettingsError):
-        return "settings"
+        return "settings", "nonstandard settings"
 
-    if isinstance(exc, (DisqualifiedModelError, ModelFitError)):
-        return "model"
+    if isinstance(exc, DisqualifiedModelError):
+        return "model", "model disqualified"
+
+    if isinstance(exc, ModelFitError):
+        return "model", "model fit failed"
 
     raise TypeError(f"Unrecognized fit failure {type(exc).__name__}")
 
@@ -133,8 +144,7 @@ def _fit_meters(
 ):
     """Fit one model per meter, serially. Returns ``(records, ledger)``: a record
     per meter that fits, carrying its ``reporting`` entry, and a population-stage
-    ledger row per meter whose fit raises a compliance or model-fit error, under
-    the leaf exception name."""
+    ledger row per meter whose fit raises a compliance or model-fit error."""
     if model_frequency not in _MODEL_CLASSES:
         raise ValueError(
             f"model_frequency must be one of {list(_MODEL_CLASSES)}, got {model_frequency!r}"
@@ -165,26 +175,13 @@ def _fit_meters(
                 bool(is_electricity_data),
                 enforce_compliance,
             )
-        except ComplianceError as exc:
-            detail = exclusions.format_warnings(exc.entries) or str(exc)
-            ledger = exclusions.append(
-                ledger,
-                [mid],
-                "population",
-                _fit_failure_origin(exc),
-                type(exc).__name__,
-                detail=detail,
-            )
-            continue
-        except ModelFitError as exc:
-            ledger = exclusions.append(
-                ledger,
-                [mid],
-                "population",
-                _fit_failure_origin(exc),
-                type(exc).__name__,
-                detail=str(exc),
-            )
+        except (ComplianceError, ModelFitError) as exc:
+            origin, reason = _fit_failure_origin_and_reason(exc)
+            detail = str(exc)
+            if isinstance(exc, ComplianceError):
+                detail = exclusions.format_warnings(exc.entries) or detail
+
+            ledger = exclusions.append(ledger, [mid], "population", origin, reason, detail=detail)
             continue
 
         record = _MeterRecord(id=mid, model=model, baseline_data=baseline_data)
@@ -283,9 +280,10 @@ class MeterPopulation:
     ``ledger`` is the population's initial exclusions ledger, in the shared
     ledger schema; empty when omitted.
 
-    ``enforce_compliance`` is the caller's policy, kept verbatim and handed to
-    every prediction the population makes, so a population built on relaxed
-    enforcement keeps predicting on the meters it admitted.
+    ``enforce_compliance`` is the caller's policy, stored and serialized as passed. Every
+    prediction the population makes enforces it less ``model``, with ``data`` judged on
+    each model's fit records only, so a population built on relaxed enforcement keeps
+    predicting on the meters it admitted.
     """
 
     _role = "population"
@@ -308,6 +306,8 @@ class MeterPopulation:
 
         self.model_frequency = model_frequency
         self._meters = {str(k): v for k, v in meters.items()}
+        # Raises on a bad policy at construction rather than at the first prediction.
+        normalize_enforce_compliance(enforce_compliance)
         self.enforce_compliance = enforce_compliance
         self.features = self._validate_features(features)
 
@@ -603,12 +603,14 @@ class MeterPopulation:
         if data is None:
             raise ValueError(f"Meter {rec.id}: no {period} data attached.")
 
-        # A population may admit a meter whose fit metrics failed (see
-        # `_validate_meters`); its model compliance member must not be enforced here
-        # or that admission is immediately undone.
-        enforce_compliance = sorted(normalize_enforce_compliance(self.enforce_compliance) - {"model"})
+        # A population may admit a meter whose fit metrics failed (`_validate_meters`),
+        # so enforcing `model` here would undo that admission. Correction applies its
+        # own observed and joint pruning to reporting data, so `data` is enforced on
+        # the model's fit records and not on the data predicted on.
+        members = normalize_enforce_compliance(self.enforce_compliance) - {"model"}
+        raise_if_model_disqualified(rec.model.compliance, members)
 
-        pred = rec.model._predict_data(data, enforce_compliance=enforce_compliance)
+        pred = rec.model._predict_data(data, enforce_compliance=sorted(members - {"data"}))
 
         frame = pd.DataFrame(
             {
@@ -865,10 +867,6 @@ class MeterPopulation:
     # -- serialization -------------------------------------------------------
 
     def _header(self):
-        enforce_compliance = self.enforce_compliance
-        if isinstance(enforce_compliance, (list, tuple, frozenset, set)):
-            enforce_compliance = list(enforce_compliance)
-
         header = {
             "schema_version": SCHEMA_VERSION,
             "model_frequency": self.model_frequency,
@@ -876,7 +874,7 @@ class MeterPopulation:
             "tz": self.tz,
             "is_electricity_data": bool(self.is_electricity_data),
             "exclusions": self._exclusions.to_json(orient="table"),
-            "enforce_compliance": enforce_compliance,
+            "enforce_compliance": self.enforce_compliance,
         }
 
         return header

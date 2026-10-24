@@ -12,7 +12,6 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 import json
-import warnings
 
 import pytest
 
@@ -20,7 +19,7 @@ import numpy as np
 import pandas as pd
 
 from opendsm.eemeter import DailyModel
-from opendsm.eemeter.models.daily.data import DailyBaselineData
+from opendsm.eemeter.models.daily.data import DailyBaselineData, DailyReportingData
 from opendsm.eemeter.common.data_settings import DailyDataSettings
 from opendsm.eemeter.models.daily.utilities.settings import DailySettings
 from opendsm.common.warnings import OpenDSMWarning
@@ -41,12 +40,14 @@ from ..helpers import (
 
 @pytest.fixture
 def daily_series(comstock_daily):
-    """(meter_df, temperature_series) extracted from ComStock daily baseline."""
+    """(meter_df, temperature_series) from the ComStock daily baseline, each day labelled at
+    Los Angeles midnight: the meter indexed in America/Los_Angeles, the temperature in UTC."""
     df_b, _ = comstock_daily
-    meter = df_b[["observed"]].rename(columns={"observed": "value"}).copy()
-    meter.index = meter.index.tz_convert("America/Los_Angeles")
+    local_midnights = df_b.index.tz_localize(None).tz_localize("America/Los_Angeles")
+    meter = df_b[["observed"]].rename(columns={"observed": "value"})
+    meter.index = local_midnights
     temp = df_b["temperature"].copy()
-    temp.index = temp.index.tz_convert("UTC")
+    temp.index = local_midnights.tz_convert("UTC")
 
     return meter, temp
 
@@ -111,16 +112,18 @@ def test_timezone_behavior(daily_series):
     with pytest.raises(DataSufficiencyError) as exc_info:
         model.predict(reporting_no_meter_utc)
 
-    assert any(
-        entry.qualified_name == "eemeter.data_quality.timezone_mismatch"
+    mismatches = [
+        entry
         for entry in exc_info.value.entries
-    )
+        if entry.qualified_name == "eemeter.data_quality.timezone_mismatch"
+    ]
+    assert len(mismatches) == 1, [entry.qualified_name for entry in exc_info.value.entries]
     model.predict(reporting_no_meter_utc, enforce_compliance=["model", "settings"])
 
     reporting_df = meter_temperature_frame(meter, temp)
     res1 = model.predict(reporting_df)
     reporting_no_meter = pd.DataFrame({"temperature": temp.tz_convert(meter.index.tz)})
-    res2 = model.predict(reporting_no_meter, enforce_compliance=["model", "settings"])
+    res2 = model.predict(reporting_no_meter)
     assert round((res1["temperature"] - res2["temperature"]).sum(), 2) == 0
     assert round((res1["predicted"] - res2["predicted"]).sum(), 2) == 0
 
@@ -197,7 +200,7 @@ def test_predict_without_observed_column_works(daily_series):
     model = DailyModel().fit(baseline_df, is_electricity_data=True)
 
     reporting_df = pd.DataFrame({"temperature": temp.tz_convert(meter.index.tz)})
-    result = model.predict(reporting_df, enforce_compliance=["model", "settings"])
+    result = model.predict(reporting_df)
 
     assert "predicted" in result.columns
     assert "observed" not in result.columns or result["observed"].isna().all()
@@ -214,7 +217,7 @@ def test_predict_does_not_trim_edge_nan_rows(daily_series):
     padded_temp.iloc[-3:] = np.nan
     reporting_df = pd.DataFrame({"temperature": padded_temp})
 
-    result = model.predict(reporting_df, enforce_compliance=["model", "settings"])
+    result = model.predict(reporting_df)
 
     assert len(result) == len(reporting_df)
 
@@ -320,7 +323,8 @@ def test_rejected_refit_leaves_fitted_model_unchanged(comstock_daily):
 
 
 def test_one_row_baseline_raises_infeasible_data_error():
-    """A single day carries no adjacent day to pair with, so no model is feasible."""
+    """A baseline needs two days carrying both temperature and observed, so a single day is
+    infeasible."""
     idx = pd.date_range("2020-01-01", periods=1, freq="D", tz="America/Los_Angeles")
     df = pd.DataFrame({"observed": [10.0], "temperature": [50.0]}, index=idx)
 
@@ -373,34 +377,57 @@ def _named_entry(model, qualified_name):
     return matches[0]
 
 
-def test_constant_temperature_fits_intercept_model():
+@pytest.fixture(scope="module")
+def constant_temperature_daily_model():
+    """A model fit with enforcement off on a year of constant temperature."""
+    rng = np.random.default_rng(0)
+    df = _degenerate_frame(
+        observed=rng.normal(30.0, 3.0, 365),
+        temperature=np.full(365, 65.0),
+    )
+    model = DailyModel().fit(df, is_electricity_data=True, enforce_compliance=False)
+
+    return model
+
+
+@pytest.fixture(scope="module")
+def constant_observed_daily_frame():
+    rng = np.random.default_rng(1)
+    df = _degenerate_frame(
+        observed=np.full(365, 12.0),
+        temperature=rng.uniform(20.0, 90.0, 365),
+    )
+
+    return df
+
+
+@pytest.fixture(scope="module")
+def constant_observed_daily_model(constant_observed_daily_frame):
+    """A model fit with enforcement off on a year of constant observed usage."""
+    model = DailyModel().fit(
+        constant_observed_daily_frame, is_electricity_data=True, enforce_compliance=False
+    )
+
+    return model
+
+
+def test_constant_temperature_fits_intercept_model(constant_temperature_daily_model):
     """Zero temperature variation leaves the balance points unidentifiable, so every
     submodel collapses to the intercept-only fit rather than crashing the optimizer."""
-    rng = np.random.default_rng(0)
-    df = _degenerate_frame(
-        observed=rng.normal(30.0, 3.0, 365),
-        temperature=np.full(365, 65.0),
-    )
+    model_keys = [
+        submodel.model_key for submodel in constant_temperature_daily_model.model.values()
+    ]
 
-    model = DailyModel().fit(df, is_electricity_data=True, enforce_compliance=False)
-
-    assert [submodel.model_key for submodel in model.model.values()] == ["tidd"] * len(
-        model.model
-    )
+    assert model_keys == ["tidd"] * len(model_keys), f"submodel keys: {model_keys}"
 
 
-def test_constant_temperature_records_insufficient_unique_temperature_values():
+def test_constant_temperature_records_insufficient_unique_temperature_values(
+    constant_temperature_daily_model,
+):
     """A constant temperature column disqualifies the baseline on the data member."""
-    rng = np.random.default_rng(0)
-    df = _degenerate_frame(
-        observed=rng.normal(30.0, 3.0, 365),
-        temperature=np.full(365, 65.0),
-    )
-
-    model = DailyModel().fit(df, is_electricity_data=True, enforce_compliance=False)
-
     entry = _named_entry(
-        model, "eemeter.sufficiency_criteria.insufficient_unique_temperature_values"
+        constant_temperature_daily_model,
+        "eemeter.sufficiency_criteria.insufficient_unique_temperature_values",
     )
 
     assert entry.severity == "disqualified"
@@ -408,33 +435,25 @@ def test_constant_temperature_records_insufficient_unique_temperature_values():
     assert entry.data["n_unique_values"] == 1
 
 
-def test_constant_observed_fits_with_zero_residual():
+def test_constant_observed_fits_with_zero_residual(
+    constant_observed_daily_frame, constant_observed_daily_model
+):
     """A constant observed column is a zero-residual fit: the selection criteria stay
     finite and the intercept reproduces the observed level."""
-    rng = np.random.default_rng(1)
-    df = _degenerate_frame(
-        observed=np.full(365, 12.0),
-        temperature=rng.uniform(20.0, 90.0, 365),
-    )
-
-    model = DailyModel().fit(df, is_electricity_data=True, enforce_compliance=False)
-    predicted = model.predict(df, enforce_compliance=False)["predicted"].values
+    predicted = constant_observed_daily_model.predict(
+        constant_observed_daily_frame, enforce_compliance=False
+    )["predicted"].values
 
     np.testing.assert_allclose(predicted, 12.0, atol=1e-4)
 
 
-def test_constant_observed_records_insufficient_unique_observed_values():
+def test_constant_observed_records_insufficient_unique_observed_values(
+    constant_observed_daily_model,
+):
     """A constant observed column disqualifies the baseline on the data member."""
-    rng = np.random.default_rng(1)
-    df = _degenerate_frame(
-        observed=np.full(365, 12.0),
-        temperature=rng.uniform(20.0, 90.0, 365),
-    )
-
-    model = DailyModel().fit(df, is_electricity_data=True, enforce_compliance=False)
-
     entry = _named_entry(
-        model, "eemeter.sufficiency_criteria.insufficient_unique_observed_values"
+        constant_observed_daily_model,
+        "eemeter.sufficiency_criteria.insufficient_unique_observed_values",
     )
 
     assert entry.severity == "disqualified"
@@ -495,8 +514,7 @@ def nonstandard_daily_fit(comstock_daily):
     """(model, emitted): a DailyModel fit with segment_minimum_count=8, and the records that
     fit emitted on the warnings channel."""
     df_b, _ = comstock_daily
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+    with pytest.warns(OpenDSMWarning) as caught:
         model = DailyModel(settings={"segment_minimum_count": 8}).fit(
             df_b.reset_index(), is_electricity_data=True, enforce_compliance=False
         )
@@ -512,12 +530,11 @@ def test_default_settings_fit_has_no_nonstandard_settings_warning(default_fitted
 
 
 @pytest.mark.slow
-def test_nonstandard_settings_deviation_is_recorded_without_emitting(nonstandard_daily_fit):
-    """The settings-deviation entry lands in compliance.status, but is never emitted on
-    the warnings channel."""
+def test_nonstandard_settings_deviation_is_recorded_and_emitted_once(nonstandard_daily_fit):
+    """The settings-deviation entry lands in compliance.status and is emitted once at fit."""
     model, emitted = nonstandard_daily_fit
 
-    assert nonstandard_settings_warnings(emitted) == []
+    assert len(nonstandard_settings_warnings(emitted)) == 1, [w.qualified_name for w in emitted]
     assert "settings" in model.compliance.status
 
 
@@ -742,7 +759,7 @@ def poor_fit_daily_frame(comstock_daily):
 
 @pytest.fixture(scope="module")
 def poor_fit_daily_model(poor_fit_daily_frame):
-    """A fitted model whose fit metrics disqualify it, so its record is written after the fit."""
+    """A model fitted with enforcement off whose fit metrics disqualify it."""
     model = DailyModel().fit(
         poor_fit_daily_frame, is_electricity_data=True, enforce_compliance=False
     )
@@ -751,7 +768,8 @@ def poor_fit_daily_model(poor_fit_daily_frame):
 
 
 def test_fit_metrics_disqualification_survives_a_round_trip(poor_fit_daily_model):
-    """The record is written after the fit, so a payload read at call time carries it."""
+    """A fit-metrics disqualification survives `to_dict`/`from_dict` with its severity, member
+    and data."""
     rebuilt = DailyModel.from_dict(poor_fit_daily_model.to_dict())
 
     entry = _named_entry(rebuilt, "eemeter.model_fit_metrics")
@@ -794,7 +812,8 @@ def test_from_dict_reports_the_validation_failure_that_rejected_a_payload(
 
 
 def test_prior_format_payload_loads_and_carries_its_advisory(default_fitted_daily_model):
-    """A payload without a schema version is read by the prior-format rules."""
+    """A payload without `schema_version` loads and carries only the
+    `eemeter.serialization.prior_format` advisory."""
     model_dict = default_fitted_daily_model.to_dict()
     del model_dict["schema_version"]
     del model_dict["compliance"]
@@ -829,7 +848,8 @@ def test_prior_format_records_rebuild_from_the_info_lists(poor_fit_daily_model):
 def test_prior_format_model_fit_metrics_disqualification_reports_model_status(
     poor_fit_daily_model,
 ):
-    """A prior-format model-tier disqualification derives `member` from its qualified name."""
+    """A model-tier disqualification in a payload without `schema_version` derives `member`
+    from its qualified name."""
     model_dict = poor_fit_daily_model.to_dict()
     stored = model_dict.pop("compliance")
     del model_dict["schema_version"]
@@ -940,8 +960,8 @@ def test_fit_prioritizes_nonstandard_settings_error_over_data_sufficiency_error(
 def test_fit_raises_data_sufficiency_error_when_settings_excluded_from_enforced_list(
     missing_daily_data,
 ):
-    """With settings excluded from the enforced list, the same fit falls through to the
-    data sufficiency check instead."""
+    """With settings excluded from the enforced list, a fit with nonstandard settings and
+    insufficient data raises DataSufficiencyError."""
     with pytest.raises(DataSufficiencyError):
         DailyModel(settings={"segment_minimum_count": 8}).fit(
             missing_daily_data, is_electricity_data=True, enforce_compliance=["data"]
@@ -997,6 +1017,24 @@ def test_predict_raises_data_sufficiency_error_for_disqualified_reporting_data(
     no_temperature = baseline_df[["temperature"]].assign(temperature=np.nan)
     with pytest.raises(DataSufficiencyError):
         model.predict(no_temperature)
+
+
+def test_predict_refuses_reporting_data_with_only_an_infeasible_record(daily_series):
+    meter, temp = daily_series
+    baseline_df = meter_temperature_frame(meter, temp)
+    model = DailyModel().fit(baseline_df, is_electricity_data=True)
+    data = DailyReportingData(baseline_df[["temperature"]], is_electricity_data=True)
+    data.compliance.all = [
+        OpenDSMWarning(
+            qualified_name="eemeter.sufficiency.no_data",
+            description="No data.",
+            data={},
+            severity="infeasible",
+        )
+    ]
+
+    with pytest.raises(DataSufficiencyError):
+        model._predict_data(data)
 
 
 def _utc_year_frame():

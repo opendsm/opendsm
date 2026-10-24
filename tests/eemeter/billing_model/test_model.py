@@ -12,12 +12,11 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-import warnings
-
 import numpy as np
 import pandas as pd
 import pytest
 
+from opendsm.common.warnings import OpenDSMWarning
 from opendsm.eemeter.common.data_settings import BillingDataSettings
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
@@ -428,8 +427,8 @@ def test_fit_prioritizes_nonstandard_settings_error_over_data_sufficiency_error(
 def test_fit_raises_data_sufficiency_error_when_settings_excluded_from_enforced_list(
     disqualified_billing_df,
 ):
-    """With settings excluded from the enforced list, the same fit falls through to the
-    data sufficiency check instead."""
+    """With settings excluded from the enforced list, a fit on nonstandard settings and
+    disqualified baseline data raises DataSufficiencyError."""
     with pytest.raises(DataSufficiencyError):
         BillingModel(settings={"segment_minimum_count": 4}).fit(
             disqualified_billing_df, is_electricity_data=True, enforce_compliance=["data"]
@@ -481,33 +480,34 @@ def test_predict_raises_data_sufficiency_error_for_disqualified_reporting_data(
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize(
-    "enforce_compliance,should_raise",
-    [
-        (True, True),
-        (False, False),
-        (["data"], True),
-        (["model"], False),
-        (["settings"], False),
-    ],
-)
-def test_fit_data_disqualification_respects_enforce_compliance_list(
-    disqualified_billing_df, enforce_compliance, should_raise
+@pytest.mark.parametrize("enforce_compliance", [True, ["data"]])
+def test_fit_raises_data_sufficiency_error_when_data_member_enforced(
+    disqualified_billing_df, enforce_compliance
 ):
-    if should_raise:
-        with pytest.raises(DataSufficiencyError):
-            BillingModel().fit(
-                disqualified_billing_df,
-                is_electricity_data=True,
-                enforce_compliance=enforce_compliance,
-            )
-    else:
-        model = BillingModel().fit(
+    """A fit on disqualified baseline data raises DataSufficiencyError whenever the data
+    member is enforced."""
+    with pytest.raises(DataSufficiencyError):
+        BillingModel().fit(
             disqualified_billing_df,
             is_electricity_data=True,
             enforce_compliance=enforce_compliance,
         )
-        assert model.is_fitted
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("enforce_compliance", [False, ["model"], ["settings"]])
+def test_fit_succeeds_on_disqualified_data_when_data_member_not_enforced(
+    disqualified_billing_df, enforce_compliance
+):
+    """A fit on disqualified baseline data completes whenever the data member is not
+    enforced."""
+    model = BillingModel().fit(
+        disqualified_billing_df,
+        is_electricity_data=True,
+        enforce_compliance=enforce_compliance,
+    )
+
+    assert model.is_fitted
 
 
 def test_fit_rejects_unknown_enforce_compliance_member_name(baseline_df):
@@ -541,19 +541,15 @@ def test_enforce_compliance_true_and_false_yield_identical_parameters(compliant_
         np.testing.assert_allclose(actual, expected, atol=1e-9)
 
 
-def test_nonstandard_settings_deviation_is_recorded_without_emitting(baseline_df):
-    """The settings-deviation entry lands in compliance.status, but is never emitted on
-    the warnings channel."""
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+def test_nonstandard_settings_deviation_is_recorded_and_emitted_once(baseline_df):
+    """A settings deviation puts 'settings' in compliance.status and is emitted once at fit."""
+    with pytest.warns(OpenDSMWarning) as caught:
         model = BillingModel(settings={"segment_minimum_count": 4}).fit(
             baseline_df, is_electricity_data=True, enforce_compliance=False
         )
 
-    assert not any(
-        getattr(w.message, "qualified_name", None) == "eemeter.settings.nonstandard"
-        for w in caught
-    )
+    emitted = [w.message for w in caught if isinstance(w.message, OpenDSMWarning)]
+    assert len(nonstandard_settings_warnings(emitted)) == 1, [w.qualified_name for w in emitted]
     assert "settings" in model.compliance.status
 
 
@@ -569,8 +565,7 @@ def test_nonstandard_settings_enforced_raises(baseline_df):
 # ---------------------------------------------------------------------------
 
 def test_predict_non_frame_raises_type_error(fitted_model):
-    """A non-dataframe argument is rejected by type, not by an attribute error
-    raised deeper in the prediction path."""
+    """A non-dataframe argument raises TypeError."""
     with pytest.raises(TypeError, match="df must be a pandas DataFrame, got str"):
         fitted_model.predict("not a frame")
 

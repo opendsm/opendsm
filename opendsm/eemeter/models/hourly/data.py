@@ -76,7 +76,7 @@ class _HourlyData:
         self._df = self._set_data(df)
 
         for entry in self._check_data_sufficiency():
-            self._record(entry)
+            self.compliance.record_and_warn(entry)
 
     @property
     def df(self):
@@ -90,16 +90,6 @@ class _HourlyData:
     def settings(self):
         """Get the settings. This is read-only after initialization."""
         return self._settings
-
-    def _record(self, entry: EEMeterWarning) -> None:
-        """Store a compliance record and emit it on the warnings channel.
-
-        This is the only point at which a record is emitted; readers of the stored
-        record, such as the model that was fit on this data, never re-emit it.
-        """
-
-        self.compliance.record(entry)
-        entry.warn()
 
     def _get_contiguous_datetime(self, df):
         # get earliest datetime and latest datetime
@@ -192,7 +182,7 @@ class _HourlyData:
         elif df.index.tz is None:
             raise ValueError("Datatime is missing timezone information")
         elif str(df.index.tz) == "UTC":
-            self._record(
+            self.compliance.record_and_warn(
                 EEMeterWarning(
                     qualified_name="eemeter.data_quality.utc_index",
                     description=(
@@ -244,10 +234,7 @@ class HourlyBaselineData(_HourlyData):
 
     Attributes:
         df (DataFrame): Immutable dataframe that contains the meter and temperature values for the baseline data period.
-        compliance (Compliance): The records produced while checking this data. Its
-            `disqualification` records are serious issues that can degrade the quality of
-            the model; to build a model in spite of them, relax `enforce_compliance` on the
-            model. Its `warnings` records are issues that will not severely reduce quality.
+        compliance (Compliance): The records produced while checking this data.
         pv_start (datetime.date): Solar install date. If left unset, assumed to be at beginning of data.
 
     """
@@ -283,10 +270,7 @@ class HourlyReportingData(_HourlyData):
 
     Attributes:
         df (DataFrame): Immutable dataframe that contains the meter and temperature values for the baseline data period.
-        compliance (Compliance): The records produced while checking this data. Its
-            `disqualification` records are serious issues that can degrade the quality of
-            the model; to build a model in spite of them, relax `enforce_compliance` on the
-            model. Its `warnings` records are issues that will not severely reduce quality.
+        compliance (Compliance): The records produced while checking this data.
         pv_start (datetime.date): Solar install date. If left unset, assumed to be at beginning of data.
     """
 

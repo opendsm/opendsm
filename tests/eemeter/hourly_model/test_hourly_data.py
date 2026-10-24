@@ -40,6 +40,7 @@ from .helpers import (
     create_repeated_values,
     create_extreme_values,
     assert_has_disqualification,
+    assert_has_infeasible,
     assert_has_warning,
     assert_column_exists,
     assert_all_hours_present,
@@ -131,7 +132,7 @@ class TestHourlyDataClassInit:
             HourlyBaselineData(df=df, is_electricity_data=True)
 
     def test_datetime_utc_timezone(self):
-        """Should issue an advisory warning for UTC timezone"""
+        """A UTC index records an advisory warning."""
         df = create_hourly_dataframe()
         df.index = df.index.tz_convert("UTC")
 
@@ -812,26 +813,24 @@ class TestHourlySufficiencyCriteria:
             HourlyBaselineData(df=df, is_electricity_data=True)
 
     def test_no_data_all_nan_baseline(self):
-        """All NaN values disqualifies"""
+        """All-NaN observed and temperature record an infeasible no_data."""
         df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
         df["observed"] = np.nan
         df["temperature"] = np.nan
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        names = {entry.qualified_name for entry in data.compliance.all}
-        assert "eemeter.sufficiency_criteria.no_data" in names
+        assert_has_infeasible(data, "eemeter.sufficiency_criteria.no_data")
 
     def test_no_data_all_nan_reporting(self):
-        """Same for reporting"""
+        """All-NaN reporting temperature records an infeasible no_data."""
         df = create_hourly_dataframe(start="2019-01-01", end="2019-03-31")
         df["temperature"] = np.nan
         # Observed is optional for reporting
 
         data = HourlyReportingData(df=df, is_electricity_data=True)
 
-        names = {entry.qualified_name for entry in data.compliance.all}
-        assert "eemeter.sufficiency_criteria.no_data" in names
+        assert_has_infeasible(data, "eemeter.sufficiency_criteria.no_data")
 
     # ===== Baseline Length Check =====
 
@@ -1271,16 +1270,14 @@ class TestHourlySufficiencyCriteria:
             data, "eemeter.sufficiency_criteria.insufficient_unique_observed_values"
         )
 
-    def test_all_zeros_electricity_disqualified(self):
-        """All zeros converted to NaN, triggers no_data infeasibility"""
+    def test_all_zeros_electricity_infeasible(self):
+        """All-zero electricity observed reads as NaN and records an infeasible no_data."""
         df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
         df["observed"] = 0
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        # All zeros become NaN, cannot be interpolated, should trigger no_data
-        names = {entry.qualified_name for entry in data.compliance.all}
-        assert "eemeter.sufficiency_criteria.no_data" in names
+        assert_has_infeasible(data, "eemeter.sufficiency_criteria.no_data")
 
     def test_all_ones_disqualified(self):
         """All 1.0 values triggers insufficient uniqueness disqualification"""

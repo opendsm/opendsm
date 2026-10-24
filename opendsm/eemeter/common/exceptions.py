@@ -72,23 +72,7 @@ class NonstandardSettingsError(ComplianceError):
 
 
 class ModelFitError(EEMeterError):
-    """Error indicating that a model could not be fit.
-
-    Args:
-        message: Why the fit failed.
-        component: The part of the model that failed, kept as ``component``.
-        segment: The portion of the data it was being fit on, kept as ``segment``.
-    """
-
-    def __init__(
-        self,
-        message: str = "",
-        component: Optional[str] = None,
-        segment: Optional[str] = None,
-    ):
-        super().__init__(message)
-        self.component = component
-        self.segment = segment
+    """Error indicating that a model could not be fit."""
 
 
 class ModelLoadError(EEMeterError):

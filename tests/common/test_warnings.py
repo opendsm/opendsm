@@ -13,11 +13,16 @@
 #  limitations under the License.
 
 import copy
+import json
+import os
 import pickle
-import warnings
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
+import opendsm
 from opendsm.common.warnings import (
     _WARNING_REGISTRY,
     ClusteringWarning,
@@ -25,6 +30,53 @@ from opendsm.common.warnings import (
     StatsWarning,
 )
 
+
+
+# pytest restores its own filter list around collection and each test, which drops the
+# filter the module installs at import; a fresh interpreter observes that filter as a host
+# application would
+_FILTER_PROBE = """
+import json
+import warnings
+
+from opendsm.common.warnings import OpenDSMWarning
+
+
+
+record =OpenDSMWarning(
+    qualified_name="opendsm.test.probe", description="A record.", severity="advisory"
+)
+
+with warnings.catch_warnings(record=True) as recorded:
+    for _ in range(2):
+        record.warn()
+
+with warnings.catch_warnings():
+    warnings.simplefilter("error")
+    try:
+        record.warn()
+        host_error_raises = False
+    except OpenDSMWarning:
+        host_error_raises = True
+
+print(json.dumps({"repeats": len(recorded), "host_error_raises": host_error_raises}))
+"""
+
+
+@pytest.fixture(scope="module")
+def filter_probe():
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONWARNINGS"}
+    env["PYTHONPATH"] = str(Path(opendsm.__file__).parents[1])
+    completed = subprocess.run(
+        [sys.executable, "-c", _FILTER_PROBE],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    result = json.loads(completed.stdout)
+
+    return result
 
 
 @pytest.fixture
@@ -140,26 +192,15 @@ def test_from_json_round_trips_to_an_equal_instance_of_the_same_subclass(
     assert rebuilt.json() == disqualified_warning.json()
 
 
-def test_from_json_legacy_payload_rebuilds_as_eemeter_warning_with_passed_severity(
-    monkeypatch,
+@pytest.mark.parametrize("missing", ["category", "severity"])
+def test_from_json_payload_without_category_or_severity_raises_key_error(
+    advisory_warning, missing
 ):
-    # the legacy branch resolves "EEMeterWarning" out of the registry; StatsWarning stands in
-    # for it so the base-class contract is tested without importing the eemeter package
-    monkeypatch.setitem(_WARNING_REGISTRY, "EEMeterWarning", StatsWarning)
+    payload = advisory_warning.json()
+    del payload[missing]
 
-    legacy_payload = {
-        "qualified_name": "eemeter.legacy.record",
-        "description": "A record without a category or severity.",
-        "data": {"n": 1},
-    }
-
-    rebuilt = OpenDSMWarning.from_json(legacy_payload, legacy_severity="advisory")
-
-    assert type(rebuilt) is StatsWarning, f"expected the registered class, got {type(rebuilt)}"
-    assert rebuilt.severity == "advisory"
-    assert rebuilt.member is None
-    assert rebuilt.qualified_name == "eemeter.legacy.record"
-    assert rebuilt.data == {"n": 1}
+    with pytest.raises(KeyError, match=missing):
+        OpenDSMWarning.from_json(payload)
 
 
 def test_pickle_round_trip_preserves_every_field(disqualified_warning):
@@ -185,35 +226,21 @@ def test_warn_emits_the_instance_on_the_warnings_channel(advisory_warning):
     assert recorded[0].message is advisory_warning
 
 
-def test_repeated_identical_warnings_all_surface(advisory_warning):
-    with pytest.warns(OpenDSMWarning) as recorded:
-        advisory_warning.warn()
-        advisory_warning.warn()
-
-    assert len(recorded) == 2, f"expected both emissions, got {len(recorded)}"
-
-
 @pytest.mark.parametrize("warning_cls", [ClusteringWarning, StatsWarning])
 def test_subclasses_register_themselves_by_class_name(warning_cls):
     assert _WARNING_REGISTRY[warning_cls.__name__] is warning_cls
 
 
-def test_appended_filter_yields_to_a_host_error_policy(advisory_warning):
-    with warnings.catch_warnings():
-        warnings.resetwarnings()
-        warnings.simplefilter("error")
-        warnings.filterwarnings("always", category=OpenDSMWarning, append=True)
+@pytest.mark.slow
+def test_repeated_identical_records_all_surface_with_no_host_policy(filter_probe):
+    """With only the interpreter's default filters, the module's own filter surfaces every
+    emission of a record warned twice from one call site."""
 
-        with pytest.raises(OpenDSMWarning):
-            advisory_warning.warn()
+    assert filter_probe["repeats"] == 2, f"expected both emissions, got {filter_probe['repeats']}"
 
 
-def test_appended_filter_still_surfaces_repeats_with_no_host_policy(advisory_warning):
-    with warnings.catch_warnings(record=True) as recorded:
-        warnings.resetwarnings()
-        warnings.filterwarnings("always", category=OpenDSMWarning, append=True)
+@pytest.mark.slow
+def test_module_filter_yields_to_a_host_error_policy(filter_probe):
+    """A host filter added after import takes precedence over the module's own filter."""
 
-        advisory_warning.warn()
-        advisory_warning.warn()
-
-    assert len(recorded) == 2, f"expected both emissions, got {len(recorded)}"
+    assert filter_probe["host_error_raises"], "a host 'error' filter did not raise the record"

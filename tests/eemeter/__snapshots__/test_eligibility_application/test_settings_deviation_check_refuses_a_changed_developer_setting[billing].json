@@ -1,0 +1,24 @@
+{
+  "changed": {
+    "passed": false,
+    "records": [
+      {
+        "data": {
+          "deviations": {
+            "cvrmse_threshold": {
+              "default": 1,
+              "value": 2.0
+            }
+          }
+        },
+        "member": "settings",
+        "qualified_name": "eemeter.settings.nonstandard",
+        "severity": "disqualified"
+      }
+    ]
+  },
+  "default": {
+    "passed": true,
+    "records": []
+  }
+}

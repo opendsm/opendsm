@@ -18,9 +18,8 @@ from typing import Any, Dict, Optional
 import numpy as np
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from opendsm.eemeter.common.compliance import check_schema_version
 
-
-SCHEMA_VERSION = 1
 
 
 class ModelType(str, Enum):
@@ -395,12 +394,4 @@ class SerializedDailyModel(DailyModelParameters):
     schema_version: int
     compliance: list[Dict[str, Any]]
 
-    @field_validator("schema_version")
-    def _known_schema_version(cls, v):
-        if v > SCHEMA_VERSION:
-            raise ValueError(
-                f"payload schema_version {v} is newer than the {SCHEMA_VERSION} this "
-                "package can read"
-            )
-
-        return v
+    _known_schema_version = field_validator("schema_version")(check_schema_version)

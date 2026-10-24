@@ -93,6 +93,15 @@ class OpenDSMWarning(UserWarning):
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
+        # `from_json` dispatches on the bare class name, so a second class under one name
+        # would silently take over the first's payloads
+        registered = _WARNING_REGISTRY.get(cls.__name__)
+        if registered is not None and registered is not cls:
+            raise TypeError(
+                f"An OpenDSMWarning subclass named {cls.__name__!r} is already registered "
+                f"as {registered.__module__}.{registered.__qualname__}"
+            )
+
         _WARNING_REGISTRY[cls.__name__] = cls
 
     def __str__(self):
@@ -116,45 +125,37 @@ class OpenDSMWarning(UserWarning):
         return json_dict
 
     @classmethod
-    def from_json(
-        cls, json_dict: dict, legacy_severity: Optional[str] = None
-    ) -> "OpenDSMWarning":
+    def from_json(cls, json_dict: dict) -> "OpenDSMWarning":
         """Rebuild a record from a `json()` payload, dispatching on its category.
 
-        A payload carrying neither `category` nor `severity` is rebuilt as an
-        `EEMeterWarning` with `legacy_severity`, which the caller knows from the list the
-        entry was stored in.
+        Raises `KeyError` when the payload lacks `category`, `severity`, `qualified_name`
+        or `description`, or names a category no `OpenDSMWarning` subclass registered.
         """
 
-        category = json_dict.get("category")
-        severity = json_dict.get("severity")
-
-        if category is None or severity is None:
-            category = "EEMeterWarning"
-            severity = legacy_severity
-
-        warning_cls = _WARNING_REGISTRY[category]
+        warning_cls = _WARNING_REGISTRY[json_dict["category"]]
         warning = warning_cls(
             qualified_name=json_dict["qualified_name"],
             description=json_dict["description"],
-            severity=severity,
+            severity=json_dict["severity"],
             data=json_dict.get("data"),
             member=json_dict.get("member"),
         )
 
         return warning
 
-    def warn(self):
-        """Emit this record on the warnings channel."""
+    def warn(self, stacklevel: int = 2):
+        """Emit this record on the warnings channel.
 
-        warnings.warn(self, stacklevel=2)
+        `stacklevel` counts frames as `warnings.warn` does, with this method as frame 1;
+        the default attributes the warning to the caller of `warn`.
+        """
 
+        warnings.warn(self, stacklevel=stacklevel)
 
 _WARNING_REGISTRY[OpenDSMWarning.__name__] = OpenDSMWarning
 
-# appended so a host policy already in the filter list (e.g. -W error) still wins; with no
-# host policy this is the only entry matching OpenDSMWarning, so "always" still prevents a
-# batch of meters producing the same text many times over from collapsing to one emission
+# appended so a host policy such as -W error still wins; "always" keeps identical records
+# from a batch of meters from collapsing to one emission
 warnings.filterwarnings("always", category=OpenDSMWarning, append=True)
 
 
