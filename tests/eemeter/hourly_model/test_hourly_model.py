@@ -1772,32 +1772,44 @@ def test_unusable_observed_raises_infeasible_regardless_of_enforced(
 # ===== Supplemental features and DST-spanning prediction =====
 
 
+_SUPPLEMENTAL_SETTINGS = {
+    "supplemental_time_series_columns": ["custom_ts_feature"],
+    "supplemental_categorical_columns": ["custom_cat_feature"],
+}
+
+
+@pytest.mark.hourly_model
+def test_supplemental_feature_settings_carry_no_settings_deviation():
+    """Declaring supplemental time-series and categorical columns is not a
+    developer-tier setting, so it carries no settings deviation."""
+    hm = HourlyModel(settings=_SUPPLEMENTAL_SETTINGS)
+
+    assert hm.settings_deviations == {}
+
+
 @pytest.mark.slow
 @pytest.mark.hourly_model
 @pytest.mark.filterwarnings("ignore:Objective did not converge.")
-def test_supplemental_features_fit_and_predict(baseline_with_supplemental_features, reporting):
-    """A custom time-series column and a custom categorical column, declared
-    through the hourly settings' supplemental_time_series_columns and
-    supplemental_categorical_columns, are picked up as features and the fitted
-    model predicts on reporting data that carries the same columns.
+def test_supplemental_features_predict_finite_out_of_sample(
+    baseline_with_supplemental_features, reporting_with_supplemental_features
+):
+    """A model fitted with a supplemental time-series column and a supplemental
+    categorical column predicts a finite value for every reporting hour that
+    carries temperature and both columns.
+
+    Predict returns the built frame padded out to whole local days, and the
+    padding hours carry no inputs, so only the input hours are checked.
     """
-    rng = np.random.default_rng(42)
-    reporting = reporting.copy()
-    reporting["custom_ts_feature"] = rng.standard_normal(len(reporting))
-    reporting["custom_cat_feature"] = rng.integers(0, 3, len(reporting))
+    hm = HourlyModel(settings=_SUPPLEMENTAL_SETTINGS).fit(
+        baseline_with_supplemental_features, is_electricity_data=True
+    )
 
-    hm = HourlyModel(
-        settings={
-            "supplemental_time_series_columns": ["custom_ts_feature"],
-            "supplemental_categorical_columns": ["custom_cat_feature"],
-        }
-    ).fit(baseline_with_supplemental_features, is_electricity_data=True)
+    prediction = hm.predict(reporting_with_supplemental_features)
 
-    # both fields are non-developer-tier, so declaring them carries no settings deviation
-    assert hm.settings_deviations == {}
-
-    prediction = hm.predict(reporting)
-    assert "predicted" in prediction.columns
+    predicted = prediction.loc[reporting_with_supplemental_features.index, "predicted"]
+    assert np.isfinite(predicted).all(), (
+        f"{(~np.isfinite(predicted)).sum()} of {len(predicted)} input hours predict non-finite"
+    )
 
 
 @pytest.mark.slow

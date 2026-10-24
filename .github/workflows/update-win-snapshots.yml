@@ -39,9 +39,11 @@ jobs:
           pip install pytest pytest-cov pytest-xdist "syrupy>=5,<7"
       - name: Regenerate snapshots
         # --snapshot-update returns non-zero when snapshots change; we
-        # want the resulting files regardless.
+        # want the resulting files regardless. Serial (-n 0) because syrupy
+        # warns on --snapshot-update across xdist workers without its file
+        # lock, and the suite turns warnings into errors.
         continue-on-error: true
-        run: pytest tests/ -m regression --snapshot-update
+        run: pytest tests/ -m regression --snapshot-update -n 0
       - name: Upload Windows snapshot artifact
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
@@ -75,12 +77,13 @@ jobs:
             echo "No artifact directory; nothing to commit."
             exit 0
           fi
-          # Artifact preserves the relative path under tests/. Copy each
-          # *_win.json into tests/<same relative path>.
-          find artifact-staging -name "*_win.json" -print | while read -r src; do
+          # The artifact roots its paths at the uploaded paths' common
+          # ancestor, tests/eemeter, and syrupy names each file
+          # `<test>[regression_win].json`. Copy each back to its place.
+          find artifact-staging -name "*_win*.json" -print | while read -r src; do
             rel="${src#artifact-staging/}"
-            mkdir -p "tests/$(dirname "$rel")"
-            cp "$src" "tests/$rel"
+            mkdir -p "tests/eemeter/$(dirname "$rel")"
+            cp "$src" "tests/eemeter/$rel"
           done
           rm -rf artifact-staging
       - name: Commit and push _win changes

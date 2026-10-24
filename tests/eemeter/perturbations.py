@@ -14,11 +14,9 @@
 
 """Seeded perturbation scenarios for compliance and regression testing.
 
-Frame scenarios take a baseline and reporting frame and return a perturbed copy of
-each; unless the scenario name says otherwise only the baseline is altered. Billing
-schedule scenarios operate on a monthly frame, whose daily index carries the period
-value on the read date and NaN in between. Every scenario copies its inputs and is
-deterministic under its default seed.
+Each scenario takes one frame and returns a perturbed copy; the random draws use a fixed
+seed, so every scenario is deterministic. Billing schedule scenarios operate on a monthly
+frame, whose daily index carries the period value on the read date and NaN in between.
 """
 
 import numpy as np
@@ -26,110 +24,116 @@ import pandas as pd
 
 
 
+_SEED = 0
+
+
 # ===== Frame scenarios =====
 
 
-def single_hour_gaps(baseline, reporting, seed=0):
-    """Isolated missing hours scattered through the baseline; hits data coverage."""
-    baseline = baseline.copy()
-    reporting = reporting.copy()
-    n_slots = len(baseline) // 2
+def isolated_gaps(df):
+    """Isolated missing rows scattered through the frame; hits data coverage."""
+    df = df.copy()
+    n_slots = len(df) // 2
     n_gaps = max(1, n_slots // 10)
-    slots = np.random.default_rng(seed).choice(n_slots, n_gaps, replace=False)
-    baseline.iloc[slots * 2, baseline.columns.get_loc("observed")] = np.nan
+    slots = np.random.default_rng(_SEED).choice(n_slots, n_gaps, replace=False)
+    df.iloc[slots * 2, df.columns.get_loc("observed")] = np.nan
 
-    return baseline, reporting
-
-
-def multi_day_gap(baseline, reporting, seed=0):
-    """Three consecutive missing days in the baseline; hits the consecutive gap limit."""
-    baseline = baseline.copy()
-    reporting = reporting.copy()
-    start = _random_block_start(baseline.index, 3, seed)
-    baseline.loc[_block_mask(baseline.index, start, 3), "observed"] = np.nan
-
-    return baseline, reporting
+    return df
 
 
-def zeros(baseline, reporting, seed=0):
-    """A fortnight of zero baseline readings, which electricity data counts as missing."""
-    baseline = baseline.copy()
-    reporting = reporting.copy()
-    start = _random_block_start(baseline.index, 14, seed)
-    baseline.loc[_block_mask(baseline.index, start, 14), "observed"] = 0.0
+def multi_day_gap(df):
+    """Three consecutive missing days; hits the consecutive gap limit."""
+    df = df.copy()
+    start = _random_block_start(df.index, 3)
+    df.loc[_block_mask(df.index, start, 3), "observed"] = np.nan
 
-    return baseline, reporting
-
-
-def negative_export(baseline, reporting, seed=0):
-    """A week of negative baseline readings, as net export does; hits the negative rule."""
-    baseline = baseline.copy()
-    reporting = reporting.copy()
-    start = _random_block_start(baseline.index, 7, seed)
-    mask = _block_mask(baseline.index, start, 7)
-    baseline.loc[mask, "observed"] = -baseline.loc[mask, "observed"].abs()
-
-    return baseline, reporting
+    return df
 
 
-def dst_week_gap(baseline, reporting, seed=0):
+def zeros(df):
+    """A fortnight of zero readings, which electricity data counts as missing."""
+    df = df.copy()
+    start = _random_block_start(df.index, 14)
+    df.loc[_block_mask(df.index, start, 14), "observed"] = 0.0
+
+    return df
+
+
+def negative_export(df):
+    """A week of negative readings, as net export does; hits the negative rule."""
+    df = df.copy()
+    start = _random_block_start(df.index, 7)
+    mask = _block_mask(df.index, start, 7)
+    df.loc[mask, "observed"] = -df.loc[mask, "observed"].abs()
+
+    return df
+
+
+def dst_week_gap(df):
     """The seven days around spring forward are missing; hits coverage across the shift."""
-    baseline = baseline.copy()
-    reporting = reporting.copy()
-    transition = _spring_forward(baseline.index)
+    df = df.copy()
+    transition = _spring_forward(df.index)
     start = transition.normalize() - pd.DateOffset(days=3)
-    baseline.loc[_block_mask(baseline.index, start, 7), "observed"] = np.nan
+    df.loc[_block_mask(df.index, start, 7), "observed"] = np.nan
 
-    return baseline, reporting
+    return df
+
+
+# ===== Frame scenario table =====
+
+
+FRAME_SCENARIOS = {
+    "isolated_gaps": isolated_gaps,
+    "multi_day_gap": multi_day_gap,
+    "zeros": zeros,
+    "negative_export": negative_export,
+    "dst_week_gap": dst_week_gap,
+}
 
 
 # ===== Billing schedule scenarios =====
 
 
-def offcycle_read(baseline, reporting, seed=0):
+def offcycle_read(df):
     """An extra read splits one period to 20 days; hits the minimum period length."""
-    baseline = baseline.copy()
-    reporting = reporting.copy()
-    reads = _read_dates(baseline)
-    rng = np.random.default_rng(seed)
-    i = rng.integers(1, len(reads) - 2)
+    df = df.copy()
+    reads = _read_dates(df)
+    i = np.random.default_rng(_SEED).integers(1, len(reads) - 2)
     start, end = reads[i], reads[i + 1]
     split = start + pd.DateOffset(days=20)
     fraction = 20 / ((end - start) / pd.Timedelta(days=1))
-    total = baseline.loc[start, "observed"]
-    baseline.loc[start, "observed"] = total * fraction
-    baseline.loc[split, "observed"] = total * (1 - fraction)
+    total = df.loc[start, "observed"]
+    df.loc[start, "observed"] = total * fraction
+    df.loc[split, "observed"] = total * (1 - fraction)
 
-    return baseline, reporting
+    return df
 
 
-def bimonthly_reads(baseline, reporting, seed=0):
-    """Every second read over half the baseline is merged into the previous period."""
-    baseline = baseline.copy()
-    reporting = reporting.copy()
-    reads = _read_dates(baseline)
-    phase = np.random.default_rng(seed).integers(0, 2)
+def bimonthly_reads(df):
+    """Every second read over half the frame is merged into the previous period."""
+    df = df.copy()
+    reads = _read_dates(df)
+    phase = np.random.default_rng(_SEED).integers(0, 2)
 
     for i in range(1 + phase, len(reads) // 2, 2):
         kept, dropped = reads[i - 1], reads[i]
-        baseline.loc[kept, "observed"] += baseline.loc[dropped, "observed"]
-        baseline.loc[dropped, "observed"] = np.nan
+        df.loc[kept, "observed"] += df.loc[dropped, "observed"]
+        df.loc[dropped, "observed"] = np.nan
 
-    return baseline, reporting
+    return df
 
 
-def estimated_read(baseline, reporting, seed=0):
+def estimated_read(df):
     """One period reads zero and trues up in the next. Electricity data counts the zero read as
     missing; model input carries no estimated-read flag, so the estimated-read rule cannot see it."""
-    baseline = baseline.copy()
-    reporting = reporting.copy()
-    reads = _read_dates(baseline)
-    i = np.random.default_rng(seed).integers(1, len(reads) - 2)
+    df = df.copy()
+    reads = _read_dates(df)
+    i = np.random.default_rng(_SEED).integers(1, len(reads) - 2)
     estimated, trued_up = reads[i], reads[i + 1]
-    baseline.loc[trued_up, "observed"] += baseline.loc[estimated, "observed"]
-    baseline.loc[estimated, "observed"] = 0.0
+    df.loc[trued_up, "observed"] += df.loc[estimated, "observed"]
+    df.loc[estimated, "observed"] = 0.0
 
-    return baseline, reporting
+    return df
 
 
 # ===== Scenario helpers =====
@@ -141,9 +145,9 @@ def _block_mask(index, start, days):
     return (index >= start) & (index < end)
 
 
-def _random_block_start(index, days, seed):
+def _random_block_start(index, days):
     starts = index.normalize().unique()[1:-days]
-    i = np.random.default_rng(seed).integers(0, len(starts))
+    i = np.random.default_rng(_SEED).integers(0, len(starts))
 
     return starts[i]
 

@@ -25,14 +25,12 @@ TEMPERATURE_SLOPE = 0.15
 NOISE_SIGMA = 0.05
 
 
-def _seasonal_temperature(year=2020, seed=1):
+def _seasonal_temperature():
     """Hourly temperature with a seasonal swing and a daily cycle, roughly 20..90 F."""
-    hours = pd.date_range(
-        f"{year}-01-01", f"{year}-12-31 23:00", freq="h", tz="America/Chicago"
-    )
+    hours = pd.date_range("2020-01-01", "2020-12-31 23:00", freq="h", tz="America/Chicago")
     doy = hours.day_of_year.values
     hour_of_day = hours.hour.values
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(1)
     values = (
         55.0
         + 28.0 * np.sin(2 * np.pi * (doy - 110) / 365)
@@ -53,13 +51,6 @@ def _cooling_load(temperature, seed):
     values = profile + response + rng.normal(0, NOISE_SIGMA, len(temperature))
 
     return pd.Series(values, index=temperature.index)
-
-
-def _hourly_frame(meter, temperature):
-    """Combine an hourly meter series and an hourly temperature series into a model input frame."""
-    frame = pd.DataFrame({"observed": meter, "temperature": temperature})
-
-    return frame
 
 
 def _slope_above_balance_point(result):
@@ -85,7 +76,7 @@ def temperature():
 @pytest.fixture(scope="module")
 def cooling_baseline(temperature):
     """HourlyModel fit once on a load with a real cooling response, with its data."""
-    df = _hourly_frame(_cooling_load(temperature, seed=2), temperature)
+    df = pd.DataFrame({"observed": _cooling_load(temperature, seed=2), "temperature": temperature})
     settings = HourlyNonSolarSettings(seed=42)
     model = HourlyModel(settings=settings).fit(
         df, is_electricity_data=True, enforce_compliance=False
@@ -99,9 +90,9 @@ def cooling_baseline(temperature):
 def test_fit_recovers_generative_temperature_slope(cooling_baseline):
     """The fit reproduces the generative response above the balance point.
 
-    The hourly model exposes no single temperature coefficient, so the slope is
-    recovered by regressing predicted load on temperature over the hours above the
-    balance point. The tolerance covers the smoothing of the clustered hour-of-week fit.
+    The hourly model exposes no single temperature coefficient, so `_slope_above_balance_point`
+    recovers the slope from predictions; the tolerance covers the smoothing of the clustered
+    hour-of-week fit.
     """
     model, df = cooling_baseline
 
@@ -116,14 +107,13 @@ def test_fit_recovers_generative_temperature_slope(cooling_baseline):
 def test_known_reduction_recovers_as_savings(cooling_baseline, temperature):
     """A known per-hour reduction injected into an independent load is recovered as savings.
 
-    Reporting observed is a fresh draw of the generative load (not the model's
-    own prediction) minus a fixed per-hour reduction, so recovery exercises the
-    model's counterfactual rather than reducing to an identity.
+    Reporting observed is a fresh draw of the load rather than the model's prediction, so the
+    recovery tests the counterfactual instead of an identity.
     """
     model, _ = cooling_baseline
     reduction_per_hour = 0.5
     reporting_meter = _cooling_load(temperature, seed=4) - reduction_per_hour
-    reporting_df = _hourly_frame(reporting_meter, temperature)
+    reporting_df = pd.DataFrame({"observed": reporting_meter, "temperature": temperature})
 
     result = model.predict(reporting_df)
     recovered = (result["predicted"] - result["observed"]).sum()

@@ -18,80 +18,62 @@ import pytest
 
 from opendsm.eemeter import BillingModel
 
+from ..helpers import (
+    HEATING_BALANCE_POINT,
+    HEATING_SLOPE,
+    heating_load,
+    seasonal_temperature,
+)
 
 
-BALANCE_POINT = 60.0
-TEMPERATURE_SLOPE = 1.2
-NOISE_SIGMA = 2.0
 
-
-def _seasonal_temperature(year=2020, seed=1):
-    """Hourly seasonal temperature swinging ~25..85 F, padded a month past year-end so
-    the billing frame's closing read still has a temperature."""
-    hours = pd.date_range(f"{year}-01-01", periods=396 * 24, freq="h", tz="America/Chicago")
-    doy = hours.day_of_year.values
-    rng = np.random.default_rng(seed)
-    values = 55.0 + 30.0 * np.sin(2 * np.pi * (doy - 110) / 365) + rng.normal(0, 2, len(hours))
-
-    return pd.Series(values, index=hours)
-
-
-def _heating_load(daily_temp, seed):
-    """Daily load with a genuine heating response: 80 + 1.2*HDD(60F) + noise."""
-    rng = np.random.default_rng(seed)
-    base = 80.0 + TEMPERATURE_SLOPE * np.maximum(BALANCE_POINT - daily_temp.values, 0.0)
-
-    return base + rng.normal(0, NOISE_SIGMA, len(daily_temp))
-
-
-def _billing_frame(daily_load, temperature):
+def _billing_frame(daily_load, daily_temperature):
     """Aggregate a daily generative load into monthly billing reads.
 
-    Each read, placed at a month start, carries the summed load for the period running to
-    the next read; a closing read one month past the data marks the final period's end with
-    no value, matching the billing data convention.
+    The frame's index is the load's days. Each read, placed at a month start, carries the
+    summed load for the period running to the next read; the final period runs through the
+    frame's last row, which carries no read.
     """
     days = daily_load.index
-    daily_temp = temperature.resample("D").mean().reindex(days)
     period_labels = days.tz_localize(None).to_period("M")
     period_sums = daily_load.groupby(period_labels).sum()
     read_dates = pd.DatetimeIndex(
         [period.start_time.tz_localize(days.tz) for period in period_sums.index]
     )
-    closing_date = read_dates[-1] + pd.DateOffset(months=1)
 
-    daily_idx = days.union([closing_date])
-    observed = pd.Series(np.nan, index=daily_idx)
+    observed = pd.Series(np.nan, index=days)
     observed.loc[read_dates] = period_sums.values
 
-    frame = pd.DataFrame(
-        {"observed": observed, "temperature": daily_temp.reindex(daily_idx)},
-        index=daily_idx,
-    )
+    frame = pd.DataFrame({"observed": observed, "temperature": daily_temperature}, index=days)
 
     return frame
 
 
 @pytest.fixture(scope="module")
-def temperature():
-    return _seasonal_temperature()
+def days():
+    return pd.date_range("2020-01-01", periods=365, freq="D", tz="America/Chicago")
 
 
 @pytest.fixture(scope="module")
-def heating_baseline(temperature):
+def daily_temperature(days):
+    return seasonal_temperature().resample("D").mean().reindex(days)
+
+
+@pytest.fixture(scope="module")
+def heating_baseline(daily_temperature):
     """BillingModel fit once on a year of heating-responsive daily load, billed monthly."""
-    days = pd.date_range("2020-01-01", periods=365, freq="D", tz="America/Chicago")
-    daily_temp = temperature.resample("D").mean().reindex(days)
-    daily_load = pd.Series(_heating_load(daily_temp, seed=2), index=days)
-    df = _billing_frame(daily_load, temperature)
+    daily_load = heating_load(daily_temperature, seed=2)
+    df = _billing_frame(daily_load, daily_temperature)
     model = BillingModel().fit(df, is_electricity_data=True, enforce_compliance=False)
 
     return model, df
 
 
 def _slope_from_predictions(result):
-    """OLS slope of predicted load on HDD(60F) at native (daily-spread) resolution."""
-    hdd = np.maximum(BALANCE_POINT - result["temperature"], 0.0)
+    """OLS slope of predicted load on HDD below HEATING_BALANCE_POINT, over a daily-spread
+    prediction.
+    """
+    hdd = np.maximum(HEATING_BALANCE_POINT - result["temperature"], 0.0)
     x = hdd - hdd.mean()
     y = result["predicted"] - result["predicted"].mean()
 
@@ -103,34 +85,29 @@ def test_fit_recovers_generative_temperature_slope(heating_baseline):
     """The fit reproduces the generative heating slope of 1.2/HDD.
 
     Billing regresses a period-constant response on each day's own temperature, which
-    pulls the recovered slope to about 1.11; the tolerance is roughly twice that gap.
+    pulls the recovered slope a few percent low.
     """
     model, df = heating_baseline
 
-    result = model.predict(df, aggregation=None)
+    result = model.predict(df)
     slope = _slope_from_predictions(result)
 
-    assert slope == pytest.approx(TEMPERATURE_SLOPE, rel=0.15), (
-        f"recovered slope {slope:.3f} vs true {TEMPERATURE_SLOPE}"
+    assert slope == pytest.approx(HEATING_SLOPE, rel=0.15), (
+        f"recovered slope {slope:.3f} vs true {HEATING_SLOPE}"
     )
 
 
 @pytest.mark.slow
-def test_known_reduction_recovers_as_savings(heating_baseline, temperature):
+def test_known_reduction_recovers_as_savings(heating_baseline, days, daily_temperature):
     """A known per-day reduction injected into an independent load is recovered as savings.
 
-    Reporting observed is a fresh draw of the generative heating load (not the model's own
-    prediction) minus a fixed per-day reduction, billed monthly like the baseline, so
-    recovery exercises the model's counterfactual rather than reducing to an identity.
+    Reporting observed is a fresh draw of the load rather than the model's prediction, so the
+    recovery tests the counterfactual instead of an identity.
     """
     model, _ = heating_baseline
-    days = pd.date_range("2020-01-01", periods=365, freq="D", tz="America/Chicago")
-    daily_temp = temperature.resample("D").mean().reindex(days)
     reduction_per_day = 5.0
-    reporting_load = pd.Series(
-        _heating_load(daily_temp, seed=4) - reduction_per_day, index=days
-    )
-    reporting_df = _billing_frame(reporting_load, temperature)
+    reporting_load = heating_load(daily_temperature, seed=4) - reduction_per_day
+    reporting_df = _billing_frame(reporting_load, daily_temperature)
 
     result = model.predict(reporting_df)
     recovered = (result["predicted"] - result["observed"]).sum()

@@ -14,8 +14,32 @@
 
 """Helpers shared by the eemeter model tests."""
 
+import numpy as np
 import pandas as pd
 
+
+
+HEATING_BALANCE_POINT = 60.0
+HEATING_SLOPE = 1.2
+
+
+def seasonal_temperature():
+    """Hourly temperature in America/Chicago for the 365 days from 2020-01-01, with a
+    seasonal swing and seeded noise; every call returns the same series."""
+    hours = pd.date_range("2020-01-01", periods=365 * 24, freq="h", tz="America/Chicago")
+    doy = hours.day_of_year.values
+    rng = np.random.default_rng(1)
+    values = 55.0 + 30.0 * np.sin(2 * np.pi * (doy - 110) / 365) + rng.normal(0, 2, len(hours))
+
+    return pd.Series(values, index=hours)
+
+
+def heating_load(daily_temperature, seed):
+    rng = np.random.default_rng(seed)
+    deficit = np.maximum(HEATING_BALANCE_POINT - daily_temperature.values, 0.0)
+    values = 80.0 + HEATING_SLOPE * deficit + rng.normal(0, 2.0, len(daily_temperature))
+
+    return pd.Series(values, index=daily_temperature.index)
 
 
 def meter_temperature_frame(meter, temperature):

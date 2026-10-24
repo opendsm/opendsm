@@ -22,40 +22,40 @@ from regression_metrics import regression_block
 
 
 
-# Each scenario's expected disqualification qualified_names by is_electricity_data, on the
-# DEFAULT meter's monthly frame; an empty list means the scenario stays qualified.
+# scenario -> (perturbation, {is_electricity_data: qualified names of the disqualifications
+# on the DEFAULT meter's monthly frame}); an empty set means the scenario stays qualified.
 BILLING_SCHEDULE_SCENARIOS = {
     "offcycle_read": (
         offcycle_read,
         {
-            True: ["eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data"],
-            False: ["eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data"],
+            True: {"eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data"},
+            False: {"eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data"},
         },
     ),
     "bimonthly_reads": (
         bimonthly_reads,
         {
-            True: [
+            True: {
                 "eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data",
                 "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
                 "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data",
-            ],
-            False: [
+            },
+            False: {
                 "eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data",
                 "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
                 "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data",
-            ],
+            },
         },
     ),
     "estimated_read": (
         estimated_read,
         {
-            True: [
+            True: {
                 "eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data",
                 "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
                 "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data",
-            ],
-            False: [],
+            },
+            False: set(),
         },
     ),
 }
@@ -104,33 +104,55 @@ def test_billing_reporting_predict_regression(
     assert regression_block(result, freq="daily") == snapshot(name="regression")
 
 
-@pytest.mark.slow
-@pytest.mark.regression
-@pytest.mark.parametrize("is_electricity_data", [True, False], ids=["electricity", "gas"])
-@pytest.mark.parametrize("scenario_name", sorted(BILLING_SCHEDULE_SCENARIOS))
-def test_billing_schedule_perturbation_regression(
-    scenario_name, is_electricity_data, comstock_monthly, snapshot
-):
+IS_ELECTRICITY_BY_FUEL = {"electricity": True, "gas": False}
+
+
+@pytest.fixture(
+    scope="session",
+    params=[
+        (scenario, fuel)
+        for scenario in BILLING_SCHEDULE_SCENARIOS
+        for fuel in IS_ELECTRICITY_BY_FUEL
+    ],
+    ids="-".join,
+)
+def billing_schedule_scenario_fit(request, comstock_monthly):
+    """Fit the DEFAULT meter's monthly baseline, perturbed by one schedule scenario, with model
+    and settings compliance enforced; return the expected disqualifications, the model and the
+    unperturbed reporting frame.
+    """
+    scenario_name, fuel = request.param
+    is_electricity_data = IS_ELECTRICITY_BY_FUEL[fuel]
     scenario, expected_by_fuel = BILLING_SCHEDULE_SCENARIOS[scenario_name]
     baseline, reporting = comstock_monthly
-    perturbed_baseline, perturbed_reporting = scenario(baseline, reporting)
 
     model = BillingModel().fit(
-        perturbed_baseline.reset_index(),
+        scenario(baseline).reset_index(),
         is_electricity_data=is_electricity_data,
         enforce_compliance=["model", "settings"],
     )
+    expected = expected_by_fuel[is_electricity_data]
+    reporting = reporting.reset_index()
 
-    expected_names = expected_by_fuel[is_electricity_data]
-    if expected_names:
-        actual_names = sorted(entry.qualified_name for entry in model.compliance.disqualification)
-        assert actual_names == sorted(expected_names)
-    else:
-        assert model.compliance.qualified
-        assert model.compliance.disqualification == []
+    return expected, model, reporting
 
-    result = model.predict(
-        perturbed_reporting.reset_index(), enforce_compliance=["model", "settings"]
-    )
+
+@pytest.mark.slow
+@pytest.mark.regression
+def test_billing_schedule_scenario_disqualifications(billing_schedule_scenario_fit):
+    """A schedule scenario disqualifies the fit exactly by its table entry."""
+    expected, model, _ = billing_schedule_scenario_fit
+    actual = {entry.qualified_name for entry in model.compliance.disqualification}
+
+    assert actual == expected
+    assert model.compliance.qualified == (not expected)
+
+
+@pytest.mark.slow
+@pytest.mark.regression
+def test_billing_schedule_scenario_prediction(billing_schedule_scenario_fit, snapshot):
+    """Predictions on the unperturbed reporting frame match the snapshot."""
+    _, model, reporting = billing_schedule_scenario_fit
+    result = model.predict(reporting, enforce_compliance=["model", "settings"])
 
     assert regression_block(result, freq="daily") == snapshot(name="regression")

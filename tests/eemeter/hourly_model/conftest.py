@@ -71,6 +71,17 @@ def baseline_with_supplemental_features(baseline):
 
 
 @pytest.fixture
+def reporting_with_supplemental_features(reporting):
+    """Reporting data with the same custom supplemental features as the baseline"""
+    reporting = reporting.copy()
+    rng = np.random.default_rng(42)
+    reporting["custom_ts_feature"] = rng.standard_normal(len(reporting))
+    reporting["custom_cat_feature"] = rng.integers(0, 3, len(reporting))
+
+    return reporting
+
+
+@pytest.fixture
 def dst_transition_baseline():
     """Baseline data spanning DST transitions for testing DST handling"""
     return create_hourly_dataframe(start="2019-01-01", end="2019-12-31", tz="America/New_York")

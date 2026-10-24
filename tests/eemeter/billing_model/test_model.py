@@ -164,7 +164,10 @@ def test_weighted_model_predicts_per_read_period_not_per_day(
     unweighted_prediction = fitted_model.predict(baseline_df)
     weighted_prediction = fitted_weighted_model.predict(baseline_df)
 
-    assert len(weighted_prediction) < len(unweighted_prediction)
+    assert len(unweighted_prediction) == 365
+    assert len(weighted_prediction) == 11, (
+        f"expected one row per read period (11), got {len(weighted_prediction)}"
+    )
     assert weighted_prediction.index.isin(unweighted_prediction.index).all(), (
         "weighted read-period timestamps fall outside the daily prediction index"
     )
