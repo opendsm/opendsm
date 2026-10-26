@@ -126,15 +126,15 @@ class Data:
 
         # Add day_of_week column
         if "day_of_week" in self._settings.time_period:
-            df["day_of_week"] = df['datetime'].dt.dayofweek
+            df["day_of_week"] = df['datetime'].dt.day_of_week
 
         # Add day_of_year column
         if "day_of_year" in self._settings.time_period:
-            df["day_of_year"] = df['datetime'].dt.dayofyear
+            df["day_of_year"] = df['datetime'].dt.day_of_year
 
         # Add weekday_weekend column
         if "weekday_weekend" in self._settings.time_period:
-            df["weekday_weekend"] = df['datetime'].dt.dayofweek
+            df["weekday_weekend"] = df['datetime'].dt.day_of_week
 
             # Setting the ordering to weekday, weekend
             df["weekday_weekend"] = (
@@ -360,7 +360,7 @@ class Data:
         # remove any rows with missing values
         df = df.dropna()
 
-        df.drop_duplicates(keep="first" , inplace = True)
+        df = df.drop_duplicates(keep="first")
 
         # drop any ids that are in excluded_ids from loadshape (or init)
         df = df[~df["id"].isin(self._excluded_ids["id"])]
@@ -563,7 +563,7 @@ class Data:
         if loadshape_df is not None:
             # If loadshape still has id as one of its columns, set it as index
             if 'id' in loadshape_df.columns:
-                loadshape_df.set_index('id', inplace=True)
+                loadshape_df = loadshape_df.set_index('id')
 
             # drop any ids that are in the excluded_ids list
             loadshape_df = loadshape_df[

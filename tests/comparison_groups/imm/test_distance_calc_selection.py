@@ -196,7 +196,7 @@ def test_distance_duplicate_best_match():
         treatment_group=treatment_group,
         comparison_pool=comparison_pool
     )
-    comparison_group.set_index("id", inplace=True)
+    comparison_group = comparison_group.set_index("id")
 
     assert comparison_group.loc["match_1", "treatment"] == "close"
     assert comparison_group.loc["match_2", "treatment"] == "far"

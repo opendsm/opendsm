@@ -878,7 +878,7 @@ def test_format_temperature_data_for_caltrack(hourly_meter, hourly_temperature):
     temperature_data.loc[new_start] = [0.04]
 
     # rename column name to 'consumption'
-    temperature_data.rename(columns={"value": "consumption"}, inplace=True)
+    temperature_data = temperature_data.rename(columns={"value": "consumption"})
 
     temperature_data_reformatted = format_temperature_data_for_caltrack(
         temperature_data
@@ -902,7 +902,7 @@ def test_format_energy_data_for_caltrack_hourly(hourly_meter, hourly_temperature
     df.loc[new_start] = [0.04]
 
     # rename column name to 'consumption'
-    df.rename(columns={"value": "consumption"}, inplace=True)
+    df = df.rename(columns={"value": "consumption"})
 
     # df_flipped to pd.Series
     df = df.squeeze()
@@ -927,7 +927,7 @@ def test_format_energy_data_for_caltrack_daily(daily_meter, daily_temperature, s
     df.loc[new_start] = [0.04]
 
     # rename column name to 'consumption'
-    df.rename(columns={"value": "consumption"}, inplace=True)
+    df = df.rename(columns={"value": "consumption"})
 
     # df_flipped to pd.Series
     df = df.squeeze()
@@ -952,7 +952,7 @@ def test_format_energy_data_for_caltrack_billing(daily_meter, daily_temperature,
     df.loc[new_start] = [0.04]
 
     # rename column name to 'consumption'
-    df.rename(columns={"value": "consumption"}, inplace=True)
+    df = df.rename(columns={"value": "consumption"})
 
     # df_flipped to pd.Series
     df = df.squeeze()

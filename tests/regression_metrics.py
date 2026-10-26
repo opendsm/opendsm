@@ -143,7 +143,7 @@ def _time_groups(index: pd.DatetimeIndex, freq: str):
     if freq == "hourly":
         # zero-pad how so cell labels sort numerically in the snapshot
         how = pd.Series(
-            [f"how{(d * 24 + h):03d}" for d, h in zip(index.dayofweek, index.hour)],
+            [f"how{(d * 24 + h):03d}" for d, h in zip(index.day_of_week, index.hour)],
             index=index, name="how",
         )
 
@@ -151,7 +151,7 @@ def _time_groups(index: pd.DatetimeIndex, freq: str):
 
     if freq == "daily":
         dow = pd.Series(
-            [f"dow{d}" for d in index.dayofweek], index=index, name="dow",
+            [f"dow{d}" for d in index.day_of_week], index=index, name="dow",
         )
 
         return [season, dow]

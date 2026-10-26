@@ -839,7 +839,7 @@ class HourlyModel:
         # assign basic temporal features
         df["date"] = df.index.date
         df["month"] = df.index.month
-        df["day_of_week"] = df.index.dayofweek
+        df["day_of_week"] = df.index.day_of_week
         df["hour_of_day"] = df.index.hour
 
         # assign temporal clusters; the fitted table is never replaced, so combinations unseen

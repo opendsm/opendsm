@@ -518,7 +518,7 @@ class DailyModel:
         cols = list(meter_data.columns)
 
         if "datetime" in cols:
-            meter_data.set_index("datetime", inplace=True)
+            meter_data = meter_data.set_index("datetime")
             cols.remove("datetime")
 
         if not isinstance(meter_data.index, pd.DatetimeIndex):
@@ -529,11 +529,11 @@ class DailyModel:
 
         for col in ["season", "day_of_week", "weekday_weekend"]:
             if col in cols:
-                meter_data.drop([col], axis=1, inplace=True)
+                meter_data = meter_data.drop([col], axis=1)
                 cols.remove(col)
 
         meter_data["season"] = meter_data.index.month.map(self.settings.season._num_dict)
-        meter_data["day_of_week"] = meter_data.index.dayofweek + 1
+        meter_data["day_of_week"] = meter_data.index.day_of_week + 1
         meter_data["weekday_weekend"] = np.where(meter_data["day_of_week"] <= 5, "weekday", "weekend")
         meter_data = meter_data.sort_index()
         meter_data = meter_data[["season", "day_of_week", "weekday_weekend", *cols]]

@@ -25,6 +25,7 @@ from opendsm.eemeter.common.data_processor_utilities import (
     clean_billing_daily_data,
     compute_data_frequency,
     frequency_duration,
+    inferred_freq,
     remove_duplicates,
 )
 from opendsm.eemeter.common.features import compute_temperature_features
@@ -320,7 +321,7 @@ class _DailyData:
             pd.DataFrame: The computed temperature features.
         """
         temp_series = df["temperature"]
-        temp_series.index.freq = temp_series.index.inferred_freq
+        temp_series.index.freq = inferred_freq(temp_series.index)
         if temp_series.index.freq != "h":
             if temp_series.index.freq is None or frequency_duration(
                 temp_series.index.freq
@@ -514,7 +515,7 @@ class _DailyData:
             if df["datetime"].dt.tz is None:
                 raise ValueError("Datatime is missing timezone information")
             df["datetime"] = pd.to_datetime(df["datetime"])
-            df.set_index("datetime", inplace=True)
+            df = df.set_index("datetime")
 
         elif df.index.tz is None:
             raise ValueError("Datatime is missing timezone information")

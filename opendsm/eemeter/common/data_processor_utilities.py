@@ -376,12 +376,29 @@ def clean_billing_daily_data(data, source_interval, warnings):
         return downsample_and_clean_daily_data(data, warnings)
 
 
+def inferred_freq(index: pd.DatetimeIndex):
+    """Infer the frequency of a datetime index from its timestamps alone.
+
+    Args:
+        index: Not modified.
+
+    Returns:
+        The inferred frequency as an offset, or None when pandas infers none (fewer than three
+        timestamps, or irregular spacing).
+    """
+    # DatetimeIndex.inferred_freq and pd.infer_freq warn on pandas 3.1
+    unset = pd.DatetimeIndex(index, freq=None)
+    inferred = pd.DatetimeIndex(unset, freq="infer")
+
+    return inferred.freq
+
+
 # TODO : requires more testing
 def compute_data_frequency(index: pd.Series, default_data_frequency: Optional[str]):
     if len(index) <= 1:
         return default_data_frequency
     # Inferred frequency returns None if frequency can't be autodetected
-    index.freq = index.inferred_freq
+    index.freq = inferred_freq(index)
     if index.freq is None:
         median_difference = day_counts(index).median()
 

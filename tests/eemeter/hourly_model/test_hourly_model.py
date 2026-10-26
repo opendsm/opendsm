@@ -122,14 +122,14 @@ def test_tz_mismatch(baseline):
 def test_predict_missing_fit_features(baseline, reporting):
     baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
     hm = HourlyModel(settings=HourlySolarSettings()).fit(baseline_data)
-    reporting.drop("ghi", axis=1, inplace=True)
+    reporting = reporting.drop("ghi", axis=1)
     reporting_data = HourlyReportingData(reporting, is_electricity_data=True)
     with pytest.raises(ValueError):
         hm.predict(reporting_data)
 
 
 def test_nonsolar_predict_with_ghi(baseline, reporting, caplog):
-    baseline.drop("ghi", axis=1, inplace=True)
+    baseline = baseline.drop("ghi", axis=1)
     baseline_data = HourlyBaselineData(baseline, is_electricity_data=True)
     hm = HourlyModel().fit(baseline_data)
     reporting_data = HourlyReportingData(reporting, is_electricity_data=True)
@@ -484,7 +484,7 @@ def flagged_hourly():
     index = pd.date_range(
         "2019-01-01", "2020-01-01", freq="h", tz="America/New_York", inclusive="left"
     )
-    day_of_year = index.dayofyear.to_numpy()
+    day_of_year = index.day_of_year.to_numpy()
     hour = index.hour.to_numpy()
     temperature = (
         55
@@ -492,7 +492,7 @@ def flagged_hourly():
         + 8 * np.sin(2 * np.pi * (hour - 9) / 24)
         + rng.normal(0, 3, len(index))
     )
-    occupied = (index.dayofweek < 5) & (hour >= 8) & (hour < 18)
+    occupied = (index.day_of_week < 5) & (hour >= 8) & (hour < 18)
     observed = (
         3
         + 2 * occupied
@@ -537,7 +537,7 @@ class TestFitStatisticsFromIncludedDays:
             lambda index: index.date == date(2019, 7, 17),
             lambda index: index.date == date(2019, 3, 10),
             lambda index: index.date == date(2019, 11, 3),
-            lambda index: (index.month == 3) & (index.dayofweek == 0),
+            lambda index: (index.month == 3) & (index.day_of_week == 0),
         ],
         ids=["ordinary-day", "23-hour-dst-day", "25-hour-dst-day", "every-march-monday"],
     )
@@ -611,7 +611,7 @@ class TestFitStatisticsFromIncludedDays:
         self, flagged_hourly
     ):
         index = flagged_hourly.index
-        flagged_hourly.loc[(index.month == 3) & (index.dayofweek == 0), _UNMEASURED_FLAGS] = True
+        flagged_hourly.loc[(index.month == 3) & (index.day_of_week == 0), _UNMEASURED_FLAGS] = True
 
         model = _fit_flagged(flagged_hourly)
 
@@ -622,7 +622,7 @@ class TestFitStatisticsFromIncludedDays:
         self, flagged_hourly
     ):
         index = flagged_hourly.index
-        flagged_hourly.loc[(index.month == 3) & (index.dayofweek == 0), _UNMEASURED_FLAGS] = True
+        flagged_hourly.loc[(index.month == 3) & (index.day_of_week == 0), _UNMEASURED_FLAGS] = True
 
         model = _fit_flagged(flagged_hourly)
 
@@ -651,7 +651,7 @@ class TestFitStatisticsFromIncludedDays:
         index = flagged_hourly.index
         other_march_sundays = (
             (index.month == 3)
-            & (index.dayofweek == 6)
+            & (index.day_of_week == 6)
             & (index.date != date(2019, 3, 10))
         )
         flagged_hourly.loc[other_march_sundays, _UNMEASURED_FLAGS] = True
@@ -670,7 +670,7 @@ class TestFitStatisticsFromIncludedDays:
         following week's ordinary Sunday gets."""
         index = flagged_hourly.index
         flagged_hourly.loc[
-            (index.month == 3) & (index.dayofweek == 6), _UNMEASURED_FLAGS
+            (index.month == 3) & (index.day_of_week == 6), _UNMEASURED_FLAGS
         ] = True
         model = _fit_flagged(flagged_hourly)
         measured = flagged_hourly.drop(columns=_UNMEASURED_FLAGS)
@@ -712,7 +712,7 @@ def supplemental_hourly(flagged_hourly):
     code whose most common value is 0."""
     rng = np.random.default_rng(1)
     index = flagged_hourly.index
-    occupied = (index.dayofweek < 5) & (index.hour >= 8) & (index.hour < 18)
+    occupied = (index.day_of_week < 5) & (index.hour >= 8) & (index.hour < 18)
     flagged_hourly["occupancy"] = occupied + rng.normal(0, 0.1, len(index))
     dates = pd.Index(index.date)
     days = dates.unique()

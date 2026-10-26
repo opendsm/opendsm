@@ -38,7 +38,7 @@ def create_hourly_dataframe(
 
     n = len(index)
 
-    day_of_year = index.dayofyear
+    day_of_year = index.day_of_year
     hour_of_day = index.hour
     seasonal = 20 * np.sin(2 * np.pi * (day_of_year - 80) / 365)
     daily = 10 * np.sin(2 * np.pi * (hour_of_day - 6) / 24)

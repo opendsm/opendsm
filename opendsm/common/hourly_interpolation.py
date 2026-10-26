@@ -112,7 +112,7 @@ def _multiple_imputation(df, columns=None, **kwargs):
         df_imputed["datetime"] - df_imputed["datetime"].min()
     ).dt.total_seconds() / 3600
     df_imputed["hour_of_day"] = df_imputed["datetime"].dt.hour
-    df_imputed["day_of_week"] = df_imputed["datetime"].dt.dayofweek
+    df_imputed["day_of_week"] = df_imputed["datetime"].dt.day_of_week
     df_imputed["month"] = df_imputed["datetime"].dt.month
     df_imputed = df_imputed.set_index("datetime")
 

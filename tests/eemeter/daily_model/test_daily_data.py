@@ -332,7 +332,7 @@ def test_daily_baseline_data_with_missing_hourly_temperature_data(
     df = get_temperature_data_hourly
 
     # Create a mask for Tuesdays and Thursdays
-    mask = df.index.dayofweek.isin([1, 3])
+    mask = df.index.day_of_week.isin([1, 3])
 
     # Set 60% of the temperature data as missing on Tuesdays and Thursdays
     df.loc[df[mask].sample(frac=0.6).index, "temperature"] = np.nan
@@ -371,7 +371,7 @@ def test_daily_baseline_data_with_missing_half_hourly_temperature_data(
     df = get_temperature_data_half_hourly
 
     # Create a mask for Tuesdays and Thursdays
-    mask = df.index.dayofweek.isin([1, 3])
+    mask = df.index.day_of_week.isin([1, 3])
 
     # Set 60% of the temperature data as missing on Tuesdays and Thursdays
     # This should cause the high frequency temperature check to fail on these days
@@ -412,7 +412,7 @@ def test_daily_baseline_data_with_missing_daily_temperature_data(
 
     # Set 60% of the temperature data as missing on Tuesdays and Thursdays
     # This should cause the high frequency temperature check to fail on these days
-    df.loc[df.index.dayofweek.isin([1, 3]), "temperature"] = np.nan
+    df.loc[df.index.day_of_week.isin([1, 3]), "temperature"] = np.nan
 
     # Create a DataFrame with daily frequency
     df_meter = get_meter_data_daily
@@ -451,7 +451,7 @@ def test_daily_baseline_data_with_missing_meter_data(
     df_meter = get_meter_data_daily
 
     # Set Tuesdays & Thursdays data as missing
-    df_meter.loc[df_meter.index.dayofweek.isin([1, 3]), "observed"] = np.nan
+    df_meter.loc[df_meter.index.day_of_week.isin([1, 3]), "observed"] = np.nan
 
     # Merge 'df' and 'df_meter' in an outer join
     df = df.merge(df_meter, left_index=True, right_index=True, how="outer")
@@ -567,7 +567,7 @@ def test_daily_reporting_data_with_missing_half_hourly_and_hourly_frequencies(
     df = pd.DataFrame(data={"temperature": temperature_mean}, index=datetime_index)
 
     # Create a mask for Tuesdays and Thursdays
-    mask = df.index.dayofweek.isin([1, 3])
+    mask = df.index.day_of_week.isin([1, 3])
 
     # Set 60% of the temperature data as missing on Tuesdays and Thursdays
     # This should cause the high frequency temperature check to fail on these days
@@ -637,7 +637,7 @@ def test_daily_reporting_data_with_missing_daily_frequencies(get_datetime_index)
     df = pd.DataFrame(data={"temperature": temperature_mean}, index=datetime_index)
 
     # Create a mask for Tuesdays and Thursdays
-    mask = df.index.dayofweek.isin([1, 3])
+    mask = df.index.day_of_week.isin([1, 3])
 
     # Set 60% of the temperature data as missing on Tuesdays and Thursdays
     # This should cause the high frequency temperature check to fail on these days

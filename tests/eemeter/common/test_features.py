@@ -879,7 +879,7 @@ def test_compute_occupancy_feature_with_nans(even_occupancy):
 
     # TODO (ssuffian): Refactor so get_missing_hours_warnings propogates.
     # right now, it will error if the dropna below isn't used.
-    hour_of_week.dropna(inplace=True)
+    hour_of_week = hour_of_week.dropna()
     occupancy = compute_occupancy_feature(hour_of_week, even_occupancy)
     assert occupancy.name == "occupancy"
     assert occupancy.shape == (99,)
@@ -956,7 +956,7 @@ def test_estimate_hour_of_week_occupancy_without_heating_hours_is_silent():
     data = pd.DataFrame(
         {
             "meter_value": 2.0 + 0.1 * cdd_65 + rng.normal(0, 0.2, len(index)),
-            "hour_of_week": index.dayofweek * 24 + index.hour,
+            "hour_of_week": index.day_of_week * 24 + index.hour,
             "cdd_65": cdd_65,
             "hdd_50": 0.0,
         },

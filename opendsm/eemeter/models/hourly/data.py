@@ -208,7 +208,7 @@ class _HourlyData:
             if df["datetime"].dt.tz is None:
                 raise ValueError("Datatime is missing timezone information")
             df["datetime"] = pd.to_datetime(df["datetime"])
-            df.set_index("datetime", inplace=True)
+            df = df.set_index("datetime")
 
         elif df.index.tz is None:
             raise ValueError("Datatime is missing timezone information")

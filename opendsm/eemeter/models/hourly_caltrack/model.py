@@ -390,23 +390,21 @@ def caltrack_hourly_fit_feature_processor(
         segmented_data.temperature_mean, occupied_bin_endpoints_list
     )
     occupied_temperature_bin_features[occupancy_feature == 0] = 0
-    occupied_temperature_bin_features.rename(
+    occupied_temperature_bin_features = occupied_temperature_bin_features.rename(
         columns={
             c: "{}_occupied".format(c)
             for c in occupied_temperature_bin_features.columns
         },
-        inplace=True,
     )
     unoccupied_temperature_bin_features = compute_temperature_bin_features(
         segmented_data.temperature_mean, unoccupied_bin_endpoints_list
     )
     unoccupied_temperature_bin_features[occupancy_feature == 1] = 0
-    unoccupied_temperature_bin_features.rename(
+    unoccupied_temperature_bin_features = unoccupied_temperature_bin_features.rename(
         columns={
             c: "{}_unoccupied".format(c)
             for c in unoccupied_temperature_bin_features.columns
         },
-        inplace=True,
     )
 
     # combine features
@@ -482,23 +480,21 @@ def caltrack_hourly_prediction_feature_processor(
         segmented_data.temperature_mean, occupied_bin_endpoints_list
     )
     occupied_temperature_bin_features[occupancy_feature == 0] = 0
-    occupied_temperature_bin_features.rename(
+    occupied_temperature_bin_features = occupied_temperature_bin_features.rename(
         columns={
             c: "{}_occupied".format(c)
             for c in occupied_temperature_bin_features.columns
         },
-        inplace=True,
     )
     unoccupied_temperature_bin_features = compute_temperature_bin_features(
         segmented_data.temperature_mean, unoccupied_bin_endpoints_list
     )
     unoccupied_temperature_bin_features[occupancy_feature == 1] = 0
-    unoccupied_temperature_bin_features.rename(
+    unoccupied_temperature_bin_features = unoccupied_temperature_bin_features.rename(
         columns={
             c: "{}_unoccupied".format(c)
             for c in unoccupied_temperature_bin_features.columns
         },
-        inplace=True,
     )
 
     # combine features

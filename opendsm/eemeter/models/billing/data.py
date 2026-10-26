@@ -25,6 +25,7 @@ from opendsm.eemeter.common.data_processor_utilities import (
     clean_billing_daily_data,
     compute_data_frequency,
     frequency_duration,
+    inferred_freq,
 )
 from opendsm.eemeter.common.features import compute_temperature_features
 from opendsm.eemeter.common.data_settings import BillingDataSettings
@@ -160,7 +161,7 @@ class _BillingData(_DailyData):
             pd.DataFrame: The computed temperature features.
         """
         temp_series = df["temperature"]
-        temp_series.index.freq = temp_series.index.inferred_freq
+        temp_series.index.freq = inferred_freq(temp_series.index)
         if temp_series.index.freq != "h":
             if (
                 temp_series.index.freq is None

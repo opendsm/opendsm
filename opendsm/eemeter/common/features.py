@@ -20,6 +20,7 @@ import statsmodels.formula.api as smf
 from statsmodels.tools.sm_exceptions import SingularMatrixWarning
 
 from ..models.hourly_caltrack.segmentation import iterate_segmented_dataset
+from .data_processor_utilities import inferred_freq
 from .transform import day_counts, overwrite_partial_rows_with_nan
 from .warnings import EEMeterWarning
 
@@ -143,7 +144,7 @@ def compute_time_features(index, hour_of_week=True, day_of_week=True, hour_of_da
             " Found: {}".format(index.freq)
         )
 
-    dow_feature = pd.Series(index.dayofweek, index=index, name="day_of_week")
+    dow_feature = pd.Series(index.day_of_week, index=index, name="day_of_week")
     hod_feature = pd.Series(index.hour, index=index, name="hour_of_day")
     how_feature = (dow_feature * 24 + hod_feature).rename("hour_of_week")
 
@@ -392,7 +393,7 @@ def compute_temperature_features(
             " temperature_data.tz_localize(...)."
         )
 
-    if meter_data_index.freq is None and meter_data_index.inferred_freq == "h":
+    if meter_data_index.freq is None and inferred_freq(meter_data_index) == "h":
         raise ValueError(
             "If you have hourly data explicitly set the frequency"
             " of the dataframe by setting"

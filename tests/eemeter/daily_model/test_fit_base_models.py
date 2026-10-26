@@ -98,7 +98,7 @@ def meter_data():
         }
     )
     df_meter["datetime"] = pd.to_datetime(df_meter["datetime"])
-    df_meter.set_index("datetime", inplace=True)
+    df_meter = df_meter.set_index("datetime")
     return df_meter
 
 

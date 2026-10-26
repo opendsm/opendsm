@@ -128,7 +128,7 @@ class HourlyModel:
         meter_data = meter_data.merge(
             prediction.result, left_index=True, right_index=True
         )
-        meter_data.dropna(inplace=True)
+        meter_data = meter_data.dropna()
         meter_data["resid"] = meter_data["value"] - meter_data["predicted_usage"]
 
         # get uncertainty variables

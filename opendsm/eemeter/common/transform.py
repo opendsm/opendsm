@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 from pandas.tseries.offsets import MonthEnd
 
+from .data_processor_utilities import inferred_freq
 from .exceptions import NoBaselineDataError, NoReportingDataError
 from .warnings import EEMeterWarning
 
@@ -813,7 +814,7 @@ def add_freq(idx, freq=None):
     idx = idx.copy()
     if freq is None:
         if idx.freq is None:
-            freq = pd.infer_freq(idx)
+            freq = inferred_freq(idx)
         else:
             return idx
     idx.freq = pd.tseries.frequencies.to_offset(freq)
@@ -957,10 +958,10 @@ def format_energy_data_for_caltrack(*args, method="hourly", tz="UTC"):
             df = pd.DataFrame(df)
         df = df.resample(freq).sum()
         df.index = df.index.rename("start")
-        args_tuple = args_tuple + (df,)
         if df.columns[0] != "value":
             current_col_name = df.columns[0]
-            df.rename(columns={current_col_name: "value"}, inplace=True)
+            df = df.rename(columns={current_col_name: "value"})
+        args_tuple = args_tuple + (df,)
 
     if len(args_tuple) == 1:
         return args_tuple[0]

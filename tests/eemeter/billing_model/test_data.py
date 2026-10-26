@@ -384,7 +384,7 @@ def test_billing_reporting_data_with_missing_half_hourly_frequencies(
     df = pd.DataFrame(data={"temperature": temperature_mean}, index=datetime_index)
 
     # Create a mask for Tuesdays and Thursdays
-    mask = df.index.dayofweek.isin([1, 3])
+    mask = df.index.day_of_week.isin([1, 3])
 
     # Set 60% of the temperature data as missing on Tuesdays and Thursdays
     # This should cause the high frequency temperature check to fail on these days
@@ -430,7 +430,7 @@ def test_billing_reporting_data_with_missing_daily_frequencies(get_datetime_inde
     df = pd.DataFrame(data={"temperature": temperature_mean}, index=datetime_index)
 
     # Create a mask for Tuesdays and Thursdays
-    mask = df.index.dayofweek.isin([1, 3])
+    mask = df.index.day_of_week.isin([1, 3])
 
     # Set 60% of the temperature data as missing on Tuesdays and Thursdays
     # This should cause the high frequency temperature check to fail on these days
