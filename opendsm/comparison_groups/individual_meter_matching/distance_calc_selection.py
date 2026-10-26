@@ -349,7 +349,7 @@ class DistanceMatching:
 
         if n_match == 0:
             raise DistanceMatchingError(
-                f"Not enough treatment pool meters {n_pool} to match with "
+                f"Not enough comparison pool meters {n_pool} to match with "
                 f"{n_treatment} treatment meters without duplicates"
             )
 
