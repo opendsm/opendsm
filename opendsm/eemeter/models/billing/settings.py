@@ -14,7 +14,8 @@
 
 from __future__ import annotations
 
-from opendsm.common.base_settings import UserField
+from opendsm.common.base_settings import DeveloperField, UserField
+from opendsm.eemeter.common.data_settings import BillingDataSettings
 from opendsm.eemeter.models.daily.utilities.settings import (
     DailySettings,
     PresetName,
@@ -23,9 +24,11 @@ from opendsm.eemeter.models.daily.utilities.settings import (
 
 
 class BillingSettings(DailySettings):
-    """Daily settings on the legacy preset."""
+    """Daily settings on the legacy preset with the billing data block."""
 
     preset: PresetName = UserField(
         default="legacy",
         description="Named set of default values that all other settings fall back to",
     )
+
+    data: BillingDataSettings = DeveloperField(default_factory=BillingDataSettings)

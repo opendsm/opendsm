@@ -17,10 +17,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from opendsm.eemeter import (
-    HourlyCaltrackModel,
-    HourlyCaltrackBaselineData,
-    HourlyCaltrackReportingData,
+from opendsm.eemeter import HourlyCaltrackModel
+from opendsm.eemeter.models.hourly_caltrack.data import (
+    _HourlyBaselineData,
+    _HourlyReportingData,
 )
 from opendsm.eemeter.models.hourly_caltrack.model import (
     caltrack_hourly_fit_feature_processor,
@@ -32,6 +32,7 @@ from opendsm.eemeter.models.hourly_caltrack import segmentation
 from opendsm.eemeter.common.features import (
     compute_time_features,
 )
+
 
 
 @pytest.fixture
@@ -493,13 +494,12 @@ def test_fit_caltrack_hourly_model_segment_single_mode(
 
 def test_json_hourly_with_zeros(comstock_hourly):
     df_b, _ = comstock_hourly
-    meter = df_b[["observed"]].rename(columns={"observed": "value"}).copy()
-    meter["value"] = 0
-    temperature = df_b["temperature"]
+    df = df_b[["observed", "temperature"]].copy()
+    df["observed"] = 0
 
-    baseline = HourlyCaltrackBaselineData.from_series(meter, temperature, is_electricity_data=True)
+    baseline = _HourlyBaselineData(df.copy(), is_electricity_data=True)
     assert baseline.df["observed"].isnull().all()
-    reporting = HourlyCaltrackReportingData.from_series(meter, temperature, is_electricity_data=True)
+    reporting = _HourlyReportingData(df.copy(), is_electricity_data=True)
     assert reporting.df["observed"].isnull().all()
 
 
@@ -509,15 +509,11 @@ def test_json_caltrack_hourly(comstock_hourly, caltrack_hourly_model):
     length."""
     _, df_r = comstock_hourly
     # the first three days of every month, so each of the twelve segment models predicts
-    df_r = df_r[df_r.index.day <= 3]
-    meter_r = df_r[["observed"]].rename(columns={"observed": "value"}).copy()
-    reporting = HourlyCaltrackReportingData.from_series(
-        meter_r, df_r["temperature"], is_electricity_data=True
-    )
-    result1 = caltrack_hourly_model.predict(reporting)
+    reporting_df = df_r[df_r.index.day <= 3][["observed", "temperature"]]
+    result1 = caltrack_hourly_model.predict(reporting_df)
 
     m = HourlyCaltrackModel.from_json(caltrack_hourly_model.to_json())
-    result2 = m.predict(reporting)
+    result2 = m.predict(reporting_df)
 
     assert result1["predicted"].sum() == result2["predicted"].sum()
     assert (
@@ -563,22 +559,59 @@ def test_from_2_0_json_rejects_formula_outside_the_grammar(request, monkeypatch)
     tampered = _with_every_formula(legacy, "meter_value ~ __import__('os').getpid()")
 
     with pytest.raises(ValueError, match="formula"):
-        HourlyCaltrackModel.from_2_0_json(json.dumps(tampered))
+        HourlyCaltrackModel.from_2_0_json(json.dumps(tampered), is_electricity_data=True)
+
+
+def test_from_2_0_json_with_keyword_logs_no_prior_format_warning(request, caplog):
+    """Loading a payload without the fuel flag and supplying it logs nothing."""
+    with open(request.fspath.dirname + "/legacy_hourly.json", "r") as f:
+        legacy_str = f.read()
+
+    with caplog.at_level("WARNING", logger="eemeter"):
+        HourlyCaltrackModel.from_2_0_json(legacy_str, is_electricity_data=True)
+
+    assert caplog.records == [], f"expected no warnings, got {caplog.records}"
 
 
 def test_legacy_deserialization_hourly(request, comstock_hourly, snapshot):
     with open(request.fspath.dirname + "/legacy_hourly.json", "r") as f:
         legacy_str = f.read()
-    baseline_model = HourlyCaltrackModel.from_2_0_json(legacy_str)
+    baseline_model = HourlyCaltrackModel.from_2_0_json(legacy_str, is_electricity_data=True)
 
     _, df_r = comstock_hourly
-    meter = df_r[["observed"]].rename(columns={"observed": "value"}).copy()
-    temperature = df_r["temperature"]
-
-    reporting = HourlyCaltrackReportingData.from_series(meter, temperature, is_electricity_data=True)
-    metered_savings_dataframe = baseline_model.predict(reporting)
+    reporting_df = df_r[["observed", "temperature"]]
+    metered_savings_dataframe = baseline_model.predict(reporting_df)
     total_metered_savings = (
         metered_savings_dataframe["observed"] - metered_savings_dataframe["predicted"]
     ).sum()
 
     assert round(float(total_metered_savings), 2) == snapshot(name="total_metered_savings")
+
+
+def _constant_hourly_frame():
+    """Two days of constant hourly usage and temperature: enough to build a data object."""
+    index = pd.date_range("2020-01-01", periods=48, freq="h", tz="UTC")
+
+    return pd.DataFrame({"observed": 1.0, "temperature": 50.0}, index=index)
+
+
+@pytest.mark.parametrize(
+    "make_value,type_name",
+    [
+        (
+            lambda: _HourlyBaselineData(_constant_hourly_frame(), is_electricity_data=True),
+            "_HourlyBaselineData",
+        ),
+        (lambda: None, "NoneType"),
+        (lambda: {"observed": [1.0]}, "dict"),
+        (lambda: pd.Series([1.0]), "Series"),
+    ],
+    ids=["data_object", "none", "dict", "series"],
+)
+@pytest.mark.parametrize("method", ["fit", "predict"])
+def test_non_dataframe_input_raises_type_error(method, make_value, type_name):
+    """fit and predict on an unfitted model reject anything that is not a DataFrame."""
+    kwargs = {"fit": {"is_electricity_data": True}, "predict": {}}[method]
+
+    with pytest.raises(TypeError, match=f"df must be a pandas DataFrame, got {type_name}"):
+        getattr(HourlyCaltrackModel(), method)(make_value(), **kwargs)

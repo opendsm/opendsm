@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import re
 
+from datetime import date
+
 import numpy as np
 import pandas as pd
 
@@ -36,7 +38,7 @@ from threadpoolctl import threadpool_limits
 import json
 
 from opendsm.eemeter.models.hourly import settings as _settings
-from opendsm.eemeter.models.hourly import HourlyBaselineData, HourlyReportingData
+from opendsm.eemeter.models.hourly.data import HourlyBaselineData, HourlyReportingData
 from opendsm.eemeter.models.hourly.scalers import (
     SafeStandardScaler,
     SafeRobustScaler,
@@ -50,6 +52,11 @@ from opendsm.eemeter.models.hourly.regressors import (
 )
 from opendsm.common.base_settings import settings_deviation_report
 from opendsm.common.base_settings import lowercase_keys
+from opendsm.eemeter.common.data_processor_utilities import (
+    require_dataframe,
+    resolve_is_electricity_data,
+    trim_edge_rows,
+)
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
     DisqualifiedModelError,
@@ -332,6 +339,7 @@ class HourlyModel:
         self._ts_feature_norm = None
         self._supplemental_fill_values = {}
 
+        # read by the comparison-group population
         self._ts_features = []
         if self.settings.train_features:
             self._ts_features = self.settings.train_features.copy()
@@ -342,6 +350,9 @@ class HourlyModel:
 
         self.warnings = []
         self.disqualification = []
+
+        self._is_electricity_data = None
+        self._pv_start = None
 
         self.baseline_timezone = None
         self.version = __version__
@@ -426,7 +437,10 @@ class HourlyModel:
             )
             model_fit_warning.warn()
             self.disqualification.append(model_fit_warning)
-            raise DataSufficiencyError("Cannot fit model: Baseline data contains all zeros in observed values")
+            raise DataSufficiencyError(
+                "Cannot fit model: Baseline data contains all zeros in observed values",
+                disqualification=self.disqualification,
+            )
 
         if baseline_data.df["observed"].isnull().all():
             model_fit_warning = self._model_warning(
@@ -435,7 +449,57 @@ class HourlyModel:
             )
             model_fit_warning.warn()
             self.disqualification.append(model_fit_warning)
-            raise DataSufficiencyError("Cannot fit model: Baseline data contains no finite observed values")
+            raise DataSufficiencyError(
+                "Cannot fit model: Baseline data contains no finite observed values",
+                disqualification=self.disqualification,
+            )
+
+    @property
+    def is_electricity_data(self) -> bool | None:
+        """Whether the meter data is electricity data; None before fit or load."""
+        return self._is_electricity_data
+
+    def _baseline_data(self, df: pd.DataFrame) -> tuple[HourlyBaselineData, int, int]:
+        """`_build_baseline_data` with the model's fuel flag and PV start, for the
+        comparison-group population."""
+        built = self._build_baseline_data(df, self._is_electricity_data, self._pv_start)
+
+        return built
+
+    def _build_baseline_data(
+        self,
+        df: pd.DataFrame,
+        is_electricity_data: bool | None,
+        pv_start: date | None = None,
+    ) -> tuple[HourlyBaselineData, int, int]:
+        """Build the baseline data object for a frame, trimming its incomplete edges; leaves
+        the model unchanged.
+
+        Returns:
+            The baseline data object and the numbers of leading and trailing rows trimmed.
+        """
+        trimmed, n_leading, n_trailing = trim_edge_rows(
+            df, trailing_columns=("observed", "temperature")
+        )
+        baseline_data = HourlyBaselineData(
+            trimmed,
+            is_electricity_data,
+            pv_start=pv_start,
+            settings=self.settings.data,
+        )
+
+        return baseline_data, n_leading, n_trailing
+
+    def _reporting_data(self, df: pd.DataFrame) -> HourlyReportingData:
+        """Called by `predict` and by the comparison-group population."""
+        reporting_data = HourlyReportingData(
+            df,
+            self._is_electricity_data,
+            pv_start=self._pv_start,
+            settings=self.settings.data,
+        )
+
+        return reporting_data
 
     def _warn_ignored_ghi(self, baseline_data):
         if "ghi" in baseline_data.df.columns and "ghi" not in self._ts_features:
@@ -455,31 +519,86 @@ class HourlyModel:
         return report
 
     def fit(
-        self, baseline_data: HourlyBaselineData, ignore_disqualification: bool = False
+        self,
+        df: pd.DataFrame,
+        *,
+        is_electricity_data: bool,
+        pv_start: date | str | None = None,
+        enforce_compliance: bool = True,
     ) -> HourlyModel:
-        """Fit the model using baseline data.
+        """Fit the model using baseline meter data.
 
         Args:
-            baseline_data: HourlyBaselineData object.
-            ignore_disqualification: Whether to ignore disqualification errors / warnings.
+            df: Hourly dataframe with a timezone-aware datetime index, an "observed"
+                column and a "temperature" column. An optional "ghi" column selects the
+                solar feature set. Any supplemental columns named in the hourly settings
+                are used as additional features.
+            is_electricity_data: Whether the meter data is electricity data.
+            pv_start: Date solar generation began, if any.
+            enforce_compliance: Whether to enforce data-sufficiency compliance.
 
         Returns:
             The fitted model.
 
         Raises:
-            TypeError: If baseline_data is not an HourlyBaselineData object.
-            DataSufficiencyError: If the model can't be fit on disqualified baseline data.
+            TypeError: If df is not a pandas DataFrame.
+            DataSufficiencyError: If `enforce_compliance` is True and the baseline data is
+                disqualified, raised before any state changes. Also raised mid-fit by the
+                prefit check or for too few measured hours per day; the model then carries the
+                new call's fuel flag, PV start, warnings and disqualification, and in the second
+                case is unfitted.
         """
-        if not isinstance(baseline_data, HourlyBaselineData):
-            raise TypeError("baseline_data must be an HourlyBaselineData object")
+        require_dataframe(df, "df")
 
+        is_electricity_data = bool(is_electricity_data)
+        if pv_start is not None:
+            pv_start = pd.to_datetime(pv_start).date()
+
+        baseline_data, n_leading, n_trailing = self._build_baseline_data(
+            df, is_electricity_data, pv_start
+        )
+        self._fit_baseline(
+            baseline_data, n_leading, n_trailing, is_electricity_data, enforce_compliance, pv_start
+        )
+
+        return self
+
+    def _fit_baseline(
+        self,
+        baseline_data,
+        n_leading,
+        n_trailing,
+        is_electricity_data,
+        enforce_compliance,
+        pv_start=None,
+    ):
+        """Fit on a built baseline data object, as `fit` does with the one it builds; a
+        comparison-group population calls it with the object it keeps, so the data is built
+        once and the model holds no copy."""
         baseline_data.log_warnings()
 
-        if baseline_data.disqualification and not ignore_disqualification:
-            raise DataSufficiencyError("Can't fit model on disqualified baseline data")
+        warnings = list(baseline_data.warnings)
+        disqualification = list(baseline_data.disqualification)
 
-        self.warnings = list(baseline_data.warnings)
-        self.disqualification = baseline_data.disqualification
+        if n_leading or n_trailing:
+            trim_warning = self._model_warning(
+                qualified_name="eemeter.data_quality.edge_rows_trimmed",
+                description="Rows missing observed or temperature were trimmed from the baseline edges.",
+                data={"leading": n_leading, "trailing": n_trailing},
+            )
+            trim_warning.warn()
+            warnings.append(trim_warning)
+
+        if disqualification and enforce_compliance:
+            raise DataSufficiencyError(
+                "Can't fit model on disqualified baseline data",
+                disqualification=disqualification,
+            )
+
+        self._is_electricity_data = is_electricity_data
+        self._pv_start = pv_start
+        self.warnings = warnings
+        self.disqualification = disqualification
 
         if not self._ts_features:
             self.settings = self.settings.add_default_features(baseline_data.df.columns)
@@ -496,8 +615,6 @@ class HourlyModel:
 
         self._fit(baseline_data)
         self._check_model_fit()
-
-        return self
 
     def _fit(self, meter_data):
         self._is_fit = False
@@ -528,54 +645,71 @@ class HourlyModel:
 
     def predict(
         self,
-        reporting_data,
-        ignore_disqualification=False,
+        df: pd.DataFrame,
+        *,
+        enforce_compliance: bool = True,
     ) -> pd.DataFrame:
         """Predicts the energy consumption using the fitted model.
 
         Args:
-            reporting_data (Union[HourlyBaselineData, HourlyReportingData]): The data used for prediction.
-            ignore_disqualification (bool, optional): Whether to ignore model disqualification. Defaults to False.
+            df: Hourly dataframe with a timezone-aware datetime index in the timezone the
+                model was fit on and a "temperature" column. An optional "ghi" column is
+                required when the model was fit with the solar feature set. Any
+                supplemental columns named in the hourly settings are used as additional
+                features.
+            enforce_compliance: Whether to enforce model disqualification.
 
         Returns:
             Dataframe with input data along with predicted energy consumption.
 
         Raises:
             RuntimeError: If the model is not fitted.
-            DisqualifiedModelError: If the model is disqualified and ignore_disqualification is False.
-            TypeError: If the reporting data is not of type HourlyBaselineData or HourlyReportingData.
+            DisqualifiedModelError: If the model is disqualified and enforce_compliance is True.
+            ValueError: If the reporting data lacks a feature the model was fit with, or has a
+                different timezone than the model.
+            TypeError: If df is not a pandas DataFrame.
         """
+        require_dataframe(df, "df")
+
+        if not self._is_fit:
+            raise RuntimeError("Model must be fit before predictions can be made.")
+
+        reporting_data = self._reporting_data(df)
+        df_predicted = self._predict_data(
+            reporting_data, enforce_compliance=enforce_compliance
+        )
+
+        return df_predicted
+
+    def _predict_data(self, data, enforce_compliance=True) -> pd.DataFrame:
+        """Predict on an already built baseline or reporting data object. Called by `predict`
+        and by the comparison-group population."""
         if not self._is_fit:
             raise RuntimeError("Model must be fit before predictions can be made.")
 
         if missing_features := (
-            set(self._ts_features) - set(reporting_data.df.columns)
+            set(self._ts_features) - set(data.df.columns)
         ):
             raise ValueError(
                 f"Reporting data is missing the following features: {missing_features}"
             )
 
-        if "ghi" in reporting_data.df.columns and "ghi" not in self._ts_features:
+        if "ghi" in data.df.columns and "ghi" not in self._ts_features:
             self._warn_model_mismatch(
                 "Reporting data contains GHI, but model was fit without GHI."
             )
 
-        if str(self.baseline_timezone) != str(reporting_data.tz):
+        if str(self.baseline_timezone) != str(data.tz):
             raise ValueError(
                 "Reporting data must use the same timezone that the model was initially fit on."
             )
 
-        if self.disqualification and not ignore_disqualification:
+        if self.disqualification and enforce_compliance:
             raise DisqualifiedModelError(
-                "Attempting to predict using disqualified model without setting ignore_disqualification=True"
+                "Attempting to predict using disqualified model without setting enforce_compliance=False"
             )
 
-        if not isinstance(reporting_data, (HourlyBaselineData, HourlyReportingData)):
-            raise TypeError(
-                "reporting_data must be a HourlyBaselineData or HourlyReportingData object"
-            )
-
-        return self._predict(reporting_data)
+        return self._predict(data)
 
     def _predict(self, eval_data, X=None):
         """
@@ -1575,6 +1709,10 @@ class HourlyModel:
                 if v is not None
             }
 
+        pv_start = None
+        if self._pv_start is not None:
+            pv_start = self._pv_start.isoformat()
+
         params = self._base_settings.SerializeModel(
             settings=self.settings,
             temporal_clusters=df_temporal_clusters,
@@ -1596,6 +1734,8 @@ class HourlyModel:
 
                 baseline_timezone=str(self.baseline_timezone),
                 version=self.version,
+                is_electricity_data=bool(self._is_electricity_data),
+                pv_start=pv_start,
             ),
         )
 
@@ -1610,15 +1750,26 @@ class HourlyModel:
         return json.dumps(self.to_dict())
 
     @classmethod
-    def from_dict(cls, data) -> HourlyModel:
+    def from_dict(cls, data, *, is_electricity_data=None) -> HourlyModel:
         """Create a instance of the class from a dictionary (such as one produced from the to_dict method).
 
         Args:
             data (dict): The dictionary containing the model data.
+            is_electricity_data (bool): The meter fuel, required only when the payload
+                does not carry it and rejected when it does.
 
         Returns:
             An instance of the class.
+
+        Raises:
+            ValueError: If is_electricity_data is supplied alongside a serialized value,
+                or omitted when the serialized model lacks one.
         """
+        info_data = dict(data.get("info"))
+        info_data["is_electricity_data"], prior_format_warning = resolve_is_electricity_data(
+            info_data.get("is_electricity_data"), is_electricity_data
+        )
+
         # get settings
         settings_dict = lowercase_keys(data.get("settings"))
         train_features = settings_dict.get("train_features")
@@ -1686,26 +1837,40 @@ class HourlyModel:
                 for k, v in raw_hour_metrics.items()
             }
 
-        info = model_cls._base_settings.ModelInfo(**data.get("info"))
-        model_cls.warnings = info.warnings
+        info = model_cls._base_settings.ModelInfo(**info_data)
+        model_cls.warnings = list(info.warnings)
         model_cls.disqualification = info.disqualification
         model_cls.baseline_timezone = info.baseline_timezone
         model_cls.version = info.version
+        model_cls._is_electricity_data = info.is_electricity_data
+
+        model_cls._pv_start = None
+        if info.pv_start is not None:
+            model_cls._pv_start = date.fromisoformat(info.pv_start)
+
+        if prior_format_warning is not None:
+            model_cls.warnings.append(prior_format_warning)
 
         return model_cls
 
     @classmethod
-    def from_json(cls, str_data) -> HourlyModel:
+    def from_json(cls, str_data, *, is_electricity_data=None) -> HourlyModel:
         """Create an instance of the class from a JSON string.
 
         Args:
             str_data: The JSON string representing the object.
+            is_electricity_data (bool): The meter fuel, required only when the payload
+                does not carry it and rejected when it does.
 
         Returns:
             An instance of the class.
 
         """
-        return cls.from_dict(json.loads(str_data))
+        model_cls = cls.from_dict(
+            json.loads(str_data), is_electricity_data=is_electricity_data
+        )
+
+        return model_cls
 
     def plot(
         self,

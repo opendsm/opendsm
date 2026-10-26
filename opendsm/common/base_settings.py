@@ -67,19 +67,9 @@ class BaseSettings(pydantic.BaseModel):
         return v
 
 
-class MutableBaseSettings(BaseSettings):
-    model_config = pydantic.ConfigDict(
-        frozen = False,
-        arbitrary_types_allowed=True,
-        str_to_lower = True,
-        str_strip_whitespace = True,
-    )
-
-
 def _tiered_field(developer: bool, *args, **kwargs):
     extra = {**(kwargs.pop("json_schema_extra", None) or {}), "developer": developer}
     field = pydantic.Field(*args, json_schema_extra=extra, **kwargs)
-
     return field
 
 

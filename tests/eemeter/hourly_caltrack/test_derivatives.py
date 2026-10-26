@@ -34,15 +34,13 @@ from opendsm.eemeter.common.features import (
 )
 from opendsm.eemeter.models.hourly_caltrack.segmentation import segment_time_series
 from opendsm.eemeter.models.daily.model import DailyModel
-from opendsm.eemeter.models.daily.data import DailyBaselineData, DailyReportingData
+from opendsm.eemeter.models.daily.data import DailyReportingData
 from opendsm.eemeter.models.billing.model import BillingModel
-from opendsm.eemeter.models.billing.data import (
-    BillingBaselineData,
-    BillingReportingData,
-)
 
 from regression_metrics import regression_block
 from syrupy_extensions import TolerantJSONSnapshotExtension
+
+from ..helpers import meter_temperature_frame
 
 
 
@@ -61,8 +59,9 @@ def reporting_model_daily(comstock_daily):
     # Reporting-period DailyModel is trained as a baseline fit on the reporting period;
     # use DailyBaselineData here because DailyReportingData has no observed values to fit on.
     _, df_r = comstock_daily
-    baseline_data = DailyBaselineData(df=df_r.reset_index().copy(), is_electricity_data=True)
-    model = DailyModel().fit(baseline_data, ignore_disqualification=True)
+    model = DailyModel().fit(
+        df_r.reset_index().copy(), is_electricity_data=True, enforce_compliance=False
+    )
 
     return model
 
@@ -86,9 +85,7 @@ def test_metered_savings_cdd_hdd_daily(
     reporting_temperature_data,
     snapshot,
 ):
-    reporting_data = DailyReportingData.from_series(
-        reporting_meter_data_daily, reporting_temperature_data, is_electricity_data=True
-    )
+    reporting_data = meter_temperature_frame(reporting_meter_data_daily, reporting_temperature_data)
     results = baseline_model_daily.predict(reporting_data)
 
     assert regression_block(results, freq="daily") == snapshot(
@@ -101,16 +98,18 @@ def reporting_model_billing(comstock_monthly):
     df_b, _ = comstock_monthly
     df_shifted = df_b.copy()
     df_shifted["observed"] = df_shifted["observed"] - 50
-    baseline_data = BillingBaselineData(
-        df=df_shifted.reset_index(), is_electricity_data=True
+    model = BillingModel().fit(
+        df_shifted.reset_index(), is_electricity_data=True, enforce_compliance=False
     )
 
-    return BillingModel().fit(baseline_data, ignore_disqualification=True)
+    return model
 
 
 @pytest.fixture
 def reporting_meter_data_billing():
-    index = pd.date_range("2019-01-01", freq="MS", periods=13, tz="America/Chicago")
+    # the two monthly reads inside reporting_temperature_data's span; the last temperature
+    # row has no read and closes the second period
+    index = pd.date_range("2019-01-01", freq="MS", periods=2, tz="America/Chicago")
     return pd.DataFrame({"value": 1}, index=index)
 
 
@@ -121,11 +120,7 @@ def test_metered_savings_cdd_hdd_billing(
     reporting_temperature_data,
     snapshot,
 ):
-    reporting_data = BillingReportingData.from_series(
-        reporting_meter_data_billing,
-        reporting_temperature_data,
-        is_electricity_data=True,
-    )
+    reporting_data = meter_temperature_frame(reporting_meter_data_billing, reporting_temperature_data)
     results = baseline_model_billing.predict(reporting_data)
 
     assert regression_block(results, freq="daily") == snapshot(name="regression")
@@ -140,9 +135,7 @@ def test_metered_savings_cdd_hdd_billing_no_reporting_data(
 ):
     # TODO test makes less sense without the use of derivatives functions. can just be merged with other predict() tests
     results = baseline_model_billing.predict(
-        BillingReportingData.from_series(
-            None, reporting_temperature_data, is_electricity_data=True
-        )
+        meter_temperature_frame(None, reporting_temperature_data)
     )
     assert list(results.columns) == [
         "season",
@@ -168,17 +161,14 @@ def test_metered_savings_cdd_hdd_billing_single_record_reporting_data(
     snapshot,
 ):
     results = baseline_model_billing.predict(
-        BillingReportingData.from_series(
-            reporting_meter_data_billing[:1],
-            reporting_temperature_data,
-            is_electricity_data=True,
-        )
+        meter_temperature_frame(reporting_meter_data_billing[:1], reporting_temperature_data)
     )
     assert list(results.columns) == [
         "season",
         "day_of_week",
         "weekday_weekend",
         "temperature",
+        "observed",
         "predicted",
         "predicted_unc",
         "heating_load",
@@ -204,8 +194,7 @@ def baseline_model_billing_single_record_baseline_data(comstock_monthly, comstoc
     ).rename(columns={"meter_value": "observed", "temperature_mean": "temperature"})
     baseline_data = baseline_data[:60]
     model = BillingModel().fit(
-        BillingBaselineData(baseline_data, is_electricity_data=True),
-        ignore_disqualification=True,
+        baseline_data, is_electricity_data=True, enforce_compliance=False
     )
 
     return model
@@ -235,12 +224,8 @@ def test_metered_savings_cdd_hdd_billing_single_record_baseline_data(
     snapshot,
 ):
     results = baseline_model_billing_single_record_baseline_data.predict(
-        BillingReportingData.from_series(
-            reporting_meter_data_billing,
-            reporting_temperature_data,
-            is_electricity_data=True,
-        ),
-        ignore_disqualification=True,
+        meter_temperature_frame(reporting_meter_data_billing, reporting_temperature_data),
+        enforce_compliance=False,
     )
     assert list(results.columns) == [
         "season",
@@ -260,24 +245,6 @@ def test_metered_savings_cdd_hdd_billing_single_record_baseline_data(
     )
 
 
-@pytest.fixture
-def reporting_meter_data_billing_wrong_timestamp():
-    index = pd.date_range("2003-01-01", freq="MS", periods=13, tz="UTC")
-    return pd.DataFrame({"value": 1}, index=index)
-
-
-def test_metered_savings_cdd_hdd_billing_reporting_data_wrong_timestamp(
-    reporting_meter_data_billing_wrong_timestamp,
-    reporting_temperature_data,
-):
-    with pytest.raises(ValueError):
-        BillingReportingData.from_series(
-            reporting_meter_data_billing_wrong_timestamp,
-            reporting_temperature_data,
-            is_electricity_data=True,
-        )
-
-
 @pytest.mark.regression
 def test_modeled_savings_cdd_hdd_daily(
     baseline_model_daily,
@@ -286,9 +253,7 @@ def test_modeled_savings_cdd_hdd_daily(
     reporting_temperature_data,
     snapshot,
 ):
-    reporting_data = DailyReportingData.from_series(
-        reporting_meter_data_daily, reporting_temperature_data, is_electricity_data=True
-    )
+    reporting_data = meter_temperature_frame(reporting_meter_data_daily, reporting_temperature_data)
     baseline_model_result = baseline_model_daily.predict(reporting_data)
     reporting_model_result = reporting_model_daily.predict(reporting_data)
     modeled_savings_df = pd.DataFrame(
@@ -447,13 +412,11 @@ def test_modeled_savings_cdd_hdd_billing(
     #     pd.date_range("2015-01-01", freq="D", periods=365, tz="UTC"),
     #     normal_year_temperature_data,
     # )
-    meter_data = meter_data = pd.DataFrame(
+    meter_data = pd.DataFrame(
         {"observed": np.nan}, index=normal_year_temperature_data.index
     )
     results = baseline_model_billing.predict(
-        BillingReportingData.from_series(
-            meter_data, normal_year_temperature_data, is_electricity_data=True
-        )
+        meter_temperature_frame(meter_data, normal_year_temperature_data)
     )
 
     assert list(results.columns) == [
@@ -472,24 +435,6 @@ def test_modeled_savings_cdd_hdd_billing(
     assert regression_block(results, freq="daily") == snapshot(name="regression")
 
 
-@pytest.fixture
-def reporting_meter_data_billing_not_aligned():
-    index = pd.date_range("2001-01-01", freq="MS", periods=13, tz="UTC")
-    return pd.DataFrame({"value": None}, index=index)
-
-
-def test_metered_savings_not_aligned_reporting_data(
-    reporting_meter_data_billing_not_aligned,
-    reporting_temperature_data,
-):
-    with pytest.raises(ValueError):
-        BillingReportingData.from_series(
-            reporting_meter_data_billing_not_aligned,
-            reporting_temperature_data,
-            is_electricity_data=True,
-        )
-
-
 @pytest.fixture(scope="session")
 def baseline_model_billing_single_record(comstock_monthly, comstock_hourly):
     df_monthly, _ = comstock_monthly
@@ -505,8 +450,7 @@ def baseline_model_billing_single_record(comstock_monthly, comstock_hourly):
         baseline_meter_data, temperature_data
     ).rename(columns={"meter_value": "observed", "temperature_mean": "temperature"})
     model = BillingModel().fit(
-        BillingBaselineData(baseline_data, is_electricity_data=True),
-        ignore_disqualification=True,
+        baseline_data, is_electricity_data=True, enforce_compliance=False
     )
 
     return model
@@ -520,12 +464,8 @@ def test_metered_savings_model_single_record(
     snapshot,
 ):
     results = baseline_model_billing_single_record.predict(
-        BillingReportingData.from_series(
-            reporting_meter_data_billing,
-            reporting_temperature_data,
-            is_electricity_data=True,
-        ),
-        ignore_disqualification=True,
+        meter_temperature_frame(reporting_meter_data_billing, reporting_temperature_data),
+        enforce_compliance=False,
     )
     assert list(results.columns) == [
         "season",

@@ -16,12 +16,16 @@ from __future__ import annotations
 
 import itertools
 import json
-from typing import Union
 
 import numpy as np
 import pandas as pd
 
 from opendsm.common.base_settings import settings_deviation_report
+from opendsm.eemeter.common.data_processor_utilities import (
+    require_dataframe,
+    resolve_is_electricity_data,
+    trim_edge_rows,
+)
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
     DisqualifiedModelError,
@@ -78,6 +82,8 @@ class DailyModel:
     _reporting_data_type = DailyReportingData
     _settings_class = DailySettings
     _data_df_name = "df"
+    _trim_trailing_columns = ("observed", "temperature")
+    _check_timezone = True
 
     def __init__(
         self,
@@ -116,6 +122,7 @@ class DailyModel:
         }
         self.verbose = verbose
         self.is_fitted = False
+        self._is_electricity_data = None
 
     def _initialize_settings(
         self,
@@ -124,13 +131,13 @@ class DailyModel:
 
         if settings is None:
             self.settings = self._settings_class()
-        elif isinstance(settings, DailySettings):
+        elif isinstance(settings, self._settings_class):
             self.settings = settings
         elif isinstance(settings, dict):
             self.settings = self._settings_class(**settings)
         else:
             raise TypeError(
-                "'settings' must be None, a dict, or a DailySettings instance"
+                f"'settings' must be None, a dict, or a {self._settings_class.__name__} instance"
             )
 
     def _reference_settings(self) -> DailySettings:
@@ -147,43 +154,115 @@ class DailyModel:
 
         return report
 
+    @property
+    def is_electricity_data(self) -> bool | None:
+        """Whether the observed values are electricity usage; None before fit or load."""
+        return self._is_electricity_data
+
+    def _baseline_data(self, df: pd.DataFrame):
+        """`_build_baseline_data` with the model's fuel flag, for the comparison-group
+        population."""
+        built = self._build_baseline_data(df, self._is_electricity_data)
+
+        return built
+
+    def _build_baseline_data(self, df: pd.DataFrame, is_electricity_data: bool | None):
+        """Build the baseline data object from a frame, trimming unusable edge rows; leaves the
+        model unchanged.
+
+        Returns:
+            The baseline data object and the numbers of leading and trailing rows trimmed.
+        """
+        trimmed, n_leading, n_trailing = trim_edge_rows(
+            df, trailing_columns=self._trim_trailing_columns
+        )
+        baseline_data = self._baseline_data_type(
+            trimmed, is_electricity_data, settings=self.settings.data
+        )
+
+        return baseline_data, n_leading, n_trailing
+
+    def _reporting_data(self, df: pd.DataFrame):
+        """Called by `predict` and by the comparison-group population."""
+
+        reporting_data = self._reporting_data_type(
+            df, self._is_electricity_data, settings=self.settings.data
+        )
+
+        return reporting_data
+
     def fit(
-        self, 
-        baseline_data: DailyBaselineData, 
-        ignore_disqualification: bool = False
+        self,
+        df: pd.DataFrame,
+        *,
+        is_electricity_data: bool,
+        enforce_compliance: bool = True,
     ) -> DailyModel:
-        """Fit the model using baseline data.
+        """Fit the model on a baseline dataframe.
 
         Args:
-            baseline_data: DailyBaselineData object.
-            ignore_disqualification: Whether to ignore disqualification errors / warnings.
+            df: Baseline data indexed by a tz-aware DatetimeIndex, or containing a tz-aware
+                'datetime' column, with 'observed' and 'temperature' columns.
+            is_electricity_data: Whether the observed values are electricity usage.
+            enforce_compliance: Whether to enforce data-sufficiency compliance.
 
         Returns:
             The fitted model.
 
         Raises:
-            TypeError: If baseline_data is not a DailyBaselineData object.
-            DataSufficiencyError: If the model can't be fit on disqualified baseline data.
+            TypeError: If df is not a pandas DataFrame.
+            DataSufficiencyError: If `enforce_compliance` is True and the baseline data is
+                disqualified; the model is left unchanged.
         """
-        if not isinstance(baseline_data, self._baseline_data_type):
-            raise TypeError(f"baseline_data must be a {self._baseline_data_type.__name__} object")
-        baseline_data.log_warnings()
-        if baseline_data.disqualification and not ignore_disqualification:
-            raise DataSufficiencyError("Can't fit model on disqualified baseline data")
-        self.baseline_timezone = baseline_data.tz
-        self.warnings = list(baseline_data.warnings)
-        self.disqualification = baseline_data.disqualification
+        require_dataframe(df, "df")
+
+        is_electricity_data = bool(is_electricity_data)
+        baseline, n_leading, n_trailing = self._build_baseline_data(df, is_electricity_data)
+        self._fit_baseline(baseline, n_leading, n_trailing, is_electricity_data, enforce_compliance)
+
+        return self
+
+    def _fit_baseline(
+        self, baseline, n_leading, n_trailing, is_electricity_data, enforce_compliance
+    ):
+        """Fit on a built baseline data object, as `fit` does with the one it builds; a
+        comparison-group population calls it with the object it keeps, so the data is built
+        once and the model holds no copy."""
+        baseline.log_warnings()
+
+        warnings = list(baseline.warnings)
+        disqualification = baseline.disqualification
+
+        if n_leading or n_trailing:
+            trim_warning = EEMeterWarning(
+                qualified_name="eemeter.data_quality.edge_rows_trimmed",
+                description=(
+                    "Rows at the start or end of the baseline data were missing values "
+                    "and have been trimmed."
+                ),
+                data={"leading": n_leading, "trailing": n_trailing},
+            )
+            warnings.append(trim_warning)
+            trim_warning.warn()
+
+        if disqualification and enforce_compliance:
+            raise DataSufficiencyError(
+                "Can't fit model on disqualified baseline data",
+                disqualification=disqualification,
+            )
+
+        self._is_electricity_data = is_electricity_data
+        self.baseline_timezone = baseline.tz
+        self.warnings = warnings
+        self.disqualification = disqualification
 
         settings_warning = nonstandard_settings_warning(self.settings_deviations)
         if settings_warning is not None:
             self.warnings.append(settings_warning)
             settings_warning.warn()
 
-        df = getattr(baseline_data, self._data_df_name)
-        self._fit(df)
+        self._fit(getattr(baseline, self._data_df_name))
         self._check_model_fit()
-
-        return self
 
     def _fit(self, meter_data):
         # Initialize dataframe
@@ -209,35 +288,18 @@ class DailyModel:
         self.is_fitted = True
         return self
 
-    def predict(
-        self,
-        reporting_data: DailyBaselineData | DailyReportingData,
-        ignore_disqualification=False,
-    ) -> pd.DataFrame:
-        """Predicts the energy consumption using the fitted model.
+    def _check_predictable(self, data, enforce_compliance: bool) -> None:
+        """Raise unless this fitted model may predict on the built data object."""
 
-        Args:
-            reporting_data (Union[DailyBaselineData, DailyReportingData]): The data used for prediction.
-            ignore_disqualification (bool, optional): Whether to ignore model disqualification. Defaults to False.
-
-        Returns:
-            Dataframe with input data along with predicted energy consumption.
-
-        Raises:
-            RuntimeError: If the model is not fitted.
-            DisqualifiedModelError: If the model is disqualified and ignore_disqualification is False.
-            ValueError: If the reporting data has a different timezone than the model.
-            TypeError: If the reporting data is not of type DailyBaselineData or DailyReportingData.
-        """
         if not self.is_fitted:
             raise RuntimeError("Model must be fit before predictions can be made.")
 
-        if self.disqualification and not ignore_disqualification:
+        if self.disqualification and enforce_compliance:
             raise DisqualifiedModelError(
-                "Attempting to predict using disqualified model without setting ignore_disqualification=True"
+                "Attempting to predict using disqualified model without setting enforce_compliance=False"
             )
 
-        if str(self.baseline_timezone) != str(reporting_data.tz):
+        if self._check_timezone and str(self.baseline_timezone) != str(data.tz):
             """would be preferable to directly compare, but
             * using str() helps accomodate mixed tzinfo implementations,
             * the likelihood of sub-hour offset inconsistencies being relevant to the daily model is low
@@ -246,13 +308,45 @@ class DailyModel:
                 "Reporting data must use the same timezone that the model was initially fit on."
             )
 
-        if not isinstance(reporting_data, (self._baseline_data_type, self._reporting_data_type)):
-            raise TypeError(
-                f"reporting_data must be a {self._baseline_data_type.__name__} or {self._reporting_data_type.__name__} object"
-            )
+    def _predict_data(self, data, enforce_compliance: bool = True) -> pd.DataFrame:
+        """Predict on an already built reporting or baseline data object. Called by `predict`
+        and by the comparison-group population."""
 
-        df = getattr(reporting_data, self._data_df_name)
+        self._check_predictable(data, enforce_compliance)
+        df = getattr(data, self._data_df_name)
         df_res = self._predict(df)
+
+        return df_res
+
+    def predict(
+        self,
+        df: pd.DataFrame,
+        *,
+        enforce_compliance: bool = True,
+    ) -> pd.DataFrame:
+        """Predicts the energy consumption using the fitted model.
+
+        Args:
+            df: Reporting data indexed by a tz-aware DatetimeIndex, or containing a tz-aware
+                'datetime' column, with a 'temperature' column. An 'observed' column is
+                optional and is passed through to the output.
+            enforce_compliance: Whether to enforce model disqualification.
+
+        Returns:
+            Dataframe with input data along with predicted energy consumption.
+
+        Raises:
+            RuntimeError: If the model is not fitted.
+            DisqualifiedModelError: If the model is disqualified and enforce_compliance is True.
+            ValueError: If the reporting data has a different timezone than the model.
+            TypeError: If df is not a pandas DataFrame.
+        """
+        require_dataframe(df, "df")
+
+        if not self.is_fitted:
+            raise RuntimeError("Model must be fit before predictions can be made.")
+
+        df_res = self._predict_data(self._reporting_data(df), enforce_compliance)
 
         return df_res
 
@@ -362,19 +456,29 @@ class DailyModel:
         return json.dumps(self.to_dict())
 
     @classmethod
-    def from_dict(cls, data) -> DailyModel:
+    def from_dict(cls, data, *, is_electricity_data: bool | None = None) -> DailyModel:
         """Create a instance of the class from a dictionary (such as one produced from the to_dict method).
 
         Args:
             data (dict): The dictionary containing the model data.
+            is_electricity_data: Whether the fitted data was electricity usage. Required only
+                when the payload does not carry it, and rejected otherwise.
 
         Returns:
             An instance of the class.
 
+        Raises:
+            ValueError: If is_electricity_data is missing from both the payload and the call,
+                or given when the payload already carries it.
         """
         settings = data.get("settings")
         daily_model = cls(settings=settings)
-        info = data.get("info")
+        info = dict(data.get("info"))
+        daily_model._is_electricity_data, prior_format = resolve_is_electricity_data(
+            info.get("is_electricity_data"), is_electricity_data
+        )
+        info["is_electricity_data"] = daily_model._is_electricity_data
+
         daily_model.params = DailyModelParameters(
             submodels=data.get("submodels"),
             info=info,
@@ -399,6 +503,9 @@ class DailyModel:
             info.get("disqualification")
         )
         daily_model.warnings = deserialize_warnings(info.get("warnings"))
+        if prior_format is not None:
+            daily_model.warnings.append(prior_format)
+
         daily_model.baseline_timezone = info.get("baseline_timezone")
         if info.get("metrics") is not None:
             daily_model.baseline_metrics = BaselineMetricsFromDict(info.get("metrics"))
@@ -416,60 +523,74 @@ class DailyModel:
         return daily_model
 
     @classmethod
-    def from_json(cls, str_data: str) -> DailyModel:
+    def from_json(cls, str_data: str, *, is_electricity_data: bool | None = None) -> DailyModel:
         """Create an instance of the class from a JSON string.
 
         Args:
             str_data: The JSON string representing the object.
+            is_electricity_data: Whether the fitted data was electricity usage. Required only
+                when the payload does not carry it, and rejected otherwise.
 
         Returns:
             An instance of the class.
 
         """
-        return cls.from_dict(json.loads(str_data))
+        return cls.from_dict(json.loads(str_data), is_electricity_data=is_electricity_data)
 
     @classmethod
-    def from_2_0_dict(cls, data) -> DailyModel:
+    def from_2_0_dict(cls, data, *, is_electricity_data: bool | None = None) -> DailyModel:
         """Create an instance of the class from a legacy (2.0) model dictionary.
 
         Args:
             data (dict): A dictionary containing the necessary data (legacy 2.0) to create a DailyModel instance.
+            is_electricity_data: Whether the fitted data was electricity usage. Legacy payloads
+                never carry this fact, so it must be supplied.
 
         Returns:
             An instance of the class.
 
+        Raises:
+            ValueError: If is_electricity_data is not supplied.
         """
         daily_model = cls(settings={"preset": "legacy"})
         daily_model.params = DailyModelParameters.from_2_0_params(data)
-        daily_model.warnings = []
+        daily_model._is_electricity_data, prior_format = resolve_is_electricity_data(
+            None, is_electricity_data
+        )
+        daily_model.params.info["is_electricity_data"] = daily_model._is_electricity_data
+        daily_model.warnings = [prior_format]
         daily_model.disqualification = []
         daily_model.baseline_timezone = "UTC"
         daily_model.is_fitted = True
+
         return daily_model
 
     @classmethod
-    def from_2_0_json(cls, str_data: str) -> DailyModel:
+    def from_2_0_json(cls, str_data: str, *, is_electricity_data: bool | None = None) -> DailyModel:
         """Create an instance of the class from a legacy (2.0) JSON string.
 
         Args:
             str_data: The JSON string.
+            is_electricity_data: Whether the fitted data was electricity usage. Legacy payloads
+                never carry this fact, so it must be supplied.
 
         Returns:
             An instance of the class.
 
         """
-        return cls.from_2_0_dict(json.loads(str_data))
+        return cls.from_2_0_dict(json.loads(str_data), is_electricity_data=is_electricity_data)
 
     def plot(
         self,
-        data: DailyBaselineData | DailyReportingData,
+        df: pd.DataFrame,
         ax=None,
         **kwargs,
     ):
         """Plot a model fit with baseline or reporting data. Requires matplotlib to use.
 
         Args:
-            data: The baseline or reporting data object to plot.
+            df: Baseline or reporting data indexed by a tz-aware DatetimeIndex, or containing
+                a tz-aware 'datetime' column, with a 'temperature' column.
             ax: Optional existing matplotlib Axes to plot onto. Creates a new figure if None.
             **kwargs: Additional keyword arguments forwarded to the plot function.
         """
@@ -478,7 +599,9 @@ class DailyModel:
         except ImportError:  # pragma: no cover
             raise ImportError("matplotlib is required for plotting.")
 
-        return plot(self, self._predict(data.df), ax=ax, **kwargs)
+        predicted = self._predict_data(self._reporting_data(df), enforce_compliance=False)
+
+        return plot(self, predicted, ax=ax, **kwargs)
 
     def _create_params_from_fit_model(self):
         submodels = {}
@@ -500,6 +623,7 @@ class DailyModel:
             info={
                 "metrics": self.baseline_metrics.model_dump(),
                 "baseline_timezone": str(self.baseline_timezone),
+                "is_electricity_data": bool(self._is_electricity_data),
                 "disqualification": [dq.json() for dq in self.disqualification],
                 "warnings": [warning.json() for warning in self.warnings],
             },

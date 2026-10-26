@@ -19,6 +19,7 @@ from pandas import Timestamp, DatetimeIndex, DataFrame
 import pytest
 
 from ..constants import METER_SEED, NUM_DAYS_IN_YEAR, TEMPERATURE_SEED
+from ..helpers import meter_temperature_frame
 
 
 
@@ -281,7 +282,8 @@ def test_daily_baseline_data_with_specific_hourly_input(comstock_hourly, snapsho
     meter = sub[["observed"]].rename(columns={"observed": "value"})
     temperature = sub["temperature"]
 
-    cls = DailyBaselineData.from_series(meter, temperature, is_electricity_data=True)
+    df = meter_temperature_frame(meter, temperature)
+    cls = DailyBaselineData(df, is_electricity_data=True)
 
     assert cls.df is not None
     assert int(len(cls.df)) == snapshot(name="df_length")
@@ -298,7 +300,8 @@ def test_daily_baseline_data_with_specific_daily_input(comstock_daily, comstock_
     meter = sub_daily[["observed"]].rename(columns={"observed": "value"})
     temperature = sub_hourly["temperature"]
 
-    cls = DailyBaselineData.from_series(meter, temperature, is_electricity_data=True)
+    df = meter_temperature_frame(meter, temperature)
+    cls = DailyBaselineData(df, is_electricity_data=True)
 
     assert cls.df is not None
     assert int(len(cls.df)) == snapshot(name="df_length")
@@ -317,7 +320,8 @@ def test_daily_baseline_data_with_missing_specific_daily_input(comstock_daily, c
     meter.loc[meter.index.month == 4] = np.nan
     temperature = sub_hourly["temperature"]
 
-    cls = DailyBaselineData.from_series(meter, temperature, is_electricity_data=True)
+    df = meter_temperature_frame(meter, temperature)
+    cls = DailyBaselineData(df, is_electricity_data=True)
 
     assert cls.df is not None
     assert int(len(cls.df)) == snapshot(name="df_length")
@@ -690,9 +694,10 @@ def baseline_data_daily_params(comstock_daily, comstock_hourly):
 )
 def test_offset_temperature_aggregations(baseline_data_daily_params, tz, hour, snapshot):
     baseline_meter_data, temp_series = baseline_data_daily_params(tz=tz, hour=hour)
-    baseline = DailyBaselineData.from_series(
-        baseline_meter_data, temp_series, is_electricity_data=True
-    )
+    start = baseline_meter_data.index.min()
+    end = baseline_meter_data.index.max() + pd.Timedelta(hours=23)
+    df = meter_temperature_frame(baseline_meter_data, temp_series[start:end])
+    baseline = DailyBaselineData(df, is_electricity_data=True)
 
     abs_diff = 0
     for day in baseline.df.index:
@@ -713,7 +718,8 @@ def test_non_ns_datetime_index(comstock_hourly, snapshot):
     # convert to microseconds
     meter.index = meter.index.astype("datetime64[us, UTC]")
     temperature.index = temperature.index.astype("datetime64[us, UTC]")
-    cls = DailyBaselineData.from_series(meter, temperature, is_electricity_data=True)
+    df = meter_temperature_frame(meter, temperature)
+    cls = DailyBaselineData(df, is_electricity_data=True)
 
     assert cls.df is not None
     assert int(len(cls.df)) == snapshot(name="df_length")
@@ -726,7 +732,8 @@ def test_offset_aggregations_hourly(comstock_hourly, snapshot):
     meter = sub[["observed"]].rename(columns={"observed": "value"}).iloc[3:]
     temperature = sub["temperature"]
 
-    baseline = DailyBaselineData.from_series(meter, temperature, is_electricity_data=True)
+    df = meter_temperature_frame(meter, temperature)
+    baseline = DailyBaselineData(df, is_electricity_data=True)
     assert baseline is not None
     assert int(len(baseline.df)) == snapshot(name="df_length")
 

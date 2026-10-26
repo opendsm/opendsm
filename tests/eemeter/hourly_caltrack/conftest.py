@@ -14,7 +14,7 @@
 
 import pytest
 
-from opendsm.eemeter import HourlyCaltrackBaselineData, HourlyCaltrackModel
+from opendsm.eemeter import HourlyCaltrackModel
 
 
 
@@ -23,10 +23,8 @@ def caltrack_hourly_model(comstock_hourly):
     """The hourly CalTRACK model fit once on the ComStock baseline meter; tests read it and
     never mutate it."""
     df_b, _ = comstock_hourly
-    meter = df_b[["observed"]].rename(columns={"observed": "value"}).copy()
-    baseline = HourlyCaltrackBaselineData.from_series(
-        meter, df_b["temperature"], is_electricity_data=True
+    model = HourlyCaltrackModel().fit(
+        df_b[["observed", "temperature"]], is_electricity_data=True
     )
-    model = HourlyCaltrackModel().fit(baseline)
 
     return model

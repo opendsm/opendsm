@@ -14,6 +14,35 @@
 
 """Helpers shared by the eemeter model tests."""
 
+import pandas as pd
+
+
+
+def meter_temperature_frame(meter, temperature):
+    """Combine meter data and temperature into one model input frame.
+
+    `meter` is a one-column frame, a Series, or None; `temperature` is a Series or a
+    one-column frame. The result has columns 'observed' then 'temperature' over the
+    sorted union of both indexes, with temperature converted to the meter's tz. With
+    `meter` None the result holds the temperature column alone, in its own tz and order.
+    """
+    if isinstance(temperature, pd.DataFrame):
+        temperature = temperature.iloc[:, 0]
+    temperature = temperature.rename("temperature")
+
+    if meter is None:
+        frame = temperature.to_frame()
+
+        return frame
+
+    if isinstance(meter, pd.DataFrame):
+        meter = meter.iloc[:, 0]
+    meter = meter.rename("observed")
+    temperature = temperature.tz_convert(meter.index.tz)
+    frame = pd.concat([meter, temperature], axis=1, sort=True)
+
+    return frame
+
 
 def nonstandard_settings_warnings(warnings):
     """Return the warnings in `warnings` whose qualified name is

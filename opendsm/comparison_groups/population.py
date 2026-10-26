@@ -25,20 +25,15 @@ import pandas as pd
 from opendsm.comparison_groups import exclusions
 from opendsm.comparison_groups.common import Data, Data_Settings
 from opendsm.comparison_groups.common import const as _const
+from opendsm.eemeter.common.data_processor_utilities import require_dataframe
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
     DisqualifiedModelError,
 )
 from opendsm.eemeter.models import (
-    BillingBaselineData,
     BillingModel,
-    BillingReportingData,
-    DailyBaselineData,
     DailyModel,
-    DailyReportingData,
-    HourlyBaselineData,
     HourlyModel,
-    HourlyReportingData,
 )
 
 
@@ -55,18 +50,6 @@ _MAX_POOL_SIZE = Data_Settings.model_fields["max_pool_size"].default
 _MODEL_CLASSES = {
     model_cls.model_frequency.value: model_cls
     for model_cls in (HourlyModel, DailyModel, BillingModel)
-}
-
-_BASELINE_TYPES = {
-    "hourly": HourlyBaselineData,
-    "daily": DailyBaselineData,
-    "billing": BillingBaselineData,
-}
-
-_REPORTING_TYPES = {
-    "hourly": HourlyReportingData,
-    "daily": DailyReportingData,
-    "billing": BillingReportingData,
 }
 
 _DEFAULT_TIME_PERIOD = {
@@ -127,7 +110,9 @@ def default_data_settings(model_frequency):
     return settings
 
 
-def _fit_meters(baseline, model_frequency, settings, ignore_disqualification, reporting):
+def _fit_meters(
+    baseline, model_frequency, is_electricity_data, settings, enforce_compliance, reporting
+):
     """Fit one model per meter, serially. Returns ``(records, ledger)``: a record
     per meter that fits, carrying its ``reporting`` entry, and a population-stage
     ledger row per meter whose fit raises a data-sufficiency or
@@ -142,21 +127,28 @@ def _fit_meters(baseline, model_frequency, settings, ignore_disqualification, re
     if unknown:
         raise KeyError(f"Reporting data for meters not in baseline: {sorted(unknown)}.")
 
-    baseline_cls = _BASELINE_TYPES[model_frequency]
     model_cls = _MODEL_CLASSES[model_frequency]
     records = {}
     ledger = exclusions.empty_ledger()
 
-    for mid, bdata in baseline.items():
-        if not isinstance(bdata, baseline_cls):
-            raise TypeError(f"Meter {mid}: baseline data must be {baseline_cls.__name__}.")
+    for mid, df in baseline.items():
+        require_dataframe(df, f"Meter {mid}: baseline data")
 
         model = model_cls(settings=settings)
 
         try:
-            model.fit(bdata, ignore_disqualification=ignore_disqualification)
+            baseline_data, n_leading, n_trailing = model._build_baseline_data(
+                df, bool(is_electricity_data)
+            )
+            model._fit_baseline(
+                baseline_data,
+                n_leading,
+                n_trailing,
+                bool(is_electricity_data),
+                enforce_compliance,
+            )
         except DataSufficiencyError as exc:
-            detail = exclusions.format_warnings(bdata.disqualification) or str(exc)
+            detail = exclusions.format_warnings(exc.disqualification) or str(exc)
             ledger = exclusions.append(
                 ledger,
                 [mid],
@@ -178,12 +170,14 @@ def _fit_meters(baseline, model_frequency, settings, ignore_disqualification, re
             )
             continue
 
-        records[str(mid)] = _MeterRecord(
-            id=mid,
-            model=model,
-            baseline_data=bdata,
-            reporting_data=reporting.get(str(mid)),
-        )
+        record = _MeterRecord(id=mid, model=model, baseline_data=baseline_data)
+
+        reporting_df = reporting.get(str(mid))
+        if reporting_df is not None:
+            require_dataframe(reporting_df, f"Meter {mid}: reporting data")
+            record.reporting_data = model._reporting_data(reporting_df)
+
+        records[str(mid)] = record
 
     if not records:
         summary = "; ".join(f"{row.id}: {row.reason}" for row in ledger.itertuples())
@@ -269,9 +263,7 @@ class MeterPopulation:
     Uncertainty columns (``modeled_unc``) are the models' t-scaled ASHRAE-style
     bands, not calibrated 1-sigma intervals.
 
-    ``is_electricity_data`` is the fuel flag of meters without baseline data, as a
-    serialized header records it; when omitted, every meter must carry baseline
-    data. ``ledger`` is the population's initial exclusions ledger, in the shared
+    ``ledger`` is the population's initial exclusions ledger, in the shared
     ledger schema; empty when omitted.
     """
 
@@ -282,7 +274,6 @@ class MeterPopulation:
         meters,
         model_frequency,
         features=None,
-        is_electricity_data=None,
         ledger=None,
     ):
         if not meters:
@@ -304,7 +295,7 @@ class MeterPopulation:
         self._baseline_pred = {}
         self._reporting_pred = {}
 
-        self.tz, self.is_electricity_data = self._validate_meters(is_electricity_data)
+        self.tz, self.is_electricity_data = self._validate_meters()
 
     # -- construction --------------------------------------------------------
 
@@ -314,9 +305,14 @@ class MeterPopulation:
         payloads).
 
         Args:
-            meters: ``{id: {model, baseline_data, reporting_data=None,
+            meters: ``{id: {model, baseline_df, reporting_df=None,
                 observed_unc=None}}``. ``model`` may be a fitted instance, a
-                ``to_dict()`` payload, or a ``to_json()`` string.
+                ``to_dict()`` payload, or a ``to_json()`` string. A payload that
+                lacks ``is_electricity_data`` raises ``ValueError``; load it with its
+                model's ``from_dict(payload, is_electricity_data=...)`` and pass the
+                instance. ``baseline_df`` and ``reporting_df`` are the meter's
+                dataframes; the model builds the data objects from them. An entry
+                without ``baseline_df`` raises ``ValueError``.
             model_frequency: Inferred from each fitted instance's type, so optional
                 for instances, and validated against it when supplied (mismatch
                 raises ``TypeError``). Required when models are passed as payloads.
@@ -348,13 +344,26 @@ class MeterPopulation:
             if resolved is None:
                 resolved = inferred
 
-            records[str(mid)] = _MeterRecord(
+            if "baseline_df" not in entry:
+                raise ValueError(f"Meter {mid}: baseline_df is required.")
+
+            baseline_df = entry["baseline_df"]
+            require_dataframe(baseline_df, f"Meter {mid}: baseline_df")
+            baseline_data, _, _ = model._baseline_data(baseline_df)
+            reporting_df = entry.get("reporting_df")
+
+            record = _MeterRecord(
                 id=mid,
                 model=model,
-                baseline_data=entry.get("baseline_data"),
-                reporting_data=entry.get("reporting_data"),
+                baseline_data=baseline_data,
                 observed_unc=entry.get("observed_unc"),
             )
+
+            if reporting_df is not None:
+                require_dataframe(reporting_df, f"Meter {mid}: reporting_df")
+                record.reporting_data = model._reporting_data(reporting_df)
+
+            records[str(mid)] = record
 
         if resolved is None:
             raise ValueError("Could not resolve model_frequency; pass it explicitly.")
@@ -366,8 +375,10 @@ class MeterPopulation:
         cls,
         baseline,
         model_frequency,
+        *,
+        is_electricity_data,
         settings=None,
-        ignore_disqualification=False,
+        enforce_compliance=True,
         features=None,
         reporting=None,
     ):
@@ -378,9 +389,10 @@ class MeterPopulation:
         while the loop continues.
 
         Args:
-            baseline: ``{id: BaselineData}`` for the requested model frequency.
+            baseline: ``{id: baseline_df}`` for the requested model frequency.
             model_frequency: ``"hourly"``, ``"daily"``, or ``"billing"``.
-            reporting: Optional ``{id: ReportingData}``. Reporting for a meter
+            is_electricity_data: Whether the observed values are electricity usage.
+            reporting: Optional ``{id: reporting_df}``. Reporting for a meter
                 that is excluded is ignored.
 
         Raises:
@@ -389,7 +401,12 @@ class MeterPopulation:
             KeyError: A ``reporting`` id is not in ``baseline``.
         """
         records, ledger = _fit_meters(
-            baseline, model_frequency, settings, ignore_disqualification, reporting
+            baseline,
+            model_frequency,
+            is_electricity_data,
+            settings,
+            enforce_compliance,
+            reporting,
         )
         population = cls(records, model_frequency, features=features, ledger=ledger)
 
@@ -409,10 +426,7 @@ class MeterPopulation:
 
         return validated
 
-    def _validate_meters(self, is_electricity_data):
-        baseline_cls = _BASELINE_TYPES[self.model_frequency]
-        reporting_cls = _REPORTING_TYPES[self.model_frequency]
-
+    def _validate_meters(self):
         timezones = set()
         fuels = set()
         ghi_flags = set()
@@ -429,36 +443,24 @@ class MeterPopulation:
             baseline = rec.baseline_data
             disqualification = rec.model.disqualification
 
-            if baseline is None:
-                if is_electricity_data is None:
-                    raise ValueError(f"Meter {mid}: baseline_data is required.")
+            # the model builds its meter's data objects, so its own fuel flag is
+            # every meter's, with or without baseline data
+            fuels.add(bool(rec.model.is_electricity_data))
 
-                fuels.add(bool(is_electricity_data))
-
-            else:
-                if not isinstance(baseline, baseline_cls):
-                    raise TypeError(f"Meter {mid}: baseline_data must be {baseline_cls.__name__}.")
-
+            if baseline is not None:
                 if tz != str(baseline.tz):
                     raise ValueError(
                         f"Meter {mid}: model timezone {tz} does not match baseline data "
                         f"timezone {baseline.tz}."
                     )
 
-                fuels.add(bool(baseline.is_electricity_data))
                 disqualification = disqualification or baseline.disqualification
 
-            if rec.reporting_data is not None:
-                if not isinstance(rec.reporting_data, reporting_cls):
-                    raise TypeError(
-                        f"Meter {mid}: reporting_data must be {reporting_cls.__name__}."
-                    )
-
-                if str(rec.reporting_data.tz) != tz:
-                    raise ValueError(
-                        f"Meter {mid}: reporting data timezone {rec.reporting_data.tz} does not "
-                        f"match model timezone {tz}."
-                    )
+            if rec.reporting_data is not None and str(rec.reporting_data.tz) != tz:
+                raise ValueError(
+                    f"Meter {mid}: reporting data timezone {rec.reporting_data.tz} does not "
+                    f"match model timezone {tz}."
+                )
 
             # an hourly model fit with train_features omitting ghi ignores a ghi
             # column its data carries, so solar is what the model uses; daily and
@@ -552,8 +554,8 @@ class MeterPopulation:
     # -- predictions ---------------------------------------------------------
 
     def _predict_record(self, rec, period):
-        """Predict ``period`` data for one meter. Billing predictions ride the
-        daily substrate (``aggregation=None``): a billing meter's ``MONTH``
+        """Predict ``period`` data for one meter. A billing model predicts
+        unaggregated, on its daily substrate: a billing meter's ``MONTH``
         loadshape is therefore a daily-mean per calendar month, not a monthly
         total. That reshaping only touches selection features (loadshapes),
         never a corrected savings number."""
@@ -565,10 +567,7 @@ class MeterPopulation:
         if data is None:
             raise ValueError(f"Meter {rec.id}: no {period} data attached.")
 
-        if self.model_frequency == "billing":
-            pred = rec.model.predict(data, aggregation=None)
-        else:
-            pred = rec.model.predict(data)
+        pred = rec.model._predict_data(data)
 
         frame = pd.DataFrame(
             {
@@ -896,21 +895,38 @@ class MeterPopulation:
 
         for meter in meter_dicts:
             mid = str(meter["id"])
-            model = model_cls.from_json(meter["model"])
-            observed_unc = _deserialize_unc(meter["observed_unc"], tz)
-            records[mid] = _MeterRecord(
+
+            # from_dict rejects a supplied flag when the payload stores one
+            payload = json.loads(meter["model"])
+            if (payload.get("info") or {}).get("is_electricity_data") is not None:
+                model = model_cls.from_dict(payload)
+            else:
+                model = model_cls.from_dict(
+                    payload, is_electricity_data=header["is_electricity_data"]
+                )
+
+            record = _MeterRecord(
                 id=mid,
                 model=model,
-                baseline_data=baseline.get(mid),
-                reporting_data=reporting.get(mid),
-                observed_unc=observed_unc,
+                observed_unc=_deserialize_unc(meter["observed_unc"], tz),
             )
+
+            baseline_df = baseline.get(mid)
+            if baseline_df is not None:
+                require_dataframe(baseline_df, f"Meter {mid}: baseline data")
+                record.baseline_data, _, _ = model._baseline_data(baseline_df)
+
+            reporting_df = reporting.get(mid)
+            if reporting_df is not None:
+                require_dataframe(reporting_df, f"Meter {mid}: reporting data")
+                record.reporting_data = model._reporting_data(reporting_df)
+
+            records[mid] = record
 
         population = cls(
             records,
             model_frequency,
             features=features,
-            is_electricity_data=header["is_electricity_data"],
             ledger=exclusions.read_table_json(header["exclusions"]),
             **cls._header_settings(header),
         )
@@ -925,15 +941,15 @@ class MeterPopulation:
     @classmethod
     def from_json(cls, s, baseline=None, reporting=None, features=None):
         """Rebuild from ``to_json()`` output, re-attaching caller-supplied
-        baseline and reporting data by id.
+        baseline and reporting frames by id.
 
         Args:
             s: JSON string written by ``to_json()``.
-            baseline: Optional mapping of meter id to baseline data. A meter
-                without an entry takes its timezone and disqualification from its
-                model and its fuel flag from the serialized header, and cannot be
-                selected or baseline-predicted.
-            reporting: Optional mapping of meter id to reporting data.
+            baseline: Optional mapping of meter id to baseline frame. A meter
+                without an entry takes its timezone, fuel flag and
+                disqualification from its model, and cannot be selected or
+                baseline-predicted.
+            reporting: Optional mapping of meter id to reporting frame.
             features: Optional feature frame indexed by meter id.
 
         Returns:
@@ -956,9 +972,9 @@ class MeterPopulation:
 
         Args:
             text: NDJSON text written by ``to_ndjson()``.
-            baseline: Optional mapping of meter id to baseline data, as for
+            baseline: Optional mapping of meter id to baseline frame, as for
                 ``from_json``.
-            reporting: Optional mapping of meter id to reporting data.
+            reporting: Optional mapping of meter id to reporting frame.
             features: Optional feature frame indexed by meter id.
 
         Returns:
@@ -1002,7 +1018,6 @@ class ComparisonPool(MeterPopulation):
         meters,
         model_frequency,
         features=None,
-        is_electricity_data=None,
         ledger=None,
         max_pool_size=_MAX_POOL_SIZE,
         seed=0,
@@ -1011,7 +1026,6 @@ class ComparisonPool(MeterPopulation):
             meters,
             model_frequency,
             features=features,
-            is_electricity_data=is_electricity_data,
             ledger=ledger,
         )
         self.max_pool_size = max_pool_size
@@ -1028,8 +1042,10 @@ class ComparisonPool(MeterPopulation):
         cls,
         baseline,
         model_frequency,
+        *,
+        is_electricity_data,
         settings=None,
-        ignore_disqualification=False,
+        enforce_compliance=True,
         features=None,
         reporting=None,
         max_pool_size=_MAX_POOL_SIZE,
@@ -1050,7 +1066,12 @@ class ComparisonPool(MeterPopulation):
         }
 
         records, ledger = _fit_meters(
-            kept_baseline, model_frequency, settings, ignore_disqualification, kept_reporting
+            kept_baseline,
+            model_frequency,
+            is_electricity_data,
+            settings,
+            enforce_compliance,
+            kept_reporting,
         )
         ledger = _record_pool_trim(ledger, trimmed)
         pool = cls(

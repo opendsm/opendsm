@@ -50,7 +50,6 @@ except ImportError:
 import logging
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
 
 class BisectingKMeans(_sklearn_BisectingKMeans):

@@ -12,8 +12,6 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from typing import Optional, Union
-
 import numpy as np
 import pandas as pd
 
@@ -24,8 +22,10 @@ from opendsm.eemeter.models.hourly_caltrack.usage_per_day import (
 )
 
 
-class HourlyReportingData:
+
+class _HourlyReportingData:
     def __init__(self, df: pd.DataFrame, is_electricity_data: bool):
+        df = df.copy()
         if "observed" not in df.columns:
             df["observed"] = np.nan
 
@@ -60,29 +60,10 @@ class HourlyReportingData:
 
         return merge_features([meter, temp], keep_partial_nan_rows=True)
 
-    @classmethod
-    def from_series(
-        cls,
-        meter_data: Optional[pd.Series],
-        temperature_data: pd.Series,
-        is_electricity_data: bool,
-    ):
-        # TODO verify
-        if meter_data is None:
-            meter_data = temperature_data.copy().rename("observed") * np.nan
-        df = merge_features([meter_data, temperature_data], keep_partial_nan_rows=True)
-        df = df.rename(
-            {
-                df.columns[0]: "observed",
-                df.columns[1]: "temperature",
-            },
-            axis=1,
-        )
-        return cls(df, is_electricity_data)
 
-
-class HourlyBaselineData(HourlyReportingData):
+class _HourlyBaselineData(_HourlyReportingData):
     def __init__(self, df: pd.DataFrame, is_electricity_data: bool):
+        df = df.copy()
         if is_electricity_data:
             df.loc[df["observed"] == 0, "observed"] = np.nan
 
@@ -106,25 +87,5 @@ class HourlyBaselineData(HourlyReportingData):
         sufficiency = caltrack_sufficiency_criteria(
             sufficiency_df, requested_start=None, requested_end=None
         )
-        return sufficiency.warnings
 
-    @classmethod
-    def from_series(
-        cls,
-        meter_data: Union[pd.Series, pd.DataFrame],
-        temperature_data: Union[pd.Series, pd.DataFrame],
-        is_electricity_data: bool,
-    ):
-        if isinstance(meter_data, pd.Series):
-            meter_data = meter_data.to_frame()
-        if isinstance(temperature_data, pd.Series):
-            temperature_data = temperature_data.to_frame()
-        meter_data = meter_data.rename(columns={meter_data.columns[0]: "observed"})
-        temperature_data = temperature_data.rename(
-            columns={temperature_data.columns[0]: "temperature"}
-        )
-        temperature_data.index = temperature_data.index.tz_convert(
-            meter_data.index.tzinfo
-        )
-        df = pd.concat([meter_data, temperature_data], axis=1).dropna()
-        return cls(df, is_electricity_data)
+        return sufficiency.warnings
