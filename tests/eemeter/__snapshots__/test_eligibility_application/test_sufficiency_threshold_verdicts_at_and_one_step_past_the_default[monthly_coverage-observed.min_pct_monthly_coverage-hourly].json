@@ -1,0 +1,21 @@
+{
+  "baseline": {
+    "at_threshold": {
+      "passed": true,
+      "records": []
+    },
+    "one_step_past": {
+      "passed": false,
+      "records": [
+        {
+          "data": {
+            "lowest_monthly_coverage": 0.8986
+          },
+          "member": "data",
+          "qualified_name": "eemeter.sufficiency_criteria.missing_monthly_observed_data",
+          "severity": "disqualified"
+        }
+      ]
+    }
+  }
+}

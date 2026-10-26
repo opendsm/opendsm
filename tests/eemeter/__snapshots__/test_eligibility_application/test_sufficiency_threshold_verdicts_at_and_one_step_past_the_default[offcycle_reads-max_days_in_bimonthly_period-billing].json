@@ -1,0 +1,76 @@
+{
+  "baseline": {
+    "at_threshold": {
+      "passed": true,
+      "records": []
+    },
+    "one_step_past": {
+      "passed": false,
+      "records": [
+        {
+          "data": [
+            "2019-01-01T00:00:00-07:00"
+          ],
+          "member": "data",
+          "qualified_name": "eemeter.sufficiency_criteria.offcycle_reads_in_billing_bimonthly_data",
+          "severity": "disqualified"
+        },
+        {
+          "data": {
+            "n_days_total": 356.0,
+            "n_valid_observed_data_days": 285.0
+          },
+          "member": "data",
+          "qualified_name": "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data",
+          "severity": "disqualified"
+        },
+        {
+          "data": {
+            "n_days_total": 356.0,
+            "n_valid_joint_data_days": 285.0
+          },
+          "member": "data",
+          "qualified_name": "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
+          "severity": "disqualified"
+        }
+      ]
+    }
+  },
+  "reporting": {
+    "at_threshold": {
+      "passed": true,
+      "records": []
+    },
+    "one_step_past": {
+      "passed": false,
+      "records": [
+        {
+          "data": [
+            "2019-01-01T00:00:00-07:00"
+          ],
+          "member": "data",
+          "qualified_name": "eemeter.sufficiency_criteria.offcycle_reads_in_billing_bimonthly_data",
+          "severity": "disqualified"
+        },
+        {
+          "data": {
+            "n_days_total": 356.0,
+            "n_valid_observed_data_days": 285.0
+          },
+          "member": "data",
+          "qualified_name": "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data",
+          "severity": "disqualified"
+        },
+        {
+          "data": {
+            "n_days_total": 356.0,
+            "n_valid_joint_data_days": 285.0
+          },
+          "member": "data",
+          "qualified_name": "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
+          "severity": "disqualified"
+        }
+      ]
+    }
+  }
+}

@@ -17,10 +17,70 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+import pydantic
 from pandas.tseries.frequencies import to_offset
 from pandas.tseries.offsets import Day, MonthBegin, MonthEnd, Tick
 
+from opendsm.eemeter.common.data_settings import BillingDataSufficiencySettings
 from opendsm.eemeter.common.warnings import EEMeterWarning
+
+
+
+class DataReport(pydantic.BaseModel):
+    """Judgments the data path made under the data rules, for the sufficiency rules to record
+    as compliance entries.
+
+    Each field carries only what the path that produced it can produce, so hourly and
+    daily frames leave the billing fields empty.
+    """
+
+    model_config = pydantic.ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    data_frequency: Optional[str] = pydantic.Field(
+        default=None,
+        description="Inferred source interval of a billing frame, None otherwise.",
+    )
+
+    offcycle_periods: tuple[pd.Timestamp, ...] = pydantic.Field(
+        default=(),
+        description="Start of each off-cycle period.",
+    )
+
+    estimated_merges: dict[pd.Timestamp, float] = pydantic.Field(
+        default_factory=dict,
+        description="Each read that absorbed a preceding estimate, mapped to its merged value.",
+    )
+
+    low_coverage_days: tuple[pd.Timestamp, ...] = pydantic.Field(
+        default=(),
+        description="Each day blanked for low observed coverage.",
+    )
+
+
+def billing_period_bounds(
+    settings: BillingDataSufficiencySettings, interval: str
+) -> tuple[str, int, int]:
+    """The period type and the inclusive day-length bounds of a billing period.
+
+    Returns:
+        The period type (``monthly`` or ``bimonthly``), the minimum and the maximum number of
+        days a period of `interval` may span, read from `settings`.
+
+    Raises:
+        ValueError: If `interval` is neither ``billing_monthly`` nor ``billing_bimonthly``.
+    """
+    min_days = settings.min_days_in_period
+    # CalTRACK 2.2.3.4, 2.2.3.5
+    if interval == "billing_monthly":
+        period_type = "monthly"
+        max_days = settings.max_days_in_monthly_period
+    elif interval == "billing_bimonthly":
+        period_type = "bimonthly"
+        max_days = settings.max_days_in_bimonthly_period
+    else:
+        raise ValueError(f"unknown billing interval: {interval}")
+
+    return period_type, min_days, max_days
 
 
 def require_dataframe(value, name: str) -> None:
@@ -178,121 +238,109 @@ def trim_edge_rows(df, trailing_columns):
     return trimmed_df, n_leading, n_trailing
 
 
-def clean_billing_data(data, source_interval):
-    entries = []
+def clean_billing_data(data, source_interval, settings):
+    """Blank the values of off-cycle billing periods and fold each estimated read into the
+    following read, removing the estimated row.
+
+    Returns the cleaned frame alongside a :any:`DataReport` carrying the source interval, the
+    off-cycle periods and the reads that absorbed an estimate. A frame left with no values
+    comes back empty.
+
+    Raises:
+        ValueError: If `source_interval` is neither ``billing_monthly`` nor
+            ``billing_bimonthly`` and `data` has a value.
+    """
     # check for empty data
     if data["value"].dropna().empty:
-        return data[:0], entries
+        empty_frame = data[:0]
+        empty_report = DataReport()
 
-    if source_interval.startswith("billing"):
-        diff = list((data.index[1:] - data.index[:-1]).days)
-        filter_ = pd.Series(diff + [np.nan], index=data.index)
+        return empty_frame, empty_report
 
-        # CalTRACK 2.2.3.4, 2.2.3.5
-        if source_interval == "billing_monthly":
-            data = data[
-                (filter_ <= 35) & (filter_ >= 25)  # keep these, inclusive
-            ].reindex(data.index)
+    _, min_days, max_days = billing_period_bounds(settings, source_interval)
+    diff = list((data.index[1:] - data.index[:-1]).days)
+    filter_ = pd.Series(diff + [np.nan], index=data.index)
 
-            if len(data[(filter_ > 35) | (filter_ < 25)]) > 0:
-                entries.append(
-                    EEMeterWarning(
-                        qualified_name="eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data",
-                        description=(
-                            "Off-cycle reads found in billing monthly data having a duration of less than 25 days"
-                        ),
-                        severity="disqualified",
-                        member="data",
-                        data=[
-                            timestamp.isoformat()
-                            for timestamp in data[(filter_ > 35) | (filter_ < 25)].index
-                        ],
-                    )
-                )
+    data = data[
+        (filter_ <= max_days) & (filter_ >= min_days)  # keep these, inclusive
+    ].reindex(data.index)
+    offcycle = filter_[(filter_ > max_days) | (filter_ < min_days)]
+    offcycle_periods = tuple(offcycle.index)
 
-        # CalTRACK 2.2.3.4, 2.2.3.5
-        if source_interval == "billing_bimonthly":
-            data = data[
-                (filter_ <= 70) & (filter_ >= 25)  # keep these, inclusive
-            ].reindex(data.index)
+    # CalTRACK 2.2.3.1
+    """
+    Adds estimate to subsequent read if there aren't more than one estimate in a row
+    and then removes the estimated row.
 
-            if len(data[(filter_ > 70) | (filter_ < 25)]) > 0:
-                entries.append(
-                    EEMeterWarning(
-                        qualified_name="eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data",
-                        description=(
-                            "Off-cycle reads found in billing monthly data having a duration of less than 25 days"
-                        ),
-                        severity="disqualified",
-                        member="data",
-                        data=[
-                            timestamp.isoformat()
-                            for timestamp in data[(filter_ > 70) | (filter_ < 25)].index
-                        ],
-                    )
-                )
+    Input:
+    index   value   estimated
+    1       2       False
+    2       3       False
+    3       5       True
+    4       4       False
+    5       6       True
+    6       3       True
+    7       4       False
+    8       NaN     NaN
 
-        # CalTRACK 2.2.3.1
-        """
-        Adds estimate to subsequent read if there aren't more than one estimate in a row
-        and then removes the estimated row.
+    Output:
+    index   value
+    1       2
+    2       3
+    4       9
+    5       NaN
+    7       7
+    8       NaN
+    """
+    estimated_merges = {}
+    add_estimated = []
+    remove_estimated_fixed_rows = []
+    merged_into_rows = []
+    if "estimated" in data.columns:
+        data["unestimated_value"] = (
+            data[:-1].value[(data[:-1].estimated == False)].reindex(data.index)
+        )
+        data["estimated_value"] = (
+            data[:-1].value[(data[:-1].estimated)].reindex(data.index)
+        )
+        for i, (index, row) in enumerate(data[:-1].iterrows()):
+            # ensures there is a prev_row and previous row value is null
+            if i > 0 and pd.isnull(prev_row["unestimated_value"]):
+                # current row value is not null
+                add_estimated.append(prev_row["estimated_value"])
+                if not pd.isnull(row["unestimated_value"]):
+                    # get all rows that had only estimated reads that will be
+                    # added to the subsequent row meaning this row
+                    # needs to be removed
+                    remove_estimated_fixed_rows.append(prev_index)
+                    merged_into_rows.append(index)
+            else:
+                add_estimated.append(0)
+            prev_row = row
+            prev_index = index
+        add_estimated.append(np.nan)
+        data["value"] = data["unestimated_value"] + add_estimated
+        data = data[~data.index.isin(remove_estimated_fixed_rows)]
+        data = data[["value"]]  # remove the estimated column
+        estimated_merges = {
+            index: data.loc[index, "value"] for index in merged_into_rows
+        }
 
-        Input:
-        index   value   estimated
-        1       2       False
-        2       3       False
-        3       5       True
-        4       4       False
-        5       6       True
-        6       3       True
-        7       4       False
-        8       NaN     NaN
-
-        Output:
-        index   value
-        1       2
-        2       3
-        4       9
-        5       NaN
-        7       7
-        8       NaN
-        """
-        add_estimated = []
-        remove_estimated_fixed_rows = []
-        orig_data = data.copy()
-        if "estimated" in data.columns:
-            data["unestimated_value"] = (
-                data[:-1].value[(data[:-1].estimated == False)].reindex(data.index)
-            )
-            data["estimated_value"] = (
-                data[:-1].value[(data[:-1].estimated)].reindex(data.index)
-            )
-            for i, (index, row) in enumerate(data[:-1].iterrows()):
-                # ensures there is a prev_row and previous row value is null
-                if i > 0 and pd.isnull(prev_row["unestimated_value"]):
-                    # current row value is not null
-                    add_estimated.append(prev_row["estimated_value"])
-                    if not pd.isnull(row["unestimated_value"]):
-                        # get all rows that had only estimated reads that will be
-                        # added to the subsequent row meaning this row
-                        # needs to be removed
-                        remove_estimated_fixed_rows.append(prev_index)
-                else:
-                    add_estimated.append(0)
-                prev_row = row
-                prev_index = index
-            add_estimated.append(np.nan)
-            data["value"] = data["unestimated_value"] + add_estimated
-            data = data[~data.index.isin(remove_estimated_fixed_rows)]
-            data = data[["value"]]  # remove the estimated column
+    report = DataReport(
+        data_frequency=source_interval,
+        offcycle_periods=offcycle_periods,
+        estimated_merges=estimated_merges,
+    )
 
     # check again for empty data
     if data.dropna().empty:
-        return data[:0], entries
+        empty_frame = data[:0]
+
+        return empty_frame, report
 
     cleaned = data["value"].to_frame()
 
-    return cleaned, entries
+    return cleaned, report
 
 
 def frequency_duration(freq):
@@ -456,55 +504,50 @@ def as_freq(
         return resampled
 
 
-def downsample_and_clean_daily_data(dataset):
-    entries = []
+def downsample_and_clean_daily_data(dataset, settings):
+    """Downsample a sub-daily series to days, blanking days at or below the coverage floor and
+    dividing each kept day by its observed fraction.
+
+    Returns the daily frame alongside a :any:`DataReport` naming the blanked days.
+    """
     dataset = as_freq(dataset, "D", include_coverage=True)
 
-    if not dataset[dataset.coverage <= 0.5].empty:
-        entries.append(
-            EEMeterWarning(
-                qualified_name="eemeter.sufficiency_criteria.missing_high_frequency_meter_data",
-                description=(
-                    "More than 50% of the high frequency Meter data is missing."
-                ),
-                severity="advisory",
-                data=[
-                    timestamp.isoformat()
-                    for timestamp in dataset[dataset.coverage <= 0.5].index
-                ],
-            )
-        )
+    min_pct = settings.observed.min_pct_hourly_coverage
+    sufficient = dataset.coverage > min_pct
+    low_coverage_days = tuple(dataset.index[dataset.coverage <= min_pct])
 
     # CalTRACK 2.2.2.1 - interpolate with average of non-null values
-    dataset.loc[dataset.coverage > 0.5, "value"] = (
-        dataset[dataset.coverage > 0.5].value / dataset[dataset.coverage > 0.5].coverage
+    dataset.loc[sufficient, "value"] = (
+        dataset[sufficient].value / dataset[sufficient].coverage
     )
 
-    cleaned = dataset[dataset.coverage > 0.5].reindex(dataset.index)[["value"]]
+    cleaned = dataset[sufficient].reindex(dataset.index)[["value"]]
+    report = DataReport(low_coverage_days=low_coverage_days)
 
-    return cleaned, entries
+    return cleaned, report
 
 
-def clean_billing_daily_data(data, source_interval):
+def clean_billing_daily_data(data, source_interval, settings):
     """Clean meter data for the billing and daily models.
 
     Returns:
-        The cleaned frame with a `value` column, and the compliance entries the
-        cleaning raised (off-cycle billing reads, sparse high-frequency days).
+        The cleaned frame with a `value` column, and the :any:`DataReport` of the
+        cleaning's judgments (off-cycle billing reads, sparse high-frequency days).
     """
     # billing data is cleaned but not resampled
     if source_interval.startswith("billing"):
         # CalTRACK 2.2.3.4, 2.2.3.5
-        return clean_billing_data(data, source_interval)
+        return clean_billing_data(data, source_interval, settings)
 
     # higher intervals like daily, hourly, 30min, 15min are
     # resampled (daily) or downsampled (hourly, 30min, 15min)
     elif source_interval == "daily":
         cleaned = data.to_frame("value")
+        report = DataReport()
 
-        return cleaned, []
+        return cleaned, report
     else:
-        return downsample_and_clean_daily_data(data)
+        return downsample_and_clean_daily_data(data, settings)
 
 
 def inferred_freq(index: pd.DatetimeIndex):
@@ -525,7 +568,15 @@ def inferred_freq(index: pd.DatetimeIndex):
 
 
 # TODO : requires more testing
-def compute_data_frequency(index: pd.Series, default_data_frequency: Optional[str]):
+_BILLING_DEFAULTS = BillingDataSufficiencySettings.model_fields
+
+
+def compute_data_frequency(
+    index: pd.Series,
+    default_data_frequency: Optional[str],
+    max_days_in_monthly_period: int = _BILLING_DEFAULTS["max_days_in_monthly_period"].default,
+    max_days_in_bimonthly_period: int = _BILLING_DEFAULTS["max_days_in_bimonthly_period"].default,
+):
     if len(index) <= 1:
         return default_data_frequency
     # Inferred frequency returns None if frequency can't be autodetected
@@ -536,8 +587,10 @@ def compute_data_frequency(index: pd.Series, default_data_frequency: Optional[st
         data_frequency_dict = {
             median_difference < 1: "hourly",
             median_difference == 1: "daily",
-            1 < median_difference <= 35: "billing_monthly",
-            35 < median_difference <= 70: "billing_bimonthly",
+            1 < median_difference <= max_days_in_monthly_period: "billing_monthly",
+            max_days_in_monthly_period
+            < median_difference
+            <= max_days_in_bimonthly_period: "billing_bimonthly",
         }
         data_frequency = data_frequency_dict.get(True, default_data_frequency)
         return data_frequency

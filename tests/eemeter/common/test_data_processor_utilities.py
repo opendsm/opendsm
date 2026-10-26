@@ -19,12 +19,22 @@ import pytest
 from pandas.tseries.offsets import Day
 
 from opendsm.eemeter.common.data_processor_utilities import (
+    DataReport,
     as_freq,
+    billing_period_bounds,
+    clean_billing_daily_data,
+    clean_billing_data,
     compute_data_frequency,
+    downsample_and_clean_daily_data,
     frequency_duration,
     require_dataframe,
     resolve_is_electricity_data,
     trim_edge_rows,
+)
+from opendsm.eemeter.common.data_settings import (
+    BillingDataSufficiencySettings,
+    DailyDataSufficiencySettings,
+    DailyObservedSufficiencySettings,
 )
 
 
@@ -68,6 +78,39 @@ def test_compute_minimum_data_frequency_irregular_monthly_spacing():
     )
 
     assert compute_data_frequency(index, default_data_frequency="daily") == "billing_monthly"
+
+
+def test_compute_minimum_data_frequency_uses_configured_monthly_threshold():
+    """A median spacing past the default monthly cutoff reclassifies once the cutoff is widened."""
+    index = pd.to_datetime(["2020-01-01", "2020-02-10", "2020-03-21", "2020-04-25"])
+    # median day-count is 40, past the default 35-day monthly cutoff
+    assert compute_data_frequency(index.copy(), default_data_frequency="daily") == "billing_bimonthly"
+    assert (
+        compute_data_frequency(
+            index.copy(), default_data_frequency="daily", max_days_in_monthly_period=45
+        )
+        == "billing_monthly"
+    )
+
+
+@pytest.mark.parametrize(
+    "median_days, expected",
+    [
+        (BillingDataSufficiencySettings().max_days_in_monthly_period, "billing_monthly"),
+        (BillingDataSufficiencySettings().max_days_in_monthly_period + 1, "billing_bimonthly"),
+    ],
+)
+def test_compute_data_frequency_cutoff_defaults_to_the_billing_settings_default(
+    median_days, expected
+):
+    """Without explicit cutoffs, the monthly cutoff is the billing settings' default."""
+    # spacings of median_days - 1, median_days and median_days + 1 infer no frequency
+    offsets = [0, median_days - 1, 2 * median_days - 1, 3 * median_days]
+    index = pd.DatetimeIndex([pd.Timestamp("2020-01-01") + pd.Timedelta(days=d) for d in offsets])
+
+    frequency = compute_data_frequency(index, default_data_frequency="daily")
+
+    assert frequency == expected, f"median spacing {median_days} days -> {frequency}"
 
 
 @pytest.mark.parametrize(
@@ -254,3 +297,197 @@ def test_resolve_is_electricity_data_rejects_neither():
     """A payload storing no flag requires a supplied one."""
     with pytest.raises(ValueError, match="This model does not store 'is_electricity_data'"):
         resolve_is_electricity_data(None, None)
+
+
+def _billing_frame(dates, values, estimated=None):
+    index = pd.to_datetime(dates)
+    frame = pd.DataFrame({"value": values}, index=index)
+    if estimated is not None:
+        frame["estimated"] = estimated
+
+    return frame
+
+
+def test_clean_billing_data_reports_offcycle_periods_it_nans():
+    """Periods shorter than the minimum or longer than the monthly maximum are NaNed and
+    reported by their start."""
+    # 31, 9, 70 and 30 day periods: the 9 and 70 day ones fall outside 25-35 days
+    data = _billing_frame(
+        ["2020-01-01", "2020-02-01", "2020-02-10", "2020-04-20", "2020-05-20"],
+        [1.0, 2.0, 3.0, 4.0, 5.0],
+    )
+
+    cleaned, report = clean_billing_data(
+        data, "billing_monthly", BillingDataSufficiencySettings()
+    )
+
+    assert report.offcycle_periods == (
+        pd.Timestamp("2020-02-01"),
+        pd.Timestamp("2020-02-10"),
+    ), f"unexpected off-cycle periods {report.offcycle_periods}"
+    assert report.data_frequency == "billing_monthly"
+    naned = cleaned.index[cleaned["value"].isna()]
+    # the final row closes the last period and carries no length of its own
+    assert list(naned) == [
+        pd.Timestamp("2020-02-01"),
+        pd.Timestamp("2020-02-10"),
+        pd.Timestamp("2020-05-20"),
+    ], f"unexpected NaNed rows {list(naned)}"
+    assert cleaned["value"].tolist()[0] == 1.0
+    assert cleaned["value"].tolist()[3] == 4.0
+
+
+def test_clean_billing_data_bimonthly_keeps_a_seventy_day_period():
+    """The bimonthly maximum admits the same 70 day period the monthly maximum rejects."""
+    data = _billing_frame(
+        ["2020-01-01", "2020-02-10", "2020-04-20", "2020-05-20"],
+        [1.0, 2.0, 3.0, 4.0],
+    )
+
+    cleaned, report = clean_billing_data(
+        data, "billing_bimonthly", BillingDataSufficiencySettings()
+    )
+
+    assert report.offcycle_periods == (), f"unexpected off-cycle periods {report.offcycle_periods}"
+    assert report.data_frequency == "billing_bimonthly"
+    assert cleaned["value"].tolist()[:3] == [1.0, 2.0, 3.0]
+
+
+def test_clean_billing_data_thresholds_come_from_settings():
+    """Widening the monthly maximum keeps a period the default would have NaNed."""
+    data = _billing_frame(
+        ["2020-01-01", "2020-02-01", "2020-03-15", "2020-04-15"],
+        [1.0, 2.0, 3.0, 4.0],
+    )
+    settings = BillingDataSufficiencySettings(max_days_in_monthly_period=45)
+
+    cleaned, report = clean_billing_data(data, "billing_monthly", settings)
+
+    assert report.offcycle_periods == (), f"unexpected off-cycle periods {report.offcycle_periods}"
+    assert cleaned["value"].tolist()[:3] == [1.0, 2.0, 3.0]
+
+
+def test_clean_billing_data_rejects_an_interval_with_no_billing_bounds():
+    data = _billing_frame(["2020-01-01", "2020-02-01"], [1.0, 2.0])
+
+    with pytest.raises(ValueError, match="unknown billing interval: daily"):
+        clean_billing_data(data, "daily", BillingDataSufficiencySettings())
+
+
+@pytest.mark.parametrize(
+    "interval, expected",
+    [
+        ("billing_monthly", ("monthly", 20, 40)),
+        ("billing_bimonthly", ("bimonthly", 20, 80)),
+    ],
+)
+def test_billing_period_bounds_read_the_interval_bounds_from_settings(interval, expected):
+    settings = BillingDataSufficiencySettings(
+        min_days_in_period=20, max_days_in_monthly_period=40, max_days_in_bimonthly_period=80
+    )
+
+    bounds = billing_period_bounds(settings, interval)
+
+    assert bounds == expected, f"{interval}: expected {expected}, got {bounds}"
+
+
+@pytest.mark.parametrize("interval", ["daily", "hourly", "billing_weekly"])
+def test_billing_period_bounds_reject_a_non_billing_interval(interval):
+    with pytest.raises(ValueError, match=f"unknown billing interval: {interval}"):
+        billing_period_bounds(BillingDataSufficiencySettings(), interval)
+
+
+def test_clean_billing_data_merges_an_estimated_read_into_the_following_read():
+    """An estimated read is folded into the next actual read, and the merge is reported
+    against the read that absorbed it."""
+    data = _billing_frame(
+        ["2020-01-01", "2020-02-01", "2020-03-01", "2020-04-01", "2020-05-01"],
+        [2.0, 5.0, 4.0, 3.0, float("nan")],
+        estimated=[False, True, False, False, False],
+    )
+
+    cleaned, report = clean_billing_data(
+        data, "billing_monthly", BillingDataSufficiencySettings()
+    )
+
+    assert report.estimated_merges == {
+        pd.Timestamp("2020-03-01"): 9.0
+    }, f"unexpected merges {report.estimated_merges}"
+    assert list(cleaned.index) == [
+        pd.Timestamp("2020-01-01"),
+        pd.Timestamp("2020-03-01"),
+        pd.Timestamp("2020-04-01"),
+        pd.Timestamp("2020-05-01"),
+    ], f"the estimated read was not removed: {list(cleaned.index)}"
+    assert cleaned.loc[pd.Timestamp("2020-03-01"), "value"] == 9.0
+
+
+def test_clean_billing_data_on_empty_values_returns_an_empty_report():
+    data = _billing_frame(["2020-01-01", "2020-02-01"], [float("nan"), float("nan")])
+
+    cleaned, report = clean_billing_data(
+        data, "billing_monthly", BillingDataSufficiencySettings()
+    )
+
+    assert cleaned.empty
+    assert report == DataReport(), f"unexpected report {report}"
+
+
+def _sub_daily_series():
+    """Three days of hourly readings whose middle day is exactly half observed."""
+    index = pd.date_range("2020-01-01", periods=72, freq="h")
+    series = pd.Series(1.0, index=index)
+    series.iloc[24:36] = float("nan")
+
+    return series
+
+
+def test_downsample_and_clean_daily_data_blanks_and_reports_low_coverage_days():
+    """A day at or below the coverage threshold is blanked and reported."""
+    settings = DailyDataSufficiencySettings()
+
+    cleaned, report = downsample_and_clean_daily_data(_sub_daily_series(), settings)
+
+    assert report.low_coverage_days == (
+        pd.Timestamp("2020-01-02"),
+    ), f"unexpected low coverage days {report.low_coverage_days}"
+    dropped = cleaned.index[cleaned["value"].isna()]
+    assert list(dropped) == list(
+        report.low_coverage_days
+    ), f"reported days {list(report.low_coverage_days)} do not match dropped rows {list(dropped)}"
+
+
+def test_downsample_and_clean_daily_data_divides_kept_days_by_coverage():
+    """A day that clears the threshold is scaled up by its coverage fraction."""
+    settings = DailyDataSufficiencySettings()
+
+    cleaned, _ = downsample_and_clean_daily_data(_sub_daily_series(), settings)
+
+    # day 1 is fully observed; day 3 has no reading following its final hour, which
+    # therefore contributes nothing
+    assert cleaned["value"].tolist()[0] == pytest.approx(24.0)
+    assert cleaned["value"].tolist()[2] == pytest.approx(23.0)
+
+
+def test_downsample_and_clean_daily_data_threshold_comes_from_settings():
+    """Lowering the coverage threshold keeps the half-observed day the default drops."""
+    settings = DailyDataSufficiencySettings(
+        observed=DailyObservedSufficiencySettings(min_pct_hourly_coverage=0.25)
+    )
+
+    cleaned, report = downsample_and_clean_daily_data(_sub_daily_series(), settings)
+
+    assert report.low_coverage_days == (), f"unexpected low coverage days {report.low_coverage_days}"
+    assert cleaned["value"].tolist()[1] == pytest.approx(24.0)
+
+
+def test_clean_billing_daily_data_passes_daily_data_through_with_an_empty_report():
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    series = pd.Series(1.0, index=index)
+
+    cleaned, report = clean_billing_daily_data(
+        series, "daily", DailyDataSufficiencySettings()
+    )
+
+    assert cleaned["value"].tolist() == [1.0] * 5
+    assert report == DataReport(), f"unexpected report {report}"

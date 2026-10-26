@@ -14,6 +14,7 @@
 
 import pytest
 
+from opendsm.eemeter.common.sufficiency_registry import ALL_PHASES, RULE_SPECS
 from opendsm.eemeter.models.billing.model import BillingModel
 from opendsm.eemeter.models.daily.model import DailyModel
 from opendsm.eemeter.models.hourly.model import HourlyModel
@@ -50,3 +51,46 @@ def test_default_settings_compliance_thresholds(model_class, snapshot):
     compliance_settings = _compliance_settings(model_class().settings)
 
     assert compliance_settings == snapshot
+
+
+# Rules at default settings
+
+
+def _rule_state(sufficiency, name: str, phase: str):
+    """Whether rule `name` is switched on for `phase`: "always on" for a rule without a
+    toggle, and per column carried by the settings for a column rule."""
+    spec = RULE_SPECS[name]
+    if spec.severity == "infeasible":
+        state = "always on"
+    elif spec.columns:
+        state = {
+            column: getattr(getattr(getattr(sufficiency, column), name), phase)
+            for column in spec.columns
+            if getattr(sufficiency, column) is not None
+        }
+    else:
+        state = getattr(getattr(sufficiency.rules, name), phase)
+
+    return state
+
+
+@pytest.mark.parametrize(
+    "family, model_class",
+    [("daily", DailyModel), ("billing", BillingModel), ("hourly", HourlyModel)],
+    ids=["daily", "billing", "hourly"],
+)
+def test_default_rules_per_phase(family, model_class, snapshot):
+    """For each phase, the rules RULE_SPECS lets run for the model's family and whether the
+    model's default settings switch each one on there."""
+    sufficiency = model_class().settings.data.sufficiency
+
+    rules_per_phase = {
+        phase: {
+            name: _rule_state(sufficiency, name, phase)
+            for name, spec in RULE_SPECS.items()
+            if family in spec.families and phase in spec.phases
+        }
+        for phase in ALL_PHASES
+    }
+
+    assert rules_per_phase == snapshot

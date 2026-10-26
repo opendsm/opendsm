@@ -1,0 +1,21 @@
+{
+  "baseline": {
+    "at_threshold": {
+      "passed": true,
+      "records": []
+    },
+    "one_step_past": {
+      "passed": false,
+      "records": [
+        {
+          "data": {
+            "Max_consecutive_hours_missing": 7
+          },
+          "member": "data",
+          "qualified_name": "eemeter.sufficiency_criteria.too_many_consecutive_hours_temperature_data_missing",
+          "severity": "disqualified"
+        }
+      ]
+    }
+  }
+}

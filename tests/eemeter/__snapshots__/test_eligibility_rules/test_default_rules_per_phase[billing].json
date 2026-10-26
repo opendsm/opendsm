@@ -1,0 +1,42 @@
+{
+  "baseline": {
+    "baseline_day_length": true,
+    "daily_coverage": {
+      "joint": true,
+      "observed": true,
+      "temperature": true
+    },
+    "estimated_reads": true,
+    "extreme_values": true,
+    "monthly_coverage": {
+      "observed": false,
+      "temperature": true
+    },
+    "negative_observed_values": true,
+    "no_data": "always on",
+    "offcycle_reads": true,
+    "unique_values": {
+      "observed": false,
+      "temperature": true
+    }
+  },
+  "reporting": {
+    "daily_coverage": {
+      "joint": true,
+      "observed": true,
+      "temperature": true
+    },
+    "estimated_reads": true,
+    "monthly_coverage": {
+      "observed": false,
+      "temperature": true
+    },
+    "negative_observed_values": true,
+    "no_data": "always on",
+    "offcycle_reads": true,
+    "unique_values": {
+      "observed": false,
+      "temperature": false
+    }
+  }
+}

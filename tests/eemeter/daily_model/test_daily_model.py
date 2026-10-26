@@ -224,7 +224,8 @@ def test_predict_does_not_trim_edge_nan_rows(daily_series):
 
 @pytest.mark.slow
 def test_edge_trimmed_frame_fits_same_coefficients_with_warning(daily_series):
-    """A baseline frame padded with all-NaN edge rows fits identically and logs one trim warning."""
+    """A baseline frame padded with all-NaN edge rows fits identically and logs one trim warning.
+    The padding counts toward the judged span, so the padded full year is too long a baseline."""
     meter, temp = daily_series
     df = meter_temperature_frame(meter, temp)
     unpadded_model = DailyModel().fit(df, is_electricity_data=True)
@@ -240,7 +241,12 @@ def test_edge_trimmed_frame_fits_same_coefficients_with_warning(daily_series):
     )
     padded_df = pd.concat([leading, df, trailing])
 
-    padded_model = DailyModel().fit(padded_df, is_electricity_data=True)
+    padded_model = DailyModel().fit(
+        padded_df, is_electricity_data=True, enforce_compliance=["model", "settings"]
+    )
+
+    disqualified = {d.qualified_name for d in padded_model.compliance.disqualification}
+    assert disqualified == {"eemeter.sufficiency_criteria.incorrect_number_of_total_days"}
 
     trim_warnings = [
         w
@@ -864,6 +870,38 @@ def test_prior_format_model_fit_metrics_disqualification_reports_model_status(
     assert rebuilt.compliance.status == ["model"]
 
 
+def test_prior_format_settings_payload_drops_removed_sufficiency_keys(
+    default_fitted_daily_model,
+):
+    """A payload without a schema version that carries an undeclared threshold key loads
+    through the prior-format path."""
+    model_dict = default_fitted_daily_model.to_dict()
+    del model_dict["schema_version"]
+    del model_dict["compliance"]
+    del model_dict["info"]["is_electricity_data"]
+    sufficiency = model_dict["settings"]["data"]["sufficiency"]
+    sufficiency["temperature"]["min_pct_hourly_coverage"] = 0.5
+    sufficiency["observed"]["min_pct_period_coverage"] = 0.5
+    sufficiency["joint"]["min_pct_period_coverage"] = 0.5
+
+    rebuilt = DailyModel.from_dict(model_dict, is_electricity_data=True)
+
+    assert rebuilt.settings.data.sufficiency.temperature.min_pct_daily_coverage == 0.9
+
+
+def test_versioned_payload_drops_removed_sufficiency_keys(default_fitted_daily_model):
+    """A payload stamped with the current schema version also sheds undeclared threshold keys."""
+    model_dict = default_fitted_daily_model.to_dict()
+    sufficiency = model_dict["settings"]["data"]["sufficiency"]
+    sufficiency["temperature"]["min_pct_hourly_coverage"] = 0.5
+    sufficiency["observed"]["min_pct_period_coverage"] = 0.5
+    sufficiency["joint"]["min_pct_period_coverage"] = 0.5
+
+    rebuilt = DailyModel.from_dict(model_dict)
+
+    assert rebuilt.settings.data.sufficiency.temperature.min_pct_daily_coverage == 0.9
+
+
 def test_daily_settings_data_block_has_sufficiency_defaults():
     settings = DailySettings()
 
@@ -895,15 +933,6 @@ def test_changed_min_baseline_length_fires_nonstandard_settings_warning(comstock
     )
 
     assert nonstandard_settings_warnings(model.compliance.disqualification) != []
-
-
-def test_changed_requested_start_does_not_fire_nonstandard_settings_warning(comstock_daily):
-    df_b, _ = comstock_daily
-    model = DailyModel(
-        settings={"data": {"sufficiency": {"requested_start": df_b.index.min()}}}
-    ).fit(df_b.reset_index(), is_electricity_data=True, enforce_compliance=False)
-
-    assert nonstandard_settings_warnings(model.compliance.all) == []
 
 
 @pytest.mark.slow

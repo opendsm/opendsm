@@ -1,0 +1,24 @@
+{
+  "baseline": {
+    "at_threshold": {
+      "passed": true,
+      "records": []
+    },
+    "one_step_past": {
+      "passed": false,
+      "records": [
+        {
+          "data": {
+            "min_required_percentage": 10.0,
+            "n_total_values": 330,
+            "n_unique_values": 32,
+            "unique_percentage": 9.7
+          },
+          "member": "data",
+          "qualified_name": "eemeter.sufficiency_criteria.insufficient_unique_temperature_values",
+          "severity": "disqualified"
+        }
+      ]
+    }
+  }
+}
