@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pydantic
 
 from typing import Optional,Union
@@ -119,15 +121,17 @@ class Data_Settings(BaseSettings):
         validate_default=True,
     )
 
-    """interpolate missing values"""
+    """fill the missing times of a meter that meets min_data_pct_required; when False, such a
+    meter is excluded"""
     interpolate_missing: bool = pydantic.Field(
-        default=True, 
+        default=False,
         validate_default=True,
     )
 
-    """minimum percentage of data required for a meter to be included"""
+    """minimum fraction of loadshape times a meter must have to be included; None selects the
+    default"""
     min_data_pct_required: Optional[float] = pydantic.Field(
-        default=min_data_pct, 
+        default=min_data_pct,
         validate_default=True,
     )
 
@@ -135,11 +139,11 @@ class Data_Settings(BaseSettings):
     @classmethod
     def validate_min_data_pct_required(cls, value):
         if value is None:
-            pass
+            return min_data_pct
 
-        elif value != min_data_pct:
-            raise ValueError(f"min_data_pct_required must be {min_data_pct}")
-        
+        if not 0 < value <= 1:
+            raise ValueError(f"min_data_pct_required must be in (0, 1], got {value}")
+
         return value
 
     """season definition to be used for the loadshape"""
@@ -179,19 +183,38 @@ class Data_Settings(BaseSettings):
 
         return self
 
-    """set min_data_pct_required"""
-    @pydantic.model_validator(mode="after")
-    def _set_min_data_pct_on_interpolate(self):
-        self.model_config["frozen"] = False
+    @property
+    def time_layout(self) -> list[tuple[str, int]]:
+        """(column, cardinality) pairs for the grouping columns of time_period, outermost first
+        in unique_time_periods order, so season leads when present."""
+        if self.time_period is None:
+            return []
 
-        if self.interpolate_missing:
-            self.min_data_pct_required = min_data_pct
-        else:
-            self.min_data_pct_required = None
+        cardinality = {
+            "season": len(self.season.options),
+            "month": 12,
+            "day_of_week": 7,
+            "weekday_weekend": len(self.weekday_weekend.options),
+            "hour": 24,
+        }
+        layout = [
+            (period, cardinality[period])
+            for period in _const.unique_time_periods
+            if period in self.time_period
+        ]
 
-        self.model_config["frozen"] = True
+        return layout
 
-        return self
+    @property
+    def n_times(self) -> Optional[int]:
+        """Number of loadshape times: the product of the time_layout cardinalities, or None
+        when time_period is None."""
+        if self.time_period is None:
+            return None
+
+        n = math.prod(card for _, card in self.time_layout)
+
+        return n
     
 
 if __name__ == "__main__":

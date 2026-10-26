@@ -18,6 +18,12 @@ import pytest
 from opendsm.common.clustering import ClusteringError
 from opendsm.comparison_groups.cg_clustering.create_comparison_groups import CG_Clustering
 from opendsm.comparison_groups.cg_clustering.settings import CG_Clustering_Settings
+from syrupy_extensions import TolerantJSONSnapshotExtension
+
+# sorted weights differ by up to about 5e-5 across platforms and BLAS builds
+_WEIGHTS_EXTENSION = TolerantJSONSnapshotExtension.with_tolerance(
+    atol=1e-4, rtol=0, atol_keys=frozenset({"sorted_weights"}), leaf_atol={}
+)
 
 
 def test_get_labels_assigns_every_pool_meter(cg_clustering_data):
@@ -93,19 +99,21 @@ def test_get_comparison_group_is_deterministic(cg_clustering_data):
 
 @pytest.mark.parametrize("seed", [42, 7, 123])
 def test_clustering_output_snapshot(cg_clustering_data, seed, snapshot):
-    """Pin permutation-invariant clustering outputs across seeds: number of
-    non-outlier clusters, sorted cluster sizes, and each treatment's dominant
-    weight."""
+    """Pin the cluster count and the sorted cluster sizes exactly, and each treatment's
+    weights sorted in descending order, rows in treatment-id order, within
+    `_WEIGHTS_EXTENSION`'s tolerance."""
     treatment_data, comparison_pool_data = cg_clustering_data
     labels, coeffs = CG_Clustering(CG_Clustering_Settings(seed=seed)).get_comparison_group(
         treatment_data, comparison_pool_data
     )
 
-    sizes = labels[labels["cluster"] >= 0]["cluster"].value_counts().sort_values()
+    clustered = labels[labels["cluster"] >= 0]["cluster"]
     summary = {
-        "n_clusters": int((labels["cluster"] >= 0).sum() and labels.loc[labels["cluster"] >= 0, "cluster"].nunique()),
-        "sorted_cluster_sizes": sorted(sizes.tolist()),
-        "dominant_weight_per_treatment": sorted(np.round(coeffs.to_numpy().max(axis=1), 4).tolist()),
+        "n_clusters": int(clustered.nunique()),
+        "sorted_cluster_sizes": sorted(clustered.value_counts().tolist()),
+        "sorted_weights": [
+            sorted(row.tolist(), reverse=True) for row in coeffs.sort_index().to_numpy(dtype=float)
+        ],
     }
 
-    assert summary == snapshot
+    assert summary == snapshot.use_extension(_WEIGHTS_EXTENSION)
