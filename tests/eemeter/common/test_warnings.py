@@ -12,7 +12,13 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from opendsm.eemeter.common.warnings import EEMeterWarning
+import json
+
+from opendsm.eemeter.common.warnings import EEMeterWarning, nonstandard_settings_warning
+
+
+
+_REPORT = {"developer_value": {"value": 3.0, "default": 1.0}}
 
 
 def test_eemeter_warning():
@@ -28,3 +34,27 @@ def test_eemeter_warning():
         "description": "description",
         "qualified_name": "qualified_name",
     }
+
+
+def test_nonstandard_settings_warning_returns_none_for_an_empty_report():
+    assert nonstandard_settings_warning({}) is None
+
+
+def test_nonstandard_settings_warning_has_the_nonstandard_qualified_name():
+    warning = nonstandard_settings_warning(_REPORT)
+
+    assert warning.qualified_name == "eemeter.settings.nonstandard"
+
+
+def test_nonstandard_settings_warning_carries_the_report_as_its_deviations():
+    warning = nonstandard_settings_warning(_REPORT)
+
+    assert warning.data["deviations"] == _REPORT, (
+        f"expected the report as the deviations payload, got {warning.data}"
+    )
+
+
+def test_nonstandard_settings_warning_payload_is_json_serializable():
+    warning = nonstandard_settings_warning(_REPORT)
+
+    assert json.dumps(warning.json())

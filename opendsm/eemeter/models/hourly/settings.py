@@ -24,7 +24,7 @@ from typing import Optional, Literal, Union, TypeVar, Dict
 
 import pywt
 
-from opendsm.common.base_settings import BaseSettings
+from opendsm.common.base_settings import BaseSettings, DeveloperField, UserField
 from opendsm.common.clustering.settings import ClusteringSettings
 from opendsm.common.metrics import BaselineMetrics
 from opendsm.common.const import CAlgoChoice
@@ -68,52 +68,52 @@ class BaseModel(str, Enum):
 
 class TemperatureBinSettings(BaseSettings):
     """how to bin temperature data"""
-    method: BinningChoice = pydantic.Field(
+    method: BinningChoice = DeveloperField(
         default=BinningChoice.FIXED_BINS,
     )
 
     """number of temperature bins"""
-    n_bins: Optional[int] = pydantic.Field(
+    n_bins: Optional[int] = DeveloperField(
         default=None,
         ge=1,
     )
 
     """temperature bin width in fahrenheit"""
-    bin_width: Optional[float] = pydantic.Field(
+    bin_width: Optional[float] = DeveloperField(
         default=25,
         ge=1,
     )
 
     """specified fixed temperature bins in fahrenheit"""
-    fixed_bins: Optional[list[float]] = pydantic.Field(
+    fixed_bins: Optional[list[float]] = DeveloperField(
         default=[10, 30, 50, 65, 75, 90, 105],
     )
 
     "minimum bin count"
-    min_bin_count: Optional[int] = pydantic.Field(
+    min_bin_count: Optional[int] = DeveloperField(
         default=20,
         ge=1,
     )
 
     """use edge bins bool"""
-    include_edge_bins: bool = pydantic.Field(
+    include_edge_bins: bool = DeveloperField(
         default=True, 
     )
 
     """rate for edge temperature bins"""
-    edge_bin_rate: Optional[Union[float, Literal["heuristic"]]] = pydantic.Field(
+    edge_bin_rate: Optional[Union[float, Literal["heuristic"]]] = DeveloperField(
         default="heuristic",
     )
 
     """percent of total data in edge bins"""
-    edge_bin_percent: Optional[float] = pydantic.Field(
+    edge_bin_percent: Optional[float] = DeveloperField(
         default=None,
         gt=0,
         le=0.45,
     )
 
     """offset normalized temperature range for edge bins (keeps exp from blowing up)"""
-    edge_bin_temperature_range_offset: Optional[float] = pydantic.Field(
+    edge_bin_temperature_range_offset: Optional[float] = DeveloperField(
         default=1.0, # prior 1.0
         ge=0,
     )
@@ -191,71 +191,71 @@ class TemperatureBinSettings(BaseSettings):
 class ElasticNetSettings(BaseSettings):
     """ElasticNet alpha parameter"""
 
-    alpha: float = pydantic.Field(
+    alpha: float = DeveloperField(
         default=0.0139,
         ge=0,
     )
 
     """ElasticNet l1_ratio parameter"""
-    l1_ratio: float = pydantic.Field(
+    l1_ratio: float = DeveloperField(
         default=0.871,
         ge=0,
         le=1,
     )
 
     """ElasticNet fit_intercept parameter"""
-    fit_intercept: bool = pydantic.Field(
+    fit_intercept: bool = DeveloperField(
         default=True,
     )
 
     """ElasticNet parameter to precompute Gram matrix"""
-    precompute: bool = pydantic.Field(
+    precompute: bool = DeveloperField(
         default=False,
     )
 
     """ElasticNet max_iter parameter"""
-    max_iter: int = pydantic.Field(
+    max_iter: int = DeveloperField(
         default=3000,
         ge=1,
         le=2**32 - 1,
     )
 
     """ElasticNet copy_X parameter"""
-    copy_x: bool = pydantic.Field(
+    copy_x: bool = DeveloperField(
         default=True,
     )
 
     """ElasticNet tol parameter"""
-    tol: float = pydantic.Field(
+    tol: float = DeveloperField(
         default=1e-3,
         gt=0,
     )
 
     """ElasticNet selection parameter"""
-    selection: SelectionChoice = pydantic.Field(
+    selection: SelectionChoice = DeveloperField(
         default=SelectionChoice.CYCLIC,
     )
 
     """ElasticNet warm_start parameter"""
-    warm_start: bool = pydantic.Field(
+    warm_start: bool = DeveloperField(
         default=False,
     )
 
 
 class KernelRidgeSettings(BaseSettings):
     """Kernel Ridge alpha parameter"""
-    alpha: float = pydantic.Field(
+    alpha: float = DeveloperField(
         default=0.0425,
         ge=0,
     )
 
     """Kernel Ridge kernel parameter"""
-    kernel: str = pydantic.Field(
+    kernel: str = DeveloperField(
         default="rbf",
     )
 
     """Kernel Ridge gamma parameter"""
-    gamma: Optional[float] = pydantic.Field(
+    gamma: Optional[float] = DeveloperField(
         default=None,
         gt=0,
     )
@@ -263,36 +263,36 @@ class KernelRidgeSettings(BaseSettings):
 
 class AdaptiveWeightsSettings(BaseSettings):
     """Adaptive Weights for ElasticNet"""
-    enabled: bool = pydantic.Field(
+    enabled: bool = DeveloperField(
         default=True,
     )
 
     """Sigma threshold for calculating C"""
-    sigma: Optional[float] = pydantic.Field(
+    sigma: Optional[float] = DeveloperField(
         default=4.55,
         gt=0,
     )
 
     """Adaptive weights window size"""
-    window_size: Optional[int] = pydantic.Field(
+    window_size: Optional[int] = DeveloperField(
         default=3,
         ge=1,
         le=12,
     )
 
     """Algorithm to use for calculating C"""
-    c_algo: Optional[CAlgoChoice] = pydantic.Field(
+    c_algo: Optional[CAlgoChoice] = DeveloperField(
         default=CAlgoChoice.IQR,
     )
 
     """Number of iterations to iterate weights"""
-    max_iter: Optional[int] = pydantic.Field(
+    max_iter: Optional[int] = DeveloperField(
         default=100,   # Exits early based on tol
         ge=1,
     )
 
     """Relative difference in weights to stop iteration"""
-    tol: Optional[float] = pydantic.Field(
+    tol: Optional[float] = DeveloperField(
         default=1E-3,   # Previously was using 1e-4
         ge=0,
     )
@@ -320,32 +320,32 @@ class Criterion(str, Enum):
 class BaseHourlySettings(BaseSettings):
     """train features used within the model"""
 
-    train_features: Optional[list[str]] = None
+    train_features: Optional[list[str]] = UserField(default=None)
 
     """CVRMSE threshold for model disqualification"""
-    cvrmse_threshold: float = pydantic.Field(
+    cvrmse_threshold: float = DeveloperField(
         default=1.4,
     )
 
     """PNRMSE threshold for model disqualification"""
-    pnrmse_threshold: float = pydantic.Field(
+    pnrmse_threshold: float = DeveloperField(
         default=2.2,
     )
 
     """minimum number of training hours per day below which a day is excluded"""
-    min_daily_training_hours: int = pydantic.Field(
+    min_daily_training_hours: int = DeveloperField(
         default=12,
         ge=0,
         le=24,
     )
 
     """temperature bin settings"""
-    temperature_bin: Optional[TemperatureBinSettings] = pydantic.Field(
+    temperature_bin: Optional[TemperatureBinSettings] = DeveloperField(
         default_factory=TemperatureBinSettings,
     )
 
     """settings for temporal clustering"""
-    temporal_cluster: ClusteringSettings = pydantic.Field(
+    temporal_cluster: ClusteringSettings = DeveloperField(
         default_factory=lambda: ClusteringSettings(
             # the RBF affinity and the median magnitude feature are tuned as a pair
             min_cluster_size=2,
@@ -382,18 +382,18 @@ class BaseHourlySettings(BaseSettings):
     )
 
     """temporal cluster aggregation method"""
-    temporal_cluster_aggregation: AggregationMethod = pydantic.Field(
+    temporal_cluster_aggregation: AggregationMethod = DeveloperField(
         default=AggregationMethod.MEDIAN,
     )
 
     """temporal cluster/temperature bin/temperature interaction scalar"""
-    interaction_scalar: float = pydantic.Field(
+    interaction_scalar: float = DeveloperField(
         default=0.524,
         gt=0,
     )
 
     """scalar for ghi feature"""
-    ghi_scalar: float = pydantic.Field(
+    ghi_scalar: float = DeveloperField(
         default=1.0,
         gt=0,
     )
@@ -401,44 +401,44 @@ class BaseHourlySettings(BaseSettings):
     """supplemental time series column names; the model does not impute them: a day missing a
     value is left out of the fit, and a missing value at prediction takes the baseline median for
     its hour"""
-    supplemental_time_series_columns: Optional[list] = pydantic.Field(
+    supplemental_time_series_columns: Optional[list] = UserField(
         default=None,
     )
 
     """supplemental categorical column names, as numeric codes; a day takes its first value, a
     day with none is left out of the fit, and a day with none at prediction takes the most common
     baseline value"""
-    supplemental_categorical_columns: Optional[list] = pydantic.Field(
+    supplemental_categorical_columns: Optional[list] = UserField(
         default=None,
     )
 
     """base model type"""
-    base_model: BaseModel = pydantic.Field(
+    base_model: BaseModel = DeveloperField(
         default=BaseModel.ELASTICNET,
     )
 
     """ElasticNet settings"""
-    elasticnet: Optional[ElasticNetSettings] = pydantic.Field(
+    elasticnet: Optional[ElasticNetSettings] = DeveloperField(
         default_factory=ElasticNetSettings,
     )
 
     """Kernel Ridge settings"""
-    kernel_ridge: Optional[KernelRidgeSettings] = pydantic.Field(
+    kernel_ridge: Optional[KernelRidgeSettings] = DeveloperField(
         default_factory=KernelRidgeSettings,
     )
 
     """Adaptive Weights settings"""
-    adaptive_weights: AdaptiveWeightsSettings = pydantic.Field(
+    adaptive_weights: AdaptiveWeightsSettings = DeveloperField(
         default_factory=AdaptiveWeightsSettings,
     )
 
     """Feature scaling method"""
-    scaling_method: ScalingChoice = pydantic.Field(
+    scaling_method: ScalingChoice = DeveloperField(
         default=ScalingChoice.STANDARD_SCALER,
     )
 
     """Significance level used for uncertainty calculations"""
-    uncertainty_alpha: float = pydantic.Field(
+    uncertainty_alpha: float = UserField(
         default=0.1,
         ge=0,
         le=1,
@@ -446,7 +446,7 @@ class BaseHourlySettings(BaseSettings):
     )
 
     """Multiplicative scale factor for per-point uncertainty"""
-    uncertainty_scale_factor: float = pydantic.Field(
+    uncertainty_scale_factor: float = DeveloperField(
         default=1.0,
         ge=0.1,
         description=(
@@ -458,7 +458,7 @@ class BaseHourlySettings(BaseSettings):
     )
 
     """seed for any random state assignment (ElasticNet, Clustering)"""
-    seed: Optional[int] = pydantic.Field(
+    seed: Optional[int] = UserField(
         default=None,
         ge=0,
     )
@@ -505,7 +505,7 @@ class BaseHourlySettings(BaseSettings):
 class HourlySolarSettings(BaseHourlySettings):
     """train features used within the model"""
 
-    train_features: list[str] = pydantic.Field(
+    train_features: list[str] = UserField(
         default=["temperature", "ghi"],
     )
 
@@ -525,7 +525,7 @@ class HourlyNonSolarSettings(BaseHourlySettings):
     #     default=10,
     #     ge=1,
     # )
-    train_features: list[str] = pydantic.Field(
+    train_features: list[str] = UserField(
         default=["temperature"],
     )
 

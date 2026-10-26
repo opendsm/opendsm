@@ -29,6 +29,9 @@ from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
     DisqualifiedModelError,
 )
+from opendsm.common.test_data import load_test_data
+from ..helpers import nonstandard_settings_warnings
+from .conftest import _TEST_METER
 import numpy as np
 import pandas as pd
 import pytest
@@ -332,6 +335,116 @@ def test_hourly_dict_settings():
     m = HourlyModel(settings={"cvrmse_threshold": 1.0})
     assert isinstance(m.settings, BaseHourlySettings)
     assert m.settings.train_features == None
+
+
+def test_uppercase_train_features_key_with_ghi_selects_solar_settings():
+    """Settings keys match case-insensitively, so `TRAIN_FEATURES` naming ghi selects the
+    solar settings."""
+    m = HourlyModel(settings={"TRAIN_FEATURES": ["ghi"]})
+
+    assert isinstance(m.settings, HourlySolarSettings), type(m.settings).__name__
+    assert set(m.settings.train_features) == {"temperature", "ghi"}
+
+
+@pytest.fixture(scope="module")
+def module_baseline():
+    """The `baseline` fixture's frame, built once for the fits this module shares."""
+    baseline, _ = load_test_data("hourly_treatment_data")
+    baseline = baseline.loc[_TEST_METER].copy()
+    baseline.loc[baseline["observed"] > 513, "observed"] = 0
+
+    return baseline
+
+
+def _fit_hourly(baseline, settings=None):
+    baseline_data = HourlyBaselineData(baseline.copy(), is_electricity_data=True)
+    model = HourlyModel(settings=settings).fit(baseline_data)
+
+    return model
+
+
+@pytest.fixture(scope="module")
+def default_fitted_hourly(module_baseline):
+    return _fit_hourly(module_baseline)
+
+
+@pytest.fixture(scope="module")
+def cvrmse_1_2_fitted_hourly(module_baseline):
+    return _fit_hourly(module_baseline, {"cvrmse_threshold": 1.2})
+
+
+@pytest.fixture(scope="module")
+def solar_fitted_hourly(module_baseline):
+    return _fit_hourly(module_baseline, HourlySolarSettings())
+
+
+@pytest.mark.slow
+def test_default_settings_fit_carries_no_nonstandard_settings_warning(default_fitted_hourly):
+    assert nonstandard_settings_warnings(default_fitted_hourly.warnings) == []
+
+
+@pytest.mark.slow
+def test_nonstandard_developer_setting_fit_carries_one_warning(cvrmse_1_2_fitted_hourly):
+    warnings = nonstandard_settings_warnings(cvrmse_1_2_fitted_hourly.warnings)
+
+    assert len(warnings) == 1
+    assert warnings[0].data["deviations"] == {"cvrmse_threshold": {"value": 1.2, "default": 1.4}}
+
+
+@pytest.mark.slow
+def test_nonstandard_developer_setting_warning_survives_dict_round_trip(cvrmse_1_2_fitted_hourly):
+    rebuilt = HourlyModel.from_dict(cvrmse_1_2_fitted_hourly.to_dict())
+
+    warnings = nonstandard_settings_warnings(rebuilt.warnings)
+
+    assert len(warnings) == 1
+    assert warnings[0].data["deviations"] == {"cvrmse_threshold": {"value": 1.2, "default": 1.4}}
+
+
+@pytest.mark.slow
+def test_solar_default_settings_fit_carries_no_nonstandard_settings_warning(solar_fitted_hourly):
+    assert nonstandard_settings_warnings(solar_fitted_hourly.warnings) == []
+
+
+@pytest.mark.slow
+def test_uppercase_train_features_key_in_model_dict_selects_solar_settings(solar_fitted_hourly):
+    """A stored payload whose settings keys are uppercase still rebuilds the solar settings."""
+    payload = solar_fitted_hourly.to_dict()
+    payload["settings"] = {key.upper(): value for key, value in payload["settings"].items()}
+
+    rebuilt = HourlyModel.from_dict(payload)
+
+    assert isinstance(rebuilt.settings, HourlySolarSettings), type(rebuilt.settings).__name__
+
+
+def test_nonstandard_settings_warning_is_not_recorded_when_the_prefit_check_raises(
+    baseline, caplog
+):
+    """A fit that raises in the pre-fit check records no nonstandard-settings warning."""
+    model = HourlyModel(settings={"cvrmse_threshold": 1.2})
+    data = HourlyBaselineData(baseline.assign(observed=0.0), is_electricity_data=True)
+
+    with caplog.at_level("WARNING", logger="eemeter"):
+        with pytest.raises(DataSufficiencyError, match="no finite observed values"):
+            model.fit(data, ignore_disqualification=True)
+
+    assert nonstandard_settings_warnings(model.warnings) == []
+    assert "eemeter.settings.nonstandard" not in caplog.text
+
+
+@pytest.mark.slow
+def test_nonstandard_settings_warning_precedes_the_ghi_mismatch_warning(
+    synthetic_hourly_with_ghi,
+):
+    """`model.warnings` lists the nonstandard-settings warning before the GHI-mismatch warning."""
+    data = HourlyBaselineData(synthetic_hourly_with_ghi, is_electricity_data=True)
+    model = HourlyModel(settings={"train_features": ["temperature"], "cvrmse_threshold": 1.2})
+
+    model.fit(data, ignore_disqualification=True)
+
+    names = [w.qualified_name for w in model.warnings]
+    assert "eemeter.settings.nonstandard" in names and "eemeter.potential_model_mismatch" in names, names
+    assert names.index("eemeter.settings.nonstandard") < names.index("eemeter.potential_model_mismatch"), names
 
 
 class TestFitExpGrowthDecay:
@@ -925,6 +1038,20 @@ class TestMissingSupplementalValues:
         assert restored_predicted.notna().all(), "the restored model left hours unpredicted"
         np.testing.assert_array_equal(restored_predicted, _predicted(model, week))
 
+    def test_serialized_model_fills_missing_values_of_a_mixed_case_column(
+        self, supplemental_hourly
+    ):
+        df = supplemental_hourly.rename(columns={"occupancy": "Occupancy"})
+        model = _fit_flagged(df, supplemental_time_series_columns=["Occupancy"])
+        restored = HourlyModel.from_dict(model.to_dict())
+        week = _supplemental_week(df)
+        week.loc["2019-07-17 15:00", "Occupancy"] = np.nan
+
+        restored_predicted = _predicted(restored, week)
+
+        assert restored_predicted.notna().all(), "the restored model left hours unpredicted"
+        np.testing.assert_array_equal(restored_predicted, _predicted(model, week))
+
     def test_model_json_without_fill_values_leaves_a_gap_day_unpredicted(
         self, supplemental_hourly
     ):
@@ -1041,3 +1168,17 @@ def test_predict_labels_unseen_combinations_for_that_prediction_only(baseline, r
 
     assert predicted.loc[predicted.index.month == 12, "predicted"].notna().all()
     pd.testing.assert_frame_equal(hm._df_temporal_clusters, fitted)
+
+
+def test_settings_deviations_property_reports_hourly_developer_tier_changes():
+    model = HourlyModel(settings=HourlyNonSolarSettings(cvrmse_threshold=1.2))
+
+    assert model.settings_deviations == {
+        "cvrmse_threshold": {"value": 1.2, "default": 1.4}
+    }
+
+
+def test_settings_deviations_property_is_empty_for_default_hourly_settings():
+    model = HourlyModel()
+
+    assert model.settings_deviations == {}

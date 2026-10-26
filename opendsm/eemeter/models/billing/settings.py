@@ -14,16 +14,18 @@
 
 from __future__ import annotations
 
-from opendsm.common.base_settings import CustomField
+from opendsm.common.base_settings import UserField
+from opendsm.eemeter.models.daily.utilities.settings import (
+    DailySettings,
+    PresetName,
+)
 
-from opendsm.eemeter.models.daily.utilities.settings import DailyLegacySettings
 
 
+class BillingSettings(DailySettings):
+    """Daily settings on the legacy preset."""
 
-class BillingSettings(DailyLegacySettings):
-    segment_minimum_count: int = CustomField(
-        default=3,
-        ge=3,
-        developer=True,
-        description="Minimum number of data points for HDD/CDD",
+    preset: PresetName = UserField(
+        default="legacy",
+        description="Named set of default values that all other settings fall back to",
     )

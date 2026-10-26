@@ -21,6 +21,11 @@ from opendsm.eemeter.models.billing.data import (
     BillingReportingData,
 )
 from opendsm.eemeter.models.billing.model import BillingModel
+from opendsm.eemeter.models.billing.settings import BillingSettings
+from opendsm.eemeter.models.billing.weighted_model import BillingWeightedModel
+from opendsm.eemeter.models.daily.utilities.settings import DailySettings
+
+from ..helpers import nonstandard_settings_warnings
 
 
 
@@ -36,8 +41,68 @@ def fitted_model(baseline_data):
     return BillingModel().fit(baseline_data, ignore_disqualification=True)
 
 
+@pytest.mark.slow
+def test_default_settings_fit_has_no_nonstandard_settings_warning(fitted_model):
+    """BillingModel's own defaults never trigger a nonstandard settings warning."""
+    assert nonstandard_settings_warnings(fitted_model.warnings) == []
+
+
+@pytest.mark.slow
+def test_nonstandard_setting_fit_carries_deviation_warning(baseline_data):
+    """A caller-supplied deviation from BillingModel's defaults warns exactly once."""
+    baseline_model = BillingModel(settings={"segment_minimum_count": 4}).fit(
+        baseline_data, ignore_disqualification=True
+    )
+
+    matching = nonstandard_settings_warnings(baseline_model.warnings)
+    assert len(matching) == 1
+
+
+def test_different_preset_is_judged_against_the_billing_reference():
+    """BillingModel judges current-preset settings against the legacy preset:
+    `segment_minimum_count` and `allow_smooth_model` deviate, and `preset` itself is not
+    listed."""
+    model = BillingModel(settings={"preset": "current"})
+
+    deviations = model.settings_deviations
+
+    assert "segment_minimum_count" in deviations
+    assert "allow_smooth_model" in deviations
+    assert "preset" not in deviations
+
+
+@pytest.mark.parametrize("model_class", [BillingModel, BillingWeightedModel])
+def test_default_settings_use_legacy_preset(model_class):
+    """Both billing models default to the legacy preset."""
+    assert model_class().settings.preset == "legacy"
+
+
+@pytest.mark.parametrize(
+    "model_class, segment_minimum_count",
+    [(BillingModel, 10), (BillingWeightedModel, 3)],
+)
+def test_default_segment_minimum_count(model_class, segment_minimum_count):
+    """The weighted model lowers the legacy preset's minimum segment count as its own
+    default."""
+    assert model_class().settings.segment_minimum_count == segment_minimum_count
+
+
+@pytest.mark.parametrize("model_class", [BillingModel, BillingWeightedModel])
+def test_default_settings_have_no_deviations(model_class):
+    """Neither billing model reports deviations on its own defaults."""
+    assert model_class().settings_deviations == {}
+
+
+@pytest.mark.parametrize("model_class", [BillingModel, BillingWeightedModel])
+def test_settings_instance_is_used_as_given(model_class):
+    """A DailySettings instance passes through the billing constructors untouched."""
+    settings = DailySettings(preset="current", segment_minimum_count=7)
+
+    assert model_class(settings=settings).settings is settings
+
+
 # ---------------------------------------------------------------------------
-# failure paths (no fit required for the unfitted case)
+# failure paths
 # ---------------------------------------------------------------------------
 
 def test_predict_before_fit_raises(baseline_data):
@@ -56,13 +121,6 @@ def test_predict_bad_aggregation_raises(fitted_model, baseline_data):
     """An unsupported aggregation level raises ValueError."""
     with pytest.raises(ValueError, match="aggregation must be one of"):
         fitted_model.predict(baseline_data, aggregation="weekly")
-
-
-def test_to_dict_sets_developer_mode(fitted_model):
-    """Serialising the model marks the settings developer_mode flag."""
-    model_dict = fitted_model.to_dict()
-
-    assert model_dict["settings"]["developer_mode"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -125,3 +183,14 @@ def test_json_billing(comstock_monthly):
     ).sum()
 
     assert total_metered_savings == total_metered_savings_loaded
+
+
+def test_one_settings_object_is_judged_against_each_billing_model_reference():
+    """The reference belongs to the model, not to the settings: the same settings are
+    standard for the weighted model and nonstandard for the plain one."""
+    settings = BillingSettings(segment_minimum_count=3)
+
+    assert BillingWeightedModel(settings=settings).settings_deviations == {}
+    assert BillingModel(settings=settings).settings_deviations == {
+        "segment_minimum_count": {"value": 3, "default": 10}
+    }

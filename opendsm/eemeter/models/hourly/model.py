@@ -48,11 +48,13 @@ from opendsm.eemeter.models.hourly.regressors import (
     SafeElasticNet,
     AdaptiveElasticNetRegressor,
 )
+from opendsm.common.base_settings import settings_deviation_report
+from opendsm.common.base_settings import lowercase_keys
 from opendsm.eemeter.common.exceptions import (
     DataSufficiencyError,
     DisqualifiedModelError,
 )
-from opendsm.eemeter.common.warnings import EEMeterWarning
+from opendsm.eemeter.common.warnings import EEMeterWarning, nonstandard_settings_warning
 from opendsm.common.clustering.cluster import cluster_features
 from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict, ReportingMetrics
 from opendsm import __version__
@@ -303,6 +305,7 @@ class HourlyModel:
 
         # TODO move this logic into HourlySettings init
         if isinstance(settings, dict):
+            settings = lowercase_keys(settings)
             features = settings.get("train_features")
             if features is not None:
                 if "ghi" in features:
@@ -407,15 +410,13 @@ class HourlyModel:
 
         return model
 
+    def _reference_settings(self):
+        return type(self.settings)()
+
     def _model_prefit_check(self, baseline_data):
         if "ghi" in self._ts_features and "ghi" not in baseline_data.df.columns:
             raise ValueError(
                 "Model was explicitly set to use GHI, but baseline data does not contain GHI."
-            )
-
-        if "ghi" in baseline_data.df.columns and "ghi" not in self._ts_features:
-            self._warn_model_mismatch(
-                "Model was explicitly set to ignore GHI, but baseline period contained a GHI column."
             )
 
         if np.allclose(baseline_data.df["observed"].values, 0):
@@ -435,6 +436,23 @@ class HourlyModel:
             model_fit_warning.warn()
             self.disqualification.append(model_fit_warning)
             raise DataSufficiencyError("Cannot fit model: Baseline data contains no finite observed values")
+
+    def _warn_ignored_ghi(self, baseline_data):
+        if "ghi" in baseline_data.df.columns and "ghi" not in self._ts_features:
+            self._warn_model_mismatch(
+                "Model was explicitly set to ignore GHI, but baseline period contained a GHI column."
+            )
+
+    @property
+    def settings_deviations(self) -> dict:
+        """Developer-tier settings that differ from this model's reference defaults.
+
+        Returns:
+            the `settings_deviation_report` of the model's settings against its reference settings.
+        """
+        report = settings_deviation_report(self.settings, self._reference_settings())
+
+        return report
 
     def fit(
         self, baseline_data: HourlyBaselineData, ignore_disqualification: bool = False
@@ -460,7 +478,7 @@ class HourlyModel:
         if baseline_data.disqualification and not ignore_disqualification:
             raise DataSufficiencyError("Can't fit model on disqualified baseline data")
 
-        self.warnings = baseline_data.warnings
+        self.warnings = list(baseline_data.warnings)
         self.disqualification = baseline_data.disqualification
 
         if not self._ts_features:
@@ -468,7 +486,14 @@ class HourlyModel:
             self._ts_features = self.settings.train_features.copy()
 
         self._model_prefit_check(baseline_data)
-        
+
+        settings_warning = nonstandard_settings_warning(self.settings_deviations)
+        if settings_warning is not None:
+            self.warnings.append(settings_warning)
+            settings_warning.warn()
+
+        self._warn_ignored_ghi(baseline_data)
+
         self._fit(baseline_data)
         self._check_model_fit()
 
@@ -1269,16 +1294,18 @@ class HourlyModel:
         records a warning counting the inputs filled.
         """
         ts_columns, cat_columns = self._supplemental_design_columns()
+        # fill values are keyed by the lowercased column name, the spelling a serialized model's
+        # keys come back in, so a reloaded model finds them
         if not self._is_fit:
             self._supplemental_fill_values = {}
             for col, idx in ts_columns.items():
                 fit_values = X[np.ix_(fit_mask, idx)]
-                self._supplemental_fill_values[col] = np.median(fit_values, axis=0).tolist()
+                self._supplemental_fill_values[col.lower().strip()] = np.median(fit_values, axis=0).tolist()
 
             for col, idx in cat_columns.items():
                 fit_values = X[np.ix_(fit_mask, idx)].ravel()
                 most_common = pd.Series(fit_values).mode().iloc[0]
-                self._supplemental_fill_values[col] = [float(most_common)]
+                self._supplemental_fill_values[col.lower().strip()] = [float(most_common)]
 
         columns = {**ts_columns, **cat_columns}
         if not columns:
@@ -1288,7 +1315,7 @@ class HourlyModel:
         filled_days = np.zeros(len(X), dtype=bool)
         n_filled = 0
         for col, idx in columns.items():
-            fill = np.broadcast_to(self._supplemental_fill_values.get(col, np.nan), len(idx))
+            fill = np.broadcast_to(self._supplemental_fill_values.get(col.lower().strip(), np.nan), len(idx))
             filled = np.isnan(X[:, idx]) & ~np.isnan(fill)
             X_filled[:, idx] = np.where(filled, fill, X[:, idx])
             filled_days |= filled.any(axis=1)
@@ -1593,12 +1620,13 @@ class HourlyModel:
             An instance of the class.
         """
         # get settings
-        train_features = data.get("settings").get("train_features")
+        settings_dict = lowercase_keys(data.get("settings"))
+        train_features = settings_dict.get("train_features")
 
         if "ghi" in train_features:
-            settings = _settings.HourlySolarSettings(**data.get("settings"))
+            settings = _settings.HourlySolarSettings(**settings_dict)
         else:
-            settings = _settings.HourlyNonSolarSettings(**data.get("settings"))
+            settings = _settings.HourlyNonSolarSettings(**settings_dict)
 
         # initialize model class
         model_cls = cls(settings=settings)

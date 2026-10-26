@@ -16,9 +16,14 @@ from __future__ import annotations
 import pydantic
 
 from enum import Enum
-from typing import Optional, Literal, Union
+from typing import Any, ClassVar, Optional, Literal, Union, get_args
 
-from opendsm.common.base_settings import BaseSettings, CustomField
+from opendsm.common.base_settings import (
+    BaseSettings,
+    DeveloperField,
+    UserField,
+    lowercase_keys,
+)
 import opendsm.eemeter.models.daily.utilities.const as _const
 from opendsm.eemeter.models.daily.utilities.opt_settings import AlgorithmChoice
 
@@ -56,20 +61,20 @@ class FullModelSelection(str, Enum):
 
 
 class Season_Definition(BaseSettings):
-    january: str = CustomField(default="winter")
-    february: str = CustomField(default="winter")
-    march: str = CustomField(default="shoulder")
-    april: str = CustomField(default="shoulder")
-    may: str = CustomField(default="shoulder")
-    june: str = CustomField(default="summer")
-    july: str = CustomField(default="summer")
-    august: str = CustomField(default="summer")
-    september: str = CustomField(default="summer")
-    october: str = CustomField(default="shoulder")
-    november: str = CustomField(default="winter")
-    december: str = CustomField(default="winter")
+    january: str = UserField(default="winter")
+    february: str = UserField(default="winter")
+    march: str = UserField(default="shoulder")
+    april: str = UserField(default="shoulder")
+    may: str = UserField(default="shoulder")
+    june: str = UserField(default="summer")
+    july: str = UserField(default="summer")
+    august: str = UserField(default="summer")
+    september: str = UserField(default="summer")
+    october: str = UserField(default="shoulder")
+    november: str = UserField(default="winter")
+    december: str = UserField(default="winter")
 
-    options: list[str] = CustomField(default=["summer", "shoulder", "winter"])
+    options: ClassVar[list[str]] = ["summer", "shoulder", "winter"]
 
     """Set dictionaries of seasons"""
     @pydantic.model_validator(mode="after")
@@ -90,15 +95,15 @@ class Season_Definition(BaseSettings):
 
 
 class Weekday_Weekend_Definition(BaseSettings):
-    monday: str = CustomField(default="weekday")
-    tuesday: str = CustomField(default="weekday")
-    wednesday: str = CustomField(default="weekday")
-    thursday: str = CustomField(default="weekday")
-    friday: str = CustomField(default="weekday")
-    saturday: str = CustomField(default="weekend")
-    sunday: str = CustomField(default="weekend")
+    monday: str = UserField(default="weekday")
+    tuesday: str = UserField(default="weekday")
+    wednesday: str = UserField(default="weekday")
+    thursday: str = UserField(default="weekday")
+    friday: str = UserField(default="weekday")
+    saturday: str = UserField(default="weekend")
+    sunday: str = UserField(default="weekend")
 
-    options: list[str] = CustomField(default=["weekday", "weekend"])
+    options: ClassVar[list[str]] = ["weekday", "weekend"]
 
     """Set dictionaries of weekday/weekend"""
     @pydantic.model_validator(mode="after")
@@ -119,59 +124,50 @@ class Weekday_Weekend_Definition(BaseSettings):
     
 
 class Split_Selection_Definition(BaseSettings):
-    criteria: ModelSelectionCriteria = CustomField(
+    criteria: ModelSelectionCriteria = DeveloperField(
         default=ModelSelectionCriteria.BIC,
-        developer=True,
         description="What selection criteria is used to select data splits of models",
     )
 
-    penalty_multiplier: float = CustomField(
+    penalty_multiplier: float = DeveloperField(
         default=0.24,
         ge=0,
-        developer=True,
         description="Penalty multiplier for split selection criteria",
     )
 
-    penalty_power: float = CustomField(
+    penalty_power: float = DeveloperField(
         default=2.061,
         ge=1,
-        developer=True,
         description="What power should the penalty of the selection criteria be raised to",
     )
 
-    allow_separate_summer: bool = CustomField(
+    allow_separate_summer: bool = DeveloperField(
         default=True,
-        developer=True,
         description="Allow summer to be modeled separately",
     )
 
-    allow_separate_shoulder: bool = CustomField(
+    allow_separate_shoulder: bool = DeveloperField(
         default=True,
-        developer=True,
         description="Allow shoulder to be modeled separately",
     )
 
-    allow_separate_winter: bool = CustomField(
+    allow_separate_winter: bool = DeveloperField(
         default=True,
-        developer=True,
         description="Allow winter to be modeled separately",
     )
 
-    allow_separate_weekday_weekend: bool = CustomField(
+    allow_separate_weekday_weekend: bool = DeveloperField(
         default=True,
-        developer=True,
         description="Allow weekdays and weekends to be modeled separately",
     )
 
-    reduce_splits_by_gaussian: bool = CustomField(
+    reduce_splits_by_gaussian: bool = DeveloperField(
         default=True,
-        developer=True,
         description="Reduces splits by fitting with multivariate Gaussians and testing for overlap",
     )
 
-    reduce_splits_num_std: Optional[list[float]] = CustomField(
+    reduce_splits_num_std: Optional[list[float]] = DeveloperField(
         default=[1.4, 0.89],
-        developer=True,
         description="Number of standard deviations to use with Gaussians",
     )
 
@@ -187,15 +183,49 @@ class Split_Selection_Definition(BaseSettings):
         return self
 
 
-def _check_developer_mode(cls):  
-    for k, v in type(cls).model_fields.items():
-        if isinstance(getattr(cls, k), BaseSettings):
-            _check_developer_mode(getattr(cls, k))
+_LEGACY_PRESET = {
+    "allow_smooth_model": False,
+    "alpha_final": 2.0,
+    "segment_minimum_count": 10,
+    "split_selection": {
+        "allow_separate_summer": False,
+        "allow_separate_shoulder": False,
+        "allow_separate_winter": False,
+        "allow_separate_weekday_weekend": False,
+        "reduce_splits_by_gaussian": False,
+        "reduce_splits_num_std": None,
+    },
+}
 
-        elif v.json_schema_extra["developer"] and getattr(cls, k) != v.default:
-            raise ValueError(f"Developer mode is not enabled. Cannot change {k} from default value.")
+PresetName = Literal["current", "legacy"]
 
-    return cls
+_PRESETS = {
+    "current": {},
+    "legacy": _LEGACY_PRESET,
+}
+
+if set(get_args(PresetName)) != _PRESETS.keys():
+    raise RuntimeError(
+        f"PresetName {get_args(PresetName)} and the preset table {list(_PRESETS)} name different presets"
+    )
+
+
+def _merge_preset(preset: dict, values: dict) -> dict:
+    """Preset values for every key the caller did not supply, nested dicts merged key by key"""
+
+    merged = dict(preset)
+    for key, value in values.items():
+        preset_value = merged.get(key)
+        if isinstance(value, pydantic.BaseModel):
+            value = value.model_dump(exclude_unset=True)
+
+        if isinstance(preset_value, dict) and isinstance(value, dict):
+            merged[key] = _merge_preset(preset_value, value)
+
+        else:
+            merged[key] = value
+
+    return merged
 
 
 class DailySettings(BaseSettings):
@@ -203,197 +233,145 @@ class DailySettings(BaseSettings):
 
     These settings should be converted to a dictionary before being passed to the DailyModel class.
     Be advised that any changes to the default settings deviates from OpenEEmeter standard methods and should be used with caution.
-
-    Attributes:
-        developer_mode (bool): Allows changing of developer settings
-        algorithm_choice (str): Optimization algorithm choice. Developer mode only.
-        initial_guess_algorithm_choice (str): Initial guess optimization algorithm choice. Developer mode only.
-        full_model (str): The largest model allowed. Developer mode only.
-        smoothed_model (bool): Allow smoothed models.
-        allow_separate_summer (bool): Allow summer to be modeled separately.
-        allow_separate_shoulder (bool): Allow shoulder to be modeled separately.
-        allow_separate_winter (bool): Allow winter to be modeled separately.
-        allow_separate_weekday_weekend (bool): Allow weekdays and weekends to be modeled separately.
-        reduce_splits_by_gaussian (bool): Reduces splits by fitting with multivariate Gaussians and testing for overlap.
-        reduce_splits_num_std (list[float]): Number of standard deviations to use with Gaussians.
-        alpha_minimum (float): Alpha where adaptive robust loss function is Welsch loss.
-        alpha_selection (float): Specified alpha to evaluate which is the best model type.
-        alpha_final_type (str): When to use 'alpha_final: 'all': on every model, 'last': on final model, 'None': don't use.
-        alpha_final (float | str | None): Specified alpha or 'adaptive' for adaptive loss in model evaluation.
-        final_bounds_scalar (float | None): Scalar for calculating bounds of 'alpha_final'.
-        regularization_alpha (float): Alpha for elastic net regularization.
-        regularization_percent_lasso (float): Percent lasso vs (1 - perc) ridge regularization.
-        segment_minimum_count (int): Minimum number of data points for HDD/CDD.
-        maximum_slope_OoM_scalar (float): Scaler for initial slope to calculate bounds based on order of magnitude.
-        initial_smoothing_parameter (float | None): Initial guess for the smoothing parameter.
-        initial_step_percentage (float | None): Initial step-size for relevant algorithms.
-        split_selection_criteria (str): What selection criteria is used to select data splits of models.
-        split_selection_penalty_multiplier (float): Penalty multiplier for split selection criteria.
-        split_selection_penalty_power (float): What power should the penalty of the selection criteria be raised to.
-        season (Dict[int, str]): Dictionary of months and their associated season (January is 1).
-        is_weekday (Dict[int, bool]): Dictionary of days (1 = Monday) and if that day is a weekday (True/False).
-        uncertainty_alpha (float): Significance level used for uncertainty calculations (0 < float < 1).
-        cvrmse_threshold (float): Threshold for the CVRMSE to disqualify a model.
-
     """
 
-    developer_mode: bool = CustomField(
-        default=False,
-        developer=False,
-        description="Developer mode flag",
+    preset: PresetName = UserField(
+        default="current",
+        description="Named set of default values that all other settings fall back to",
     )
 
-    silent_developer_mode: bool = CustomField(
-        default=False,
-        developer=False,
-        exclude=True,
-        repr=False,
-    )
-
-    algorithm_choice: Optional[AlgorithmChoice] = CustomField(
+    algorithm_choice: Optional[AlgorithmChoice] = DeveloperField(
         default=AlgorithmChoice.NLOPT_SBPLX,
-        developer=True,
         description="Optimization algorithm choice",
     )
 
-    initial_guess_algorithm_choice: Optional[AlgorithmChoice] = CustomField(
+    initial_guess_algorithm_choice: Optional[AlgorithmChoice] = DeveloperField(
         default=AlgorithmChoice.NLOPT_DIRECT,
-        developer=True,
         description="Initial guess optimization algorithm choice",
     )
 
-    full_model: Optional[FullModelSelection] = CustomField(
+    full_model: Optional[FullModelSelection] = DeveloperField(
         default=FullModelSelection.HDD_TIDD_CDD,
-        developer=True,
         description="The largest model allowed",
     )
 
-    allow_smooth_model: bool = CustomField(
+    allow_smooth_model: bool = DeveloperField(
         default=True,
-        developer=True,
         description="Allow smoothed models",
     )
 
-    alpha_minimum: float = CustomField(
+    alpha_minimum: float = DeveloperField(
         default=-100,
         le=-10,
-        developer=True,
         description="Alpha where adaptive robust loss function is Welsch loss",
     )
 
-    alpha_selection: float = CustomField(
+    alpha_selection: float = DeveloperField(
         default=2,
         ge=-10,
         le=2,
-        developer=True,
         description="Specified alpha to evaluate which is the best model type",
     )
 
-    alpha_final_type: Optional[AlphaFinalType] = CustomField(
+    alpha_final_type: Optional[AlphaFinalType] = DeveloperField(
         default=AlphaFinalType.LAST,
-        developer=True,
         description="When to use 'alpha_final: 'all': on every model, 'last': on final model, 'None': don't use",
     )
 
-    alpha_final: Optional[Union[float, Literal["adaptive"]]] = CustomField(
+    alpha_final: Optional[Union[float, Literal["adaptive"]]] = DeveloperField(
         default="adaptive",
-        developer=True,
         description="Specified alpha or 'adaptive' for adaptive loss in model evaluation",
     )
 
-    final_bounds_scalar: Optional[float] = CustomField(
+    final_bounds_scalar: Optional[float] = DeveloperField(
         default=1,
-        developer=True,
         description="Scalar for calculating bounds of 'alpha_final'",
     )
 
-    regularization_alpha: float = CustomField(
+    regularization_alpha: float = DeveloperField(
         default=0.001,
         ge=0,
-        developer=True,
         description="Alpha for elastic net regularization",
     )
 
-    regularization_percent_lasso: float = CustomField(
+    regularization_percent_lasso: float = DeveloperField(
         default=1,
         ge=0,
         le=1,
-        developer=True,
         description="Percent lasso vs (1 - perc) ridge regularization",
     )
 
-    segment_minimum_count: int = CustomField(
+    segment_minimum_count: int = DeveloperField(
         default=6,
         ge=3,
-        developer=True,
         description="Minimum number of data points for HDD/CDD",
     )
 
-    maximum_slope_oom_scalar: float = CustomField(
+    maximum_slope_oom_scalar: float = DeveloperField(
         default=2,
         ge=1,
-        developer=True,
         description="Scaler for initial slope to calculate bounds based on order of magnitude",
     )
 
-    initial_step_percentage: Optional[float] = CustomField(
+    initial_step_percentage: Optional[float] = DeveloperField(
         default=0.1,
-        developer=True,
         description="Initial step-size for relevant algorithms",
     )
 
-    split_selection: Split_Selection_Definition = CustomField(
+    split_selection: Split_Selection_Definition = DeveloperField(
         default_factory=Split_Selection_Definition,
-        developer=True,
         description="Settings for split selection",
     )
 
-    season: Season_Definition = CustomField(
+    season: Season_Definition = DeveloperField(
         default_factory=Season_Definition,
-        developer=False,
         description="Dictionary of months and their associated season (January is 1)",
     )
 
-    weekday_weekend: Weekday_Weekend_Definition = CustomField(
+    weekday_weekend: Weekday_Weekend_Definition = DeveloperField(
         default_factory=Weekday_Weekend_Definition,
-        developer=False,
         description="Dictionary of days (1 = Monday) and if that day is a weekday (True/False)",
     )
 
-    uncertainty_alpha: float = CustomField(
+    uncertainty_alpha: float = UserField(
         default=0.1,
         ge=0,
         le=1,
-        developer=False,
         description="Significance level used for uncertainty calculations",
     )
 
-    cvrmse_threshold: float = CustomField(
+    cvrmse_threshold: float = DeveloperField(
         default=1,
         ge=0,
-        developer=True,
         description="Threshold for the CVRMSE to disqualify a model",
     )
 
-    pnrmse_threshold: float = CustomField(
+    pnrmse_threshold: float = DeveloperField(
         default=1.6,
         ge=0,
-        developer=True,
         description="Threshold for the PNRMSE to disqualify a model",
     )
 
 
-    @pydantic.model_validator(mode="after")
-    def _check_developer_mode(self):
-        if self.developer_mode:
-            if not self.silent_developer_mode:
-                print("Warning: Daily model is nonstandard and should be explicitly stated in any derived work")
+    @pydantic.model_validator(mode="before")
+    def _apply_preset(cls, values: Any) -> Any:
+        if not isinstance(values, dict):
+            return values
 
-            return self
-        
-        _check_developer_mode(self)
+        # Runs before the BaseSettings key lowercasing, and the preset lookup needs lowercase keys.
+        values = lowercase_keys(values)
+        preset = values.get("preset", cls.model_fields["preset"].default)
+        if not isinstance(preset, str):
+            return values
 
-        return self
+        preset = preset.lower().strip()
+        values["preset"] = preset
+        if preset not in _PRESETS:
+            return values
+
+        merged = _merge_preset(_PRESETS[preset], values)
+
+        return merged
 
 
     @pydantic.model_validator(mode="after")
@@ -487,95 +465,13 @@ class DailySettings(BaseSettings):
         return "\n".join(text_all)
     
 
-class Split_Selection_Legacy_Definition(Split_Selection_Definition):
-    allow_separate_summer: bool = CustomField(
-        default=False,
-        developer=True,
-        description="Allow summer to be modeled separately",
-    )
-
-    allow_separate_shoulder: bool = CustomField(
-        default=False,
-        developer=True,
-        description="Allow shoulder to be modeled separately",
-    )
-
-    allow_separate_winter: bool = CustomField(
-        default=False,
-        developer=True,
-        description="Allow winter to be modeled separately",
-    )
-
-    allow_separate_weekday_weekend: bool = CustomField(
-        default=False,
-        developer=True,
-        description="Allow weekdays and weekends to be modeled separately",
-    )
-
-    reduce_splits_by_gaussian: bool = CustomField(
-        default=False,
-        developer=True,
-        description="Reduces splits by fitting with multivariate Gaussians and testing for overlap",
-    )
-
-    reduce_splits_num_std: Optional[list[float]] = CustomField(
-        default=None,
-        developer=True,
-        description="Number of standard deviations to use with Gaussians",
-    )
-
-
-class DailyLegacySettings(DailySettings):
-    allow_smooth_model: bool = CustomField(
-        default=False,
-        developer=True,
-        description="Allow smoothed models",
-    )
-
-    alpha_final: Optional[Union[float, Literal["adaptive"]]] = CustomField(
-        default=2.0,
-        developer=True,
-        description="Specified alpha or 'adaptive' for adaptive loss in model evaluation",
-    )
-
-    segment_minimum_count: int = CustomField(
-        default=10,
-        ge=3,
-        developer=True,
-        description="Minimum number of data points for HDD/CDD",
-    )
-
-    split_selection: Split_Selection_Legacy_Definition = CustomField(
-        default_factory=Split_Selection_Legacy_Definition,
-        developer=True,
-        description="Settings for split selection",
-    )
-
-
 def update_daily_settings(settings, update_dict):
     if not isinstance(settings, DailySettings):
         raise TypeError("settings must be an instance of 'Daily_Settings'")
 
     # update settings with update_dict
     settings_dict = settings.model_dump()
-    settings_dict.update(update_dict)
+    settings_dict.update(lowercase_keys(update_dict))
+    updated = type(settings)(**settings_dict)
 
-    if isinstance(settings, DailyLegacySettings):
-        return DailyLegacySettings(**settings_dict)
-     
-    return DailySettings(**settings_dict)
-
-
-# TODO: deprecate
-def default_settings(**kwargs) -> DailySettings:
-    """
-    Returns default settings.
-    """
-    return DailySettings(**kwargs)
-
-# TODO: deprecate
-def caltrack_legacy_settings(**kwargs) -> DailyLegacySettings:
-    """
-    Returns CalTRACK legacy settings.
-    """
-    return DailyLegacySettings(**kwargs)
+    return updated

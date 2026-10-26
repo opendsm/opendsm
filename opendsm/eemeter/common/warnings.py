@@ -16,7 +16,9 @@ import logging
 from typing import Optional, Union
 import pydantic
 
-__all__ = ("EEMeterWarning",)
+
+
+__all__ = ("EEMeterWarning", "nonstandard_settings_warning")
 
 
 class EEMeterWarning(pydantic.BaseModel):
@@ -49,14 +51,41 @@ class EEMeterWarning(pydantic.BaseModel):
         The output of this function can be converted to a serialized string
         with :any:`json.dumps`.
         """
-        return {
+        json_dict = {
             "qualified_name": self.qualified_name,
             "description": self.description,
             "data": self.data,
         }
+
+        return json_dict
 
     def warn(self):
         data = ""
         if self.data:
             data = f"\n{self.data}"
         logging.getLogger("eemeter").warning(f"{self.description}{data}")
+
+
+def nonstandard_settings_warning(deviations: dict) -> Optional[EEMeterWarning]:
+    """Return a warning carrying a settings deviation report.
+
+    Args:
+        deviations: A report built by `settings_deviation_report`.
+
+    Returns:
+        An `eemeter.settings.nonstandard` warning whose `data["deviations"]` is
+        `deviations`, or None when that report is empty.
+    """
+    if not deviations:
+        return None
+
+    warning = EEMeterWarning(
+        qualified_name="eemeter.settings.nonstandard",
+        description=(
+            "Model settings deviate from the OpenDSM defaults. Results are not standard "
+            "OpenDSM outputs."
+        ),
+        data={"deviations": deviations},
+    )
+
+    return warning

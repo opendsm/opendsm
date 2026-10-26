@@ -16,7 +16,34 @@ from __future__ import annotations
 
 import pydantic
 
+from pydantic_core import to_jsonable_python
+
 from typing import Any
+
+
+
+def lowercase_keys(value: Any) -> Any:
+    """Return a copy of a dict with every string key lowercased and stripped, nested dicts included.
+
+    Values that are not dicts are returned as given, and lists are not descended into.
+
+    Raises:
+        ValueError: If two keys of one dict normalize to the same key.
+    """
+    if not isinstance(value, dict):
+        return value
+
+    lowered = {}
+    for key, item in value.items():
+        if isinstance(key, str):
+            key = key.lower().strip()
+
+        if key in lowered:
+            raise ValueError(f"settings key '{key}' is given more than once in different spellings")
+
+        lowered[key] = lowercase_keys(item)
+
+    return lowered
 
 
 class BaseSettings(pydantic.BaseModel):
@@ -30,12 +57,7 @@ class BaseSettings(pydantic.BaseModel):
     """Make all property keys lowercase and strip whitespace"""
     @pydantic.model_validator(mode="before")
     def __lowercase_property_keys__(cls, values: Any) -> Any:
-        def __lower__(value: Any) -> Any:
-            if isinstance(value, dict):
-                return {k.lower().strip() if isinstance(k, str) else k: __lower__(v) for k, v in value.items()}
-            return value
-
-        return __lower__(values)
+        return lowercase_keys(values)
 
     """Make all property values lowercase and strip whitespace before validation"""
     @pydantic.field_validator("*", mode="before")
@@ -54,7 +76,58 @@ class MutableBaseSettings(BaseSettings):
     )
 
 
-# add developer field to pydantic Field
-def CustomField(developer=False, *args, **kwargs):
-    field = pydantic.Field(json_schema_extra={"developer": developer}, *args, **kwargs)
+def _tiered_field(developer: bool, *args, **kwargs):
+    extra = {**(kwargs.pop("json_schema_extra", None) or {}), "developer": developer}
+    field = pydantic.Field(*args, json_schema_extra=extra, **kwargs)
+
     return field
+
+
+def UserField(*args, **kwargs):
+    """Return a pydantic ``Field`` that a deviation report never lists, nor recurses into."""
+    return _tiered_field(False, *args, **kwargs)
+
+
+def DeveloperField(*args, **kwargs):
+    """Return a pydantic ``Field`` that a deviation report lists or recurses into."""
+    return _tiered_field(True, *args, **kwargs)
+
+
+def _collect_deviations(settings: BaseSettings, reference: BaseSettings, prefix: str) -> list[tuple[str, Any, Any]]:
+    deviations = []
+    for name, field in type(settings).model_fields.items():
+        extra = field.json_schema_extra or {}
+        developer = extra.get("developer", True)
+        if not developer:
+            continue
+
+        value = getattr(settings, name)
+        default = getattr(reference, name)
+        path = f"{prefix}{name}"
+
+        if isinstance(value, BaseSettings) and isinstance(default, BaseSettings):
+            deviations.extend(_collect_deviations(value, default, f"{path}."))
+        elif value != default:
+            deviations.append((path, to_jsonable_python(value), to_jsonable_python(default)))
+
+    return deviations
+
+
+def settings_deviation_report(settings: BaseSettings, reference: BaseSettings) -> dict:
+    """Report the developer-tier settings that differ from a reference.
+
+    Args:
+        settings: The settings to judge.
+        reference: The settings they are judged against.
+
+    Returns:
+        A dictionary keyed by dotted field path, each entry holding the field's ``value``
+        and the reference's ``default``, both converted to JSON-compatible Python. Empty
+        when the two agree on every developer-tier field.
+    """
+    report = {
+        path: {"value": value, "default": default}
+        for path, value, default in _collect_deviations(settings, reference, "")
+    }
+
+    return report

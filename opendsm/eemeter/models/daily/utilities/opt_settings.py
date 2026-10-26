@@ -18,7 +18,7 @@ import pydantic
 from enum import Enum
 from typing import Optional
 
-from opendsm.common.base_settings import BaseSettings, CustomField
+from opendsm.common.base_settings import BaseSettings, DeveloperField
 
 
 class AlgorithmChoice(str, Enum):
@@ -82,46 +82,46 @@ class StopCriteriaChoice(str, Enum):
 
 
 class OptimizationSettings(BaseSettings):
-    algorithm: AlgorithmChoice = CustomField(
+    algorithm: AlgorithmChoice = DeveloperField(
         default=AlgorithmChoice.NLOPT_SBPLX,
         description="Optimization algorithm choice",
     )
 
-    stop_criteria_type: StopCriteriaChoice = CustomField(
+    stop_criteria_type: StopCriteriaChoice = DeveloperField(
         default=StopCriteriaChoice.ITERATION_MAXIMUM,
         description="Stopping criteria",
     )
 
-    stop_criteria_value: float = CustomField(
+    stop_criteria_value: float = DeveloperField(
         default=2000,
         gt=0,
         description="Stopping criteria value for the optimization algorithm",
     )
     
-    initial_step: Optional[float] = CustomField(
+    initial_step: Optional[float] = DeveloperField(
         default=0.1,
         gt=0,
         description="Initial step size for the optimization algorithm",
     )
 
-    x_tol_rel: float = CustomField(
+    x_tol_rel: float = DeveloperField(
         default=1e-5,
         gt=0,
         description="Relative cutoff X tolerance for the optimization algorithm",
     )
 
-    f_tol_rel: float = CustomField(
+    f_tol_rel: float = DeveloperField(
         default=1e-5,
         gt=0,
         description="Relative cutoff function tolerance for the optimization algorithm",
     )
 
-    initial_population_multiplier: Optional[float] = CustomField(
+    initial_population_multiplier: Optional[float] = DeveloperField(
         default=None,
         description="Initial population multiplier for the optimization algorithm",
     )
 
-    seed: Optional[int] = CustomField(
+    seed: Optional[int] = DeveloperField(
         default=0,
         description="Seed passed to nlopt.srand for deterministic convergence; set to None to use system entropy",
     )
