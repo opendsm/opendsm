@@ -73,6 +73,7 @@ def resolve_is_electricity_data(
         description=(
             "Model payload does not store 'is_electricity_data', so the supplied value was used."
         ),
+        severity="advisory",
         data={"is_electricity_data": value},
     )
 
@@ -177,10 +178,11 @@ def trim_edge_rows(df, trailing_columns):
     return trimmed_df, n_leading, n_trailing
 
 
-def clean_billing_data(data, source_interval, warnings):
+def clean_billing_data(data, source_interval):
+    entries = []
     # check for empty data
     if data["value"].dropna().empty:
-        return data[:0]
+        return data[:0], entries
 
     if source_interval.startswith("billing"):
         diff = list((data.index[1:] - data.index[:-1]).days)
@@ -193,12 +195,14 @@ def clean_billing_data(data, source_interval, warnings):
             ].reindex(data.index)
 
             if len(data[(filter_ > 35) | (filter_ < 25)]) > 0:
-                warnings.append(
+                entries.append(
                     EEMeterWarning(
                         qualified_name="eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data",
                         description=(
                             "Off-cycle reads found in billing monthly data having a duration of less than 25 days"
                         ),
+                        severity="disqualified",
+                        member="data",
                         data=[
                             timestamp.isoformat()
                             for timestamp in data[(filter_ > 35) | (filter_ < 25)].index
@@ -213,12 +217,14 @@ def clean_billing_data(data, source_interval, warnings):
             ].reindex(data.index)
 
             if len(data[(filter_ > 70) | (filter_ < 25)]) > 0:
-                warnings.append(
+                entries.append(
                     EEMeterWarning(
                         qualified_name="eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data",
                         description=(
                             "Off-cycle reads found in billing monthly data having a duration of less than 25 days"
                         ),
+                        severity="disqualified",
+                        member="data",
                         data=[
                             timestamp.isoformat()
                             for timestamp in data[(filter_ > 70) | (filter_ < 25)].index
@@ -282,9 +288,11 @@ def clean_billing_data(data, source_interval, warnings):
 
     # check again for empty data
     if data.dropna().empty:
-        return data[:0]
+        return data[:0], entries
 
-    return data["value"].to_frame()
+    cleaned = data["value"].to_frame()
+
+    return cleaned, entries
 
 
 def frequency_duration(freq):
@@ -448,16 +456,18 @@ def as_freq(
         return resampled
 
 
-def downsample_and_clean_daily_data(dataset, warnings):
+def downsample_and_clean_daily_data(dataset):
+    entries = []
     dataset = as_freq(dataset, "D", include_coverage=True)
 
     if not dataset[dataset.coverage <= 0.5].empty:
-        warnings.append(
+        entries.append(
             EEMeterWarning(
                 qualified_name="eemeter.sufficiency_criteria.missing_high_frequency_meter_data",
                 description=(
                     "More than 50% of the high frequency Meter data is missing."
                 ),
+                severity="advisory",
                 data=[
                     timestamp.isoformat()
                     for timestamp in dataset[dataset.coverage <= 0.5].index
@@ -470,21 +480,31 @@ def downsample_and_clean_daily_data(dataset, warnings):
         dataset[dataset.coverage > 0.5].value / dataset[dataset.coverage > 0.5].coverage
     )
 
-    return dataset[dataset.coverage > 0.5].reindex(dataset.index)[["value"]]
+    cleaned = dataset[dataset.coverage > 0.5].reindex(dataset.index)[["value"]]
+
+    return cleaned, entries
 
 
-def clean_billing_daily_data(data, source_interval, warnings):
+def clean_billing_daily_data(data, source_interval):
+    """Clean meter data for the billing and daily models.
+
+    Returns:
+        The cleaned frame with a `value` column, and the compliance entries the
+        cleaning raised (off-cycle billing reads, sparse high-frequency days).
+    """
     # billing data is cleaned but not resampled
     if source_interval.startswith("billing"):
         # CalTRACK 2.2.3.4, 2.2.3.5
-        return clean_billing_data(data, source_interval, warnings)
+        return clean_billing_data(data, source_interval)
 
     # higher intervals like daily, hourly, 30min, 15min are
     # resampled (daily) or downsampled (hourly, 30min, 15min)
     elif source_interval == "daily":
-        return data.to_frame("value")
+        cleaned = data.to_frame("value")
+
+        return cleaned, []
     else:
-        return downsample_and_clean_daily_data(data, warnings)
+        return downsample_and_clean_daily_data(data)
 
 
 def inferred_freq(index: pd.DatetimeIndex):

@@ -21,6 +21,7 @@ from opendsm.common.stats.distribution_transform import (
     Standardize,
     YeoJohnson,
 )
+from opendsm.common.warnings import StatsWarning
 
 
 
@@ -212,8 +213,86 @@ def test_box_cox_skips_non_positive_column():
     data = np.array([-1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0]).reshape(-1, 1)
 
     transform = BoxCox()
-    with pytest.warns(RuntimeWarning, match="non-positive"):
+    with pytest.warns(StatsWarning, match="non-positive") as record:
         transformed = transform.fit_transform(data)
 
     assert transform.skip_dims_[0]
     assert np.allclose(transformed, data)
+    assert (
+        record[0].message.qualified_name
+        == "stats.distribution_transform.box_cox_non_positive"
+    )
+    assert record[0].message.data == {"dim": 0}
+
+
+@pytest.mark.parametrize("method", ["fit", "fit_transform"])
+def test_box_cox_non_positive_warning_points_at_the_caller(method):
+    """The non-positive-column warning is attributed to the line calling the transform."""
+    data = np.array([-1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0]).reshape(-1, 1)
+
+    with pytest.warns(StatsWarning) as record:
+        getattr(BoxCox(), method)(data)
+
+    assert record[0].filename == __file__, f"expected {__file__}, got {record[0].filename}"
+
+
+class TestFitDimFailureHandling:
+    """Behavior of the per-dimension exception guard in TransformBase._fit_core."""
+
+    def test_well_conditioned_column_emits_nothing_and_is_not_skipped(self, recwarn):
+        """A normal fit produces no StatsWarning and leaves the dimension unskipped."""
+        data = np.random.default_rng(3).lognormal(0.0, 0.5, 50).reshape(-1, 1)
+
+        transform = Standardize().fit(data)
+
+        assert not transform.skip_dims_[0]
+        assert not any(issubclass(w.category, StatsWarning) for w in recwarn.list)
+
+    @pytest.mark.parametrize(
+        "exc_type", [np.linalg.LinAlgError, ValueError, FloatingPointError]
+    )
+    def test_caught_exception_types_warn_and_skip(self, monkeypatch, exc_type):
+        """LinAlgError, ValueError, and FloatingPointError from _fit_dim are caught,
+        recorded as a StatsWarning carrying the dimension, and skip the column."""
+
+        def _raise(self, d, col_f, fm, X, return_transformed, out):
+            raise exc_type("degenerate column")
+
+        monkeypatch.setattr(Standardize, "_fit_dim", _raise)
+        data = np.linspace(1.0, 20.0, 50).reshape(-1, 1)
+
+        with pytest.warns(StatsWarning) as record:
+            transform = Standardize().fit(data)
+
+        assert transform.skip_dims_[0]
+        assert record[0].message.qualified_name == (
+            "stats.distribution_transform.fit_dim_failed"
+        )
+        assert record[0].message.data == {"dim": 0}
+
+    @pytest.mark.parametrize("method", ["fit", "fit_transform"])
+    def test_fit_dim_failure_warning_points_at_the_caller(self, monkeypatch, method):
+        """The fit-failure warning is attributed to the line calling the transform."""
+
+        def _raise(self, d, col_f, fm, X, return_transformed, out):
+            raise ValueError("degenerate column")
+
+        monkeypatch.setattr(Standardize, "_fit_dim", _raise)
+        data = np.linspace(1.0, 20.0, 50).reshape(-1, 1)
+
+        with pytest.warns(StatsWarning) as record:
+            getattr(Standardize(), method)(data)
+
+        assert record[0].filename == __file__, f"expected {__file__}, got {record[0].filename}"
+
+    def test_uncaught_exception_propagates(self, monkeypatch):
+        """An exception outside the caught set is not converted to a warning."""
+
+        def _raise(self, d, col_f, fm, X, return_transformed, out):
+            raise TypeError("unexpected failure")
+
+        monkeypatch.setattr(Standardize, "_fit_dim", _raise)
+        data = np.linspace(1.0, 20.0, 50).reshape(-1, 1)
+
+        with pytest.raises(TypeError, match="unexpected failure"):
+            Standardize().fit(data)

@@ -42,6 +42,7 @@ from opendsm.comparison_groups.savings.settings import (
     CGCorrectionSettings,
     WeightClusterAggChoice,
 )
+from opendsm.eemeter.common.compliance import Compliance
 from opendsm.eemeter.common.warnings import EEMeterWarning
 from .equivalence_env import (
     POOL_OBSERVED_UNC,
@@ -112,15 +113,23 @@ def _reporting_map(df_r, ids, cutoff=None):
 
 
 def _disqualified(model):
-    """A copy of ``model`` carrying a disqualification, so its prediction fails."""
+    """A copy of ``model`` carrying a disqualification, so its prediction fails. Uses
+    the ``settings`` member rather than ``model``: a population's own predictions
+    never enforce ``model`` (a fit-disqualified meter stays admitted and
+    predictable), so only a still-enforced member reproduces a genuine prediction
+    failure here."""
     model = copy.deepcopy(model)
-    model.disqualification = [
-        EEMeterWarning(
-            qualified_name="eemeter.model_fit_metrics",
-            description="constructed disqualification",
-            data=None,
-        )
-    ]
+    model.compliance = Compliance(
+        all=[
+            EEMeterWarning(
+                qualified_name="eemeter.settings.nonstandard",
+                description="constructed disqualification",
+                severity="disqualified",
+                member="settings",
+                data=None,
+            )
+        ]
+    )
 
     return model
 
@@ -1455,7 +1464,7 @@ def test_reporting_temperature_only_disqualification_keeps_treatment_meter(daily
 
     holed = _reporting_override(daily_dq_env, victim, _temperature_gap)
     treatment, pool = _build_dq(daily_dq_env, treatment_overrides={victim: holed})
-    dq_names = [w.qualified_name for w in treatment.meter(victim).reporting_data.disqualification]
+    dq_names = [w.qualified_name for w in treatment.meter(victim).reporting_data.compliance.disqualification]
 
     result = correct_reporting(daily_dq_env["selection"], treatment, pool, victim)
 

@@ -415,9 +415,9 @@ def _observed_dq_exclusions(population, ids, ledger):
 
     def failure(reporting_data):
         observed_dq = [
-            warning
-            for warning in reporting_data.disqualification
-            if "observed" in warning.qualified_name or "joint" in warning.qualified_name
+            entry
+            for entry in reporting_data.compliance.disqualification
+            if "observed" in entry.qualified_name or "joint" in entry.qualified_name
         ]
         if not observed_dq:
             return None

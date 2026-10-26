@@ -176,9 +176,9 @@ class Bisymlog(TransformBase):
         if self.rescale_quantile is not None:
             pq = np.quantile(col_f, [self.rescale_quantile, 1 - self.rescale_quantile])
             cq = np.quantile(transformed, [self.rescale_quantile, 1 - self.rescale_quantile])
-            denom = np.diff(cq)
+            denom = np.diff(cq).item()
             if abs(denom) > 1e-15:
-                slope = float(np.diff(pq) / denom)
+                slope = np.diff(pq).item() / denom
                 offset = float(pq[0] - cq[0] * slope)
             else:
                 slope, offset = 1.0, 0.0

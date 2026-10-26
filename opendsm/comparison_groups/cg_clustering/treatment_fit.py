@@ -27,6 +27,7 @@ import pandas as pd
 from opendsm.common.clustering import transform as _transform
 from opendsm.common.stats.adaptive_loss import adaptive_weights
 from opendsm.comparison_groups.cg_clustering import settings as _settings
+from opendsm.comparison_groups.exceptions import ComparisonGroupError
 
 
 
@@ -123,7 +124,7 @@ def fit_to_clusters(
     return x
 
 
-class ClusterTreatmentMatchError(Exception):
+class ClusterTreatmentMatchError(ComparisonGroupError):
     pass
 
 

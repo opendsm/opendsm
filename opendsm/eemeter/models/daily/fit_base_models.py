@@ -68,8 +68,13 @@ def fit_initial_models_from_full_model(df_meter, settings, print_res=False):
     opt_settings = _get_opt_settings(settings)
     fit_input = [T, obs, weights, settings, opt_settings]
 
+    # a segment with no temperature variation gives the balance points zero-width
+    # bounds, so only the intercept is identifiable
+    if np.ptp(T) == 0:
+        model_res = fit_tidd(*fit_input, initial_fit=True)
+
     # initial fitting of the most complicated model allowed
-    if settings.full_model == FullModelSelection.HDD_TIDD_CDD:
+    elif settings.full_model == FullModelSelection.HDD_TIDD_CDD:
         model_res = fit_hdd_tidd_cdd(
             *fit_input, smooth=settings.allow_smooth_model, initial_fit=True
         )

@@ -16,7 +16,10 @@ from enum import Enum
 from typing import Any, Dict, Optional
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
+
+from opendsm.eemeter.common.compliance import check_schema_version
+
 
 
 class ModelType(str, Enum):
@@ -379,3 +382,16 @@ class DailyModelParameters(BaseModel):
                 "fw-su_sh_wi": submodel_params,
             },
         )
+
+
+class SerializedDailyModel(DailyModelParameters):
+    """A serialized daily model payload, validated when a model is loaded from it.
+
+    `schema_version` names the payload layout and `compliance` holds the records the
+    model carried when it was written, one `OpenDSMWarning.json()` entry each.
+    """
+
+    schema_version: int
+    compliance: list[Dict[str, Any]]
+
+    _known_schema_version = field_validator("schema_version")(check_schema_version)

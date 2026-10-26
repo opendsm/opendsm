@@ -145,16 +145,18 @@ def test_billing_baseline_data_with_monthly_frequencies(get_datetime_index):
     assert cls.df is not None
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
-    assert len(cls.warnings) == 1
+    assert len(cls.compliance.warnings) == 1
     assert (
-        cls.warnings[0].qualified_name
+        cls.compliance.warnings[0].qualified_name
         == "eemeter.sufficiency_criteria.unable_to_confirm_daily_temperature_sufficiency"
     )
-    # DQ because only 12 days worth of temperature data is available
-    assert len(cls.disqualification) == 2
-    assert set([dq.qualified_name for dq in cls.disqualification]) == set([
+    # DQ because only 12 days worth of temperature data is available, and those 12
+    # monthly readings are each broadcast across their billing period
+    assert len(cls.compliance.disqualification) == 3
+    assert set([dq.qualified_name for dq in cls.compliance.disqualification]) == set([
         "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data",
         "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
+        "eemeter.sufficiency_criteria.insufficient_unique_temperature_values",
     ])
 
 
@@ -183,17 +185,19 @@ def test_billing_baseline_data_with_bimonthly_frequencies(get_datetime_index):
     # Because two months are missing
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
-    assert len(cls.warnings) == 1
+    assert len(cls.compliance.warnings) == 1
     assert (
-        cls.warnings[0].qualified_name
+        cls.compliance.warnings[0].qualified_name
         == "eemeter.sufficiency_criteria.unable_to_confirm_daily_temperature_sufficiency"
     )
-    # DQ because only 6 days worth of temperature data is available
-    assert len(cls.disqualification) == 2
-    assert set([dq.qualified_name for dq in cls.disqualification]) == set(
+    # DQ because only 6 days worth of temperature data is available, and those 6
+    # bimonthly readings are each broadcast across their billing period
+    assert len(cls.compliance.disqualification) == 3
+    assert set([dq.qualified_name for dq in cls.compliance.disqualification]) == set(
         [
             "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
             "eemeter.sufficiency_criteria.too_many_days_with_missing_temperature_data",
+            "eemeter.sufficiency_criteria.insufficient_unique_temperature_values",
         ]
     )
 
@@ -216,8 +220,8 @@ def test_billing_baseline_data_with_monthly_hourly_frequencies(
     assert cls.df is not None
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
-    assert len(cls.warnings) == 0
-    assert len(cls.disqualification) == 0
+    assert len(cls.compliance.warnings) == 0
+    assert len(cls.compliance.disqualification) == 0
 
 
 def test_billing_baseline_data_with_bimonthly_hourly_frequencies(
@@ -237,8 +241,8 @@ def test_billing_baseline_data_with_bimonthly_hourly_frequencies(
     assert cls.df is not None
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
-    assert len(cls.warnings) == 0
-    assert len(cls.disqualification) == 0
+    assert len(cls.compliance.warnings) == 0
+    assert len(cls.compliance.disqualification) == 0
 
 
 def test_billing_baseline_data_with_monthly_daily_frequencies(
@@ -259,12 +263,40 @@ def test_billing_baseline_data_with_monthly_daily_frequencies(
     assert cls.df is not None
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
-    assert len(cls.warnings) == 1
+    assert len(cls.compliance.warnings) == 1
     assert (
-        cls.warnings[0].qualified_name
+        cls.compliance.warnings[0].qualified_name
         == "eemeter.sufficiency_criteria.unable_to_confirm_daily_temperature_sufficiency"
     )
-    assert len(cls.disqualification) == 0
+    assert len(cls.compliance.disqualification) == 0
+
+
+def test_billing_baseline_data_with_constant_temperature(
+    get_meter_data_monthly, get_temperature_data_daily
+):
+    # A constant temperature column leaves the balance points unidentifiable
+    df = get_temperature_data_daily.copy()
+    df["temperature"] = 70.0
+
+    df_meter = get_meter_data_monthly
+
+    # Merge 'df' and 'df_meter' in an outer join
+    df = df.merge(df_meter, left_index=True, right_index=True, how="outer")
+    df = df[:-1]  # when using dataframe input, rows are exact length
+
+    cls = BillingBaselineData(df, is_electricity_data=True)
+
+    disqualification = cls.compliance.disqualification
+    dq_names = [dq.qualified_name for dq in disqualification]
+    assert "eemeter.sufficiency_criteria.insufficient_unique_temperature_values" in dq_names
+
+    dq = next(
+        dq
+        for dq in disqualification
+        if dq.qualified_name
+        == "eemeter.sufficiency_criteria.insufficient_unique_temperature_values"
+    )
+    assert dq.member == "data"
 
 
 def test_billing_baseline_data_with_bimonthly_daily_frequencies(
@@ -286,12 +318,12 @@ def test_billing_baseline_data_with_bimonthly_daily_frequencies(
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     # assert round(cls.df.observed.sum(), 2) == round(df.observed[:-1].sum(), 2)
     assert round(cls.df.observed.sum(), 2) == round(df.observed.sum(), 2)
-    assert len(cls.warnings) == 1
+    assert len(cls.compliance.warnings) == 1
     assert (
-        cls.warnings[0].qualified_name
+        cls.compliance.warnings[0].qualified_name
         == "eemeter.sufficiency_criteria.unable_to_confirm_daily_temperature_sufficiency"
     )
-    assert len(cls.disqualification) == 0
+    assert len(cls.compliance.disqualification) == 0
 
 
 def _meter_temp(df_hourly_baseline):
@@ -312,8 +344,8 @@ def test_billing_baseline_data_with_specific_hourly_input(comstock_hourly, snaps
 
     assert cls.df is not None
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
-    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
-    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
+    assert sorted({w.qualified_name for w in cls.compliance.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.compliance.disqualification}) == snapshot(name="disqualification")
 
 
 def test_billing_baseline_data_with_specific_daily_input(comstock_daily, comstock_hourly, snapshot):
@@ -329,8 +361,8 @@ def test_billing_baseline_data_with_specific_daily_input(comstock_daily, comstoc
 
     assert cls.df is not None
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
-    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
-    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
+    assert sorted({w.qualified_name for w in cls.compliance.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.compliance.disqualification}) == snapshot(name="disqualification")
 
 
 def test_billing_baseline_data_with_specific_missing_daily_input(comstock_daily, comstock_hourly, snapshot):
@@ -347,8 +379,8 @@ def test_billing_baseline_data_with_specific_missing_daily_input(comstock_daily,
     cls = BillingBaselineData(meter_temperature_frame(meter, temperature), is_electricity_data=True)
 
     assert cls.df is not None
-    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
-    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
+    assert sorted({w.qualified_name for w in cls.compliance.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.compliance.disqualification}) == snapshot(name="disqualification")
 
 
 def test_billing_baseline_data_with_specific_monthly_input(comstock_monthly, comstock_hourly, snapshot):
@@ -369,8 +401,8 @@ def test_billing_baseline_data_with_specific_monthly_input(comstock_monthly, com
     assert len(cls.df) == 365
     assert cls.df.observed.sum() == pytest.approx(meter.observed.sum(), rel=1e-12)
     assert round(float(cls.df.observed.sum()), 2) == snapshot(name="observed_sum")
-    assert sorted({w.qualified_name for w in cls.warnings}) == snapshot(name="warnings")
-    assert sorted({d.qualified_name for d in cls.disqualification}) == snapshot(name="disqualification")
+    assert sorted({w.qualified_name for w in cls.compliance.warnings}) == snapshot(name="warnings")
+    assert sorted({d.qualified_name for d in cls.compliance.disqualification}) == snapshot(name="disqualification")
 
 
 def test_billing_baseline_data_last_row_without_observed_closes_the_last_period(
@@ -407,7 +439,7 @@ def test_billing_data_disqualifies_reads_outside_the_temperature_span(data_class
 
     data = data_class(meter_temperature_frame(meter, temperature), is_electricity_data=True)
 
-    disqualification = {d.qualified_name for d in data.disqualification}
+    disqualification = {d.qualified_name for d in data.compliance.disqualification}
     assert "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data" in disqualification
     assert not (data.df.observed.notna() & data.df.temperature.notna()).any()
 
@@ -445,12 +477,12 @@ def test_billing_reporting_data_with_missing_half_hourly_frequencies(
     elif datetime_index.freq == "h":
         assert len(cls.df.temperature.dropna()) == 270
 
-    assert len(cls.warnings) == 1
+    assert len(cls.compliance.warnings) == 1
     assert (
-        cls.warnings[0].qualified_name
+        cls.compliance.warnings[0].qualified_name
         == "eemeter.sufficiency_criteria.missing_high_frequency_temperature_data"
     )
-    assert len(cls.disqualification) == 3
+    assert len(cls.compliance.disqualification) == 3
     expected_disqualifications = [
         "eemeter.sufficiency_criteria.missing_monthly_temperature_data",
         "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
@@ -458,7 +490,7 @@ def test_billing_reporting_data_with_missing_half_hourly_frequencies(
     ]
     assert all(
         disqualification.qualified_name in expected_disqualifications
-        for disqualification in cls.disqualification
+        for disqualification in cls.compliance.disqualification
     )
 
 
@@ -486,12 +518,12 @@ def test_billing_reporting_data_with_missing_daily_frequencies(get_datetime_inde
     assert cls.df is not None
     assert len(cls.df) == NUM_DAYS_IN_YEAR
     assert len(cls.df.temperature.dropna()) == len(df.temperature.dropna())
-    assert len(cls.warnings) == 1
+    assert len(cls.compliance.warnings) == 1
     assert (
-        cls.warnings[0].qualified_name
+        cls.compliance.warnings[0].qualified_name
         == "eemeter.sufficiency_criteria.unable_to_confirm_daily_temperature_sufficiency"
     )
-    assert len(cls.disqualification) == 3
+    assert len(cls.compliance.disqualification) == 3
     expected_disqualifications = [
         "eemeter.sufficiency_criteria.missing_monthly_temperature_data",
         "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data",
@@ -499,7 +531,7 @@ def test_billing_reporting_data_with_missing_daily_frequencies(get_datetime_inde
     ]
     assert all(
         disqualification.qualified_name in expected_disqualifications
-        for disqualification in cls.disqualification
+        for disqualification in cls.compliance.disqualification
     )
 
 
@@ -531,3 +563,19 @@ def test_dst_handling():
     df = DataFrame({"observed": [1] * 3, "temperature": [50] * 3}, index=idx)
     baseline = BillingBaselineData(df, is_electricity_data=True)
     assert (baseline.df.index.hour == 1).all()
+
+
+def test_mixed_monthly_and_bimonthly_reads_infer_monthly(comstock_monthly):
+    """Data frequency comes from the median gap between reads, so a majority-monthly
+    schedule is treated as monthly and the longer reads are disqualified as off-cycle."""
+    df_b, _ = comstock_monthly
+    df = df_b.copy()
+    observed = df["observed"].dropna()
+    merged_reads = observed.index[7::2][:3]
+    df.loc[merged_reads, "observed"] = np.nan
+
+    data = BillingBaselineData(df.reset_index(), is_electricity_data=True)
+
+    names = {entry.qualified_name for entry in data.compliance.disqualification}
+    assert "eemeter.sufficiency_criteria.offcycle_reads_in_billing_monthly_data" in names
+    assert "eemeter.sufficiency_criteria.offcycle_reads_in_billing_bimonthly_data" not in names

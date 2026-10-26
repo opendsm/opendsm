@@ -1,0 +1,39 @@
+{
+  "matching": {
+    "passed": true,
+    "records": [
+      {
+        "data": {},
+        "member": null,
+        "qualified_name": "eemeter.sufficiency_criteria.unable_to_confirm_daily_temperature_sufficiency",
+        "severity": "advisory"
+      }
+    ]
+  },
+  "mismatched": {
+    "passed": false,
+    "records": [
+      {
+        "data": {},
+        "member": null,
+        "qualified_name": "eemeter.data_quality.utc_index",
+        "severity": "advisory"
+      },
+      {
+        "data": {},
+        "member": null,
+        "qualified_name": "eemeter.sufficiency_criteria.unable_to_confirm_daily_temperature_sufficiency",
+        "severity": "advisory"
+      },
+      {
+        "data": {
+          "baseline_timezone": "America/Chicago",
+          "reporting_timezone": "UTC"
+        },
+        "member": "data",
+        "qualified_name": "eemeter.data_quality.timezone_mismatch",
+        "severity": "disqualified"
+      }
+    ]
+  }
+}

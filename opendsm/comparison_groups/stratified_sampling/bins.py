@@ -18,10 +18,12 @@ import itertools
 from operator import and_
 from functools import reduce
 
+from opendsm.comparison_groups.exceptions import ComparisonGroupError
+
 __all__ = ("BinnedData", "Binning", "Bin", "MultiBin")
 
 
-class ModelSamplingException(Exception):
+class ModelSamplingException(ComparisonGroupError):
     pass
 
 

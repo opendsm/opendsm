@@ -21,6 +21,7 @@ from scipy.optimize import (
     minimize as scipy_minimize,
     minimize_scalar as scipy_minimize_scalar,
 )
+from opendsm.eemeter.common.exceptions import ModelFitError
 from opendsm.eemeter.models.daily.optimize_results import OptimizedResult
 
 nlopt_algorithms = {
@@ -171,15 +172,20 @@ class SciPyOptimizer(BaseOptimizer):
         if algorithm.lower() in ["brent", "golden", "bounded"]:
             scipy_obj_fcn = lambda x: self.obj_fcn([x])
 
-            if algorithm.lower() in ["brent", "golden"]:
-                res = scipy_minimize_scalar(
-                    scipy_obj_fcn, bracket=bnds[0], method=algorithm.lower()
-                )
+            try:
+                if algorithm.lower() in ["brent", "golden"]:
+                    res = scipy_minimize_scalar(
+                        scipy_obj_fcn, bracket=bnds[0], method=algorithm.lower()
+                    )
 
-            elif algorithm.lower() == "bounded":
-                res = scipy_minimize_scalar(
-                    scipy_obj_fcn, bounds=bnds[0], method="bounded"
-                )
+                elif algorithm.lower() == "bounded":
+                    res = scipy_minimize_scalar(
+                        scipy_obj_fcn, bounds=bnds[0], method="bounded"
+                    )
+            except (np.linalg.LinAlgError, FloatingPointError) as exc:
+                raise ModelFitError(
+                    f"SciPy {algorithm.lower()} optimization failed: {exc}"
+                ) from exc
 
             res.x = [res.x]
 
@@ -190,17 +196,22 @@ class SciPyOptimizer(BaseOptimizer):
 
             scipy_obj_fcn = lambda x: self.obj_fcn(x)
 
-            if algorithm.lower() == "direct":
-                res = scipy_direct(
-                    scipy_obj_fcn, 
-                    bnds_opt,
-                    maxiter=int(settings.stop_criteria_value),
-                    f_min_rtol=settings.f_tol_rel,
-                )
-            else:
-                res = scipy_minimize(
-                    scipy_obj_fcn, x0_opt, method=algorithm, bounds=bnds_opt
-                )
+            try:
+                if algorithm.lower() == "direct":
+                    res = scipy_direct(
+                        scipy_obj_fcn,
+                        bnds_opt,
+                        maxiter=int(settings.stop_criteria_value),
+                        f_min_rtol=settings.f_tol_rel,
+                    )
+                else:
+                    res = scipy_minimize(
+                        scipy_obj_fcn, x0_opt, method=algorithm, bounds=bnds_opt
+                    )
+            except (np.linalg.LinAlgError, FloatingPointError) as exc:
+                raise ModelFitError(
+                    f"SciPy {algorithm.lower()} optimization failed: {exc}"
+                ) from exc
 
         res.time_elapsed = timer() - timer_start
 
@@ -251,16 +262,6 @@ class NLoptOptimizer(BaseOptimizer):
             max_initial_step = np.max(np.abs(bnds_opt - x0_opt), axis=0)
 
             initial_step = (bnds_opt[1] - bnds_opt[0]) * settings.initial_step
-
-            # TODO: bring this back in at some point?
-            # coef_id_opt = [id for n, id in enumerate(self.coef_id) if n in idx_opt]
-            # for n, coef_name in enumerate(coef_id_opt):
-            #     if "dd_bp" in coef_name:
-            #         initial_step[n] *= 2
-
-            #     if coef_name == "hdd_bp":
-            #         initial_step[n] *= -1
-
             initial_step = np.clip(initial_step, -max_initial_step, max_initial_step)
 
             x1 = x0_opt + initial_step
@@ -268,7 +269,7 @@ class NLoptOptimizer(BaseOptimizer):
                 initial_step, (x1 < bnds_opt[0]) | (x1 > bnds_opt[1]), -initial_step
             )  # first step in direction of more variable space
 
-            opt.set_initial_step(initial_step)        
+            opt.set_initial_step(initial_step)
 
         # alter default size of population in relevant algorithms
         if settings.algorithm == "nlopt_crs2_lm":
@@ -282,22 +283,26 @@ class NLoptOptimizer(BaseOptimizer):
                 int(np.rint(default_pop_size * settings["initial_pop_multiplier"]))
             )
 
-        # if using multistart algorithm as global, set subopt
-        if (settings.algorithm == "nlopt_mlsl_lds"):  
+        if settings.algorithm == "nlopt_mlsl_lds":
             raise NotImplementedError("nlopt_mlsl_lds not implemented")
-            local_algorithm = nlopt_algorithms[self.opt_settings.algorithm]
-            sub_opt = nlopt.opt(local_algorithm, np.size(x0_opt))
-            sub_opt.set_initial_step(initial_step)
-            sub_opt.set_xtol_rel(settings.x_tol_rel)
-            sub_opt.set_ftol_rel(settings.f_tol_rel)
-            opt.set_local_optimizer(sub_opt)
 
         # Seed NLopt's internal RNG so stochastic algorithms (SBPLX initial-step
         # perturbation, DIRECT_L_RAND, CRS2_LM, MLSL, ISRES, ESCH) converge to
         # the same minimum across platforms / BLAS / CPU instruction sets.
         if settings.seed is not None:
             nlopt.srand(settings.seed)
-        x_opt = opt.optimize(x0_opt)  # optimize!
+
+        try:
+            x_opt = opt.optimize(x0_opt)
+        except (
+            nlopt.RoundoffLimited,
+            nlopt.exception,
+            np.linalg.LinAlgError,
+            FloatingPointError,
+        ) as exc:
+            raise ModelFitError(
+                f"NLopt {settings.algorithm.value} optimization failed: {exc}"
+            ) from exc
 
         if nlopt.SUCCESS > 0:
             success = True

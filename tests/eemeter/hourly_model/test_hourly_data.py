@@ -22,13 +22,12 @@ Tests cover:
 - Integration scenarios and edge cases
 """
 
-import logging
-
 import pytest
 import numpy as np
 import pandas as pd
 from datetime import date
 
+from opendsm.common.warnings import OpenDSMWarning
 from opendsm.eemeter.models.hourly.data import (
     _HourlyData,
     HourlyBaselineData,
@@ -41,6 +40,7 @@ from .helpers import (
     create_repeated_values,
     create_extreme_values,
     assert_has_disqualification,
+    assert_has_infeasible,
     assert_has_warning,
     assert_column_exists,
     assert_all_hours_present,
@@ -89,7 +89,7 @@ class TestHourlyDataClassInit:
         assert_all_hours_present(data.df)
         assert len(data.df) == 8760
         assert data.df.index[0] == synthetic_hourly_data.index[0]
-        assert data.disqualification == []
+        assert data.compliance.disqualification == []
 
     def test_reporting_without_observed(self):
         """Observed column missing (should work for reporting)"""
@@ -132,15 +132,20 @@ class TestHourlyDataClassInit:
             HourlyBaselineData(df=df, is_electricity_data=True)
 
     def test_datetime_utc_timezone(self):
-        """Should issue warning for UTC timezone"""
+        """A UTC index records an advisory warning."""
         df = create_hourly_dataframe()
         df.index = df.index.tz_convert("UTC")
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        # Check for UTC warning
-        warning_names = [w.qualified_name for w in data.warnings]
-        assert any("utc" in name.lower() for name in warning_names)
+        utc_entries = [
+            entry
+            for entry in data.compliance.warnings
+            if entry.qualified_name == "eemeter.data_quality.utc_index"
+        ]
+
+        assert len(utc_entries) == 1, "UTC index did not record an advisory warning"
+        assert utc_entries[0].severity == "advisory"
 
     def test_datetime_non_ns_precision(self):
         """Should convert to nanosecond precision"""
@@ -808,24 +813,24 @@ class TestHourlySufficiencyCriteria:
             HourlyBaselineData(df=df, is_electricity_data=True)
 
     def test_no_data_all_nan_baseline(self):
-        """All NaN values disqualifies"""
+        """All-NaN observed and temperature record an infeasible no_data."""
         df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
         df["observed"] = np.nan
         df["temperature"] = np.nan
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        assert_has_disqualification(data, "eemeter.sufficiency_criteria.no_data")
+        assert_has_infeasible(data, "eemeter.sufficiency_criteria.no_data")
 
     def test_no_data_all_nan_reporting(self):
-        """Same for reporting"""
+        """All-NaN reporting temperature records an infeasible no_data."""
         df = create_hourly_dataframe(start="2019-01-01", end="2019-03-31")
         df["temperature"] = np.nan
         # Observed is optional for reporting
 
         data = HourlyReportingData(df=df, is_electricity_data=True)
 
-        assert_has_disqualification(data, "eemeter.sufficiency_criteria.no_data")
+        assert_has_infeasible(data, "eemeter.sufficiency_criteria.no_data")
 
     # ===== Baseline Length Check =====
 
@@ -858,7 +863,7 @@ class TestHourlySufficiencyCriteria:
         if expect_disqualified:
             assert_has_disqualification(data, dq_name)
         else:
-            dq_names = [dq.qualified_name for dq in data.disqualification]
+            dq_names = [dq.qualified_name for dq in data.compliance.disqualification]
             assert dq_name not in dq_names
 
     def test_reporting_skips_length_check(self):
@@ -867,7 +872,7 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyReportingData(df=df, is_electricity_data=True)
 
-        dq_names = [dq.qualified_name for dq in data.disqualification]
+        dq_names = [dq.qualified_name for dq in data.compliance.disqualification]
         assert "eemeter.sufficiency_criteria.incorrect_number_of_total_days" not in dq_names
 
     def test_custom_length_thresholds(self):
@@ -877,7 +882,7 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyBaselineData(df=df, is_electricity_data=True, settings=settings)
 
-        dq_names = [dq.qualified_name for dq in data.disqualification]
+        dq_names = [dq.qualified_name for dq in data.compliance.disqualification]
         assert "eemeter.sufficiency_criteria.incorrect_number_of_total_days" not in dq_names
 
     # ===== Negative Observed Values Check =====
@@ -889,7 +894,7 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        dq_names = [dq.qualified_name for dq in data.disqualification]
+        dq_names = [dq.qualified_name for dq in data.compliance.disqualification]
         assert "eemeter.sufficiency_criteria.negative_observed_values" not in dq_names
 
     def test_negative_values_gas_baseline(self):
@@ -899,7 +904,7 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyBaselineData(df=df, is_electricity_data=False)
 
-        for dq in data.disqualification:
+        for dq in data.compliance.disqualification:
             if "negative_observed_values" in dq.qualified_name:
                 assert "n_negative_observed_values" in dq.data
                 assert dq.data["n_negative_observed_values"] == 10
@@ -911,7 +916,7 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyReportingData(df=df, is_electricity_data=True)
 
-        dq_names = [dq.qualified_name for dq in data.disqualification]
+        dq_names = [dq.qualified_name for dq in data.compliance.disqualification]
         assert "eemeter.sufficiency_criteria.negative_observed_values" not in dq_names
 
     def test_negative_values_gas_reporting(self):
@@ -956,7 +961,7 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        dq_names = [dq.qualified_name for dq in data.disqualification]
+        dq_names = [dq.qualified_name for dq in data.compliance.disqualification]
         assert (
             f"eemeter.sufficiency_criteria.too_many_days_with_missing_{column}_data"
             not in dq_names
@@ -984,7 +989,7 @@ class TestHourlySufficiencyCriteria:
         settings = {"sufficiency": {column: {"min_pct_daily_coverage": 0.8}}}
         data = HourlyBaselineData(df=df, is_electricity_data=True, settings=settings)
 
-        dq_names = [dq.qualified_name for dq in data.disqualification]
+        dq_names = [dq.qualified_name for dq in data.compliance.disqualification]
         assert (
             f"eemeter.sufficiency_criteria.too_many_days_with_missing_{column}_data"
             not in dq_names
@@ -1013,7 +1018,7 @@ class TestHourlySufficiencyCriteria:
 
         reporting_data = HourlyReportingData(df=df, is_electricity_data=True)
 
-        dq_names = [dq.qualified_name for dq in reporting_data.disqualification]
+        dq_names = [dq.qualified_name for dq in reporting_data.compliance.disqualification]
         assert (
             "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data"
             in dq_names
@@ -1026,7 +1031,7 @@ class TestHourlySufficiencyCriteria:
 
         reporting_data = HourlyReportingData(df=df, is_electricity_data=True)
 
-        dq_names = [dq.qualified_name for dq in reporting_data.disqualification]
+        dq_names = [dq.qualified_name for dq in reporting_data.compliance.disqualification]
         assert (
             "eemeter.sufficiency_criteria.too_many_days_with_missing_observed_data"
             not in dq_names
@@ -1043,7 +1048,7 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        dq_names = [dq.qualified_name for dq in data.disqualification]
+        dq_names = [dq.qualified_name for dq in data.compliance.disqualification]
         assert (
             "eemeter.sufficiency_criteria.too_many_days_with_missing_joint_data"
             not in dq_names
@@ -1113,7 +1118,7 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        dq_names = [dq.qualified_name for dq in data.disqualification]
+        dq_names = [dq.qualified_name for dq in data.compliance.disqualification]
         assert f"eemeter.sufficiency_criteria.missing_monthly_{column}_data" not in dq_names
 
     @pytest.mark.parametrize(
@@ -1159,7 +1164,7 @@ class TestHourlySufficiencyCriteria:
         settings = {"sufficiency": {column: {"min_pct_monthly_coverage": 0.8}}}
         data = HourlyBaselineData(df=df, is_electricity_data=True, settings=settings)
 
-        dq_names = [dq.qualified_name for dq in data.disqualification]
+        dq_names = [dq.qualified_name for dq in data.compliance.disqualification]
         assert f"eemeter.sufficiency_criteria.missing_monthly_{column}_data" not in dq_names
 
     @pytest.mark.parametrize(
@@ -1206,7 +1211,7 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        dq_names = [dq.qualified_name for dq in data.disqualification]
+        dq_names = [dq.qualified_name for dq in data.compliance.disqualification]
         assert "eemeter.sufficiency_criteria.missing_monthly_ghi_data" not in dq_names
 
     def test_observed_monthly_coverage_reporting_skipped(self):
@@ -1219,7 +1224,7 @@ class TestHourlySufficiencyCriteria:
 
         reporting_data = HourlyReportingData(df=df, is_electricity_data=True)
 
-        dq_names = [dq.qualified_name for dq in reporting_data.disqualification]
+        dq_names = [dq.qualified_name for dq in reporting_data.compliance.disqualification]
         assert (
             "eemeter.sufficiency_criteria.missing_monthly_observed_data"
             not in dq_names
@@ -1236,7 +1241,7 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        dq_names = [dq.qualified_name for dq in data.disqualification]
+        dq_names = [dq.qualified_name for dq in data.compliance.disqualification]
         assert (
             "eemeter.sufficiency_criteria.insufficient_unique_observed_values"
             not in dq_names
@@ -1248,7 +1253,7 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        dq_names = [dq.qualified_name for dq in data.disqualification]
+        dq_names = [dq.qualified_name for dq in data.compliance.disqualification]
         assert (
             "eemeter.sufficiency_criteria.insufficient_unique_observed_values"
             not in dq_names
@@ -1265,15 +1270,14 @@ class TestHourlySufficiencyCriteria:
             data, "eemeter.sufficiency_criteria.insufficient_unique_observed_values"
         )
 
-    def test_all_zeros_electricity_disqualified(self):
-        """All zeros converted to NaN, triggers no_data disqualification"""
+    def test_all_zeros_electricity_infeasible(self):
+        """All-zero electricity observed reads as NaN and records an infeasible no_data."""
         df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
         df["observed"] = 0
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        # All zeros become NaN, cannot be interpolated, should trigger no_data
-        assert_has_disqualification(data, "eemeter.sufficiency_criteria.no_data")
+        assert_has_infeasible(data, "eemeter.sufficiency_criteria.no_data")
 
     def test_all_ones_disqualified(self):
         """All 1.0 values triggers insufficient uniqueness disqualification"""
@@ -1307,7 +1311,7 @@ class TestHourlySufficiencyCriteria:
 
         reporting_data = HourlyReportingData(df=df, is_electricity_data=True)
 
-        dq_names = [dq.qualified_name for dq in reporting_data.disqualification]
+        dq_names = [dq.qualified_name for dq in reporting_data.compliance.disqualification]
         assert (
             "eemeter.sufficiency_criteria.insufficient_unique_observed_values"
             not in dq_names
@@ -1333,7 +1337,7 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        for dq in data.disqualification:
+        for dq in data.compliance.disqualification:
             if "insufficient_unique_observed_values" in dq.qualified_name:
                 assert "n_unique_values" in dq.data
                 assert "n_total_values" in dq.data
@@ -1360,8 +1364,8 @@ class TestHourlySufficiencyCriteria:
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
         # Check it's in warnings, not disqualifications
-        warning_names = [w.qualified_name for w in data.warnings]
-        dq_names = [dq.qualified_name for dq in data.disqualification]
+        warning_names = [w.qualified_name for w in data.compliance.warnings]
+        dq_names = [dq.qualified_name for dq in data.compliance.disqualification]
 
         assert "eemeter.sufficiency_criteria.extreme_values_detected" in warning_names
         assert "eemeter.sufficiency_criteria.extreme_values_detected" not in dq_names
@@ -1425,7 +1429,7 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        for w in data.warnings:
+        for w in data.compliance.warnings:
             if "extreme_values_detected" in w.qualified_name:
                 assert "n_extreme_values" in w.data
                 assert w.data["n_extreme_values"] == 10
@@ -1437,7 +1441,7 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        for w in data.warnings:
+        for w in data.compliance.warnings:
             if "extreme_values_detected" in w.qualified_name:
                 # Check bounds info in data
                 assert "bound" in str(w.data).lower() or "extreme" in str(w.data).lower()
@@ -1460,7 +1464,7 @@ class TestHourlySufficiencyCriteria:
 
         reporting_data = HourlyReportingData(df=df, is_electricity_data=True)
 
-        warning_names = [w.qualified_name for w in reporting_data.warnings]
+        warning_names = [w.qualified_name for w in reporting_data.compliance.warnings]
         # Reporting should not check extreme values
         assert "eemeter.sufficiency_criteria.extreme_values_detected" not in warning_names
 
@@ -1470,7 +1474,7 @@ class TestHourlySufficiencyCriteria:
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        warning_names = [w.qualified_name for w in data.warnings]
+        warning_names = [w.qualified_name for w in data.compliance.warnings]
         assert "eemeter.sufficiency_criteria.extreme_values_detected" not in warning_names
 
 class TestHourlyDataIntegration:
@@ -1498,7 +1502,7 @@ class TestHourlyDataIntegration:
         assert_all_hours_present(data.df)
         assert len(data.df) == 90 * 24 - 1
         assert {"interpolated_observed", "interpolated_temperature"} <= set(data.df.columns)
-        assert data.disqualification == []
+        assert data.compliance.disqualification == []
 
     def test_with_ghi_complete_pipeline(self):
         """Include GHI in pipeline"""
@@ -1517,18 +1521,16 @@ class TestHourlyDataIntegration:
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        assert len(data.disqualification) >= 2
+        assert len(data.compliance.disqualification) >= 2
 
     def test_multiple_warnings(self):
         """Multiple warnings issued"""
         df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
         df = create_extreme_values(df, 10)
-        # Convert to UTC for UTC warning
-        df.index = df.index.tz_convert("UTC")
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        assert len(data.warnings) >= 1
+        assert len(data.compliance.warnings) >= 1
 
     def test_warnings_and_disqualifications(self):
         """Both present"""
@@ -1537,23 +1539,20 @@ class TestHourlyDataIntegration:
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        assert len(data.disqualification) >= 1
-        assert len(data.warnings) >= 1
+        assert len(data.compliance.disqualification) >= 1
+        assert len(data.compliance.warnings) >= 1
 
-    def test_log_warnings_called(self, caplog):
-        """Warnings logged"""
+    def test_compliance_entries_emitted_once_on_construction(self):
+        """Each compliance record is emitted on the warnings channel exactly once"""
         df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
         df = create_extreme_values(df, 10)
 
-        data = HourlyBaselineData(df=df, is_electricity_data=True)
+        with pytest.warns(OpenDSMWarning) as record:
+            data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        with caplog.at_level(logging.WARNING, logger="eemeter"):
-            data.log_warnings()
-
-        assert (
-            "Extreme values (outside 3x IQR) must be flagged for manual review."
-            in caplog.text
-        )
+        emitted_names = [w.message.qualified_name for w in record.list]
+        recorded_names = [entry.qualified_name for entry in data.compliance.all]
+        assert emitted_names == recorded_names
 
 
 class TestHourlyDataEdgeCases:
@@ -1588,7 +1587,7 @@ class TestHourlyDataEdgeCases:
         if expect_disqualified:
             assert_has_disqualification(data, dq_name)
         else:
-            dq_names = [dq.qualified_name for dq in data.disqualification]
+            dq_names = [dq.qualified_name for dq in data.compliance.disqualification]
             assert dq_name not in dq_names
 
     @pytest.mark.parametrize(
@@ -1614,7 +1613,7 @@ class TestHourlyDataEdgeCases:
         if expect_disqualified:
             assert_has_disqualification(data, dq_name)
         else:
-            dq_names = [dq.qualified_name for dq in data.disqualification]
+            dq_names = [dq.qualified_name for dq in data.compliance.disqualification]
             assert dq_name not in dq_names
 
     # ===== DST & Timezone Edge Cases =====
@@ -1638,14 +1637,16 @@ class TestHourlyDataEdgeCases:
         assert len(data.df) == expected_rows
 
     def test_utc_input_warning(self):
-        """UTC timezone issues warning"""
+        """UTC timezone issues an advisory warning and leaves the data qualified"""
         df = create_hourly_dataframe(start="2019-01-01", end="2019-12-31")
         df.index = df.index.tz_convert("UTC")
 
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
-        warning_names = [w.qualified_name for w in data.warnings]
-        assert any("utc" in name.lower() for name in warning_names)
+        warning_names = {entry.qualified_name for entry in data.compliance.warnings}
+        disqualified_names = {entry.qualified_name for entry in data.compliance.disqualification}
+        assert "eemeter.data_quality.utc_index" in warning_names
+        assert "eemeter.data_quality.utc_index" not in disqualified_names
 
     def test_timezone_conversion_preserved(self):
         """Convert before input"""
@@ -1685,7 +1686,7 @@ class TestHourlyDataEdgeCases:
         data = HourlyBaselineData(df=df, is_electricity_data=True)
 
         assert (data.df.loc[df.index, "observed"] == df["observed"]).all()
-        warning_names = [w.qualified_name for w in data.warnings]
+        warning_names = [w.qualified_name for w in data.compliance.warnings]
         assert "eemeter.sufficiency_criteria.extreme_values_detected" not in warning_names
 
     # ===== Empty & Minimal Data =====
