@@ -18,39 +18,33 @@ import pytest
 
 from opendsm.eemeter import DailyModel
 
-from ..helpers import meter_temperature_frame
+from ..helpers import (
+    heating_load,
+    meter_temperature_frame,
+    seasonal_temperature,
+)
 
-
-
-def _seasonal_temperature(year=2020, seed=1):
-    """Hourly seasonal temperature swinging ~25..85 F across the year."""
-    hours = pd.date_range(f"{year}-01-01", periods=365 * 24, freq="h", tz="America/Chicago")
-    doy = hours.day_of_year.values
-    rng = np.random.default_rng(seed)
-    values = 55.0 + 30.0 * np.sin(2 * np.pi * (doy - 110) / 365) + rng.normal(0, 2, len(hours))
-
-    return pd.Series(values, index=hours)
 
 
 @pytest.fixture(scope="module")
 def temperature():
-    return _seasonal_temperature()
-
-
-def _heating_load(daily_temp, seed):
-    """Daily load with a genuine heating response: 80 + 1.2*HDD(60F) + noise."""
-    rng = np.random.default_rng(seed)
-    base = 80.0 + 1.2 * np.maximum(60.0 - daily_temp.values, 0.0)
-
-    return base + rng.normal(0, 2.0, len(daily_temp))
+    return seasonal_temperature()
 
 
 @pytest.fixture(scope="module")
-def heating_baseline(temperature):
+def days():
+    return pd.date_range("2020-01-01", periods=365, freq="D", tz="America/Chicago")
+
+
+@pytest.fixture(scope="module")
+def daily_temperature(temperature, days):
+    return temperature.resample("D").mean().reindex(days)
+
+
+@pytest.fixture(scope="module")
+def heating_baseline(temperature, daily_temperature):
     """DailyModel fit once on a load with a real heating response, with its data."""
-    days = pd.date_range("2020-01-01", periods=365, freq="D", tz="America/Chicago")
-    daily_temp = temperature.resample("D").mean().reindex(days)
-    meter = pd.Series(_heating_load(daily_temp, seed=2), index=days)
+    meter = heating_load(daily_temperature, seed=2)
     df = meter_temperature_frame(meter, temperature)
     model = DailyModel().fit(df, is_electricity_data=True, enforce_compliance=False)
 
@@ -58,7 +52,7 @@ def heating_baseline(temperature):
 
 
 @pytest.mark.slow
-def test_flat_load_does_not_fabricate_temperature_response(temperature):
+def test_flat_load_does_not_fabricate_temperature_response(temperature, days):
     """A temperature-insensitive load yields negligible HDD/CDD slopes.
 
     The selector may still pick a fuller model_type, but the fitted heating and
@@ -66,7 +60,6 @@ def test_flat_load_does_not_fabricate_temperature_response(temperature):
     and the prediction must track the mean rather than the temperature swing.
     """
     rng = np.random.default_rng(0)
-    days = pd.date_range("2020-01-01", periods=365, freq="D", tz="America/Chicago")
     meter = pd.Series(40.0 + rng.normal(0, 1.0, 365), index=days)
     df = meter_temperature_frame(meter, temperature)
 
@@ -98,7 +91,7 @@ def test_no_load_change_gives_near_zero_savings(heating_baseline):
 
 
 @pytest.mark.slow
-def test_known_reduction_recovers_as_savings(heating_baseline, temperature):
+def test_known_reduction_recovers_as_savings(heating_baseline, temperature, daily_temperature):
     """A known reduction injected into an independent load is recovered as savings.
 
     Reporting observed is the generative heating load (not the model's own
@@ -106,12 +99,8 @@ def test_known_reduction_recovers_as_savings(heating_baseline, temperature):
     model's counterfactual rather than reducing to an identity.
     """
     model, _ = heating_baseline
-    days = pd.date_range("2020-01-01", periods=365, freq="D", tz="America/Chicago")
-    daily_temp = temperature.resample("D").mean().reindex(days)
     reduction_per_day = 5.0
-    reporting_meter = pd.Series(
-        _heating_load(daily_temp, seed=4) - reduction_per_day, index=days
-    )
+    reporting_meter = heating_load(daily_temperature, seed=4) - reduction_per_day
     reporting_df = meter_temperature_frame(reporting_meter, temperature)
 
     result = model.predict(reporting_df)
