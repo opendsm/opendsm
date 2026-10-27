@@ -615,3 +615,8 @@ def test_non_dataframe_input_raises_type_error(method, make_value, type_name):
 
     with pytest.raises(TypeError, match=f"df must be a pandas DataFrame, got {type_name}"):
         getattr(HourlyCaltrackModel(), method)(make_value(), **kwargs)
+
+
+@pytest.mark.slow
+def test_wrapper_to_dict_writes_model_choice(caltrack_hourly_model):
+    assert caltrack_hourly_model.to_dict()["model_choice"] == "hourly_caltrack"

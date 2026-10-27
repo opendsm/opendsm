@@ -18,6 +18,7 @@ import pytest
 import numpy as np
 import pandas as pd
 
+from opendsm import __version__
 from opendsm.eemeter import DailyModel
 from opendsm.eemeter.models.daily.data import DailyBaselineData, DailyReportingData
 from opendsm.eemeter.common.data_settings import DailyDataSettings
@@ -817,12 +818,22 @@ def test_from_dict_reports_the_validation_failure_that_rejected_a_payload(
     assert exc_info.value.__cause__ is not None
 
 
+def _as_prior_format(model_dict):
+    """Remove, in place, the keys a payload without `schema_version` does not carry, and return
+    the removed `compliance` records."""
+    del model_dict["schema_version"]
+    del model_dict["model_choice"]
+    del model_dict["info"]["version"]
+    compliance = model_dict.pop("compliance")
+
+    return compliance
+
+
 def test_prior_format_payload_loads_and_carries_its_advisory(default_fitted_daily_model):
     """A payload without `schema_version` loads and carries only the
     `eemeter.serialization.prior_format` advisory."""
     model_dict = default_fitted_daily_model.to_dict()
-    del model_dict["schema_version"]
-    del model_dict["compliance"]
+    _as_prior_format(model_dict)
     del model_dict["info"]["is_electricity_data"]
 
     rebuilt = DailyModel.from_dict(model_dict, is_electricity_data=True)
@@ -835,8 +846,7 @@ def test_prior_format_payload_loads_and_carries_its_advisory(default_fitted_dail
 def test_prior_format_records_rebuild_from_the_info_lists(poor_fit_daily_model):
     """Entries without a severity take the severity of the list they came from."""
     model_dict = poor_fit_daily_model.to_dict()
-    stored = model_dict.pop("compliance")
-    del model_dict["schema_version"]
+    stored = _as_prior_format(model_dict)
     model_dict["info"]["disqualification"] = [
         {key: entry[key] for key in ("qualified_name", "description", "data")}
         for entry in stored
@@ -857,8 +867,7 @@ def test_prior_format_model_fit_metrics_disqualification_reports_model_status(
     """A model-tier disqualification in a payload without `schema_version` derives `member`
     from its qualified name."""
     model_dict = poor_fit_daily_model.to_dict()
-    stored = model_dict.pop("compliance")
-    del model_dict["schema_version"]
+    stored = _as_prior_format(model_dict)
     model_dict["info"]["disqualification"] = [
         {key: entry[key] for key in ("qualified_name", "description", "data")}
         for entry in stored
@@ -876,8 +885,7 @@ def test_prior_format_settings_payload_drops_removed_sufficiency_keys(
     """A payload without a schema version that carries an undeclared threshold key loads
     through the prior-format path."""
     model_dict = default_fitted_daily_model.to_dict()
-    del model_dict["schema_version"]
-    del model_dict["compliance"]
+    _as_prior_format(model_dict)
     del model_dict["info"]["is_electricity_data"]
     sufficiency = model_dict["settings"]["data"]["sufficiency"]
     sufficiency["temperature"]["min_pct_hourly_coverage"] = 0.5
@@ -1197,3 +1205,63 @@ def test_nonstandard_settings_enforced_raises(comstock_daily):
         DailyModel(settings={"segment_minimum_count": 8}).fit(
             df_b.reset_index(), is_electricity_data=True
         )
+
+
+def test_to_dict_writes_model_choice(default_fitted_daily_model):
+    assert default_fitted_daily_model.to_dict()["model_choice"] == "daily"
+
+
+def test_from_dict_requires_model_choice_on_a_versioned_payload(default_fitted_daily_model):
+    model_dict = default_fitted_daily_model.to_dict()
+    del model_dict["model_choice"]
+
+    with pytest.raises(ModelLoadError, match="could not be read"):
+        DailyModel.from_dict(model_dict)
+
+
+def test_new_model_carries_the_opendsm_version():
+    assert DailyModel().version == __version__
+
+
+def test_to_dict_records_the_opendsm_version(default_fitted_daily_model):
+    assert default_fitted_daily_model.to_dict()["info"]["version"] == __version__
+
+
+def test_from_dict_keeps_the_stored_version(default_fitted_daily_model):
+    model_dict = default_fitted_daily_model.to_dict()
+    model_dict["info"]["version"] = "0.0.1"
+
+    rebuilt = DailyModel.from_dict(model_dict)
+
+    assert rebuilt.to_dict()["info"]["version"] == "0.0.1"
+
+
+def test_from_dict_restores_the_stored_version_on_the_model(default_fitted_daily_model):
+    model_dict = default_fitted_daily_model.to_dict()
+    model_dict["info"]["version"] = "0.0.1"
+
+    rebuilt = DailyModel.from_dict(model_dict)
+
+    assert rebuilt.version == "0.0.1"
+
+
+def test_from_dict_without_a_stored_version_has_none(default_fitted_daily_model):
+    model_dict = default_fitted_daily_model.to_dict()
+    del model_dict["info"]["version"]
+
+    rebuilt = DailyModel.from_dict(model_dict)
+
+    assert rebuilt.version is None
+
+
+def test_refit_of_a_loaded_model_records_the_installed_version(
+    default_fitted_daily_model, comstock_daily
+):
+    df_b, _ = comstock_daily
+    model_dict = default_fitted_daily_model.to_dict()
+    model_dict["info"]["version"] = "0.0.1"
+    rebuilt = DailyModel.from_dict(model_dict)
+
+    rebuilt.fit(df_b.reset_index(), is_electricity_data=True, enforce_compliance=False)
+
+    assert rebuilt.to_dict()["info"]["version"] == __version__

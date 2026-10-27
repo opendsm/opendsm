@@ -60,6 +60,8 @@ _MODEL_CLASSES = {
     for model_cls in (HourlyModel, DailyModel, BillingModel)
 }
 
+_MODEL_CHOICES = {model_cls.model_choice: model_cls for model_cls in _MODEL_CLASSES.values()}
+
 _DEFAULT_TIME_PERIOD = {
     "hourly": _const.TimePeriod.SEASONAL_HOURLY_DAY_OF_WEEK,
     "daily": _const.TimePeriod.SEASONAL_DAY_OF_WEEK,
@@ -107,14 +109,16 @@ def _model_frequency_of_model(model) -> str:
     )
 
 
-def _model_from_payload(model_cls, payload):
-    if isinstance(payload, str):
-        return model_cls.from_json(payload)
+def _checked_model_frequency(mid, model, model_frequency) -> str:
+    """The model's frequency; raises ``TypeError`` when ``model_frequency`` is given and differs."""
+    inferred = _model_frequency_of_model(model)
+    if model_frequency is not None and inferred != model_frequency:
+        raise TypeError(
+            f"Meter {mid}: model frequency {inferred!r} does not match "
+            f"requested {model_frequency!r}."
+        )
 
-    if isinstance(payload, dict):
-        return model_cls.from_dict(payload)
-
-    raise TypeError(f"Model payload must be a dict or JSON string, got {type(payload).__name__}")
+    return inferred
 
 
 def default_data_settings(model_frequency):
@@ -336,9 +340,11 @@ class MeterPopulation:
                 instance. ``baseline_df`` and ``reporting_df`` are the meter's
                 dataframes; the model builds the data objects from them. An entry
                 without ``baseline_df`` raises ``ValueError``.
-            model_frequency: Inferred from each fitted instance's type, so optional
-                for instances, and validated against it when supplied (mismatch
-                raises ``TypeError``). Required when models are passed as payloads.
+            model_frequency: Inferred from each model: a fitted instance's type or a
+                payload's ``model_choice``. Required only for a payload without
+                ``model_choice``; when supplied it is validated against the inferred
+                value (mismatch raises ``TypeError``). A payload whose ``model_choice``
+                names no supported model raises ``ValueError``.
         """
         records = {}
         resolved = model_frequency
@@ -347,23 +353,34 @@ class MeterPopulation:
             model_obj = entry["model"]
 
             if isinstance(model_obj, (dict, str)):
-                if model_frequency is None:
+                payload = model_obj
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+
+                choice = payload.get("model_choice")
+                if choice is None:
+                    if model_frequency is None:
+                        raise ValueError(
+                            "model_frequency is required when models are passed as dict or "
+                            "JSON payloads without a model_choice."
+                        )
+                    model_cls = _MODEL_CLASSES[model_frequency]
+
+                elif choice not in _MODEL_CHOICES:
                     raise ValueError(
-                        "model_frequency is required when models are passed as dict or JSON "
-                        "payloads."
+                        f"Meter {mid}: payload model_choice {choice!r} is not supported; "
+                        f"expected one of {sorted(_MODEL_CHOICES)}."
                     )
-                inferred = model_frequency
-                model = _model_from_payload(_MODEL_CLASSES[inferred], model_obj)
+
+                else:
+                    model_cls = _MODEL_CHOICES[choice]
+
+                model = model_cls.from_dict(payload)
 
             else:
-                inferred = _model_frequency_of_model(model_obj)
-                if model_frequency is not None and inferred != model_frequency:
-                    raise TypeError(
-                        f"Meter {mid}: model frequency {inferred!r} does not match "
-                        f"requested {model_frequency!r}."
-                    )
                 model = model_obj
 
+            inferred = _checked_model_frequency(mid, model, model_frequency)
             if resolved is None:
                 resolved = inferred
 
@@ -464,12 +481,7 @@ class MeterPopulation:
         disqualified = []
 
         for mid, rec in self._meters.items():
-            if _model_frequency_of_model(rec.model) != self.model_frequency:
-                raise TypeError(
-                    f"Meter {mid}: model type does not match population model frequency "
-                    f"{self.model_frequency!r}."
-                )
-
+            _checked_model_frequency(mid, rec.model, self.model_frequency)
             tz = str(rec.model.baseline_timezone)
             baseline = rec.baseline_data
             disqualification = rec.model.compliance.disqualification

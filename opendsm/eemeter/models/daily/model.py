@@ -44,6 +44,7 @@ from opendsm.eemeter.common.exceptions import (
     NonstandardSettingsError,
 )
 from opendsm.eemeter.common.sufficiency_criteria import frame_span
+from opendsm.eemeter.common.model_choice import check_model_choice
 from opendsm.eemeter.common.warnings import EEMeterWarning, nonstandard_settings_warning
 from opendsm.common.warnings import OpenDSMWarning
 from opendsm.eemeter.models.daily.base_models.full_model import (
@@ -69,6 +70,7 @@ from opendsm.eemeter.models.daily.utilities.ellipsoid_test import ellipsoid_spli
 from opendsm.eemeter.models.daily.utilities.selection_criteria import selection_criteria
 from opendsm.common.metrics import BaselineMetrics, BaselineMetricsFromDict
 from opendsm.common.const import ModelFrequency
+from opendsm import __version__
 
 
 
@@ -95,6 +97,7 @@ class DailyModel:
     """
 
     model_frequency = ModelFrequency.DAILY
+    model_choice = "daily"
 
     _baseline_data_type = DailyBaselineData
     _reporting_data_type = DailyReportingData
@@ -141,6 +144,7 @@ class DailyModel:
         self.compliance = Compliance()
         self.is_fitted = False
         self._is_electricity_data = None
+        self.version = __version__
 
     def _initialize_settings(
         self,
@@ -314,6 +318,7 @@ class DailyModel:
 
         self.baseline_metrics = self._get_error_metrics(self.best_combination)
 
+        self.version = __version__
         self.params = self._create_params_from_fit_model()
         self.is_fitted = True
         return self
@@ -485,9 +490,11 @@ class DailyModel:
         always carries the records the model holds when it is written.
 
         Returns:
-            Model parameters.
+            Model parameters, plus the payload keys `model_choice`, `schema_version`
+            and `compliance`.
         """
         model_dict = self.params.model_dump()
+        model_dict["model_choice"] = self.model_choice
         model_dict["schema_version"] = SCHEMA_VERSION
         model_dict["compliance"] = [entry.json() for entry in self.compliance.all]
 
@@ -516,9 +523,10 @@ class DailyModel:
         Raises:
             ValueError: If is_electricity_data is missing from both the payload and the call,
                 or given when the payload already carries it.
-            ModelLoadError: If the payload is malformed or carries a `schema_version`
-                this package cannot read.
+            ModelLoadError: If the payload was written by another model class, is
+                malformed, or carries a `schema_version` this package cannot read.
         """
+        check_model_choice(data, cls.model_choice)
         settings = data.get("settings")
         if settings is not None:
             settings = strip_removed_sufficiency_keys(settings)
@@ -555,6 +563,7 @@ class DailyModel:
         if prior_format is not None:
             daily_model.compliance.record(prior_format)
 
+        daily_model.version = info.get("version")
         daily_model.baseline_timezone = info.get("baseline_timezone")
         if info.get("metrics") is not None:
             daily_model.baseline_metrics = BaselineMetricsFromDict(info.get("metrics"))
@@ -672,6 +681,7 @@ class DailyModel:
                 "metrics": self.baseline_metrics.model_dump(),
                 "baseline_timezone": str(self.baseline_timezone),
                 "is_electricity_data": bool(self._is_electricity_data),
+                "version": self.version,
             },
         )
 

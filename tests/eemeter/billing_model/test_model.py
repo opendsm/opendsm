@@ -627,3 +627,7 @@ def test_predict_aggregation_on_temperature_only_frame(
     assert list(result.columns) == list(with_observed.columns)
     assert result["observed"].isna().all()
     assert result["predicted"].notna().any()
+
+
+def test_to_dict_writes_billing_model_choice(fitted_model):
+    assert fitted_model.to_dict()["model_choice"] == "billing"
