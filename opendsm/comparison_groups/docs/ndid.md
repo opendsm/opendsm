@@ -297,11 +297,19 @@ $\gamma = 0$ it is the plain mean of normalized residuals.
   of the noise variance at five meters and an eighth at twenty. Sums over many
   rows inherit that bias.
 - The heterogeneity's lag terms multiply square roots of noisy row estimates,
-  which understates them: with estimates independent across rows, by up to a
-  quarter at five to ten meters. Offsets that persist across rows make
-  neighbouring estimates agree and narrow the gap. A treatment's offset may
-  also persist beyond the longest autocorrelation lag, so aggregates over longer
-  periods understate it, as they do the correction's own error.
+  which understates them. With row estimates independent the shortfall reaches a
+  quarter at five to ten meters. On a synthetic twenty-meter pool whose offsets
+  hold for four-hour blocks, neighbouring estimates agree and the shortfall is
+  about 6%.
+- The lag terms take their autocorrelation from the pool's baseline residuals,
+  which describe how long model noise persists, not how long a treatment's
+  offset from the pool persists. On a synthetic pool whose baseline noise is
+  independent from hour to hour while offsets hold for four hours, the
+  aggregation understates the variance of daily sums about 3.7-fold, while the
+  same row variances paired under the offsets' true persistence match it within
+  6%. How the two persistences compare on real meters is not measured, and an
+  offset that outlasts the longest lag is understated at any aggregation longer
+  than that lag, as is the correction's own error.
 - Contamination of the pool and the pool's representativeness for the treatment
   have no statistic. The in-sample autocorrelation may understate aggregate
   bands. In a first billing window with few matches, the band rests on the pooled
