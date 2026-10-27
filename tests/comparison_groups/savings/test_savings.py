@@ -645,7 +645,7 @@ def test_empty_correction_yields_empty_frames_without_error():
 # ── NDID long-run variance ────────────────────────────────────────────────────
 
 
-def _ndid_frame(index, corrected_unc, cg_var, observed_unc=0.0):
+def _ndid_frame(index, corrected_unc, cg_var, observed_unc=0.0, cg_heterogeneity_var=0.0):
     n = len(index)
     corrected = np.linspace(10.0, 20.0, n)
     frame = _meter_frame(
@@ -657,6 +657,7 @@ def _ndid_frame(index, corrected_unc, cg_var, observed_unc=0.0):
         observed_unc=observed_unc,
     )
     frame["cg_var"] = np.asarray(cg_var, dtype=np.float64) * np.ones(n)
+    frame["cg_heterogeneity_var"] = np.asarray(cg_heterogeneity_var, dtype=np.float64) * np.ones(n)
 
     return frame
 
@@ -687,6 +688,7 @@ def test_ndid_billing_empty_acf_reproduces_quadrature_path_with_read_expansion()
     frame2, period2 = _billing_read("m1", "2019-02-09", "2019-03-10", 20.0, 25.0, 3.0)
     frame = pd.concat([frame1, frame2], ignore_index=True)
     frame["cg_var"] = [1.0, 4.0]
+    frame["cg_heterogeneity_var"] = [0.5, 2.0]
     periods = period1 + period2
 
     ndid = compute_savings(
@@ -695,7 +697,9 @@ def test_ndid_billing_empty_acf_reproduces_quadrature_path_with_read_expansion()
     )
     legacy = compute_savings(
         _correction(
-            frame.drop(columns=["cg_var"]), granularity="billing", correction_periods=periods
+            frame.drop(columns=["cg_var", "cg_heterogeneity_var"]),
+            granularity="billing",
+            correction_periods=periods,
         ),
         aggregation="monthly",
     )
@@ -720,6 +724,62 @@ def test_ndid_constant_sigma_ar1_matches_truncated_closed_form():
     expected = np.sqrt(n * (model_unc**2 + observed_unc**2) + cg_unc**2 * long_run)
 
     assert result.savings["savings_unc"].iloc[0] == pytest.approx(expected, rel=1e-9)
+
+
+def test_ndid_heterogeneity_series_takes_its_own_long_run_variance():
+    n, k, phi = 50, 5, 0.6
+    model_unc, het_unc = 1.5, 2.0
+    corrected_unc = np.sqrt(model_unc**2 + het_unc**2)
+    frame = _ndid_frame(_index(n), corrected_unc, 0.0, cg_heterogeneity_var=het_unc**2)
+    cg_acf = phi ** np.arange(1, k + 1)
+
+    unc = _savings_unc(frame, cg_acf=cg_acf)
+
+    lags = np.arange(1, k + 1)
+    long_run = n + 2.0 * np.sum(phi**lags * (n - lags))
+    expected = np.sqrt(n * model_unc**2 + het_unc**2 * long_run)
+
+    assert unc[0] == pytest.approx(expected, rel=1e-9)
+
+
+def test_ndid_independent_series_contribute_no_cross_lag_products():
+    """sigma = [1, 0, 1, 0] and eta = [0, 1, 0, 1] at rho_1 = 0.5: neither series has
+    an adjacent nonzero pair and the two never multiply, so the band is quadrature.
+    One combined series sqrt(sigma^2 + eta^2) would add 2 * 0.5 * 3."""
+    cg_var = np.array([1.0, 0.0, 1.0, 0.0])
+    het_var = 1.0 - cg_var
+    frame = _ndid_frame(
+        _index(4), corrected_unc=np.sqrt(2.0), cg_var=cg_var, cg_heterogeneity_var=het_var
+    )
+
+    unc = _savings_unc(frame, cg_acf=np.array([0.5]))
+
+    assert unc[0] == pytest.approx(np.sqrt(4 * 2.0), rel=1e-12)
+
+
+def test_ndid_each_series_negative_lag_sum_is_clipped_alone():
+    """rho = [-0.9, 0.5]: sigma = [1, 1, 0, 0] has only a lag-1 pair (sum -0.9, clipped
+    to 0) and eta = [1, 0, 1, 0] only a lag-2 pair (sum 0.5, adding 2 * 0.5). Clipping
+    the combined sum -0.4 instead would drop eta's positive term."""
+    frame = _ndid_frame(
+        _index(4),
+        corrected_unc=2.0,
+        cg_var=np.array([1.0, 1.0, 0.0, 0.0]),
+        cg_heterogeneity_var=np.array([1.0, 0.0, 1.0, 0.0]),
+    )
+
+    unc = _savings_unc(frame, cg_acf=np.array([-0.9, 0.5]))
+
+    assert unc[0] == pytest.approx(np.sqrt(4 * 4.0 + 1.0), rel=1e-12)
+
+
+def test_ndid_frame_without_heterogeneity_raises():
+    frame = _ndid_frame(_index(4), corrected_unc=2.0, cg_var=1.0).drop(
+        columns=["cg_heterogeneity_var"]
+    )
+
+    with pytest.raises(ValueError, match="lacks cg_heterogeneity_var"):
+        compute_savings(_correction(frame, cg_acf=np.array([0.5])), aggregation="total")
 
 
 def test_ndid_negative_lag_sum_falls_back_to_quadrature():

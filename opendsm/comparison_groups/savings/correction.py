@@ -236,18 +236,21 @@ def _ndid_correction(
     """Run the NDID kernel for one treatment meter over its admitted comparison
     group, with typical loads taken from the baseline profiles at cells ``q`` and
     scaled to each row by the days its sum covers (``t_scale`` for the treatment,
-    ``cg_scale`` per pool meter; all ones at native cadence) and the pool laws pooled over ``cg_ids``. Returns the kernel outputs (without the
-    trust array) followed by the diagnostics dict."""
+    ``cg_scale`` per pool meter; all ones at native cadence) and the pool laws pooled
+    over ``cg_ids``. Returns the kernel outputs (without the trust array) followed by
+    the diagnostics dict."""
     tr_profile = treatment.baseline_profile(treatment_id)
     profiles = [pool.baseline_profile(mid) for mid in cg_ids]
 
     typical = np.array([p.typical_load for p in profiles])
+    rms = np.array([p.residual_rms for p in profiles])
     s = typical[:, q].T * cg_scale
+    noise = (rms[:, q] / typical[:, q]).T ** 2
     S = np.array([p.annual_scale for p in profiles])
     s_Tr = tr_profile.typical_load[q] * t_scale
     laws = pool.pooled_laws(cg_ids, cg_label, ndid_settings)
 
-    mTrc, mTrc_unc, cg_var, cg_effective_n, cg_acf, mask = ndid_correction_matrix(
+    mTrc, mTrc_unc, cg_var, cg_het_var, cg_effective_n, cg_acf, mask = ndid_correction_matrix(
         mTr,
         mTr_unc,
         s_Tr,
@@ -255,6 +258,7 @@ def _ndid_correction(
         oCGr,
         mCGr,
         s,
+        noise,
         S,
         q,
         cg_label,
@@ -274,7 +278,7 @@ def _ndid_correction(
         ],
     }
 
-    return mTrc, mTrc_unc, cg_var, cg_effective_n, cg_acf, mask, diagnostics
+    return mTrc, mTrc_unc, cg_var, cg_het_var, cg_effective_n, cg_acf, mask, diagnostics
 
 
 def _align_to_index(arr, row_map, present, n_rows):
@@ -593,8 +597,10 @@ class CorrectionResult:
     result as ``prior`` to a later call reuses exactly these members.
 
     Under the NDID algorithm ``corrected`` also carries ``cg_var`` (the one-sigma
-    sampling variance of the correction, treatment units squared, already inside
-    ``corrected_unc``) and ``cg_effective_n`` (the cluster-weighted Kish effective
+    sampling variance of the correction, shared by every treatment corrected against the
+    pool), ``cg_heterogeneity_var`` (the one-sigma variance of this treatment's own offset
+    from the pool, its alone), both in treatment units squared and already inside
+    ``corrected_unc``, and ``cg_effective_n`` (the cluster-weighted Kish effective
     number of pool meters); ``cg_acf`` is the weighted pooled residual
     autocorrelation at lags 1..K (empty at billing) and ``diagnostics`` holds the
     run's pooled-laws summary (``gamma_fit``, NaN when degenerate, ``gamma_used``,
@@ -1201,21 +1207,23 @@ def correct_reporting(
         else:
             t_scale = np.ones(len(out_index))
             cg_scale = np.ones(oCGr.shape)
-        mTrc, mTrc_unc, cg_var, cg_effective_n, cg_acf, mask, diagnostics = _ndid_correction(
-            treatment,
-            pool,
-            treatment_id,
-            cg_ids,
-            cg_label,
-            t_weight,
-            mTr,
-            mTr_unc,
-            oCGr,
-            mCGr,
-            q,
-            t_scale,
-            cg_scale,
-            settings.ndid,
+        mTrc, mTrc_unc, cg_var, cg_het_var, cg_effective_n, cg_acf, mask, diagnostics = (
+            _ndid_correction(
+                treatment,
+                pool,
+                treatment_id,
+                cg_ids,
+                cg_label,
+                t_weight,
+                mTr,
+                mTr_unc,
+                oCGr,
+                mCGr,
+                q,
+                t_scale,
+                cg_scale,
+                settings.ndid,
+            )
         )
         min_cluster_meters = 1
     else:
@@ -1252,6 +1260,7 @@ def correct_reporting(
 
     if ndid:
         corrected["cg_var"] = cg_var
+        corrected["cg_heterogeneity_var"] = cg_het_var
         corrected["cg_effective_n"] = cg_effective_n
 
     cg_usage = pd.DataFrame(

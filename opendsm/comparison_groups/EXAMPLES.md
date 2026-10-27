@@ -199,7 +199,9 @@ ndid_savings = compute_savings(ndid_correction, aggregation="monthly")
 ```
 
 Each meter's baseline profile, which NDID needs, is computed at fit time and
-carried with the model. The correction frame gains `cg_var`, the
-comparison-group variance per timestep, and `cg_effective_n`, the effective
-number of comparison meters behind it. The savings band sums that variance over
-each month with the baseline autocorrelation in `ndid_correction.cg_acf`.
+carried with the model. The correction frame gains `cg_var`, the sampling
+variance of the comparison-group correction per timestep,
+`cg_heterogeneity_var`, the variance of the treatment's own offset from the
+comparison group, and `cg_effective_n`, the effective number of comparison
+meters behind them. The savings band sums both variances over each month with
+the baseline autocorrelation in `ndid_correction.cg_acf`.

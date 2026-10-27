@@ -2331,7 +2331,7 @@ def test_per_meter_correction_reproduces_the_batch_snapshot(
 # ── NDID on the pinned bank ──────────────────────────────────────────────────
 
 
-_NDID_COLUMNS = _CORRECTED_COLUMNS + ["cg_var", "cg_effective_n"]
+_NDID_COLUMNS = _CORRECTED_COLUMNS + ["cg_var", "cg_heterogeneity_var", "cg_effective_n"]
 
 _NDID_CADENCES = ("hourly", "daily", "billing")
 
@@ -2439,10 +2439,14 @@ def test_ndid_end_to_end_is_finite_where_modeled(ndid_env, granularity):
     assert result.cg_ids == list(env["pool"].ids)
     assert modeled.any()
 
-    for column in ("corrected", "corrected_unc", "cg_var", "cg_effective_n"):
+    finite_columns = (
+        "corrected", "corrected_unc", "cg_var", "cg_heterogeneity_var", "cg_effective_n"
+    )
+    for column in finite_columns:
         assert np.isfinite(frame[column].to_numpy()[modeled]).all(), column
 
     assert (frame["cg_var"].to_numpy()[modeled] > 0).mean() >= 0.99
+    assert (frame["cg_heterogeneity_var"].to_numpy()[modeled] >= 0).all()
     assert result.cg_acf.shape == (_ACF_LAGS[granularity],)
     assert result.diagnostics["cluster_sizes"] == [len(result.cg_ids)]
     assert result.diagnostics["gamma_used"] == 0.0
@@ -2661,7 +2665,9 @@ def _assert_rows_match(result, reference):
     frame = result.corrected
     np.testing.assert_allclose(
         frame["corrected_unc"].to_numpy() ** 2,
-        frame["modeled_unc"].to_numpy() ** 2 + frame["cg_var"].to_numpy(),
+        frame["modeled_unc"].to_numpy() ** 2
+        + frame["cg_var"].to_numpy()
+        + frame["cg_heterogeneity_var"].to_numpy(),
         rtol=1e-12,
     )
 
@@ -2751,7 +2757,7 @@ def test_ndid_daily_delivery_of_hourly_data_is_finite_from_day_one(
             env["selection"], treatment, pool, env["treatment_id"], settings=settings, prior=prior
         )
 
-        for column in ("corrected", "corrected_unc", "cg_var"):
+        for column in ("corrected", "corrected_unc", "cg_var", "cg_heterogeneity_var"):
             assert np.isfinite(result.corrected[column].to_numpy()).all(), (day, column)
 
         deliveries.append(result)
@@ -2799,7 +2805,7 @@ def test_examples_ndid_block_runs_on_the_pinned_bank(daily_env):
     exec(_example_block("Example 3: the NDID correction"), namespace)
 
     frame = namespace["ndid_correction"].corrected
-    assert {"cg_var", "cg_effective_n"} <= set(frame.columns)
+    assert {"cg_var", "cg_heterogeneity_var", "cg_effective_n"} <= set(frame.columns)
     assert np.isfinite(frame["corrected"]).sum() > 0
 
     direct = correct_reporting(

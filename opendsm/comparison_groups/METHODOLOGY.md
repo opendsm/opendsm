@@ -136,17 +136,20 @@ weights. The weights combine a Cauchy kernel on the difference in relative state
 $m / s$, an optional size relevance, a pooled size law, and a one-pass
 robustness weight on the Yeo-Johnson transformed cross-section. Each cluster's
 one-sigma variance blends the weighted cross-sectional standard error with a
-pooled baseline law, and the comparison-group variance enters the band in
-quadrature with the treatment model's own:
+pooled baseline law. The treatment also sits apart from each cluster's mean by
+an offset of its own, whose variance $h_k$ is the cross-sectional spread of the
+normalized errors beyond the comparison meters' own baseline noise. Both enter
+the band in quadrature with the treatment model's own:
 
 $$
-\sigma_{cT}(t)^2 = \sigma_T(t)^2 + s_T(t)^2 \sum_k T_k(t)^2 \, \text{var}_k(t).
+\sigma_{cT}(t)^2 = \sigma_T(t)^2 + s_T(t)^2 \sum_k T_k(t)^2 \, \text{var}_k(t)
++ s_T(t)^2 \sum_k T_k(t) \, h_k(t).
 $$
 
 The typical loads, spreads and residual autocorrelation come from a baseline
 profile computed at fit time and serialized with the model, or on demand from the
-baseline data for a model serialized before the profile existed. Savings sum the
-comparison-group variance over a period with its baseline autocorrelation rather
+baseline data for a model serialized before the profile existed. Savings sum both
+comparison-group variances over a period with the baseline autocorrelation rather
 than in quadrature. The full definitions, the profile, the weights, the band, the
 aggregation rule, the settings and the documented approximations are in
 [the NDID correction](docs/ndid.md).

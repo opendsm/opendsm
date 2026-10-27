@@ -68,7 +68,13 @@ NDID_SNAPSHOT_PATH = pathlib.Path(__file__).parent / "fixtures" / "ndid_snapshot
 NDID_SNAPSHOT_SCHEMA_VERSION = 1
 
 # The NDID per-row output columns and run diagnostics the NDID snapshot pins.
-NDID_SNAPSHOT_COLUMNS = ("corrected", "corrected_unc", "cg_var", "cg_effective_n")
+NDID_SNAPSHOT_COLUMNS = (
+    "corrected",
+    "corrected_unc",
+    "cg_var",
+    "cg_heterogeneity_var",
+    "cg_effective_n",
+)
 
 NDID_SNAPSHOT_DIAGNOSTICS = ("gamma_fit", "gamma_used", "S_ref", "cluster_sizes", "lam")
 

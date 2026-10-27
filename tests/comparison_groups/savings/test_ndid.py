@@ -56,6 +56,7 @@ def _pool(T=6, M=4, seed=0):
         "S_Tr": 1.5,
         "mCGr": rng.uniform(1.0, 3.0, (T, M)),
         "s": rng.uniform(1.0, 3.0, (T, M)),
+        "noise": np.full((T, M), 0.04),
         "S": rng.uniform(0.5, 3.0, M),
         "q": np.arange(T) % 2,
         "cg_label": np.zeros(M, dtype=int),
@@ -69,7 +70,8 @@ def _pool(T=6, M=4, seed=0):
 def _run(case, laws, settings, **kwargs):
     result = ndid_correction_matrix(
         case["mTr"], case["mTr_unc"], case["s_Tr"], case["S_Tr"], case["oCGr"],
-        case["mCGr"], case["s"], case["S"], case["q"], case["cg_label"], case["t_weight"],
+        case["mCGr"], case["s"], case["noise"], case["S"], case["q"], case["cg_label"],
+        case["t_weight"],
         laws, settings, **kwargs,
     )
 
@@ -78,7 +80,7 @@ def _run(case, laws, settings, **kwargs):
 
 def _columns(case, cols):
     sub = dict(case)
-    for key in ("oCGr", "mCGr", "s"):
+    for key in ("oCGr", "mCGr", "s", "noise"):
         sub[key] = case[key][:, cols]
 
     for key in ("S", "cg_label"):
@@ -100,7 +102,7 @@ def test_plain_mean_identity():
         case[key] = case[key].astype(np.float32)
 
     settings = NDIDSettings(gamma=0.0, state_bandwidth_factor=1e6)
-    mTrc, _, _, _, _, mask = _run(case, _laws(n_clusters=2), settings, trust_constant=np.inf)
+    mTrc, _, _, _, _, _, mask = _run(case, _laws(n_clusters=2), settings, trust_constant=np.inf)
 
     m = case["mCGr"].astype(np.float64)
     e = (m - case["oCGr"].astype(np.float64)) / case["s"].astype(np.float64)
@@ -116,12 +118,15 @@ def test_plain_mean_identity():
 def test_single_meter_cluster_returns_its_residual_and_pooled_variance():
     case = _pool(T=5, M=1, seed=2)
     laws = _laws(v=[[0.01, 0.04]])
-    mTrc, corrected_unc, cg_var, n_eff, _, _ = _run(case, laws, GAMMA0)
+    mTrc, corrected_unc, cg_var, het_var, n_eff, _, _ = _run(case, laws, GAMMA0)
 
     e = (case["mCGr"][:, 0] - case["oCGr"][:, 0]) / case["s"][:, 0]
     np.testing.assert_allclose(mTrc, case["mTr"] - case["s_Tr"] * e, rtol=1e-12)
     np.testing.assert_allclose(cg_var / case["s_Tr"] ** 2, laws.v[0, case["q"]], rtol=1e-12)
-    np.testing.assert_allclose(corrected_unc, np.sqrt(case["mTr_unc"] ** 2 + cg_var), rtol=1e-12)
+    np.testing.assert_allclose(het_var / case["s_Tr"] ** 2, laws.v[0, case["q"]], rtol=1e-12)
+    np.testing.assert_allclose(
+        corrected_unc, np.sqrt(case["mTr_unc"] ** 2 + cg_var + het_var), rtol=1e-12
+    )
     np.testing.assert_array_equal(n_eff, 1.0)
 
 
@@ -130,14 +135,16 @@ def test_two_identical_meters_give_kish_two_and_cross_sectional_variance():
     case["mCGr"][:, 1] = case["mCGr"][:, 0]
     case["s"][:, 1] = case["s"][:, 0]
     case["S"][1] = case["S"][0]
-    _, _, cg_var, n_eff, _, _, trust = _run(case, _laws(), GAMMA0, return_trust=True)
+    _, _, cg_var, het_var, n_eff, _, _, trust = _run(case, _laws(), GAMMA0, return_trust=True)
 
     e = (case["mCGr"] - case["oCGr"]) / case["s"]
     se2 = (e[:, 0] - e[:, 1]) ** 2 / 4
+    heterogeneity = np.maximum((e[:, 0] - e[:, 1]) ** 2 / 2 - 0.04, 0.0)
 
     np.testing.assert_array_equal(trust, 1.0)
     np.testing.assert_array_equal(n_eff, 2.0)
     np.testing.assert_allclose(cg_var / case["s_Tr"] ** 2, se2, rtol=1e-12)
+    np.testing.assert_allclose(het_var / case["s_Tr"] ** 2, heterogeneity, rtol=1e-12)
 
 
 def test_hand_computed_weighted_median_and_trust():
@@ -151,20 +158,31 @@ def test_hand_computed_weighted_median_and_trust():
         "mCGr": np.ones((1, 3)),
         "oCGr": np.array([[1.0, 0.0, -9.0]]),
         "s": np.ones((1, 3)),
+        "noise": np.full((1, 3), 0.04),
         "S": np.ones(3),
         "q": np.array([0]),
         "cg_label": np.zeros(3, dtype=int),
         "t_weight": np.array([1.0]),
     }
-    mTrc, corrected_unc, cg_var, n_eff, _, mask, trust = _run(
+    mTrc, corrected_unc, cg_var, het_var, n_eff, _, mask, trust = _run(
         case, _laws(), GAMMA0, return_trust=True
     )
 
+    # Heterogeneity: spread over the untrimmed weights (1/3 each) about the trimmed
+    # mean, divided by c = 1 - 2 sum(p p_trim) + sum(p_trim^2), less the equal noise 0.04.
+    e = np.array([0.0, 1.0, 10.0])
+    center = 2.382326998636837
+    p = np.full(3, 1.0 / 3.0)
+    p_trim = np.array([1.0, 1.0, 0.4942]) / 2.4942
+    c = 1.0 - 2.0 * np.sum(p * p_trim) + np.sum(p_trim**2)
+    heterogeneity = np.sum(p * (e - center) ** 2) / c - 0.04
+
     np.testing.assert_allclose(trust, [[1.0, 1.0, 0.4942]], rtol=1e-12)
-    np.testing.assert_allclose(mTrc, 1.0 - 2.0 * 2.382326998636837, rtol=1e-12)
+    np.testing.assert_allclose(mTrc, 1.0 - 2.0 * center, rtol=1e-12)
     np.testing.assert_allclose(n_eff, 2.7720080160637823, rtol=1e-12)
     np.testing.assert_allclose(cg_var, 4.0 * 5.4714669027315885, rtol=1e-12)
-    np.testing.assert_allclose(corrected_unc, np.sqrt(cg_var), rtol=1e-12)
+    np.testing.assert_allclose(het_var, 4.0 * heterogeneity, rtol=1e-12)
+    np.testing.assert_allclose(corrected_unc, np.sqrt(cg_var + het_var), rtol=1e-12)
     assert mask.all()
 
 
@@ -177,6 +195,7 @@ def test_size_law_and_size_relevance_weights():
         "mCGr": np.ones((1, 2)),
         "oCGr": np.array([[1.0, 0.0]]),
         "s": np.ones((1, 2)),
+        "noise": np.full((1, 2), 0.04),
         "S": np.array([1.0, 4.0]),
         "q": np.array([0]),
         "cg_label": np.zeros(2, dtype=int),
@@ -198,7 +217,7 @@ def test_zero_spread_matches_only_equal_states():
     case["s_Tr"][:] = 1.0
     case["mCGr"][0] = [case["mTr"][0], case["mTr"][0] + 1.0]
     case["mCGr"][1] = case["mTr"][1] + 1.0
-    mTrc, _, _, n_eff, _, mask = _run(case, _laws(spread=0.0), GAMMA0)
+    mTrc, _, _, _, n_eff, _, mask = _run(case, _laws(spread=0.0), GAMMA0)
 
     e = case["mCGr"][0, 0] - case["oCGr"][0, 0]
     np.testing.assert_allclose(mTrc[0], case["mTr"][0] - e, rtol=1e-12)
@@ -213,19 +232,19 @@ def test_row_rules():
     case["s_Tr"][2] = 0.0
     case["oCGr"][3] = np.nan
     case["mTr_unc"][4] = np.nan
-    mTrc, corrected_unc, cg_var, n_eff, _, mask, trust = _run(
+    mTrc, corrected_unc, cg_var, het_var, n_eff, _, mask, trust = _run(
         case, _laws(), GAMMA0, return_trust=True
     )
 
     for t in (0, 1, 3):
-        assert np.isnan(mTrc[t]) and np.isnan(corrected_unc[t]) and np.isnan(cg_var[t])
+        assert np.isnan([mTrc[t], corrected_unc[t], cg_var[t], het_var[t]]).all()
 
     assert mTrc[2] == case["mTr"][2]
-    assert cg_var[2] == 0.0
+    assert cg_var[2] == 0.0 and het_var[2] == 0.0
     assert corrected_unc[2] == case["mTr_unc"][2]
 
-    assert np.isfinite(mTrc[4]) and np.isfinite(cg_var[4]) and np.isnan(corrected_unc[4])
-    assert np.isfinite([mTrc[5], cg_var[5], corrected_unc[5]]).all()
+    assert np.isfinite([mTrc[4], cg_var[4], het_var[4]]).all() and np.isnan(corrected_unc[4])
+    assert np.isfinite([mTrc[5], cg_var[5], het_var[5], corrected_unc[5]]).all()
 
     np.testing.assert_array_equal(n_eff[:4], 0.0)
     assert not mask[:4].any() and not trust[:4].any()
@@ -242,10 +261,10 @@ def test_zero_t_weight_cluster_is_skipped():
     sub["t_weight"] = np.array([1.0])
     alone = _run(sub, _laws(), GAMMA0)
 
-    for got, want in zip(full[:4], alone[:4]):
+    for got, want in zip(full[:5], alone[:5]):
         np.testing.assert_allclose(got, want, rtol=1e-12)
 
-    assert not full[5][:, 2:].any() and not full[6][:, 2:].any()
+    assert not full[6][:, 2:].any() and not full[7][:, 2:].any()
 
 
 def test_relevance_zero_removes_meter():
@@ -254,10 +273,10 @@ def test_relevance_zero_removes_meter():
     full = _run(case, _laws(), GAMMA0, relevance=relevance)
     alone = _run(_columns(case, [0, 1, 3]), _laws(), GAMMA0)
 
-    for got, want in zip(full[:4], alone[:4]):
+    for got, want in zip(full[:5], alone[:5]):
         np.testing.assert_allclose(got, want, rtol=1e-12)
 
-    assert not full[5][:, 2].any()
+    assert not full[6][:, 2].any()
 
 
 def test_negative_label_excluded():
@@ -266,19 +285,19 @@ def test_negative_label_excluded():
     full = _run(case, _laws(), GAMMA0, return_trust=True)
     alone = _run(_columns(case, [0, 2, 3]), _laws(), GAMMA0)
 
-    for got, want in zip(full[:4], alone[:4]):
+    for got, want in zip(full[:5], alone[:5]):
         np.testing.assert_allclose(got, want, rtol=1e-12)
 
-    assert not full[5][:, 1].any() and not full[6][:, 1].any()
+    assert not full[6][:, 1].any() and not full[7][:, 1].any()
 
 
 def test_single_timestep():
     case = _pool(T=1, M=3, seed=9)
-    mTrc, corrected_unc, cg_var, n_eff, cg_acf, mask = _run(case, _laws(), GAMMA0)
+    mTrc, corrected_unc, cg_var, het_var, n_eff, cg_acf, mask = _run(case, _laws(), GAMMA0)
 
-    assert mTrc.shape == corrected_unc.shape == cg_var.shape == n_eff.shape == (1,)
-    assert mask.shape == (1, 3)
-    assert np.isfinite([mTrc[0], corrected_unc[0], cg_var[0]]).all()
+    assert mTrc.shape == corrected_unc.shape == cg_var.shape == het_var.shape == (1,)
+    assert n_eff.shape == (1,) and mask.shape == (1, 3)
+    assert np.isfinite([mTrc[0], corrected_unc[0], cg_var[0], het_var[0]]).all()
     np.testing.assert_allclose(cg_acf, [0.5, 0.2])
 
 
@@ -288,7 +307,7 @@ def test_cg_acf_is_t_weighted_mean():
     case["t_weight"] = np.array([0.25, 0.75])
     laws = _laws(n_clusters=2)
     laws.acf = np.array([[0.4, 0.2, 0.0], [0.8, 0.4, 0.1]])
-    cg_acf = _run(case, laws, GAMMA0)[4]
+    cg_acf = _run(case, laws, GAMMA0)[5]
 
     np.testing.assert_allclose(cg_acf, [0.7, 0.35, 0.075], rtol=1e-12)
 
@@ -309,12 +328,118 @@ def test_return_trust_bounds():
 def test_near_zero_pool_prediction_gives_bounded_correction():
     case = _pool(T=6, M=5, seed=12)
     case["mCGr"][:, 0] = 1e-9
-    mTrc, _, cg_var, _, _, _ = _run(case, _laws(), GAMMA0)
+    mTrc, _, cg_var, het_var, _, _, _ = _run(case, _laws(), GAMMA0)
 
     e = (case["mCGr"] - case["oCGr"]) / case["s"]
     correction = (case["mTr"] - mTrc) / case["s_Tr"]
-    assert np.isfinite(mTrc).all() and np.isfinite(cg_var).all()
+    assert np.isfinite(mTrc).all() and np.isfinite(cg_var).all() and np.isfinite(het_var).all()
     assert (np.abs(correction) <= np.abs(e).max(axis=1) + 1e-12).all()
+
+
+def _cross_section(offset_var, noise_var, T=200, M=400, seed=20):
+    """Equal states and unit typical loads, so every meter weighs the same; each row's
+    normalized residuals are a shared value plus independent offsets and noise."""
+    rng = np.random.default_rng(seed)
+    e = (
+        rng.normal(0.1, 0.05, (T, 1))
+        + rng.normal(0.0, np.sqrt(offset_var), (T, M))
+        + rng.normal(0.0, np.sqrt(noise_var), (T, M))
+    )
+    case = {
+        "mTr": np.ones(T),
+        "mTr_unc": np.zeros(T),
+        "s_Tr": np.ones(T),
+        "S_Tr": 1.0,
+        "mCGr": np.ones((T, M)),
+        "oCGr": 1.0 - e,
+        "s": np.ones((T, M)),
+        "noise": np.full((T, M), noise_var),
+        "S": np.ones(M),
+        "q": np.zeros(T, dtype=int),
+        "cg_label": np.zeros(M, dtype=int),
+        "t_weight": np.array([1.0]),
+    }
+
+    return case
+
+
+def test_heterogeneity_recovers_the_variance_of_member_offsets():
+    """With offsets of variance 0.09 beside noise equal to the pooled law, the row
+    heterogeneity averages to 0.09."""
+    case = _cross_section(offset_var=0.09, noise_var=0.04)
+    het_var = _run(case, _laws(v=0.04), GAMMA0, trust_constant=np.inf)[3]
+
+    mean = het_var.mean()
+    assert abs(mean - 0.09) < 0.004, f"mean heterogeneity {mean:.5f}; expected 0.09"
+
+
+def test_heterogeneity_is_near_zero_when_members_differ_only_by_noise():
+    """Residuals that differ only by noise equal to the pooled law leave no
+    heterogeneity beyond the small upward bias of the truncation at zero."""
+    case = _cross_section(offset_var=0.0, noise_var=0.04)
+    het_var = _run(case, _laws(v=0.04), GAMMA0, trust_constant=np.inf)[3]
+
+    assert (het_var >= 0).all()
+    assert het_var.mean() < 0.004, f"mean heterogeneity {het_var.mean():.5f}; expected < 0.004"
+
+
+def test_heterogeneity_subtracts_each_meter_noise_at_its_weight_in_the_spread():
+    """Size-law weights favor large meters whose baseline noise is below the cluster's
+    average; subtracting each meter's own noise at its weight in the spread recovers the
+    offset variance 0.04, where subtracting the plain average noise would leave about 0.028."""
+    rng = np.random.default_rng(22)
+    T, M = 400, 60
+    S = np.exp(rng.normal(0.0, 1.0, M))
+    noise = 0.04 * S**-0.5 / np.mean(S**-0.5)
+    e = (
+        rng.normal(0.1, 0.05, (T, 1))
+        + rng.normal(0.0, 0.2, (T, M))
+        + rng.standard_normal((T, M)) * np.sqrt(noise)
+    )
+    case = {
+        "mTr": np.ones(T),
+        "mTr_unc": np.zeros(T),
+        "s_Tr": np.ones(T),
+        "S_Tr": 1.0,
+        "mCGr": np.ones((T, M)),
+        "oCGr": 1.0 - e,
+        "s": np.ones((T, M)),
+        "noise": np.tile(noise, (T, 1)),
+        "S": S,
+        "q": np.zeros(T, dtype=int),
+        "cg_label": np.zeros(M, dtype=int),
+        "t_weight": np.array([1.0]),
+    }
+    laws = _laws(v=0.04, gamma_used=0.25, S_ref=float(np.median(S)))
+    het_var = _run(case, laws, GAMMA0, trust_constant=np.inf)[3]
+
+    mean = het_var.mean()
+    assert abs(mean - 0.04) < 0.003, f"mean heterogeneity {mean:.5f}; expected 0.04"
+
+
+def test_heterogeneity_enters_with_unsquared_cluster_weights():
+    """The treatment's offset variance is the t_weight-weighted mean of the clusters'
+    heterogeneities, while the sampling variance takes the squared weights."""
+    case = _pool(T=5, M=6, seed=21)
+    case["cg_label"] = np.array([0, 0, 0, 1, 1, 1])
+    case["t_weight"] = np.array([0.3, 0.7])
+    case["noise"] = np.full_like(case["s"], 0.001)
+    settings = NDIDSettings(gamma=0.0, state_bandwidth_factor=1e6)
+    laws = _laws(v=0.001)
+    _, _, cg_var, het_var, *_ = _run(case, _laws(n_clusters=2, v=0.001), settings)
+
+    alone = []
+    for cols in ([0, 1, 2], [3, 4, 5]):
+        sub = _columns(case, cols)
+        sub["t_weight"] = np.array([1.0])
+        alone.append(_run(sub, laws, settings))
+
+    expected_het = 0.3 * alone[0][3] + 0.7 * alone[1][3]
+    expected_var = 0.09 * alone[0][2] + 0.49 * alone[1][2]
+
+    assert (alone[0][3] > 0).all() and (alone[1][3] > 0).all()
+    np.testing.assert_allclose(het_var, expected_het, rtol=1e-12)
+    np.testing.assert_allclose(cg_var, expected_var, rtol=1e-12)
 
 
 @pytest.mark.parametrize(
@@ -322,6 +447,7 @@ def test_near_zero_pool_prediction_gives_bounded_correction():
     [
         ("t_weight", np.array([0.5, 0.5]), "t_weight"),
         ("s", np.ones((6, 3)), "'s'"),
+        ("noise", np.ones((6, 3)), "'noise'"),
         ("S", np.ones(3), "'S'"),
         ("q", np.arange(6) % 3, "cells"),
         ("q", np.zeros(6), "integer"),
@@ -370,17 +496,20 @@ def test_profile_laws_and_kernel_run_end_to_end_on_a_synthetic_pool():
     cg_label = np.zeros(n_pool, dtype=int)
     laws = pooled_laws_from_profiles(pool, cg_label, S, settings)
     s = np.column_stack([profile.typical_load[q] for profile in pool])
+    noise = np.column_stack(
+        [(profile.residual_rms[q] / profile.typical_load[q]) ** 2 for profile in pool]
+    )
     s_Tr = treatment.typical_load[q]
     mTr = predicted[window, n_pool]
 
-    mTrc, corrected_unc, cg_var, cg_effective_n, cg_acf, mask = ndid_correction_matrix(
+    mTrc, corrected_unc, cg_var, het_var, cg_effective_n, cg_acf, mask = ndid_correction_matrix(
         mTr, np.zeros_like(mTr), s_Tr, treatment.annual_scale, observed[window, :n_pool],
-        predicted[window, :n_pool], s, S, q, cg_label, np.array([1.0]), laws, settings,
+        predicted[window, :n_pool], s, noise, S, q, cg_label, np.array([1.0]), laws, settings,
     )
 
     assert np.isfinite(mTrc).all()
-    assert (cg_var > 0).all()
-    assert np.array_equal(corrected_unc, np.sqrt(cg_var))
+    assert (cg_var > 0).all() and (het_var >= 0).all()
+    assert np.array_equal(corrected_unc, np.sqrt(cg_var + het_var))
     assert (np.abs(mTr - mTrc) / s_Tr < 1.0).all()
     assert (cg_effective_n > 1).all()
     assert cg_acf.shape == (168,)

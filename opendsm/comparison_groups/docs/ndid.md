@@ -154,6 +154,40 @@ sampling variance of $\hat e_k$: purely cross-sectional once $n_{\text{eff}} \ge
 2$ and purely the pooled baseline law at $n_{\text{eff}} = 1$. No interval
 factor is applied inside the correction, so `alpha` does not enter NDID.
 
+## Heterogeneity per cluster
+
+The band above says how well the cluster's mean is known. The treatment also
+sits some distance from that mean, by an offset of its own that no number of
+pool meters removes, and the cross-section measures how large such offsets are.
+With $p_i = w^0_i / \sum_j w^0_j$ the weights before the trust factor,
+$\tilde p_i = w_i / \sum_j w_j$ the weights after it, and
+$n_0 = 1 / \sum_i p_i^2$,
+
+$$
+D_k(t) = \sum_i p_i \left(e_i - \hat e_k\right)^2, \qquad
+g_i = p_i - 2 p_i \tilde p_i + \tilde p_i^2, \qquad
+c_k(t) = \sum_i g_i,
+$$
+
+$$
+h_k(t) = \beta_0 \max\!\left(0, \frac{D_k - \sum_i g_i \, r_i[q(t)]}{c_k}\right)
++ (1 - \beta_0) \, v_k[q(t)], \qquad \beta_0 = \text{clip}(n_0 - 1, 0, 1).
+$$
+
+The spread is taken over the weights before trust because the treatment is not
+trimmed: a pool meter that trust discounts is still evidence of how far a meter
+can sit from the mean. It is centered on the trusted mean because that is the
+estimate the treatment is corrected with. For independent meters under fixed
+weights, meter $i$'s variance enters the expected spread with weight $g_i$, so
+subtracting each meter's own baseline noise $r_i$ at that weight and dividing by
+$c_k$ leaves the heterogeneity whatever the meters' noise. The cluster's pooled
+law would not serve here, because the size law and the state kernel favor
+meters whose noise can differ from the cluster's average. With equal weights
+that trust leaves whole, $c_k = 1 - 1/n_0$. The treatment's own noise is
+already in its band. Below $n_0 = 2$ the estimate blends toward the pooled law,
+which stands in for the heterogeneity a single meter cannot identify, so the
+band does not narrow for lack of meters.
+
 ## Combination and outputs
 
 With $T_k(t)$ the treatment's cluster weights renormalized over the clusters
@@ -165,33 +199,50 @@ m_{cT}(t) = m_T(t) - s_T(t) \sum_k T_k(t) \, \hat e_k(t), \qquad
 $$
 
 $$
-\sigma_{cT}(t) = \sqrt{\sigma_T(t)^2 + \sigma^2_{CG}(t)},
+\sigma^2_H(t) = s_T(t)^2 \sum_k T_k(t) \, h_k(t), \qquad
+\sigma_{cT}(t) = \sqrt{\sigma_T(t)^2 + \sigma^2_{CG}(t) + \sigma^2_H(t)},
 $$
 
-where $\sigma_T$ is the treatment model's own band. The correction frame gains
-`cg_var` ($\sigma^2_{CG}$) and `cg_effective_n` ($\sum_k T_k n_{\text{eff},k}$),
+where $\sigma_T$ is the treatment model's own band. The cluster weights enter
+$\sigma^2_{CG}$ squared, because the clusters' sampling errors are independent
+and average down, and $\sigma^2_H$ unsquared, because the treatment's own
+offset does not shrink when its weight spreads over several clusters. The
+spread of the cluster means between clusters, which a treatment drawn from one
+cluster would add, is not included. The correction frame gains `cg_var`
+($\sigma^2_{CG}$), `cg_heterogeneity_var` ($\sigma^2_H$) and `cg_effective_n`
+($\sum_k T_k n_{\text{eff},k}$),
 and the result carries `cg_acf`, the treatment-weighted mean of the clusters'
 autocorrelations, and `diagnostics` with the pooled-law summary. A row whose
 treatment prediction is not finite, or at which no cluster contributes, is NaN.
+A row with no typical load takes no correction, and both variances are 0 there.
 
 ## Aggregation
 
-`compute_savings` sums a period's comparison-group variance with its lags rather
-than in quadrature. With $\sigma_t = \sqrt{\sigma^2_{CG}(t)}$ over the period's
-rows in time order (zero where it is NaN) and $\rho_j$ the result's `cg_acf`,
+`compute_savings` sums a period's two comparison-group variances with their
+lags rather than in quadrature. With $\sigma_t = \sqrt{\sigma^2_{CG}(t)}$ and
+$\eta_t = \sqrt{\sigma^2_H(t)}$ over the period's rows in time order (zero where
+NaN) and $\rho_j$ the result's `cg_acf`,
 
 $$
 \text{var}_{CG} = \sum_t \sigma_t^2
 + 2 \sum_{j=1}^{K} \rho_j \sum_{t=1}^{n-j} \sigma_t \sigma_{t+j},
+\qquad
+\text{var}_{H} = \sum_t \eta_t^2
++ 2 \sum_{j=1}^{K} \rho_j \sum_{t=1}^{n-j} \eta_t \eta_{t+j},
 $$
 
-and the period variance is $\sum_t (\sigma_{cT,t}^2 - \sigma^2_{CG,t} +
-\sigma_{O,t}^2) + \text{var}_{CG}$, with $\sigma_O$ the observed uncertainty. A
-negative lag sum is set to zero, falling back to quadrature. With every
+and the period variance is $\sum_t (\sigma_{cT,t}^2 - \sigma^2_{CG,t} -
+\sigma^2_{H,t} + \sigma_{O,t}^2) + \text{var}_{CG} + \text{var}_{H}$, with
+$\sigma_O$ the observed uncertainty. The two series are independent of each
+other, so no product of one with the other enters. A series' negative lag sum
+is set to zero, so that series falls back to quadrature. With every
 $\rho_j = 0$ this equals the existing path exactly, and at billing cadence the
 read periods are summed in quadrature. Error shared by several treatments
 corrected against one pool is not combined across treatments, because the
-correction runs one meter at a time.
+correction runs one meter at a time. A combination across treatments would treat
+$\sigma_{CG}$ as shared among the treatments corrected against one pool, in full
+only where their weights on the pool coincide, and $\sigma_H$ as independent,
+which is why the two are reported separately.
 
 ## Settings
 
@@ -221,13 +272,36 @@ $\gamma = 0$ it is the plain mean of normalized residuals.
 - The treatment's own band is a t-scaled prediction interval, and it is combined
   with a one-sigma comparison-group term, the same heuristic mix the existing
   algorithms use.
-- A row's correction and `cg_var` depend only on its own reporting cross-section
+- A row's correction, `cg_var` and `cg_heterogeneity_var` depend only on its own
+  reporting cross-section
   and frozen baseline quantities, but the admitted pool can differ between
   deliveries through `min_window_coverage`, which is evaluated per delivered
   window. At hourly cadence the model's own band (`modeled_unc`) is an aggregate
   over the delivered window, so `corrected_unc` also moves with the window.
   Those are the two sources of difference between progressive and one-shot
   delivery.
+- The baseline noise the heterogeneity subtracts comes from in-sample baseline
+  residuals, which understate reporting-period noise and so leave the
+  heterogeneity high, and from residuals that contain misfit the cluster
+  shares, which the correction removes, and so leave it low. Their net is not
+  measured.
+- The heterogeneity at a row rests on that row's cross-section alone, so it is
+  as noisy as the cluster is small. Its degrees of freedom are about
+  $(n_0 - 1) \left(h_k / (h_k + \bar r_k)\right)^2$, with $\bar r_k$ the
+  subtracted noise, falling toward a few where the noise is as large as the
+  heterogeneity, so an interval for a single row needs a multiplier on those
+  degrees of freedom.
+- The truncation at zero biases the heterogeneity upward where it is small
+  against the noise and the cluster is small: on synthetic cross-sections with
+  equal weights and no true heterogeneity, the mean estimate is about a quarter
+  of the noise variance at five meters and an eighth at twenty. Sums over many
+  rows inherit that bias.
+- The heterogeneity's lag terms multiply square roots of noisy row estimates,
+  which understates them: with estimates independent across rows, by up to a
+  quarter at five to ten meters. Offsets that persist across rows make
+  neighbouring estimates agree and narrow the gap. A treatment's offset may
+  also persist beyond the longest autocorrelation lag, so aggregates over longer
+  periods understate it, as they do the correction's own error.
 - Contamination of the pool and the pool's representativeness for the treatment
   have no statistic. The in-sample autocorrelation may understate aggregate
   bands. In a first billing window with few matches, the band rests on the pooled

@@ -142,31 +142,35 @@ def _read_period_end(periods, start):
     raise ValueError(f"no read period starts at {start}.")
 
 
-def _lag_variance(rows, keys, cg_acf):
-    """Per-group serial-covariance term of the comparison-group error,
-    ``2 * sum_j rho_j * sum_t sigma_t sigma_{t+j}``, aligned to the sorted groups
-    of ``rows.groupby(keys)``.
+def _lag_variance(rows, keys, cg_acf, sigma_columns):
+    """Per-group serial-covariance term of independent error series that share the
+    autocorrelation ``cg_acf``, ``2 * sum_j rho_j * sum_t sum_s sigma_s,t sigma_s,t+j``
+    over the series ``s`` in ``sigma_columns``, aligned to the sorted groups of
+    ``rows.groupby(keys)``. Independent series contribute no cross-series products.
 
     Lags count consecutive rows in time order, and a lag product enters a group
     only when both rows belong to it, since a seasonal period is not contiguous.
-    A negative group sum, which a mean of moving-window autocorrelations does
-    not rule out, is set to 0 so that group falls back to quadrature.
+    A series' negative group sum, which a mean of moving-window autocorrelations
+    does not rule out, is set to 0 so that series falls back to quadrature there.
     """
     ordered = rows.sort_values(["id", "datetime"], kind="stable")
     codes = ordered.groupby(keys, sort=True).ngroup().to_numpy()
-    sigma = ordered["sigma"].to_numpy(dtype=np.float64)
+    sigmas = [ordered[column].to_numpy(dtype=np.float64) for column in sigma_columns]
     n_groups = len(np.unique(codes))
-    lag = np.zeros(n_groups)
+    lag = np.zeros((len(sigmas), n_groups))
 
     for j, rho in enumerate(cg_acf, start=1):
         if j >= len(codes):
             break
 
         same = codes[:-j] == codes[j:]
-        products = sigma[:-j][same] * sigma[j:][same]
-        lag += rho * np.bincount(codes[:-j][same], weights=products, minlength=n_groups)
+        for series, sigma in enumerate(sigmas):
+            products = sigma[:-j][same] * sigma[j:][same]
+            lag[series] += rho * np.bincount(
+                codes[:-j][same], weights=products, minlength=n_groups
+            )
 
-    lag = np.maximum(2.0 * lag, 0.0)
+    lag = np.maximum(2.0 * lag, 0.0).sum(axis=0)
 
     return lag
 
@@ -245,17 +249,21 @@ def compute_savings(correction, observed_unc=None, aggregation="native", season_
     exact reconstruction (unifying the two constructions is future work; see
     ``ROADMAP.md``).
 
-    An NDID result (rows carrying ``cg_var`` and a non-empty ``cg_acf``) adds
-    the serial correlation of its comparison-group error. With
-    ``sigma_t = sqrt(cg_var_t)`` (0 on uncovered rows and where ``cg_var`` is
-    NaN) and ``rho_j = cg_acf[j - 1]`` for lags ``j = 1..K``, a period's
-    variance is ``sum_t (corrected_unc_t^2 - cg_var_t + observed_unc_t^2) +
-    sum_t sigma_t^2 + 2 * sum_j rho_j * sum_t sigma_t sigma_{t+j}`` over its
-    covered rows: the treatment-model share stays in quadrature and the
-    comparison-group share takes its long-run variance. Lags count consecutive
-    native rows in time order, and a pair contributes only when both rows fall
-    in the period. A negative lag sum is set to 0, so that period falls back to
-    quadrature. With every ``rho_j = 0`` this is the quadrature path exactly.
+    An NDID result (rows carrying ``cg_var`` and ``cg_heterogeneity_var`` and a
+    non-empty ``cg_acf``) adds the serial correlation of its two comparison-group
+    error series, the correction's sampling error and the treatment's own offset
+    from the pool, which are independent of each other. With
+    ``sigma_t = sqrt(cg_var_t)`` and ``eta_t = sqrt(cg_heterogeneity_var_t)`` (0 on
+    uncovered rows and where the variance is NaN) and ``rho_j = cg_acf[j - 1]``
+    for lags ``j = 1..K``, a period's variance is ``sum_t corrected_unc_t^2 +
+    sum_t observed_unc_t^2 + 2 * sum_j rho_j * sum_t (sigma_t sigma_{t+j} +
+    eta_t eta_{t+j})`` over its covered rows: the treatment-model share stays in
+    quadrature and each comparison-group series takes its long-run variance. Lags
+    count consecutive native rows in time order, and a pair contributes only when
+    both rows fall in the period. A series' negative lag sum is set to 0, so that
+    series falls back to quadrature in that period. With every ``rho_j = 0`` this
+    is the quadrature path exactly. A frame carrying ``cg_var`` without
+    ``cg_heterogeneity_var`` raises ValueError.
     Billing NDID results carry an empty ``cg_acf`` (read periods are treated as
     serially independent) and, like the other algorithms, take the quadrature
     path.
@@ -283,6 +291,15 @@ def compute_savings(correction, observed_unc=None, aggregation="native", season_
     if season_def is None:
         season_def = default_season_def
 
+    if (
+        "cg_var" in correction.corrected.columns
+        and "cg_heterogeneity_var" not in correction.corrected.columns
+    ):
+        raise ValueError(
+            "An NDID correction frame carries cg_var and cg_heterogeneity_var together; "
+            "this one lacks cg_heterogeneity_var."
+        )
+
     long_run = (
         "cg_var" in correction.corrected.columns
         and correction.cg_acf is not None
@@ -291,7 +308,7 @@ def compute_savings(correction, observed_unc=None, aggregation="native", season_
     columns = ["id", "datetime", "observed", "corrected", "corrected_unc", "observed_unc"]
 
     if long_run:
-        columns.append("cg_var")
+        columns.extend(["cg_var", "cg_heterogeneity_var"])
 
     native = correction.corrected[columns].copy()
     native["datetime"] = native["datetime"].dt.as_unit("ns")
@@ -320,13 +337,17 @@ def compute_savings(correction, observed_unc=None, aggregation="native", season_
     keys = ["id", "period"]
 
     if long_run:
-        # sum_t (corrected_unc^2 - cg_var + observed_unc^2) + sum_t sigma_t^2 is the
-        # quadrature sum already in masked_savings_var, since sigma_t^2 = cg_var_t
-        # wherever sigma_t is nonzero; only the lag term remains to add.
-        cg_var = rows["cg_var"].to_numpy(dtype=np.float64)
-        has_sigma = rows["finite"].to_numpy() & np.isfinite(cg_var)
-        rows["sigma"] = np.sqrt(np.where(has_sigma, cg_var, 0.0))
-        lag_var = _lag_variance(rows, keys, correction.cg_acf)
+        # Each series' sum_t sigma_t^2 is already inside the quadrature sum in
+        # masked_savings_var, because corrected_unc^2 contains both variances wherever
+        # they are finite; only the lag terms remain to add.
+        finite = rows["finite"].to_numpy()
+        sigma_columns = ["sigma_cg", "sigma_heterogeneity"]
+        for sigma_column, var_column in zip(sigma_columns, ["cg_var", "cg_heterogeneity_var"]):
+            variance = rows[var_column].to_numpy(dtype=np.float64)
+            has_sigma = finite & np.isfinite(variance)
+            rows[sigma_column] = np.sqrt(np.where(has_sigma, variance, 0.0))
+
+        lag_var = _lag_variance(rows, keys, correction.cg_acf, sigma_columns)
     else:
         lag_var = None
 

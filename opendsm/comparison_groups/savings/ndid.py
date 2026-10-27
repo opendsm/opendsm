@@ -69,7 +69,41 @@ def _trust(e, w0, lam, trust_constant):
     return np.where(w0 > 0, trust, 0.0)
 
 
-def _validate(mTr, mTr_unc, s_Tr, q, oCGr, mCGr, s, S, cg_label, relevance, t_weight, laws):
+def _heterogeneity(e, w0, w, center, noise, v, ok):
+    """Variance of one more meter's normalized residual about ``center``, less the pool's
+    own noise.
+
+    The spread is taken over the untrimmed weights ``w0``, because the treatment meter is
+    not trimmed, about the trimmed point ``center`` the correction uses. Each meter's
+    variance enters the spread's expectation with weight ``g = p - 2 p p_trim + p_trim^2``,
+    so subtracting the ``g``-weighted baseline ``noise`` and dividing by ``c = sum(g)``
+    leaves the heterogeneity, exactly for independent meters under fixed weights whatever
+    their noise. Below an untrimmed Kish count of 2 the estimate blends toward the
+    cluster's pooled law ``v``, which stands in for the heterogeneity a single meter cannot
+    identify. Rows outside ``ok`` are 0.
+    """
+    W0 = np.where(ok, w0.sum(axis=1), 1.0)
+    W = np.where(ok, w.sum(axis=1), 1.0)
+    p = w0 / W0[:, None]
+    p_trim = w / W[:, None]
+
+    g = p - 2.0 * p * p_trim + p_trim**2
+    spread = (p * (e - center[:, None]) ** 2).sum(axis=1)
+    c = g.sum(axis=1)
+    pool_noise = (g * np.where(w0 > 0, noise, 0.0)).sum(axis=1)
+    n0 = np.where(ok, 1.0 / np.where(ok, (p**2).sum(axis=1), 1.0), 0.0)
+    blend = np.clip(n0 - 1.0, 0.0, 1.0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        cross = np.where(blend > 0, np.maximum((spread - pool_noise) / c, 0.0), 0.0)
+
+    het = np.where(ok, blend * cross + (1.0 - blend) * v, 0.0)
+
+    return het
+
+
+def _validate(
+    mTr, mTr_unc, s_Tr, q, oCGr, mCGr, s, noise, S, cg_label, relevance, t_weight, laws
+):
     T = len(mTr)
     for name, arr in (("mTr_unc", mTr_unc), ("s_Tr", s_Tr), ("q", q)):
         if arr.shape != (T,):
@@ -79,7 +113,7 @@ def _validate(mTr, mTr_unc, s_Tr, q, oCGr, mCGr, s, S, cg_label, relevance, t_we
         raise ValueError(f"'oCGr' must have shape ({T}, M); got {oCGr.shape}.")
 
     M = oCGr.shape[1]
-    for name, arr in (("mCGr", mCGr), ("s", s)):
+    for name, arr in (("mCGr", mCGr), ("s", s), ("noise", noise)):
         if arr.shape != (T, M):
             raise ValueError(f"'{name}' must have shape ({T}, {M}); got {arr.shape}.")
 
@@ -115,6 +149,7 @@ def ndid_correction_matrix(
     oCGr,
     mCGr,
     s,
+    noise,
     S,
     q,
     cg_label,
@@ -130,7 +165,13 @@ def ndid_correction_matrix(
     Each pool meter's reporting residual is normalized by its typical load, and the
     treatment's correction at a timestep is a ``t_weight``-combination of per-cluster
     weighted means of those normalized residuals, scaled back by the treatment's typical
-    load. Within a cluster, meters are weighted by how closely their predicted relative
+    load. The band adds to the treatment's own band two one-sigma variances: the sampling
+    variance of the per-cluster means, which every treatment corrected against the pool
+    shares, and the heterogeneity, the variance of the treatment's own normalized residual
+    about those means beyond the pool meters' own baseline noise, which is the treatment's
+    alone.
+
+    Within a cluster, meters are weighted by how closely their predicted relative
     load matches the treatment's (Cauchy state kernel), by size relevance and the size
     law, by ``relevance``, and by a robust cross-sectional trust that discounts extreme
     residuals after a Yeo-Johnson transform at the cluster's pooled lambda.
@@ -150,6 +191,9 @@ def ndid_correction_matrix(
         Treatment annual scale.
     oCGr, mCGr, s : array-like, shape (T, M)
         Pool observed, pool predicted and pool typical load, in each meter's units.
+    noise : array-like, shape (T, M)
+        Pool baseline noise: each meter's baseline residual variance at the row's cell
+        divided by its squared typical load there.
     S : array-like, shape (M,)
         Pool annual scales.
     q : array-like of int, shape (T,)
@@ -175,9 +219,14 @@ def ndid_correction_matrix(
     mTrc : ndarray, shape (T,)
         Corrected treatment prediction, in treatment units.
     corrected_unc : ndarray, shape (T,)
-        sqrt(mTr_unc**2 + cg_var), in treatment units.
+        sqrt(mTr_unc**2 + cg_var + cg_heterogeneity_var), in treatment units.
     cg_var : ndarray, shape (T,)
         One-sigma sampling variance of the correction, in treatment units squared.
+    cg_heterogeneity_var : ndarray, shape (T,)
+        One-sigma variance of the treatment's own offset from the per-cluster means,
+        ``s_Tr**2`` times the ``t_weight``-weighted cluster heterogeneities, in treatment
+        units squared. A meter's offset does not shrink when its weight spreads over
+        clusters, so the weights enter unsquared.
     cg_effective_n : ndarray, shape (T,)
         Cluster-weighted Kish effective number of pool meters.
     cg_acf : ndarray, shape (K_acf,)
@@ -199,6 +248,7 @@ def ndid_correction_matrix(
     oCGr = np.asarray(oCGr, dtype=np.float64)
     mCGr = np.asarray(mCGr, dtype=np.float64)
     s = np.asarray(s, dtype=np.float64)
+    noise = np.asarray(noise, dtype=np.float64)
     S = np.asarray(S, dtype=np.float64)
     q = np.asarray(q)
     cg_label = np.asarray(cg_label)
@@ -207,7 +257,9 @@ def ndid_correction_matrix(
         relevance = np.ones(oCGr.shape[1:])
     relevance = np.asarray(relevance, dtype=np.float64)
 
-    _validate(mTr, mTr_unc, s_Tr, q, oCGr, mCGr, s, S, cg_label, relevance, t_weight, laws)
+    _validate(
+        mTr, mTr_unc, s_Tr, q, oCGr, mCGr, s, noise, S, cg_label, relevance, t_weight, laws
+    )
 
     T, M = oCGr.shape
     row_finite = np.isfinite(mTr) & np.isfinite(s_Tr)
@@ -229,6 +281,7 @@ def ndid_correction_matrix(
     contributes = np.zeros((n_clusters, T), dtype=bool)
     e_hat = np.zeros((n_clusters, T))
     var = np.zeros((n_clusters, T))
+    het = np.zeros((n_clusters, T))
     n_eff = np.zeros((n_clusters, T))
     mask = np.zeros((T, M), dtype=bool)
     trust = np.zeros((T, M))
@@ -267,6 +320,7 @@ def ndid_correction_matrix(
         contributes[k] = ok
         e_hat[k] = np.where(ok, mean, 0.0)
         var[k] = np.where(ok, var_k, 0.0)
+        het[k] = _heterogeneity(e_k, w0, w, mean, noise[:, cols], laws.v[k, q], ok)
         n_eff[k] = n
         mask[:, cols] = w > 0
         trust[:, cols] = trust_k
@@ -279,22 +333,26 @@ def ndid_correction_matrix(
     mTrc = np.full(T, np.nan)
     corrected_unc = np.full(T, np.nan)
     cg_var = np.full(T, np.nan)
+    cg_heterogeneity_var = np.full(T, np.nan)
     cg_effective_n = np.zeros(T)
 
     no_state = row_finite & ~active
     mTrc[no_state] = mTr[no_state]
     cg_var[no_state] = 0.0
+    cg_heterogeneity_var[no_state] = 0.0
     corrected_unc[no_state] = mTr_unc[no_state]
 
     c = corrected
     mTrc[c] = mTr[c] - s_Tr[c] * (T_k[:, c] * e_hat[:, c]).sum(axis=0)
     cg_var[c] = s_Tr[c] ** 2 * (T_k[:, c] ** 2 * var[:, c]).sum(axis=0)
-    corrected_unc[c] = np.sqrt(mTr_unc[c] ** 2 + cg_var[c])
+    cg_heterogeneity_var[c] = s_Tr[c] ** 2 * (T_k[:, c] * het[:, c]).sum(axis=0)
+    corrected_unc[c] = np.sqrt(mTr_unc[c] ** 2 + cg_var[c] + cg_heterogeneity_var[c])
     cg_effective_n[c] = (T_k[:, c] * n_eff[:, c]).sum(axis=0)
 
     cg_acf = t_weight @ laws.acf
 
+    outputs = (mTrc, corrected_unc, cg_var, cg_heterogeneity_var, cg_effective_n, cg_acf, mask)
     if return_trust:
-        return mTrc, corrected_unc, cg_var, cg_effective_n, cg_acf, mask, trust
+        outputs = outputs + (trust,)
 
-    return mTrc, corrected_unc, cg_var, cg_effective_n, cg_acf, mask
+    return outputs
