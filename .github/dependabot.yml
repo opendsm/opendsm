@@ -1,5 +1,7 @@
 # One grouped pull request per ecosystem per month, and nothing in a month without updates.
 # A new major release of a Python dependency gets a pull request of its own.
+# Security fixes to Python dependencies open as alerts arrive, grouped per Dependabot run
+# with the same split for a new major release.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -18,6 +20,10 @@ updates:
     versioning-strategy: increase-if-necessary
     groups:
       python:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      python-security:
+        applies-to: security-updates
         patterns: ["*"]
         update-types: ["minor", "patch"]
   - package-ecosystem: docker
