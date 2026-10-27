@@ -10,15 +10,42 @@ Guidelines
 * Write new tests and run old tests! Make sure that % test coverage does not decrease.
 * Contributions are reviewed by a maintainer before acceptance. To facilitate
   review, please make a [pull request](https://github.com/opendsm/opendsm/pulls/new)
-  and provide a description and follow the checklist in the pull request template.
-  Tests will be automatically run using GitHub Actions after a pull request is created.
-* Prefix new feature branches with `feature/` and bug fix branches with `fix/`
-  and make pull requests directly against `master`.
+  against `master` from a branch prefixed `feature/` (new features) or `fix/`
+  (bug fixes), describe the change, and follow the checklist in the pull
+  request template. CI runs the tests on every pull request.
 * Contributions that add new required dependencies to the library will be
   given a more thorough review to ensure that those dependency additions
   1) do not pose a security risk and 2) are absolutely necessary.
-* Contributions that allow for data exfiltration by making external HTTP or TCP
-  requests will not be accepted.
+* Contributions that allow for data exfiltration will not be accepted. The
+  library sends no user data over the network, and its only request downloads
+  the test data published in the opendsm repository.
+
+Author responsibility
+---------------------
+
+AI tools (e.g., coding assistants and large language models) may be used for
+any part of a contribution, including code, tests, documentation, and pull
+request descriptions. Their use does not need to be disclosed, and the project
+does not ask which tools were used. The author is responsible for all of the
+contribution, however it was produced, and the rules below apply to every
+contribution in the same way.
+
+* You are responsible for everything you submit. Understand each change well
+  enough to explain it in review. Maintainers may close a pull request whose
+  author cannot, because review depends on the author answering questions
+  about the change.
+* Your `Signed-off-by` line certifies, under the Developer Certificate of
+  Origin, that you have the right to submit every part of the contribution,
+  including any part you did not write by hand.
+* Statements in a pull request description are yours. Claim only what you
+  have checked (e.g., that the suite passes on a platform or that model
+  results are unchanged), and say what you left unchecked.
+* Do not change, skip, or loosen an existing test or snapshot to make a
+  failing test pass. When a pull request changes an existing test or
+  snapshot, its description explains why.
+* Bug reports include a short, self-contained snippet that reproduces the
+  problem, as the bug report template asks. Report security problems
+  privately as [SECURITY.md](SECURITY.md) describes, never in a public issue.
 
 Contributor maintenance responsibility
 --------------------------------------
@@ -31,26 +58,25 @@ maintainers to be too difficult to maintain will not be accepted.
 Testing
 -------
 
-Please write unit tests for all new features. At time of writing, this
-package has 100% test coverage. We would like to maintain that coverage level,
-because 100% coverage is easier than 99% coverage. This does not necessarily
-mean that all line are tested. For lines that are sufficiently inconvenient to
-test, we maintain 100% test coverage by adding `# pragma: no cover` comments
-after the difficult to test lines or blocks.
+Please write tests for all new features, and pair each bug fix with a
+regression test that fails without the fix.
 
-This helps us stay on top of un-covered sections without sacrificing the
-convenience of 100% coverage and without being too overbearing about tests.
+Test coverage must not fall. The floor is `fail_under` in `pyproject.toml`,
+measured over the full suite with numba JIT disabled so that JIT-compiled
+functions are visible to the tracer. CI does not measure coverage, so run
+`tox -e coverage` locally before opening a pull request (the run is serial
+and memory-intensive). Lines that are impractical to test may carry a
+`# pragma: no cover` comment, with a nearby comment giving the reason.
 
 Tests are run using the following commands (flags are passed to the py.test
 executable):
 
 ```
-docker-compose run --rm test                         # run all tests
+docker-compose run --rm test                            # run all tests
 
 # cheat sheet of variations
-docker-compose run --rm test --no-cov                # no coverage
-docker-compose run --rm test tests/test_features.py  # run a specific suite
-docker-compose run --rm test -k compute              # filter for tests with `compute` in the name
+docker-compose run --rm test tests/eemeter/daily_model  # run a specific suite
+docker-compose run --rm test -k compute                 # filter for tests with `compute` in the name
 ```
 
 Test configuration can be found in `pyproject.toml` (`[tool.pytest.ini_options]`), `tox.ini`, and `tests/conftest.py`.
@@ -70,28 +96,26 @@ License
 
 This project is licensed under [Apache 2.0](LICENSE).
 
-All source files must apply the following SPDX header:
+Every source file must carry the following license header at the top, after
+any shebang or encoding line:
 
 ``` python
-
-#  Copyright 2014-2025 OpenDSM contributors
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#      http://www.apache.org/licenses/LICENSE-2.0
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Contributors to the OpenDSM project
+# SPDX-License-Identifier: Apache-2.0
 ```
+
+The header carries no year, so it never needs updating. Keep the notices of
+any third-party code a file adapts, and add that code's license to the
+identifier line (e.g., `Apache-2.0 AND MIT`).
 
 Developer Certificate of Origin
 -------------------------------
 
 This project uses the
-[Developer Certificate of Origin](https://developercertificate.org/),
-the text of which is copied below:
+[Developer Certificate of Origin](https://developercertificate.org/). Sign off
+every commit with `git commit -s`, which adds a `Signed-off-by` line with your
+name and email. The DCO check on each pull request fails when a commit lacks
+it. The text of the certificate is copied below:
 
 ```
 Developer Certificate of Origin
@@ -136,11 +160,11 @@ By making a contribution to this project, I certify that:
 Charter
 -------
 
-The charter for the open source project can be find in [CHARTER](CHARTER) and
+The charter for the open source project can be found in [CHARTER](CHARTER.md) and
 contains the following sections:
 
 1. Mission and Scope of the Project
-2. Techincal Steering Committee
+2. Technical Steering Committee
 3. TSC Voting
 4. Compliance with Policies
 5. Community Assets
@@ -174,5 +198,6 @@ Other resources
 - [README](README.md): basic project information shown on the PyPI project page.
 - [MAINTAINERS](MAINTAINERS.md): an ordered list of project maintainers.
 - [LICENSE](LICENSE): Apache 2.0.
-- [CHARTER](CHARTER): open source project charter.
+- [CHARTER](CHARTER.md): open source project charter.
 - [CODE_OF_CONDUCT](CODE_OF_CONDUCT.md): code of conduct for contributors.
+- [SECURITY](SECURITY.md): how to report a vulnerability.

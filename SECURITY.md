@@ -16,7 +16,8 @@ The predecessor package `eemeter` on PyPI receives no fixes. Users of `eemeter` 
 
 Report vulnerabilities privately through GitHub's private vulnerability reporting for this
 repository: <https://github.com/opendsm/opendsm/security/advisories/new>. Do not open a public
-issue or pull request for a security problem.
+issue or pull request for a security problem. Include the affected version and a proof of
+concept or steps that reproduce the problem.
 
 Maintainers acknowledge reports within seven days. Confirmed vulnerabilities are fixed in a
 release and disclosed afterwards as a GitHub security advisory with a CVE identifier, crediting
