@@ -1,3 +1,14 @@
+#  Copyright 2014-2025 OpenDSM contributors
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#      http://www.apache.org/licenses/LICENSE-2.0
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+
 """Hourly parameter counts include each fitted intercept, even with no active slopes."""
 
 import numpy as np
@@ -9,7 +20,7 @@ from opendsm.eemeter import HourlyModel
 
 @pytest.mark.parametrize("with_design_matrix", [False, True])
 @pytest.mark.parametrize(
-    "fit_intercept, active_slopes", [(True, 0), (True, 2), (False, 2)]
+    "fit_intercept, active_slopes", [(True, 0), (True, 2), (False, 0), (False, 2)]
 )
 def test_baseline_metrics_count_hourly_intercepts(
     fit_intercept, active_slopes, with_design_matrix
@@ -31,9 +42,11 @@ def test_baseline_metrics_count_hourly_intercepts(
 
     expected_per_hour = active_slopes + int(fit_intercept)
     assert model.baseline_metrics.num_model_params == 24 * expected_per_hour
+    assert model.baseline_metrics.ddof == len(df) - 24 * expected_per_hour
     assert len(model.baseline_hour_metrics) == 24
     for metrics in model.baseline_hour_metrics.values():
         assert metrics.num_model_params == expected_per_hour
+        assert metrics.ddof == 60 - expected_per_hour
 
 
 @pytest.mark.parametrize("fit_intercept", [False, True])
