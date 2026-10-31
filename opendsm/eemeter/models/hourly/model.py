@@ -1318,15 +1318,20 @@ class HourlyModel:
                 self._model = self._model.base_model
 
             coef = self._model.coef_
+            n_intercept = int(self.settings.elasticnet.fit_intercept)
+            # Each of the 24 hourly outputs fits its own intercept.
+            num_parameters = np.count_nonzero(coef) + 24 * n_intercept
         elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
             coef = self._model.dual_coef_
+            # Preserve the existing KernelRidge parameter-count convention.
+            n_intercept = 1
+            num_parameters = np.count_nonzero(coef) + 1
 
         df_measured = df_meter.loc[self._measured_hours(df_meter)]
 
-        num_parameters = np.count_nonzero(coef)
         self.baseline_metrics = BaselineMetrics(
             df=df_measured,
-            num_model_params=num_parameters + 1, # + 1 for intercept
+            num_model_params=num_parameters,
         )
 
         # calculate baseline metrics per hour-of-day with edf-based num_model_params
@@ -1357,7 +1362,7 @@ class HourlyModel:
                 num_params_h = max(1, round(edf_h))
             else:
                 # Fallback: count_nonzero (KernelRidge or missing X_fit)
-                num_params_h = np.count_nonzero(hour_coef) + 1
+                num_params_h = np.count_nonzero(hour_coef) + n_intercept
 
             self.baseline_hour_metrics[hour] = BaselineMetrics(
                 df=hour_data,
@@ -1387,14 +1392,15 @@ class HourlyModel:
 
         Uses the Zou-Hastie closed form: edf = Σ d²/(d² + λ₂) where d are
         singular values of the (optionally weighted) design matrix restricted
-        to active columns at this hour. +1 for intercept.
+        to active columns at this hour, plus one when an intercept is fitted.
 
         X_fit is per-day (shape n_fit_days × n_features), shared across all hours.
         Each hour uses the same X but different active columns from coef[hour].
         """
+        n_intercept = int(self.settings.elasticnet.fit_intercept)
         active = np.nonzero(hour_coef)[0]
         if len(active) == 0:
-            return 1  # intercept only
+            return n_intercept
 
         X_active = X_fit[:, active]
         if hasattr(X_active, 'toarray'):
@@ -1406,7 +1412,7 @@ class HourlyModel:
             X_active = np.sqrt(w_h)[:, np.newaxis] * X_active
 
         s = np.linalg.svd(X_active, compute_uv=False)
-        edf = float(np.sum(s**2 / (s**2 + lambda_2))) + 1  # +1 for intercept
+        edf = float(np.sum(s**2 / (s**2 + lambda_2))) + n_intercept
 
         return edf
 
