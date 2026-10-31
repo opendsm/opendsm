@@ -235,7 +235,7 @@ class BaselineMetrics(ArbitraryPydanticModel):
         baseline period data.
     num_model_params : int
         Number of parameters in the baseline model (used for degrees of freedom
-        adjustments). Must be >= 1.
+        adjustments). Must be >= 0.
 
     Attributes
     ----------
@@ -349,7 +349,7 @@ class BaselineMetrics(ArbitraryPydanticModel):
     )
 
     num_model_params: int = pydantic.Field(
-        ge=1,
+        ge=0,
         validate_default=True,
         description="Number of parameters in the baseline model",
     )
@@ -1130,7 +1130,7 @@ class BaselineMetrics(ArbitraryPydanticModel):
             return 1 - safe_divide(num, den, _MIN_DENOMINATOR)
 
         return safe_divide(den, num, _MIN_DENOMINATOR) - 1
-    
+
     @computed_field_cached_property()
     def pearson_r(self) -> float:
         """Calculate Pearson correlation coefficient.
@@ -1197,7 +1197,7 @@ class BaselineMetrics(ArbitraryPydanticModel):
             return "bad"
         else:
             return "very bad"
-        
+
     @computed_field_cached_property()
     def explained_variance_score(self) -> float:
         """Calculate the explained variance score.
@@ -1215,7 +1215,7 @@ class BaselineMetrics(ArbitraryPydanticModel):
         den = self.observed.variance
 
         return 1 - safe_divide(num, den, _MIN_DENOMINATOR)
-    
+
 
 def BaselineMetricsFromDict(input_dict: dict) -> BaselineMetrics:
     """Construct a BaselineMetrics instance from a dictionary.
@@ -1480,7 +1480,7 @@ class ReportingMetrics(pydantic.BaseModel):
             return None
 
         return self.total_savings_uncertainty / np.sqrt(self.n)
-    
+
 
 class AutocorrelationMethod(Enum):
     """Methods for computing autocorrelation function.
