@@ -175,6 +175,45 @@ def test_reduce_model(
     assert np.allclose(x, expected_x)
 
 
+# T_min, T_max, T_min_seg, T_max_seg for the single-slope reduce_model cases
+_SINGLE_SLOPE_BNDS = (50.0, 90.0, 55.0, 85.0)
+
+
+@pytest.mark.parametrize(
+    ("hdd_beta", "cdd_beta", "bp", "expected_x"),
+    [(0.0, 2.0, 50.0, [50.0, 2.0, 100.0]), (2.0, 0.0, 90.0, [90.0, -2.0, 100.0])],
+    ids=["cooling_from_T_min", "heating_from_T_max"],
+)
+def test_reduce_model_keeps_single_slope_balance_point(
+    hdd_beta, cdd_beta, bp, expected_x
+):
+    """Reducing to one slope keeps a balance point at that slope's own data edge."""
+    coef_id, x = reduce_model(
+        bp, hdd_beta, 0.0, bp, cdd_beta, 0.0, 100.0, *_SINGLE_SLOPE_BNDS, "hdd_tidd_cdd"
+    )
+
+    assert coef_id == ["c_hdd_bp", "c_hdd_beta", "intercept"]
+    assert np.allclose(x, expected_x), f"expected {expected_x}, got {x}"
+
+
+@pytest.mark.parametrize(
+    ("hdd_beta", "cdd_beta", "bp", "expected_x"),
+    [(0.0, 2.0, 52.0, [55.0, 2.0, 100.0]), (2.0, 0.0, 88.0, [85.0, -2.0, 100.0])],
+    ids=["cooling_in_min_buffer", "heating_in_max_buffer"],
+)
+def test_reduce_model_moves_balance_point_in_buffer_to_segment_bound(
+    hdd_beta, cdd_beta, bp, expected_x
+):
+    """Reducing to one slope moves a balance point inside the temperature buffer to the
+    segment bound."""
+    coef_id, x = reduce_model(
+        bp, hdd_beta, 0.0, bp, cdd_beta, 0.0, 100.0, *_SINGLE_SLOPE_BNDS, "hdd_tidd_cdd"
+    )
+
+    assert coef_id == ["c_hdd_bp", "c_hdd_beta", "intercept"]
+    assert np.allclose(x, expected_x), f"expected {expected_x}, got {x}"
+
+
 class TestOptimizeResult:
     @pytest.fixture
     def optimize_result(self):

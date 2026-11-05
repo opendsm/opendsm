@@ -85,7 +85,9 @@ def fit_c_hdd_tidd(
     T_initial, T_segment = get_T_bnds(T, settings)
     c_hdd_bnds = T_initial if initial_fit else T_segment
 
-    # set bounds and alter coefficient guess for single slope models w/o an intercept segment
+    # set bounds and alter coefficient guess for single slope models w/o a TIDD segment;
+    # the guess's intercept moves along its slope to the new breakpoint
+    single_slope = False
     if not smooth and not initial_fit:
         T_min, T_max = T_initial
         T_min_seg, T_max_seg = T_segment
@@ -94,16 +96,18 @@ def fit_c_hdd_tidd(
             x0.hdd_bp >= T_max_seg or isclose(x0.hdd_bp, T_max_seg, rel_tol=rtol)
         ):
             # model is heating only, and breakpoint is approximately within max temp buffer
-            x0.intercept -= x0.hdd_bp * T_max
+            x0.intercept += x0.hdd_beta * (T_max - x0.hdd_bp)
             x0.hdd_bp = T_max
             c_hdd_bnds = [T_max, T_max]
+            single_slope = True
         if x0.model_type is ModelType.TIDD_CDD and (
             x0.cdd_bp <= T_min_seg or isclose(x0.cdd_bp, T_min_seg, rel_tol=rtol)
         ):
             # model is cooling only, and breakpoint is approximately within min temp buffer
-            x0.intercept -= x0.cdd_bp * T_min
+            x0.intercept += x0.cdd_beta * (T_min - x0.cdd_bp)
             x0.cdd_bp = T_min
             c_hdd_bnds = [T_min, T_min]
+            single_slope = True
 
     # not known whether heating or cooling model on initial fit
     if initial_fit:
@@ -115,6 +119,11 @@ def fit_c_hdd_tidd(
         c_hdd_beta_bnds = [0, max_slope]
 
     intercept_bnds = np.quantile(obs, [0.01, 0.99])
+    if single_slope:
+        # a single slope's intercept is its value at the coldest (cooling) or warmest (heating)
+        # temperature, the line's lowest point, which can fall below the observed low tail
+        intercept_bnds[0] -= intercept_bnds[1] - intercept_bnds[0]
+
     if smooth:
         c_hdd_k_bnds = [0, 1e3]
         bnds_0 = [c_hdd_bnds, c_hdd_beta_bnds, c_hdd_k_bnds, intercept_bnds]
