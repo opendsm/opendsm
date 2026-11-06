@@ -23,10 +23,7 @@ def test_full_model_import():
     cdd_beta = 0.02
     cdd_k = 0.002
     intercept = 100
-    T_fit_bnds = np.array([10, 100]).astype(np.double)
     T = np.linspace(10, 100, 130).astype(np.double)
 
-    res = full_model(
-        hdd_bp, hdd_beta, hdd_k, cdd_bp, cdd_beta, cdd_k, intercept, T_fit_bnds, T
-    )
+    res = full_model(hdd_bp, hdd_beta, hdd_k, cdd_bp, cdd_beta, cdd_k, intercept, T)
     assert res.size == T.size

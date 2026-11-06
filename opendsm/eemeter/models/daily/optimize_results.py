@@ -422,9 +422,8 @@ class OptimizedResult:
             x = [hdd_bp, hdd_beta, hdd_k, cdd_bp, cdd_beta, cdd_k, intercept]
 
         hdd_bp, cdd_bp, intercept = x[0], x[3], x[6]
-        T_fit_bnds = np.array([self.T_min, self.T_max])
 
-        model = full_model(*x, T_fit_bnds, T)
+        model = full_model(*x, T)
         f_unc = np.ones_like(model) * self.f_unc
 
         load_only = model - intercept

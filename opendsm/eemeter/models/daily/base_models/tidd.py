@@ -81,10 +81,10 @@ def set_full_model_coeffs(intercept):
     return np.array([hdd_bp, hdd_beta, hdd_k, cdd_bp, cdd_beta, cdd_k, intercept])
 
 
-def _tidd(intercept, T_fit_bnds=np.array([]), T=np.array([])):
+def _tidd(intercept, T=np.array([])):
     model_vars = set_full_model_coeffs(intercept)
 
-    return full_model(*model_vars, T_fit_bnds, T)
+    return full_model(*model_vars, T)
 
 
 def _tidd_total_sum_of_squares(intercept, T, obs):

@@ -28,7 +28,6 @@ def full_model(
     cdd_beta,
     cdd_k,
     intercept,
-    T_fit_bnds=np.array([]),
     T=np.array([]),
 ):
     """
@@ -42,7 +41,6 @@ def full_model(
     cdd_beta (float): The beta value for the cooling model.
     cdd_k (float): The k value for the cooling model.
     intercept (float): The intercept value for the model.
-    T_fit_bnds (numpy array): The temperature bounds for the model fitting. Default is an empty numpy array.
     T (numpy array): The temperature values. Default is an empty numpy array.
 
     Returns:

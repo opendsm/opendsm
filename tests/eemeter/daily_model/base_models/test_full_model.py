@@ -23,7 +23,6 @@ T_MIN = 50.0
 T_MIN_SEG = 55.0
 T_MAX_SEG = 85.0
 T_MAX = 90.0
-T_FIT_BNDS = np.array([T_MIN, T_MAX])
 INTERCEPT = 100.0
 
 
@@ -82,9 +81,7 @@ def test_balance_point_in_temperature_buffer_moves_to_segment_bound(bp, beta, ex
 def test_single_slope_is_flat_beyond_its_balance_point(hdd_beta, cdd_beta, bp, T):
     """Past the balance point at the edge of the fitted temperatures, a single slope predicts
     its intercept."""
-    E = full_model(
-        bp, hdd_beta, 0.0, bp, cdd_beta, 0.0, INTERCEPT, T_FIT_BNDS, np.array(T)
-    )
+    E = full_model(bp, hdd_beta, 0.0, bp, cdd_beta, 0.0, INTERCEPT, np.array(T))
 
     np.testing.assert_allclose(E, INTERCEPT, err_msg=f"temperatures {T} gave {E}")
 
@@ -101,8 +98,6 @@ def test_single_slope_extends_beyond_the_data_on_its_slope_side(
     hdd_beta, cdd_beta, bp, T, expected
 ):
     """Beyond the fitted temperatures on the sloped side, a single slope keeps its trend."""
-    E = full_model(
-        bp, hdd_beta, 0.0, bp, cdd_beta, 0.0, INTERCEPT, T_FIT_BNDS, np.array(T)
-    )
+    E = full_model(bp, hdd_beta, 0.0, bp, cdd_beta, 0.0, INTERCEPT, np.array(T))
 
     np.testing.assert_allclose(E, expected, err_msg=f"temperatures {T} gave {E}")

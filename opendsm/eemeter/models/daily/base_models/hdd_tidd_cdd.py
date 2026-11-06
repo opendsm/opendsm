@@ -132,13 +132,12 @@ def _hdd_tidd_cdd(
     cdd_bp,
     cdd_beta,
     intercept,
-    T_fit_bnds=np.array([]),
     T=np.array([]),
 ):
     hdd_k = cdd_k = 0
 
     return full_model(
-        hdd_bp, hdd_beta, hdd_k, cdd_bp, cdd_beta, cdd_k, intercept, T_fit_bnds, T
+        hdd_bp, hdd_beta, hdd_k, cdd_bp, cdd_beta, cdd_k, intercept, T
     )
 
 
@@ -155,7 +154,6 @@ def evaluate_hdd_tidd_cdd_smooth(
     cdd_beta,
     cdd_k,
     intercept,
-    T_fit_bnds,
     T,
     pct_k=True,
 ):
@@ -163,7 +161,7 @@ def evaluate_hdd_tidd_cdd_smooth(
         [hdd_bp, hdd_k, cdd_bp, cdd_k] = get_smooth_coeffs(hdd_bp, hdd_k, cdd_bp, cdd_k)
 
     return _hdd_tidd_cdd_smooth(
-        hdd_bp, hdd_beta, hdd_k, cdd_bp, cdd_beta, cdd_k, intercept, T_fit_bnds, T
+        hdd_bp, hdd_beta, hdd_k, cdd_bp, cdd_beta, cdd_k, intercept, T
     )
 
 
@@ -215,7 +213,6 @@ def _hdd_tidd_cdd_smooth_x0(T, obs, alpha, settings, smooth, min_weight=0.0):
                 cdd_beta,
                 cdd_k,
                 intercept,
-                T_fit_bnds,
                 T,
             )
             resid = model - obs

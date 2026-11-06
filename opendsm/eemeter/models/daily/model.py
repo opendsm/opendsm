@@ -1042,9 +1042,8 @@ class DailyModel:
             x = [hdd_bp, hdd_beta, hdd_k, cdd_bp, cdd_beta, cdd_k, intercept]
 
         hdd_bp, cdd_bp, intercept = x[0], x[3], x[6]
-        T_fit_bnds = np.array([T_min, T_max])
 
-        model = full_model(*x, T_fit_bnds, T.astype(np.float64))
+        model = full_model(*x, T.astype(np.float64))
         f_unc = np.ones_like(model) * submodel.f_unc
 
         load_only = model - intercept

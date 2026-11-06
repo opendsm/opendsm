@@ -344,8 +344,6 @@ def _c_hdd_tidd_bp0(T, obs, alpha, settings, min_weight=0.0):
     T = T[idx_sorted]
     obs = obs[idx_sorted]
 
-    T_fit_bnds = np.array([T[0], T[-1]])
-
     def bp_obj_fcn_dec(T, obs):
         def bp_obj_fcn(x, grad=[]):
             [c_hdd_bp] = x
@@ -370,7 +368,7 @@ def _c_hdd_tidd_bp0(T, obs, alpha, settings, min_weight=0.0):
                 intercept = get_intercept(obs[idx_hdd], alpha)
 
             model = _c_hdd_tidd(
-                c_hdd_bp, c_hdd_beta, intercept, T_fit_bnds=T_fit_bnds, T=T
+                c_hdd_bp, c_hdd_beta, intercept, T=T
             )
 
             resid = model - obs
@@ -410,17 +408,17 @@ def _c_hdd_tidd_bp0(T, obs, alpha, settings, min_weight=0.0):
 
 
 def _c_hdd_tidd(
-    c_hdd_bp, c_hdd_beta, intercept, T_fit_bnds=np.array([]), T=np.array([])
+    c_hdd_bp, c_hdd_beta, intercept, T=np.array([])
 ):
     model_vars = set_full_model_coeffs(c_hdd_bp, c_hdd_beta, intercept)
-    return full_model(*model_vars, T_fit_bnds, T)
+    return full_model(*model_vars, T)
 
 
 def _c_hdd_tidd_smooth(
-    c_hdd_bp, c_hdd_beta, c_hdd_k, intercept, T_fit_bnds=np.array([]), T=np.array([])
+    c_hdd_bp, c_hdd_beta, c_hdd_k, intercept, T=np.array([])
 ):
     x = set_full_model_coeffs_smooth(c_hdd_bp, c_hdd_beta, c_hdd_k, intercept)
-    return full_model(*x, T_fit_bnds, T)
+    return full_model(*x, T)
 
 
 def _c_hdd_tidd_weight(
