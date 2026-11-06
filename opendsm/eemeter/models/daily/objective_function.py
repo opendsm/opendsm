@@ -68,25 +68,23 @@ def no_weights_obj_fcn(X, aux_inputs):
     return SSE
 
 
-def model_fcn_dec(model_fcn_full, T_fit_bnds, T):
+def model_fcn_dec(model_fcn_full, T):
     """
-    Returns a function that takes only X as input and returns the output of model_fcn_full with X, T_fit_bnds, and T as inputs.
+    Returns a function that takes only X as input and returns the output of model_fcn_full with X and T as inputs.
 
     Parameters:
     - model_fcn_full: function
-        The full model function that takes X, T_fit_bnds, and T as inputs.
-    - T_fit_bnds: tuple
-        The bounds of the temperature range.
+        The full model function that takes X and T as inputs.
     - T: float
         The temperature value.
 
     Returns:
     - function
-        A function that takes only X as input and returns the output of model_fcn_full with X, T_fit_bnds, and T as inputs.
+        A function that takes only X as input and returns the output of model_fcn_full with X and T as inputs.
     """
 
     def model_fcn_X_only(X):
-        return model_fcn_full(*X, T_fit_bnds, T)
+        return model_fcn_full(*X, T)
 
     return model_fcn_X_only
 
@@ -131,7 +129,7 @@ def obj_fcn_decorator(
     T_fit_bnds = np.array([np.min(T), np.max(T)])
     T_range = T_fit_bnds[1] - T_fit_bnds[0]
 
-    model_fcn = model_fcn_dec(model_fcn_full, T_fit_bnds, T)
+    model_fcn = model_fcn_dec(model_fcn_full, T)
 
     lasso_a = settings.regularization_percent_lasso * settings.regularization_alpha
     ridge_a = (

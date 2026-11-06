@@ -23,6 +23,7 @@ from opendsm.eemeter.models.daily.base_models.full_model import full_model
 from opendsm.eemeter.models.daily.base_models.hdd_tidd_cdd import full_model_weight
 from opendsm.eemeter.models.daily.objective_function import obj_fcn_decorator
 from opendsm.eemeter.models.daily.utilities.opt_settings import OptimizationSettings
+from opendsm.eemeter.models.daily.utilities.selection_criteria import selection_criteria
 from opendsm.eemeter.models.daily.optimize import InitialGuessOptimizer, Optimizer
 from opendsm.eemeter.models.daily.parameters import ModelCoefficients, ModelType
 from opendsm.eemeter.models.daily.utilities.base_model import (
@@ -85,7 +86,10 @@ def fit_c_hdd_tidd(
     T_initial, T_segment = get_T_bnds(T, settings)
     c_hdd_bnds = T_initial if initial_fit else T_segment
 
-    # set bounds and alter coefficient guess for single slope models w/o an intercept segment
+    # a guess whose breakpoint sits approximately within the temperature buffer may be a
+    # single slope model w/o a TIDD segment: its breakpoint moves to the data edge and
+    # its intercept along its slope to that edge
+    single_slope_x0 = None
     if not smooth and not initial_fit:
         T_min, T_max = T_initial
         T_min_seg, T_max_seg = T_segment
@@ -94,16 +98,16 @@ def fit_c_hdd_tidd(
             x0.hdd_bp >= T_max_seg or isclose(x0.hdd_bp, T_max_seg, rel_tol=rtol)
         ):
             # model is heating only, and breakpoint is approximately within max temp buffer
-            x0.intercept -= x0.hdd_bp * T_max
-            x0.hdd_bp = T_max
-            c_hdd_bnds = [T_max, T_max]
+            single_slope_x0 = x0.model_copy()
+            single_slope_x0.intercept += x0.hdd_beta * (T_max - x0.hdd_bp)
+            single_slope_x0.hdd_bp = T_max
         if x0.model_type is ModelType.TIDD_CDD and (
             x0.cdd_bp <= T_min_seg or isclose(x0.cdd_bp, T_min_seg, rel_tol=rtol)
         ):
             # model is cooling only, and breakpoint is approximately within min temp buffer
-            x0.intercept -= x0.cdd_bp * T_min
-            x0.cdd_bp = T_min
-            c_hdd_bnds = [T_min, T_min]
+            single_slope_x0 = x0.model_copy()
+            single_slope_x0.intercept += x0.cdd_beta * (T_min - x0.cdd_bp)
+            single_slope_x0.cdd_bp = T_min
 
     # not known whether heating or cooling model on initial fit
     if initial_fit:
@@ -115,6 +119,66 @@ def fit_c_hdd_tidd(
         c_hdd_beta_bnds = [0, max_slope]
 
     intercept_bnds = np.quantile(obs, [0.01, 0.99])
+    fit_inputs = (T, obs, weights, settings, opt_options, smooth, alpha, initial_fit)
+    res = _optimize_c_hdd_tidd(
+        *fit_inputs, x0, bnds, c_hdd_bnds, c_hdd_beta_bnds, intercept_bnds
+    )
+    if single_slope_x0 is None:
+        return res
+
+    # a single slope's intercept is its value at the coldest (cooling) or warmest (heating)
+    # temperature, the line's lowest point, which can fall below the observed low tail
+    single_slope_intercept_bnds = intercept_bnds.copy()
+    single_slope_intercept_bnds[0] -= intercept_bnds[1] - intercept_bnds[0]
+    edge = single_slope_x0.to_np_array()[0]
+    res_single_slope = _optimize_c_hdd_tidd(
+        *fit_inputs,
+        single_slope_x0,
+        bnds,
+        [edge, edge],
+        c_hdd_beta_bnds,
+        single_slope_intercept_bnds,
+    )
+
+    # keep whichever shape the data support better: the single slope fixes its breakpoint,
+    # so it has one fewer free coefficient than the fit with a TIDD segment. Both are scored on
+    # squared residuals under the data's weights, since each fit's robust loss discounts
+    # different days
+    def weighted_sse(fit):
+        if weights is None:
+            return np.sum(fit.resid**2)
+
+        return np.sum(weights * fit.resid**2)
+
+    criteria_single_slope = selection_criteria(
+        weighted_sse(res_single_slope), res_single_slope.TSS, res_single_slope.N, 2
+    )
+    criteria_tidd_segment = selection_criteria(weighted_sse(res), res.TSS, res.N, 3)
+    if criteria_single_slope <= criteria_tidd_segment:
+        return res_single_slope
+
+    return res
+
+
+def _optimize_c_hdd_tidd(
+    T,
+    obs,
+    weights,
+    settings,
+    opt_options,
+    smooth,
+    alpha,
+    initial_fit,
+    x0,
+    bnds,
+    c_hdd_bnds,
+    c_hdd_beta_bnds,
+    intercept_bnds,
+):
+    if bnds is not None:
+        # _c_hdd_tidd_update_bnds writes into the bounds it is given
+        bnds = np.copy(bnds)
+
     if smooth:
         c_hdd_k_bnds = [0, 1e3]
         bnds_0 = [c_hdd_bnds, c_hdd_beta_bnds, c_hdd_k_bnds, intercept_bnds]
@@ -335,8 +399,6 @@ def _c_hdd_tidd_bp0(T, obs, alpha, settings, min_weight=0.0):
     T = T[idx_sorted]
     obs = obs[idx_sorted]
 
-    T_fit_bnds = np.array([T[0], T[-1]])
-
     def bp_obj_fcn_dec(T, obs):
         def bp_obj_fcn(x, grad=[]):
             [c_hdd_bp] = x
@@ -361,7 +423,7 @@ def _c_hdd_tidd_bp0(T, obs, alpha, settings, min_weight=0.0):
                 intercept = get_intercept(obs[idx_hdd], alpha)
 
             model = _c_hdd_tidd(
-                c_hdd_bp, c_hdd_beta, intercept, T_fit_bnds=T_fit_bnds, T=T
+                c_hdd_bp, c_hdd_beta, intercept, T=T
             )
 
             resid = model - obs
@@ -401,17 +463,17 @@ def _c_hdd_tidd_bp0(T, obs, alpha, settings, min_weight=0.0):
 
 
 def _c_hdd_tidd(
-    c_hdd_bp, c_hdd_beta, intercept, T_fit_bnds=np.array([]), T=np.array([])
+    c_hdd_bp, c_hdd_beta, intercept, T=np.array([])
 ):
     model_vars = set_full_model_coeffs(c_hdd_bp, c_hdd_beta, intercept)
-    return full_model(*model_vars, T_fit_bnds, T)
+    return full_model(*model_vars, T)
 
 
 def _c_hdd_tidd_smooth(
-    c_hdd_bp, c_hdd_beta, c_hdd_k, intercept, T_fit_bnds=np.array([]), T=np.array([])
+    c_hdd_bp, c_hdd_beta, c_hdd_k, intercept, T=np.array([])
 ):
     x = set_full_model_coeffs_smooth(c_hdd_bp, c_hdd_beta, c_hdd_k, intercept)
-    return full_model(*x, T_fit_bnds, T)
+    return full_model(*x, T)
 
 
 def _c_hdd_tidd_weight(

@@ -28,7 +28,6 @@ def full_model(
     cdd_beta,
     cdd_k,
     intercept,
-    T_fit_bnds=np.array([]),
     T=np.array([]),
 ):
     """
@@ -42,7 +41,6 @@ def full_model(
     cdd_beta (float): The beta value for the cooling model.
     cdd_k (float): The k value for the cooling model.
     intercept (float): The intercept value for the model.
-    T_fit_bnds (numpy array): The temperature bounds for the model fitting. Default is an empty numpy array.
     T (numpy array): The temperature values. Default is an empty numpy array.
 
     Returns:
@@ -53,25 +51,21 @@ def full_model(
     if (hdd_beta == 0) and (cdd_beta == 0):
         return np.ones_like(T) * intercept
 
-    [T_min, T_max] = T_fit_bnds
-
     if cdd_bp < hdd_bp:
         hdd_bp, cdd_bp = cdd_bp, hdd_bp
         hdd_beta, cdd_beta = cdd_beta, hdd_beta
         hdd_k, cdd_k = cdd_k, hdd_k
 
+    # a slope applies only on its own side of its balance point, so a single-slope model whose
+    # balance point sits at the edge of the fitted temperatures is flat beyond that edge
     E_tot = np.empty_like(T)
     for n, Ti in enumerate(T):
-        if (Ti < hdd_bp) or (
-            (hdd_bp == cdd_bp) and (cdd_bp >= T_max)
-        ):  # Temperature is within the heating model
+        if Ti < hdd_bp:  # Temperature is within the heating model
             T_bp = hdd_bp
             beta = -hdd_beta
             k = hdd_k
 
-        elif (Ti > cdd_bp) or (
-            (hdd_bp == cdd_bp) and (hdd_bp <= T_min)
-        ):  # Temperature is within the cooling model
+        elif Ti > cdd_bp:  # Temperature is within the cooling model
             T_bp = cdd_bp
             beta = cdd_beta
             k = -cdd_k
@@ -137,7 +131,15 @@ def get_full_model_x(model_key, x, T_min, T_max, T_min_seg, T_max_seg):
     elif model_key == "c_hdd_tidd":
         [c_hdd_bp, c_hdd_beta, intercept] = x
 
-        if c_hdd_bp < T_min_seg:
+        # a cooling slope from T_min or a heating slope from T_max spans every fitted
+        # temperature, leaving no TIDD segment for T_min_seg/T_max_seg
+        # to protect, so its balance point stays where the fit put it
+        is_single_slope = (c_hdd_beta >= 0 and c_hdd_bp == T_min) or (
+            c_hdd_beta < 0 and c_hdd_bp == T_max
+        )
+        if is_single_slope:
+            hdd_bp = cdd_bp = c_hdd_bp
+        elif c_hdd_bp < T_min_seg:
             cdd_bp = hdd_bp = T_min_seg
         elif c_hdd_bp > T_max_seg:
             cdd_bp = hdd_bp = T_max_seg

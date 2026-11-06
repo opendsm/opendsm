@@ -12,6 +12,8 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+from functools import partial
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -119,3 +121,207 @@ def test_known_reduction_recovers_as_savings(heating_baseline, temperature):
     expected = reduction_per_day * result["observed"].notna().sum()
 
     assert recovered == pytest.approx(expected, rel=0.1)
+
+
+def _daily_frame(start, temp, observed):
+    days = pd.date_range(start, periods=len(temp), freq="D", tz="America/Chicago")
+    df = pd.DataFrame({"observed": observed, "temperature": temp}, index=days)
+
+    return df
+
+
+def _warm_cooling_only():
+    """56 days, every one above a cooling balance point at 80 F."""
+    rng = np.random.default_rng(0)
+    temp = 81.5 + 11.5 * rng.random(56)
+    observed = 2500 + 120 * (temp - 80) + rng.normal(0, 60, 56)
+
+    return _daily_frame("2025-07-01", temp, observed)
+
+
+def _cold_heating_only():
+    """56 days, every one below a heating balance point at 40 F."""
+    rng = np.random.default_rng(0)
+    temp = 20 + 15 * rng.random(56)
+    observed = 2500 + 120 * (40 - temp) + rng.normal(0, 60, 56)
+
+    return _daily_frame("2025-01-01", temp, observed)
+
+
+def _year(seed):
+    rng = np.random.default_rng(seed)
+    days = pd.date_range("2025-01-01", periods=365, freq="D", tz="America/Chicago")
+    temp = 67 - 20 * np.cos(2 * np.pi * (days.day_of_year.values - 15) / 365)
+    temp = temp + rng.normal(0, 4, 365)
+
+    return rng, days, temp
+
+
+def _year_with_summer_step():
+    """A year of cooling above 60 F with a summer load step, so summer fits on its own."""
+    rng, days, temp = _year(seed=1)
+    summer = days.month.isin([6, 7, 8, 9])
+    observed = 2500 + 120 * np.clip(temp - 60, 0, None) + 600 * summer + rng.normal(0, 60, 365)
+
+    return _daily_frame("2025-01-01", temp, observed)
+
+
+def _year_heating_and_cooling():
+    """A year with heating below 55 F and cooling above 68 F."""
+    rng, _, temp = _year(seed=2)
+    observed = (
+        2500
+        + 60 * np.clip(55 - temp, 0, None)
+        + 90 * np.clip(temp - 68, 0, None)
+        + rng.normal(0, 60, 365)
+    )
+
+    return _daily_frame("2025-01-01", temp, observed)
+
+
+def _shoulder_flat_stretch(flat_days, seed):
+    """120 shoulder-season days, flat over the `flat_days` coldest and cooling above them."""
+    rng = np.random.default_rng(seed)
+    days = pd.date_range("2025-05-01", periods=120, freq="D", tz="America/Chicago")
+    temp = 66 - 8 * np.cos(2 * np.pi * (days.day_of_year.values - 15) / 365)
+    temp = temp + rng.normal(0, 3.5, 120)
+    bp = np.sort(temp)[flat_days - 1]
+    observed = 1500 + 120 * np.clip(temp - bp, 0, None) + rng.normal(0, 70, 120)
+
+    return _daily_frame("2025-05-01", temp, observed)
+
+
+_SCENARIOS = {
+    "warm_cooling_only": _warm_cooling_only,
+    "cold_heating_only": _cold_heating_only,
+    "shoulder_flat_6_days": partial(_shoulder_flat_stretch, 6, seed=4),
+    "shoulder_flat_9_days": partial(_shoulder_flat_stretch, 9, seed=0),
+    "year_with_summer_step": _year_with_summer_step,
+    "year_heating_and_cooling": _year_heating_and_cooling,
+}
+
+
+@pytest.fixture(scope="module")
+def fitted():
+    """Returns `fit(scenario, base_settings)`, which fits each pair once for the module and
+    returns (model, baseline data)."""
+    fits = {}
+
+    def fit(scenario, base_settings):
+        if (scenario, base_settings) not in fits:
+            data = DailyBaselineData(_SCENARIOS[scenario](), is_electricity_data=True)
+            model = DailyModel(model=base_settings).fit(data, ignore_disqualification=True)
+            fits[(scenario, base_settings)] = (model, data)
+
+        return fits[(scenario, base_settings)]
+
+    return fit
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("base_settings", ["current", "legacy"])
+@pytest.mark.parametrize("scenario", list(_SCENARIOS))
+def test_baseline_prediction_reproduces_fitted_values(fitted, scenario, base_settings):
+    """Predicting the baseline returns, day for day, each submodel's fitted values.
+
+    Coefficients are reduced and constrained after the optimizer finishes; none of that may
+    move the fitted line.
+    """
+    model, data = fitted(scenario, base_settings)
+    predicted = model.predict(data, ignore_disqualification=True)["predicted"]
+
+    for component, submodel in model.model.items():
+        days = model._meter_segment(component).index
+        np.testing.assert_allclose(
+            predicted.loc[days].values,
+            submodel.model,
+            rtol=1e-9,
+            atol=1e-6,
+            err_msg=f"{component} ({submodel.model_name}) predicts its baseline off its fit",
+        )
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("base_settings", ["current", "legacy"])
+@pytest.mark.parametrize("scenario", list(_SCENARIOS))
+def test_baseline_prediction_sums_to_observed(fitted, scenario, base_settings):
+    """Summed baseline predictions match summed observations, including baselines whose days
+    all lie on one side of the balance point."""
+    model, data = fitted(scenario, base_settings)
+    result = model.predict(data, ignore_disqualification=True)
+
+    shortfall = 1.0 - result["predicted"].sum() / result["observed"].sum()
+
+    assert abs(shortfall) < 0.005, (
+        f"baseline predicted {shortfall:+.2%} short of its observed total"
+    )
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("scenario", "base_settings", "component"),
+    [
+        ("warm_cooling_only", "current", "fw-su_sh_wi"),
+        ("warm_cooling_only", "legacy", "fw-su_sh_wi"),
+        ("cold_heating_only", "legacy", "fw-su_sh_wi"),
+        ("year_with_summer_step", "current", "fw-su"),
+    ],
+)
+def test_single_slope_fit_keeps_balance_point_at_data_edge(
+    fitted, scenario, base_settings, component
+):
+    """A one-sided component is stored as a single slope from its coldest (cooling) or
+    warmest (heating) day."""
+    model, _ = fitted(scenario, base_settings)
+    submodel = model.model[component]
+    bp, beta = submodel.x[0], submodel.x[1]
+    edge = submodel.T_min if beta >= 0 else submodel.T_max
+
+    assert submodel.model_key == "c_hdd_tidd", f"{component} fit {submodel.model_name}"
+    assert bp == edge, f"{component} balance point {bp}, expected data edge {edge}"
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("scenario", "base_settings", "offsets"),
+    [
+        ("warm_cooling_only", "current", [0.0, -5.0, -15.0, -30.0]),
+        ("warm_cooling_only", "legacy", [0.0, -5.0, -15.0, -30.0]),
+        ("cold_heating_only", "legacy", [0.0, 5.0, 15.0, 30.0]),
+    ],
+)
+def test_single_slope_prediction_is_flat_beyond_balance_point_edge(
+    fitted, scenario, base_settings, offsets
+):
+    """Reporting days past a single slope's balance point edge predict the value at that edge."""
+    model, data = fitted(scenario, base_settings)
+    temps = data.df["temperature"]
+    edge = temps.min() if offsets[-1] < 0 else temps.max()
+    reporting = DailyReportingData(
+        _daily_frame("2025-11-01", edge + np.array(offsets), np.zeros(len(offsets))),
+        is_electricity_data=True,
+    )
+
+    predicted = model.predict(reporting, ignore_disqualification=True)["predicted"].values
+
+    np.testing.assert_allclose(
+        predicted, predicted[0], rtol=1e-12, err_msg=f"temperatures {edge + np.array(offsets)}"
+    )
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("base_settings", "scenario"),
+    [("current", "shoulder_flat_6_days"), ("legacy", "shoulder_flat_9_days")],
+)
+def test_flat_stretch_inside_the_data_keeps_a_tidd_segment(fitted, base_settings, scenario):
+    """A load flat over about as many of its coldest days as the model's minimum segment keeps
+    that stretch as a TIDD segment, its balance point at or above T_min_seg."""
+    model, _ = fitted(scenario, base_settings)
+
+    for component, submodel in model.model.items():
+        bp = submodel.x[0]
+        assert bp >= submodel.T_min_seg, (
+            f"{component} ({submodel.model_name}) balance point {bp:.2f} is below "
+            f"T_min_seg {submodel.T_min_seg:.2f}"
+        )
