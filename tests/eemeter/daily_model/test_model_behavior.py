@@ -12,6 +12,8 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+from functools import partial
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -177,9 +179,23 @@ def _year_heating_and_cooling():
     return _daily_frame("2025-01-01", temp, observed)
 
 
+def _shoulder_flat_stretch(flat_days, seed):
+    """120 shoulder-season days, flat over the `flat_days` coldest and cooling above them."""
+    rng = np.random.default_rng(seed)
+    days = pd.date_range("2025-05-01", periods=120, freq="D", tz="America/Chicago")
+    temp = 66 - 8 * np.cos(2 * np.pi * (days.day_of_year.values - 15) / 365)
+    temp = temp + rng.normal(0, 3.5, 120)
+    bp = np.sort(temp)[flat_days - 1]
+    observed = 1500 + 120 * np.clip(temp - bp, 0, None) + rng.normal(0, 70, 120)
+
+    return _daily_frame("2025-05-01", temp, observed)
+
+
 _SCENARIOS = {
     "warm_cooling_only": _warm_cooling_only,
     "cold_heating_only": _cold_heating_only,
+    "shoulder_flat_6_days": partial(_shoulder_flat_stretch, 6, seed=4),
+    "shoulder_flat_9_days": partial(_shoulder_flat_stretch, 9, seed=0),
     "year_with_summer_step": _year_with_summer_step,
     "year_heating_and_cooling": _year_heating_and_cooling,
 }
@@ -291,3 +307,21 @@ def test_single_slope_prediction_is_flat_beyond_balance_point_edge(
     np.testing.assert_allclose(
         predicted, predicted[0], rtol=1e-12, err_msg=f"temperatures {edge + np.array(offsets)}"
     )
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("base_settings", "scenario"),
+    [("current", "shoulder_flat_6_days"), ("legacy", "shoulder_flat_9_days")],
+)
+def test_flat_stretch_inside_the_data_keeps_a_tidd_segment(fitted, base_settings, scenario):
+    """A load flat over about as many of its coldest days as the model's minimum segment keeps
+    that stretch as a TIDD segment, its balance point at or above T_min_seg."""
+    model, _ = fitted(scenario, base_settings)
+
+    for component, submodel in model.model.items():
+        bp = submodel.x[0]
+        assert bp >= submodel.T_min_seg, (
+            f"{component} ({submodel.model_name}) balance point {bp:.2f} is below "
+            f"T_min_seg {submodel.T_min_seg:.2f}"
+        )
