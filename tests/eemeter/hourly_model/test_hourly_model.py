@@ -1041,3 +1041,21 @@ def test_predict_labels_unseen_combinations_for_that_prediction_only(baseline, r
 
     assert predicted.loc[predicted.index.month == 12, "predicted"].notna().all()
     pd.testing.assert_frame_equal(hm._df_temporal_clusters, fitted)
+
+
+def test_hourly_model_refit(baseline):
+    """Calling fit a second time on the same HourlyModel instance succeeds
+    and produces results identical to fitting a fresh instance (#646)."""
+    data = HourlyBaselineData(baseline, is_electricity_data=True)
+    model1 = HourlyModel()
+    model1.fit(data, ignore_disqualification=True)
+    # Refit the same model instance
+    model1.fit(data, ignore_disqualification=True)
+
+    # Fit a fresh model instance
+    model2 = HourlyModel()
+    model2.fit(data, ignore_disqualification=True)
+
+    np.testing.assert_allclose(model1._model.coef_, model2._model.coef_)
+    np.testing.assert_allclose(model1._model.intercept_, model2._model.intercept_)
+    assert model1.baseline_metrics.model_dump() == model2.baseline_metrics.model_dump()

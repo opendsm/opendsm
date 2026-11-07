@@ -463,6 +463,18 @@ class HourlyModel:
         self.warnings = baseline_data.warnings
         self.disqualification = baseline_data.disqualification
 
+        self._set_scalers()
+        self._model = self._set_model()
+
+        self._T_bin_edges = None
+        self._T_edge_bin_coeffs = None
+        self._df_temporal_clusters = None
+        self._categorical_features = None
+        self._ts_feature_norm = None
+        self._supplemental_fill_values = {}
+        self.baseline_metrics = None
+        self.baseline_hour_metrics = None
+
         if not self._ts_features:
             self.settings = self.settings.add_default_features(baseline_data.df.columns)
             self._ts_features = self.settings.train_features.copy()
@@ -1315,7 +1327,7 @@ class HourlyModel:
             if self.settings.adaptive_weights.enabled:
                 if hasattr(self._model, 'base_model'):
                     adaptive_weights = getattr(self._model.base_model, 'adaptive_weights', None)
-                self._model = self._model.base_model
+                    self._model = self._model.base_model
 
             coef = self._model.coef_
         elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
