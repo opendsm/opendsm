@@ -271,7 +271,7 @@ class HourlyModel:
     """
 
     model_frequency = ModelFrequency.HOURLY
-
+    
     # thresholds for switching model types
     _alpha_model_threshold = 1E-5
     _l1_ratio_model_threshold = 1E-4
@@ -385,7 +385,7 @@ class HourlyModel:
                     tol=settings.tol,
                     random_state=settings._seed,
                 )
-
+                
                 if not isinstance(model, Ridge):
                     model.precompute = settings.precompute
                     model.selection = settings.selection
@@ -396,7 +396,7 @@ class HourlyModel:
 
             if self.settings.adaptive_weights.enabled:
                 model = AdaptiveElasticNetRegressor(model, self.settings)
-
+                
         elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
             settings = self.settings.kernel_ridge
             model = KernelRidge(
@@ -468,7 +468,7 @@ class HourlyModel:
             self._ts_features = self.settings.train_features.copy()
 
         self._model_prefit_check(baseline_data)
-
+        
         self._fit(baseline_data)
         self._check_model_fit()
 
@@ -1028,7 +1028,7 @@ class HourlyModel:
             df["ghi_norm"] *= self.settings.ghi_scalar
 
         return df
-
+    
     def _add_extreme_temperature_bins(self, df, bin_range):
         settings = self.settings.temperature_bin
 
@@ -1313,28 +1313,15 @@ class HourlyModel:
         adaptive_weights = None
         if self.settings.base_model == _settings.BaseModel.ELASTICNET:
             if self.settings.adaptive_weights.enabled:
-                if hasattr(self._model, "base_model"):
-                    adaptive_weights = getattr(
-                        self._model.base_model, "adaptive_weights", None
-                    )
+                if hasattr(self._model, 'base_model'):
+                    adaptive_weights = getattr(self._model.base_model, 'adaptive_weights', None)
                 self._model = self._model.base_model
 
             coef = self._model.coef_
-            n_intercept = int(self.settings.elasticnet.fit_intercept)
-            # Each of the 24 hourly outputs fits its own intercept.
-            num_parameters = np.count_nonzero(coef) + 24 * n_intercept
         elif self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE:
             coef = self._model.dual_coef_
-            # Preserve the existing KernelRidge parameter-count convention.
-            n_intercept = 1
-            num_parameters = np.count_nonzero(coef) + 1
 
         df_measured = df_meter.loc[self._measured_hours(df_meter)]
-
-        self.baseline_metrics = BaselineMetrics(
-            df=df_measured,
-            num_model_params=num_parameters,
-        )
 
         # calculate baseline metrics per hour-of-day with edf-based num_model_params
         self.baseline_hour_metrics = {}
@@ -1345,35 +1332,43 @@ class HourlyModel:
         if not is_kernel and X_fit is not None:
             lambda_2 = self._compute_lambda_2(X_fit.shape[0])
 
+        hour_num_params = []
         for hour in range(24):
             hour_coef = coef[:, hour] if is_kernel else coef[hour]
             hour_data = df_measured[df_measured.index.hour == hour]
-
-            if len(hour_data) < 3:
-                self.baseline_hour_metrics[hour] = None
-                continue
+            n_h = len(hour_data)
 
             # Compute edf via SVD when X_fit is available and model is not KernelRidge
             if X_fit is not None and not is_kernel and lambda_2 is not None:
                 edf_h = self._compute_hour_edf(
-                    X_fit,
-                    hour,
-                    hour_coef,
-                    lambda_2,
-                    adaptive_weights,
+                    X_fit, hour, hour_coef, lambda_2, adaptive_weights,
                 )
                 # Clamp so ddof >= 3 → stdtrit(ddof, perc) is finite and reasonable
-                n_h = len(hour_data)
-                edf_h = max(n_intercept, min(edf_h, n_h - 3))
-                num_params_h = max(n_intercept, round(edf_h))
+                edf_h = max(1, min(edf_h, n_h - 3))
+                num_params_h = max(1, round(edf_h))
             else:
                 # Fallback: count_nonzero (KernelRidge or missing X_fit)
-                num_params_h = np.count_nonzero(hour_coef) + n_intercept
+                num_params_h = np.count_nonzero(hour_coef) + 1
+
+            # every hour is fitted, so it counts toward the global total
+            # even when it has too little data for its own metrics
+            hour_num_params.append(int(num_params_h))
+
+            if n_h < 3:
+                self.baseline_hour_metrics[hour] = None
+                continue
 
             self.baseline_hour_metrics[hour] = BaselineMetrics(
                 df=hour_data,
                 num_model_params=num_params_h,
             )
+
+        # The global count is the sum of the per-hour counts (each including its
+        # intercept), so the global and per-hour metrics describe the same model.
+        self.baseline_metrics = BaselineMetrics(
+            df=df_measured,
+            num_model_params=sum(hour_num_params),
+        )
 
     def _compute_lambda_2(self, n_samples):
         """Compute the L2 penalty parameter for the edf formula.
@@ -1389,8 +1384,8 @@ class HourlyModel:
         if isinstance(base, Ridge) and not isinstance(base, ElasticNet):
             return base.alpha
         else:
-            alpha = getattr(base, "alpha", 0)
-            l1_ratio = getattr(base, "l1_ratio", 0)
+            alpha = getattr(base, 'alpha', 0)
+            l1_ratio = getattr(base, 'l1_ratio', 0)
             return n_samples * alpha * (1 - l1_ratio)
 
     def _compute_hour_edf(self, X_fit, hour, hour_coef, lambda_2, adaptive_weights):
@@ -1398,18 +1393,17 @@ class HourlyModel:
 
         Uses the Zou-Hastie closed form: edf = Σ d²/(d² + λ₂) where d are
         singular values of the (optionally weighted) design matrix restricted
-        to active columns at this hour, plus one when an intercept is fitted.
+        to active columns at this hour. +1 for intercept.
 
         X_fit is per-day (shape n_fit_days × n_features), shared across all hours.
         Each hour uses the same X but different active columns from coef[hour].
         """
-        n_intercept = int(self.settings.elasticnet.fit_intercept)
         active = np.nonzero(hour_coef)[0]
         if len(active) == 0:
-            return n_intercept
+            return 1  # intercept only
 
         X_active = X_fit[:, active]
-        if hasattr(X_active, "toarray"):
+        if hasattr(X_active, 'toarray'):
             X_active = X_active.toarray()
 
         # Apply per-hour adaptive weights (also daily-indexed)
@@ -1418,7 +1412,7 @@ class HourlyModel:
             X_active = np.sqrt(w_h)[:, np.newaxis] * X_active
 
         s = np.linalg.svd(X_active, compute_uv=False)
-        edf = float(np.sum(s**2 / (s**2 + lambda_2))) + n_intercept
+        edf = float(np.sum(s**2 / (s**2 + lambda_2))) + 1  # +1 for intercept
 
         return edf
 
@@ -1640,7 +1634,7 @@ class HourlyModel:
 
         setattr(model_cls._feature_scaler, loc_attr, np.array(feature_scaler_loc))
         model_cls._feature_scaler.scale_ = np.array(feature_scaler_scale)
-
+        
         setattr(model_cls._y_scaler, loc_attr, np.array(y_scaler_values[0]))
         model_cls._y_scaler.scale_ = np.array(y_scaler_values[1])
 
