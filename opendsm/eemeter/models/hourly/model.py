@@ -1323,12 +1323,6 @@ class HourlyModel:
 
         df_measured = df_meter.loc[self._measured_hours(df_meter)]
 
-        num_parameters = np.count_nonzero(coef)
-        self.baseline_metrics = BaselineMetrics(
-            df=df_measured,
-            num_model_params=num_parameters + 1, # + 1 for intercept
-        )
-
         # calculate baseline metrics per hour-of-day with edf-based num_model_params
         self.baseline_hour_metrics = {}
         is_kernel = self.settings.base_model == _settings.BaseModel.KERNEL_RIDGE
@@ -1338,13 +1332,11 @@ class HourlyModel:
         if not is_kernel and X_fit is not None:
             lambda_2 = self._compute_lambda_2(X_fit.shape[0])
 
+        hour_num_params = []
         for hour in range(24):
             hour_coef = coef[:, hour] if is_kernel else coef[hour]
             hour_data = df_measured[df_measured.index.hour == hour]
-
-            if len(hour_data) < 3:
-                self.baseline_hour_metrics[hour] = None
-                continue
+            n_h = len(hour_data)
 
             # Compute edf via SVD when X_fit is available and model is not KernelRidge
             if X_fit is not None and not is_kernel and lambda_2 is not None:
@@ -1352,17 +1344,31 @@ class HourlyModel:
                     X_fit, hour, hour_coef, lambda_2, adaptive_weights,
                 )
                 # Clamp so ddof >= 3 → stdtrit(ddof, perc) is finite and reasonable
-                n_h = len(hour_data)
                 edf_h = max(1, min(edf_h, n_h - 3))
                 num_params_h = max(1, round(edf_h))
             else:
                 # Fallback: count_nonzero (KernelRidge or missing X_fit)
                 num_params_h = np.count_nonzero(hour_coef) + 1
 
+            # every hour is fitted, so it counts toward the global total
+            # even when it has too little data for its own metrics
+            hour_num_params.append(int(num_params_h))
+
+            if n_h < 3:
+                self.baseline_hour_metrics[hour] = None
+                continue
+
             self.baseline_hour_metrics[hour] = BaselineMetrics(
                 df=hour_data,
                 num_model_params=num_params_h,
             )
+
+        # The global count is the sum of the per-hour counts (each including its
+        # intercept), so the global and per-hour metrics describe the same model.
+        self.baseline_metrics = BaselineMetrics(
+            df=df_measured,
+            num_model_params=sum(hour_num_params),
+        )
 
     def _compute_lambda_2(self, n_samples):
         """Compute the L2 penalty parameter for the edf formula.
